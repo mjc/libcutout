@@ -69,6 +69,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+pub(crate) const DATABASE_PAGE_SIZE_BYTES: u32 = 16 * 1024;
 const MAX_QUERY_LIMIT: u32 = 500;
 /// Default number of rides loaded for one history page.
 pub const DEFAULT_HISTORY_PAGE_LIMIT: u32 = 50;
@@ -5749,6 +5750,10 @@ fn configure_connection(
     if !sqlite_capabilities(connection)?.has_rtree() {
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
+    let page_count: u64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    if page_count == 0 {
+        connection.pragma_update(None, "page_size", DATABASE_PAGE_SIZE_BYTES)?;
+    }
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
@@ -5770,7 +5775,10 @@ fn configure_connection(
 
 #[cfg(test)]
 mod sqlite_durability_tests {
-    use super::{Connection, LiveCaptureEventKind, LiveCaptureId, configure_connection};
+    use super::{
+        Connection, DATABASE_PAGE_SIZE_BYTES, LiveCaptureEventKind, LiveCaptureId,
+        configure_connection,
+    };
 
     #[test]
     fn file_database_uses_wal_with_full_commit_durability() {
@@ -5789,8 +5797,12 @@ mod sqlite_durability_tests {
         let synchronous: u32 = connection
             .pragma_query_value(None, "synchronous", |row| row.get(0))
             .unwrap();
+        let page_size: u32 = connection
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
         assert_eq!(journal, "wal");
         assert_eq!(synchronous, 2);
+        assert_eq!(page_size, DATABASE_PAGE_SIZE_BYTES);
     }
 
     #[test]

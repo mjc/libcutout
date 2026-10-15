@@ -122,6 +122,7 @@ fn selection_dto(value: &ride_maps::DraftChargingSupply) -> MobileChargingSupply
     MobileChargingSupplyDto {
         voltage_volts: value.voltage().map(ride_maps::SupplyVoltage::as_u16),
         connectors: value.connectors().iter().cloned().map(Into::into).collect(),
+        outlet_count: value.outlet_count().map(ride_maps::OutletCount::get),
     }
 }
 
@@ -151,6 +152,7 @@ mod tests {
                 connectors: vec![MobileChargingConnectorDto::Other {
                     label: "über plug".into(),
                 }],
+                outlet_count: None,
             }))
             .snapshot();
         assert_eq!(edited.origin, MobileChargingPowerDraftOriginDto::Manual);
@@ -167,6 +169,7 @@ mod tests {
                 },
                 MobileChargingConnectorDto::Type2,
             ],
+            outlet_count: Some(4),
         };
         let restored = mobile_charging_power_draft(None, false).edit(Some(supply.clone()));
         let changed = restored
@@ -181,6 +184,7 @@ mod tests {
             .edit(Some(MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::Unknown],
+                outlet_count: None,
             }))
             .snapshot();
         assert_eq!(
@@ -196,16 +200,37 @@ mod tests {
     }
 
     #[test]
+    fn manual_count_edit_confirms_only_the_fields_the_rider_supplied() {
+        let suggested = mobile_charging_power_draft(Some("US".into()), false).snapshot();
+        assert_eq!(suggested.selection.outlet_count, None);
+        assert!(suggested.included_supply.is_none());
+
+        let count_only = MobileChargingSupplyDto {
+            voltage_volts: None,
+            connectors: Vec::new(),
+            outlet_count: Some(5),
+        };
+        let edited = mobile_charging_power_draft(Some("US".into()), false)
+            .edit(Some(count_only.clone()))
+            .snapshot();
+        assert_eq!(edited.origin, MobileChargingPowerDraftOriginDto::Manual);
+        assert_eq!(edited.selection, count_only);
+        assert_eq!(edited.included_supply, Some(count_only));
+    }
+
+    #[test]
     fn invalid_manual_edit_keeps_previous_diagnostic_selection_but_revokes_inclusion() {
         let before = MobileChargingSupplyDto {
             voltage_volts: Some(240),
             connectors: vec![MobileChargingConnectorDto::Type2],
+            outlet_count: None,
         };
         let edited = mobile_charging_power_draft(None, false)
             .edit(Some(before.clone()))
             .edit(Some(MobileChargingSupplyDto {
                 voltage_volts: Some(2_001),
                 connectors: vec![MobileChargingConnectorDto::Unknown],
+                outlet_count: None,
             }))
             .snapshot();
         assert_eq!(edited.origin, MobileChargingPowerDraftOriginDto::Manual);

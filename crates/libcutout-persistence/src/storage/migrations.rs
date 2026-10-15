@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 46;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 47;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -68,7 +68,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         42 => migrate_v42_to_current(connection)?,
         43 => migrate_v43_to_v44(connection)?,
         44 => migrate_v44_to_v45(connection)?,
-        45 => migrate_v45_to_current(connection)?,
+        45 => migrate_v45_to_v46(connection)?,
+        46 => migrate_v46_to_v47(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -100,7 +101,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate_v44_to_v45(connection)?;
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 45 {
-            migrate_v45_to_current(connection)?;
+            migrate_v45_to_v46(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 46 {
+            migrate_v46_to_v47(connection)?;
         }
     }
     Ok(())
@@ -420,6 +424,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::recorded_capture::SCHEMA)?;
     connection.execute_batch(super::charging::SCHEMA)?;
     ensure_charging_sync_schema(connection)?;
+    ensure_community_account_columns(connection)?;
     Ok(())
 }
 
@@ -1642,6 +1647,13 @@ fn migrate_v42_to_current(connection: &mut Connection) -> Result<(), StorageErro
 
 fn migrate_v43_to_v44(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    ensure_elapsed_time_columns(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(44))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_elapsed_time_columns(connection: &Connection) -> Result<(), StorageError> {
     for (column, declaration) in [
         (
             "elapsed_time_ms",
@@ -1668,14 +1680,12 @@ fn migrate_v43_to_v44(connection: &mut Connection) -> Result<(), StorageError> {
             "INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_elapsed_partial IN (0, 1))",
         ),
     ] {
-        if !table_has_column(&transaction, "rides", column)? {
-            transaction.execute_batch(&format!(
+        if !table_has_column(connection, "rides", column)? {
+            connection.execute_batch(&format!(
                 "ALTER TABLE rides ADD COLUMN {column} {declaration};"
             ))?;
         }
     }
-    transaction.execute_batch(&schema_pragmas(44))?;
-    transaction.commit()?;
     Ok(())
 }
 
@@ -1687,10 +1697,19 @@ fn migrate_v44_to_v45(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn migrate_v45_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+fn migrate_v45_to_v46(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_community_account_columns(&transaction)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&schema_pragmas(46))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v46_to_v47(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_elapsed_time_columns(&transaction)?;
+    ensure_community_account_columns(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(47))?;
     transaction.commit()?;
     Ok(())
 }
@@ -1744,7 +1763,6 @@ fn ensure_charging_sync_schema(connection: &Connection) -> Result<(), StorageErr
         "INSERT OR IGNORE INTO charging_sync_state(singleton,cursor,last_refreshed_at_ms) VALUES (1,0,NULL)",
         [],
     )?;
-    ensure_community_account_columns(connection)?;
     Ok(())
 }
 
@@ -1937,6 +1955,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
+    verify_elapsed_time_schema(connection)?;
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
@@ -1944,6 +1963,30 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_elapsed_time_schema(connection: &Connection) -> Result<(), StorageError> {
+    for (column, nullable) in [
+        ("elapsed_time_ms", true),
+        ("elapsed_time_anchor_ms", true),
+        ("elapsed_time_running", false),
+        ("elapsed_time_partial", false),
+        ("last_recorded_point_elapsed_time_ms", true),
+        ("last_recorded_point_elapsed_partial", false),
+    ] {
+        let shape: Option<(String, i64)> = connection
+            .query_row(
+                "SELECT type, \"notnull\" FROM pragma_table_info('rides') WHERE name = ?1",
+                [column],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let expected_not_null = i64::from(!nullable);
+        if shape != Some(("INTEGER".to_owned(), expected_not_null)) {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
     Ok(())
 }
 

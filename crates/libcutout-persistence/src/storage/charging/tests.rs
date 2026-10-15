@@ -1,4 +1,4 @@
-use super::records::find_remote;
+use super::records::{detail, find_remote};
 use super::sync::{
     acknowledge_vote_operation, apply_changes_page, block_operation, changes_cursor,
     directory_last_updated, list_blocked_operations, replace_blocked_operation, resolve_operation,
@@ -70,6 +70,23 @@ fn owned_remote(
 }
 fn bounds() -> GeoBounds {
     GeoBounds::new(-1.0, 1.0, 179.0, -179.0).unwrap()
+}
+
+#[test]
+fn outlet_count_survives_local_record_readback() {
+    let supply = ChargingSupply::single(None, ChargingConnector::Unknown)
+        .with_outlet_count(Some(4))
+        .unwrap();
+    let details = ChargingDetails::new(None, None, None, None, None, vec![supply]).unwrap();
+    let input = input(0.5).with_details(details).unwrap();
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let receipt = save(&mut connection, &mut spatial, &input).unwrap();
+
+    let stored = detail(&connection, receipt.point_id).unwrap().unwrap();
+    let recovered = stored.input.unwrap();
+    let supply = &recovered.details().supplies()[0];
+    assert_eq!(supply.outlet_count().map(u16::from), Some(4));
 }
 
 #[test]
@@ -2787,10 +2804,160 @@ fn charging_upgrade_accepts_earlier_charging_schema_without_moving_time() {
     );
 }
 
+fn seed_elapsed_migration_ride(
+    connection: &Connection,
+    version: i64,
+    include_elapsed_columns: bool,
+) {
+    connection
+        .execute_batch(
+            "INSERT INTO rides
+            (id,source,state,created_at_ms,monotonic_created_at_ms,
+             monotonic_last_event_ms,paused_duration_ms,completed_duration_ms,
+             updated_at_ms,point_count,distance_mm,
+             moving_time_revision,moving_time_ms,moving_time_observed_ms,
+             moving_time_unknown_ms,moving_time_cursor_ms,
+             last_recorded_point_moving_time_ms,
+             last_recorded_point_moving_observed_ms,
+             last_recorded_point_moving_unknown_ms,
+             last_recorded_point_moving_availability,
+             elapsed_time_ms,elapsed_time_anchor_ms,elapsed_time_running,
+             elapsed_time_partial,last_recorded_point_elapsed_time_ms,
+             last_recorded_point_elapsed_partial)
+         VALUES ('existing-ride','live','saved',1,10,200,20,100,2,3,4,
+                 7,100,150,50,200,90,130,40,'partial',
+                 1500,2000,0,1,1400,1);",
+        )
+        .unwrap();
+    if version < 45 {
+        connection
+            .execute_batch(
+                "DROP TABLE charging_sync_conflicts;
+                 DROP TABLE charging_sync_state;
+                 ALTER TABLE charging_outbox DROP COLUMN blocked_kind;",
+            )
+            .unwrap();
+    }
+    if !include_elapsed_columns {
+        connection
+            .execute_batch(
+                "ALTER TABLE rides DROP COLUMN elapsed_time_ms;
+                 ALTER TABLE rides DROP COLUMN elapsed_time_anchor_ms;
+                 ALTER TABLE rides DROP COLUMN elapsed_time_running;
+                 ALTER TABLE rides DROP COLUMN elapsed_time_partial;
+                 ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_time_ms;
+                 ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_partial;",
+            )
+            .unwrap();
+    }
+    connection
+        .pragma_update(None, "user_version", version)
+        .unwrap();
+}
+
+fn assert_elapsed_migration_ride_preserved(connection: &Connection, has_elapsed: bool) {
+    let elapsed = connection
+        .query_row(
+            "SELECT elapsed_time_ms,elapsed_time_anchor_ms,elapsed_time_running,
+                    elapsed_time_partial,last_recorded_point_elapsed_time_ms,
+                    last_recorded_point_elapsed_partial
+             FROM rides WHERE id='existing-ride'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<u64>>(0)?,
+                    row.get::<_, Option<u64>>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, Option<u64>>(4)?,
+                    row.get::<_, bool>(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        elapsed,
+        if has_elapsed {
+            (Some(1500), Some(2000), false, true, Some(1400), true)
+        } else {
+            (None, None, false, false, None, false)
+        }
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT created_at_ms,monotonic_created_at_ms,
+                        monotonic_last_event_ms,paused_duration_ms,
+                        completed_duration_ms,updated_at_ms,point_count,distance_mm,
+                        moving_time_revision,moving_time_ms,moving_time_observed_ms,
+                        moving_time_unknown_ms,moving_time_cursor_ms,
+                        last_recorded_point_moving_time_ms,
+                        last_recorded_point_moving_observed_ms,
+                        last_recorded_point_moving_unknown_ms,
+                        last_recorded_point_moving_availability
+                 FROM rides WHERE id='existing-ride'",
+                [],
+                |row| {
+                    Ok((
+                        (
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, Option<i64>>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ),
+                        (
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, i64>(7)?,
+                            row.get::<_, i64>(8)?,
+                            row.get::<_, i64>(9)?,
+                            row.get::<_, i64>(10)?,
+                            row.get::<_, i64>(11)?,
+                        ),
+                        (
+                            row.get::<_, Option<i64>>(12)?,
+                            row.get::<_, i64>(13)?,
+                            row.get::<_, i64>(14)?,
+                            row.get::<_, i64>(15)?,
+                            row.get::<_, String>(16)?,
+                        ),
+                    ))
+                },
+            )
+            .unwrap(),
+        (
+            (1, Some(10), Some(200), 20, 100, 2),
+            (3, 4, 7, 100, 150, 50),
+            (Some(200), 90, 130, 40, "partial".to_owned()),
+        )
+    );
+}
+
+fn assert_charging_migration_state(
+    connection: &mut Connection,
+    point_id: MapPointId,
+    pending: &ChargingOperation,
+) {
+    assert_eq!(
+        detail(connection, point_id).unwrap().unwrap().input,
+        Some(input(179.5))
+    );
+    assert_eq!(next_operation(connection).unwrap().as_ref(), Some(pending));
+    assert_eq!(changes_cursor(connection).unwrap().get(), 0);
+    assert_eq!(directory_last_updated(connection).unwrap(), None);
+}
+
 #[test]
 fn charging_sync_upgrade_preserves_elapsed_time_and_pending_spots() {
-    for version in [43, 44] {
-        let mut connection = database();
+    for (version, include_elapsed_columns) in [(45, false), (45, true), (43, false), (44, true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("charging.sqlite");
+        let mut connection = Connection::open(&path).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        super::super::migrations::migrate(&mut connection).unwrap();
         let saved = save(
             &mut connection,
             &mut SpatialSchemaState::Uninitialized,
@@ -2798,79 +2965,56 @@ fn charging_sync_upgrade_preserves_elapsed_time_and_pending_spots() {
         )
         .unwrap();
         let pending = next_operation(&mut connection).unwrap().unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO rides
-                (id,source,state,created_at_ms,updated_at_ms,point_count,distance_mm,
-                 elapsed_time_ms,elapsed_time_anchor_ms,elapsed_time_running,
-                 elapsed_time_partial,last_recorded_point_elapsed_time_ms,
-                 last_recorded_point_elapsed_partial)
-             VALUES ('existing-ride','live','saved',1,2,3,4,1500,2000,0,1,1400,1);
-             DROP TABLE charging_sync_conflicts;
-             DROP TABLE charging_sync_state;
-             ALTER TABLE charging_outbox DROP COLUMN blocked_kind;",
-            )
-            .unwrap();
-        if version == 43 {
-            connection
-                .execute_batch(
-                    "ALTER TABLE rides DROP COLUMN elapsed_time_ms;
-                 ALTER TABLE rides DROP COLUMN elapsed_time_anchor_ms;
-                 ALTER TABLE rides DROP COLUMN elapsed_time_running;
-                 ALTER TABLE rides DROP COLUMN elapsed_time_partial;
-                 ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_time_ms;
-                 ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_partial;",
-                )
-                .unwrap();
-        }
-        connection
-            .pragma_update(None, "user_version", version)
-            .unwrap();
+        seed_elapsed_migration_ride(&connection, version, include_elapsed_columns);
 
+        if version == 45 && !include_elapsed_columns {
+            assert!(super::super::migrations::verify_current_schema(&connection).is_err());
+        }
         super::super::migrations::migrate(&mut connection).unwrap();
         super::super::migrations::verify_current_schema(&connection).unwrap();
-
-        let elapsed = connection
-            .query_row(
-                "SELECT elapsed_time_ms,elapsed_time_anchor_ms,elapsed_time_running,
-                    elapsed_time_partial,last_recorded_point_elapsed_time_ms,
-                    last_recorded_point_elapsed_partial
-             FROM rides WHERE id='existing-ride'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, Option<u64>>(0)?,
-                        row.get::<_, Option<u64>>(1)?,
-                        row.get::<_, bool>(2)?,
-                        row.get::<_, bool>(3)?,
-                        row.get::<_, Option<u64>>(4)?,
-                        row.get::<_, bool>(5)?,
-                    ))
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            elapsed,
-            if version == 44 {
-                (Some(1500), Some(2000), false, true, Some(1400), true)
-            } else {
-                (None, None, false, false, None, false)
-            }
-        );
-        assert_eq!(
-            detail(&connection, saved.point_id).unwrap().unwrap().input,
-            Some(input(179.5))
-        );
-        assert_eq!(next_operation(&mut connection).unwrap().unwrap(), pending);
-        assert_eq!(changes_cursor(&connection).unwrap().get(), 0);
-        assert_eq!(directory_last_updated(&connection).unwrap(), None);
+        assert_elapsed_migration_ride_preserved(&connection, include_elapsed_columns);
+        assert_charging_migration_state(&mut connection, saved.point_id, &pending);
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
             super::super::migrations::CURRENT_SCHEMA_VERSION
         );
+
+        drop(connection);
+        let mut reopened = Connection::open(&path).unwrap();
+        reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
+        super::super::migrations::migrate(&mut reopened).unwrap();
+        super::super::migrations::verify_current_schema(&reopened).unwrap();
+        assert_charging_migration_state(&mut reopened, saved.point_id, &pending);
+        assert_eq!(
+            reopened
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::super::migrations::CURRENT_SCHEMA_VERSION
+        );
     }
+}
+
+#[test]
+fn current_schema_verification_rejects_invalid_elapsed_column_shapes() {
+    let wrong_type = database();
+    wrong_type
+        .execute_batch(
+            "ALTER TABLE rides DROP COLUMN elapsed_time_ms;
+             ALTER TABLE rides ADD COLUMN elapsed_time_ms TEXT;",
+        )
+        .unwrap();
+    assert!(super::super::migrations::verify_current_schema(&wrong_type).is_err());
+
+    let wrong_nullability = database();
+    wrong_nullability
+        .execute_batch(
+            "ALTER TABLE rides DROP COLUMN elapsed_time_running;
+             ALTER TABLE rides ADD COLUMN elapsed_time_running INTEGER DEFAULT 0;",
+        )
+        .unwrap();
+    assert!(super::super::migrations::verify_current_schema(&wrong_nullability).is_err());
 }
 
 #[test]
@@ -3051,4 +3195,95 @@ fn community_account_deletion_rejects_personal_vote_cache_and_keeps_public_refre
     assert_eq!(cached.vote_revision.get(), 0);
     assert!(!cached.owned);
     assert_eq!(cached.input, published.input);
+}
+
+#[test]
+fn schema_46_migration_repairs_both_historical_shapes_and_preserves_account_fences() {
+    for (missing_account_columns, missing_elapsed_columns, expected_state, has_elapsed) in [
+        (true, false, CommunityAccountState::Active, true),
+        (false, true, CommunityAccountState::Deleting, false),
+    ] {
+        let mut connection = database();
+        let mut spatial = SpatialSchemaState::Uninitialized;
+        let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
+        let pending = next_operation(&mut connection).unwrap().unwrap();
+        seed_elapsed_migration_ride(&connection, 46, true);
+        if expected_state == CommunityAccountState::Deleting {
+            account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+        }
+        if missing_account_columns {
+            connection
+                .execute_batch(
+                    "ALTER TABLE charging_sync_state DROP COLUMN account_deleted_at_ms;
+                     ALTER TABLE charging_sync_state DROP COLUMN account_state;",
+                )
+                .unwrap();
+        }
+        if missing_elapsed_columns {
+            connection
+                .execute_batch(
+                    "ALTER TABLE rides DROP COLUMN elapsed_time_ms;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_anchor_ms;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_running;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_partial;
+                     ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_time_ms;
+                     ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_partial;",
+                )
+                .unwrap();
+        }
+        connection.pragma_update(None, "user_version", 46).unwrap();
+
+        super::super::migrations::migrate(&mut connection).unwrap();
+        super::super::migrations::verify_current_schema(&connection).unwrap();
+        assert_eq!(account::state(&connection).unwrap(), expected_state);
+        assert_eq!(count(&connection).unwrap(), 1);
+        assert_eq!(
+            detail(&connection, saved.point_id).unwrap().unwrap().input,
+            Some(input(179.5))
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM charging_outbox", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        if expected_state == CommunityAccountState::Active {
+            assert_eq!(
+                next_operation(&mut connection).unwrap().as_ref(),
+                Some(&pending)
+            );
+        }
+        assert_elapsed_migration_ride_preserved(&connection, has_elapsed);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::super::migrations::CURRENT_SCHEMA_VERSION,
+        );
+    }
+}
+
+#[test]
+fn schema_46_elapsed_repair_preserves_completed_account_deletion() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    account::apply(
+        &mut connection,
+        AccountEvent::CompleteDeletion { at_ms: 9876 },
+    )
+    .unwrap();
+    seed_elapsed_migration_ride(&connection, 46, false);
+
+    super::super::migrations::migrate(&mut connection).unwrap();
+    super::super::migrations::verify_current_schema(&connection).unwrap();
+    assert_eq!(
+        account::state(&connection).unwrap(),
+        CommunityAccountState::Deleted {
+            completed_at_milliseconds: 9876
+        }
+    );
+    assert_elapsed_migration_ride_preserved(&connection, false);
+    assert!(save(&mut connection, &mut spatial, &input(0.5)).is_err());
 }

@@ -12,7 +12,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     }
 
     func testVoltageOptionsIncludeVoltagesFromAlreadyRetainedSpots() {
-        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.typeB])
+        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.nema515], outletCount: nil)
 
         XCTAssertEqual(ChargingSpotPresentation.voltageOptions(in: [retainedSupply]), [100])
     }
@@ -56,7 +56,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     }
 
     func testUnknownPowerDoesNotInventVoltageOrConnector() {
-        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [])
+        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [], outletCount: nil)
         XCTAssertEqual(ChargingSpotPresentation.supplyText(unknown), "Voltage unknown")
         XCTAssertEqual(ChargingSpotPresentation.connectorName(.unknown), "Unknown connector")
         XCTAssertEqual(
@@ -65,12 +65,27 @@ final class ChargingSpotPresentationTests: XCTestCase {
 
     func testDistinctSupplyGroupsKeepTheirOwnVoltageAndConnector() {
         XCTAssertEqual(
-            ChargingSpotPresentation.supplyText(MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB])),
-            "120 V · Type B"
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: nil)),
+            "120 V · US 3 Prong"
         )
         XCTAssertEqual(
-            ChargingSpotPresentation.supplyText(MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772])),
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: nil)),
             "240 V · J1772"
+        )
+    }
+
+    func testSupplyTextUsesSingularAndPluralOutletCounts() {
+        XCTAssertEqual(
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: 1)),
+            "1 outlet · 120 V · US 3 Prong"
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: 2)),
+            "2 outlets · 120 V · US 3 Prong"
         )
     }
 

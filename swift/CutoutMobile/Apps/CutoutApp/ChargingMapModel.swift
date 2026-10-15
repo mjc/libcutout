@@ -102,7 +102,6 @@ final class ChargingMapModel {
     var communitySyncPendingCount: UInt32 { communitySync?.pendingCount ?? 0 }
     var communitySyncDownloaded: UInt32 { communitySync?.downloaded ?? 0 }
     var communitySyncUploaded: UInt32 { communitySync?.uploaded ?? 0 }
-    var communitySyncLastUpdated: Date? { communitySync?.lastUpdated }
 
     init(
         filter: MobileChargingFilterDto = MobileChargingFilterDto(

@@ -15,6 +15,18 @@ pub struct ChargingLocationFix {
 }
 
 impl ChargingLocationFix {
+    /// Returns the validated coordinate.
+    #[must_use]
+    pub const fn coordinate(self) -> Coordinate {
+        self.coordinate
+    }
+
+    /// Returns the source's horizontal uncertainty in metres.
+    #[must_use]
+    pub const fn horizontal_accuracy_meters(self) -> f64 {
+        self.horizontal_accuracy_meters
+    }
+
     /// Creates a map fix from platform values, rejecting invalid coordinates, timestamps,
     /// and horizontal accuracies.
     #[must_use]
@@ -79,7 +91,7 @@ fn is_fresh(fix: ChargingLocationFix, now_unix_seconds: f64) -> bool {
     (0.0..=CHARGING_LOCATION_FIX_MAXIMUM_AGE_SECONDS).contains(&age)
 }
 
-fn coordinate_sample(coordinate: Coordinate) -> LocationSample {
+pub(crate) fn coordinate_sample(coordinate: Coordinate) -> LocationSample {
     LocationSample::new(
         coordinate,
         MonotonicMilliseconds::new(0),

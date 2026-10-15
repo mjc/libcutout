@@ -233,10 +233,26 @@ struct ChargingMapContentView: View {
     }
 
     private func resolveEditorCountry() async {
-        guard let editor, let location = locationSamples.freshLocation() else { return }
-        let countryCode = await ChargingCountryLookup.countryCode(at: Self.dto(location.coordinate))
+        guard let editor else { return }
+        guard let location = locationSamples.freshLocation() else {
+            editor.setCountryCode(nil)
+            editor.setConnectorChoices(nil)
+            return
+        }
+        let origin = Self.dto(location.coordinate)
+        let countryCode = await ChargingCountryLookup.countryCode(at: origin)
         guard !Task.isCancelled else { return }
         editor.setCountryCode(countryCode)
+        do {
+            let database = try await RustPersistenceStore.open()
+            let choices = try await database.chargingConnectorChoicesNear(
+                origin: origin, locationCountryCode: countryCode)
+            guard !Task.isCancelled else { return }
+            editor.setConnectorChoices(choices)
+        } catch {
+            guard !Task.isCancelled else { return }
+            editor.setConnectorChoices(nil)
+        }
     }
 
     private func editorStageChanged(_: ChargingSpotEditorModel.Stage?, _ stage: ChargingSpotEditorModel.Stage?) {
@@ -466,14 +482,6 @@ struct ChargingMapContentView: View {
                 }
             }
             .onMapCameraChange(frequency: .onEnd, cameraChanged)
-            #if os(iOS)
-                .gesture(
-                    ChargingMapLongPressGesture { point in
-                        guard editor == nil, let coordinate = proxy.convert(point, from: .local) else { return }
-                        beginPlacement(at: coordinate)
-                    }
-                )
-            #endif
             .overlay {
                 if editor?.stage == .moving {
                     ChargingPlacementPin()
@@ -552,8 +560,7 @@ struct ChargingMapContentView: View {
             },
             set: { route in
                 guard let route else {
-                    sheetRoute = nil
-                    if editor?.stage != .moving { editor?.movePin() }
+                    cancelEditor()
                     return
                 }
                 if case .editor = route {
@@ -674,7 +681,6 @@ struct ChargingMapContentView: View {
         let coordinate = locationSamples.freshLocation(at: Date())?.coordinate ?? visibleCenter
         guard let coordinate, CLLocationCoordinate2DIsValid(coordinate) else { return }
         beginPlacement(at: coordinate)
-        editor?.confirmLocation()
     }
 
     private func finishAddingSpot(_ receipt: MobileChargingWriteReceiptDto, coordinate: MobileMapCoordinateDto) {
@@ -1001,7 +1007,10 @@ struct ChargingMapContentView: View {
         if let error = model.error ?? editorLaunchError {
             statusRow(ChargingSpotPresentation.loadErrorKey(error), retry: model.error != nil)
         } else if model.spots.isEmpty && !model.isLoading {
-            statusRow("charging.status.empty", retry: false)
+            Button(localizedAppText("charging.status.empty"), action: beginAddingAtCurrentLocation)
+                .frame(minHeight: 44)
+                .font(.footnote)
+                .accessibilityIdentifier("charging.empty.add")
         } else if model.limitReached {
             Text(localizedAppText("charging.status.limit")).font(.footnote).padding(8)
         }

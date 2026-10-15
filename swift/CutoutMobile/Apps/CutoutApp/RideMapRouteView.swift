@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import MapKit
 import Observation
 import SwiftUI
@@ -30,6 +31,23 @@ final class RideMapPresentationState {
     var sharedCameraSpan = RideMapPresentationState.sharedLocalSpan
     var currentLocation: CLLocationCoordinate2D?
     var historyFittedCameraID: String?
+
+    /// Opens the normal unsaved editor without replacing another draft or changing the ride.
+    @discardableResult
+    func beginChargingStop(_ prompt: MobileChargingStopPromptDto, locale: Locale) -> Bool {
+        guard chargingEditor == nil else { return false }
+        charging.cancelAutomaticDiscovery()
+        charging.deselect()
+        mode = .charging
+        let coordinate = CLLocationCoordinate2D(
+            latitude: prompt.coordinate.latitudeDegrees, longitude: prompt.coordinate.longitudeDegrees
+        )
+        chargingMapPosition = .region(MKCoordinateRegion(center: coordinate, span: sharedCameraSpan))
+        let editor = ChargingSpotEditorModel(coordinate: prompt.coordinate, inputLocale: locale)
+        editor.confirmLocation()
+        chargingEditor = editor
+        return true
+    }
 
     static func defaultLocalRegion(center: CLLocationCoordinate2D) -> MKCoordinateRegion {
         MKCoordinateRegion(center: center, span: sharedLocalSpan)

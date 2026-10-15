@@ -63,7 +63,8 @@ availability, cache updates and user cancellation. Swift executes one-shot searc
 and camera decisions without deriving another discovery state from UI flags.
 Rust emits a validated camera target once; Swift owns its pending presentation
 and consumption. One native sheet route selects details, issues, or the existing
-editor model; moving the pin dismisses the form while retaining that model.
+editor model. The map Add action enters placement; confirming the pin opens the
+compact form. Dismissing the editor cancels that draft.
 Charging location selection validates freshness and chooses fixes in Rust; Swift
 uses acceptance predicates and retains the original accepted native location
 and its platform metadata.

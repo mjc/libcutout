@@ -8,17 +8,12 @@ enum ChargingSpotEditorField: Hashable {
 }
 
 struct ChargingSpotEditorView: View {
-    private static let countryOptions: [(code: String, name: String)] = Locale.Region.isoRegions
-        .map(\.identifier)
-        .filter { $0.count == 2 }
-        .map { (code: $0, name: Locale.current.localizedString(forRegionCode: $0) ?? $0) }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-
     @Bindable var model: ChargingSpotEditorModel
     let onCancel: () -> Void
     let onSaved: (MobileChargingWriteReceiptDto) -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @FocusState private var focusedField: ChargingSpotEditorField?
     @State private var selectedDetent: PresentationDetent = .medium
 
@@ -51,13 +46,6 @@ struct ChargingSpotEditorView: View {
                         .foregroundStyle(.red)
                     }
                     .accessibilityIdentifier("charging.editor.optional-details-error")
-                }
-                Section {
-                    Button(localizedAppText("charging.editor.move_pin")) {
-                        focusedField = nil
-                        model.movePin()
-                    }
-                    .accessibilityIdentifier("charging.editor.move-pin")
                 }
                 DisclosureGroup(isExpanded: $model.areOptionalDetailsExpanded) {
                     optionalDetails
@@ -140,6 +128,24 @@ struct ChargingSpotEditorView: View {
 
     private var requiredDetails: some View {
         Section {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) { kindChoices }
+            } else {
+                HStack(spacing: 8) { kindChoices }
+            }
+            if model.selectedKind == .food {
+                foodType
+            } else if model.selectedKind == .ev {
+                Toggle(
+                    localizedAppText("charging.cost.paid"),
+                    isOn: Binding(
+                        get: { model.cost == .paid },
+                        set: { model.cost = $0 ? .paid : .free }
+                    )
+                )
+                .accessibilityIdentifier("charging.editor.ev-paid")
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text(localizedAppText("charging.editor.access_note"))
                     .font(.subheadline)
@@ -154,17 +160,6 @@ struct ChargingSpotEditorView: View {
             }
             if !model.accessNote.isEmpty {
                 fieldFeedback(.accessNote, identifier: "charging.editor.access-note-error")
-            }
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 8) {
-                    costChoice(.free)
-                    costChoice(.paid)
-                }
-            } else {
-                HStack {
-                    costChoice(.free)
-                    costChoice(.paid)
-                }
             }
             if let errorKey = model.errorKey {
                 Text(localizedAppText(errorKey))
@@ -211,20 +206,49 @@ struct ChargingSpotEditorView: View {
         }
     }
 
-    private func costChoice(_ cost: MobileChargingCostDto) -> some View {
-        let selected = model.cost == cost
-        let key = cost == .free ? "charging.cost.free" : "charging.cost.paid"
+    private var kindChoices: some View {
+        ForEach(ChargingSpotEditorModel.Kind.allCases, id: \.self) { kind in
+            kindChoice(kind)
+        }
+    }
+
+    private func kindChoice(_ kind: ChargingSpotEditorModel.Kind) -> some View {
+        let selected = model.selectedKind == kind
+        let icon =
+            switch kind {
+            case .charging: "bolt.fill"
+            case .food: "fork.knife"
+            case .ev: "bolt.car"
+            }
         return Button {
-            model.cost = cost
+            model.chooseKind(kind)
         } label: {
-            Label(localizedAppText(key), systemImage: selected ? "checkmark.circle.fill" : "circle")
-                .frame(maxWidth: .infinity, minHeight: 44)
+            VStack(spacing: 4) {
+                Image(systemName: icon).accessibilityHidden(true)
+                Text(localizedAppText("charging.editor.kind.\(kind.rawValue)"))
+                    .multilineTextAlignment(.center)
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.bordered)
         .tint(selected ? .accentColor : .secondary)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityRemoveTraits(selected ? [] : .isSelected)
-        .accessibilityIdentifier(cost == .free ? "charging.editor.cost.free" : "charging.editor.cost.paid")
+        .accessibilityIdentifier("charging.editor.kind.\(kind.rawValue)")
+    }
+
+    private var foodType: some View {
+        Picker(localizedAppText("charging.editor.venue"), selection: $model.venue) {
+            Text(localizedAppText("charging.editor.venue.choose")).tag(nil as MobileChargingVenueDto?)
+            Text(localizedAppText("charging.venue.restaurant")).tag(
+                MobileChargingVenueDto.restaurant as MobileChargingVenueDto?)
+            Text(localizedAppText("charging.venue.cafe")).tag(MobileChargingVenueDto.cafe as MobileChargingVenueDto?)
+            Text(localizedAppText("charging.venue.bar")).tag(MobileChargingVenueDto.bar as MobileChargingVenueDto?)
+            Text(localizedAppText("charging.venue.other")).tag(MobileChargingVenueDto.other as MobileChargingVenueDto?)
+        }
+        .accessibilityIdentifier("charging.editor.venue")
     }
 
     private var coordinateFields: some View {
@@ -253,6 +277,30 @@ struct ChargingSpotEditorView: View {
     }
 
     @ViewBuilder private var optionalDetails: some View {
+        Picker(
+            localizedAppText("charging.editor.outlet_count"),
+            selection: Binding(
+                get: { model.outletCount },
+                set: model.setOutletCount
+            )
+        ) {
+            if !(1...10).contains(model.outletCount) {
+                Text(String(model.outletCount)).tag(model.outletCount)
+            }
+            ForEach(1...10, id: \.self) { count in
+                Text(String(count)).tag(count)
+            }
+        }
+        .accessibilityIdentifier("charging.editor.outlet-count")
+
+        if model.supplies.isEmpty {
+            ChargingConnectorPicker(
+                choices: model.connectorChoices,
+                selection: model.plugWasEdited ? model.selectedPlug : (model.selectedPlug ?? model.suggestedPlug),
+                onSelect: model.setSelectedPlug
+            )
+        }
+
         LabeledContent(localizedAppText("charging.editor.name")) {
             TextField("", text: $model.name)
                 .focused($focusedField, equals: .name)
@@ -260,17 +308,6 @@ struct ChargingSpotEditorView: View {
                 .accessibilityIdentifier("charging.editor.name")
         }
         fieldFeedback(.name, identifier: "charging.editor.name.error")
-        Picker(localizedAppText("charging.editor.venue"), selection: $model.venue) {
-            Text(localizedAppText("charging.editor.venue.choose")).tag(nil as MobileChargingVenueDto?)
-            Text(localizedAppText("charging.venue.restaurant")).tag(
-                MobileChargingVenueDto.restaurant as MobileChargingVenueDto?)
-            Text(localizedAppText("charging.venue.cafe")).tag(MobileChargingVenueDto.cafe as MobileChargingVenueDto?)
-            Text(localizedAppText("charging.venue.bar")).tag(MobileChargingVenueDto.bar as MobileChargingVenueDto?)
-            Text(localizedAppText("charging.venue.ev")).tag(
-                MobileChargingVenueDto.evChargingStation as MobileChargingVenueDto?)
-            Text(localizedAppText("charging.venue.other")).tag(MobileChargingVenueDto.other as MobileChargingVenueDto?)
-        }
-        .accessibilityIdentifier("charging.editor.venue")
         VStack(alignment: .leading, spacing: 8) {
             Text(localizedAppText("charging.editor.hours"))
                 .font(.subheadline)
@@ -327,24 +364,12 @@ struct ChargingSpotEditorView: View {
             }
             fieldFeedback(.payment, identifier: "charging.editor.price.error")
         }
-        Picker(localizedAppText("charging.editor.country"), selection: $model.countrySelection) {
-            Text(localizedAppText("charging.editor.country.unknown")).tag(nil as String?)
-            ForEach(Self.countryOptions, id: \.code) { country in
-                Text(country.name).tag(country.code as String?)
-            }
-        }
-        .pickerStyle(.menu)
-        .accessibilityIdentifier("charging.editor.country")
-        Button(localizedAppText("charging.editor.supply.add")) {
-            if model.venue == .evChargingStation { model.addSupply() } else { model.addSuggestedSupply() }
-        }
-        .accessibilityIdentifier("charging.editor.supply.add")
         fieldFeedback(.supply, identifier: "charging.editor.supplies.error")
-        coordinateFields
+        if voiceOverEnabled { coordinateFields }
         ForEach(model.supplies) { draft in
             ChargingSupplyForm(
                 draft: draft,
-                outletChoices: model.outletChoices,
+                connectorChoices: model.connectorChoices,
                 focusedField: $focusedField,
                 validationIssue: supplyIssue(for: draft.id)
             ) {

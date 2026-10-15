@@ -18,6 +18,7 @@ final class ChargingOtherConnectorDraft: Identifiable {
 final class ChargingSupplyDraft: Identifiable {
     let id = UUID()
     var voltageText: String { didSet { syncManualEdit() } }
+    private var outletCount: UInt16?
     private(set) var connectors: [MobileChargingConnectorDto]
     private(set) var otherConnectors: [ChargingOtherConnectorDraft]
     private var powerDraft: MobileChargingPowerDraft
@@ -27,6 +28,7 @@ final class ChargingSupplyDraft: Identifiable {
     /// Starts an empty manual row. Incomplete text remains local until it forms a valid supply.
     init() {
         self.voltageText = ""
+        self.outletCount = nil
         self.connectors = []
         self.otherConnectors = []
         self.powerDraft = mobileChargingPowerDraft(countryCode: nil, evStation: false).edit(supply: nil)
@@ -35,6 +37,7 @@ final class ChargingSupplyDraft: Identifiable {
     /// Starts a country or venue suggestion. Rust owns its provenance and confirmation state.
     init(countryCode: String?, evStation: Bool) {
         self.voltageText = ""
+        self.outletCount = nil
         self.connectors = []
         self.otherConnectors = []
         self.powerDraft = mobileChargingPowerDraft(countryCode: countryCode, evStation: evStation)
@@ -44,6 +47,7 @@ final class ChargingSupplyDraft: Identifiable {
     /// Restores an observed supply as confirmed manual power, preserving its connector order.
     init(supply: MobileChargingSupplyDto, countryCode: String?, evStation: Bool) {
         self.voltageText = ""
+        self.outletCount = supply.outletCount
         self.connectors = []
         self.otherConnectors = []
         self.powerDraft = mobileChargingPowerDraft(countryCode: countryCode, evStation: evStation)
@@ -53,6 +57,7 @@ final class ChargingSupplyDraft: Identifiable {
     }
 
     var snapshot: MobileChargingPowerDraftSnapshot { powerDraft.snapshot() }
+    var compactOutletCount: Int { Int(outletCount ?? 1) }
     var isConfirmed: Bool { snapshot.includedSupply != nil }
     var hasIncompleteEdit: Bool { !isEmpty && snapshot.origin == .manual && !isConfirmed }
     var requiresConfirmation: Bool {
@@ -61,6 +66,7 @@ final class ChargingSupplyDraft: Identifiable {
 
     var isEmpty: Bool {
         voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && outletCount == nil
             && connectors.isEmpty
             && otherConnectors.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
@@ -102,10 +108,16 @@ final class ChargingSupplyDraft: Identifiable {
         onChange?()
     }
 
+    func setCompactOutletCount(_ count: UInt16) {
+        outletCount = count
+        syncManualEdit()
+    }
+
     private func loadSelection(_ supply: MobileChargingSupplyDto) {
         isApplyingSnapshot = true
         defer { isApplyingSnapshot = false }
         voltageText = supply.voltageVolts.map(String.init) ?? ""
+        outletCount = supply.outletCount
         connectors = supply.connectors.filter { if case .other = $0 { false } else { true } }
         otherConnectors = supply.connectors.compactMap {
             if case .other(let label) = $0 { ChargingOtherConnectorDraft(label: label) } else { nil }
@@ -120,15 +132,15 @@ final class ChargingSupplyDraft: Identifiable {
             voltage.map({ mobileChargingPowerVoltageIsValid(voltageVolts: $0) }) ?? true
         else { return nil }
         if connectors.contains(.unknown) {
-            return MobileChargingSupplyDto(voltageVolts: voltage, connectors: [.unknown])
+            return MobileChargingSupplyDto(voltageVolts: voltage, connectors: [.unknown], outletCount: outletCount)
         }
         var selected = connectors
         for connector in otherConnectors {
             let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
             if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
         }
-        guard voltage != nil || !selected.isEmpty else { return nil }
-        return MobileChargingSupplyDto(voltageVolts: voltage, connectors: selected)
+        guard voltage != nil || !selected.isEmpty || outletCount != nil else { return nil }
+        return MobileChargingSupplyDto(voltageVolts: voltage, connectors: selected, outletCount: outletCount)
     }
 
     private func syncManualEdit() {
@@ -144,8 +156,8 @@ final class ChargingSupplyDraft: Identifiable {
             return
         }
         connectors.removeAll { $0 == .unknown }
-        if selected, !connectors.contains(connector) { connectors.append(connector) }
-        if !selected { connectors.removeAll { $0 == connector } }
+        connectors.removeAll { $0 == connector }
+        if selected { connectors.append(connector) }
         syncManualEdit()
     }
 
