@@ -169,7 +169,7 @@
             let directory = parent.appendingPathComponent("cutout-staging-test-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             print("Capture staging runtime: \(ProcessInfo.processInfo.operatingSystemVersionString); \(directory.path)")
-            return directory
+            return directory.resolvingSymlinksInPath()
         }
 
         private func captureBuilder() -> MobilePevcapCaptureBuilder {
