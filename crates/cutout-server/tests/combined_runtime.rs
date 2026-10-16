@@ -378,7 +378,7 @@ struct RunningServer {
 
 impl RunningServer {
     fn send_terminate(&self) {
-        let signal = Command::new("/bin/kill")
+        let signal = Command::new("kill")
             .arg("-TERM")
             .arg(self.child.id().to_string())
             .status()
