@@ -533,6 +533,7 @@ app.addEventListener('input', event => {
     return;
   }
   if (event.target.closest('#alpha-removal-form')) {
+    readRemovalForm(event.target.form);
     if (removalMessage) showRemovalMessage('', 'status');
     if (event.target.id === 'removal-email') event.target.removeAttribute('aria-invalid');
     return;
