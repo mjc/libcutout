@@ -447,6 +447,17 @@ pub async fn mobile_register_charging_identity()
     register(&ChargingHttpClient::production()?).await
 }
 
+/// Registers one contributor identity against a local development service.
+///
+/// # Errors
+/// Rejects origins that are not HTTP loopback, or returns a typed registration failure.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn mobile_register_charging_identity_at_loopback(
+    base_url: String,
+) -> Result<MobileChargingIdentityDto, MobileChargingError> {
+    register(&ChargingHttpClient::loopback(&base_url)?).await
+}
+
 async fn download_page(
     client: &ChargingHttpClient,
     database_handle: &persistence::RideDatabase,
@@ -962,6 +973,38 @@ async fn refresh_directory_once(
     })
 }
 
+impl RideDatabaseHandle {
+    async fn synchronize_charging_spots_with_client(
+        &self,
+        client: &ChargingHttpClient,
+        token: String,
+    ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+        let started = tokio::time::Instant::now();
+        let _guard = tokio::time::timeout(SYNC_TIMEOUT, self.charging_sync_lock.lock())
+            .await
+            .map_err(|_| MobileChargingError::Network)?;
+        synchronize_once_with_timeout(
+            client,
+            self.inner.clone(),
+            token,
+            SYNC_TIMEOUT.saturating_sub(started.elapsed()),
+        )
+        .await
+    }
+
+    async fn refresh_charging_directory_with_client(
+        &self,
+        client: &ChargingHttpClient,
+    ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+        tokio::time::timeout(SYNC_TIMEOUT, async {
+            let _guard = self.charging_sync_lock.lock().await;
+            refresh_directory_once(client, self.inner.clone()).await
+        })
+        .await
+        .map_err(|_| MobileChargingError::Network)?
+    }
+}
+
 #[uniffi::export(async_runtime = "tokio")]
 #[allow(clippy::needless_pass_by_value)]
 impl RideDatabaseHandle {
@@ -977,15 +1020,22 @@ impl RideDatabaseHandle {
         &self,
         token: String,
     ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-        let started = tokio::time::Instant::now();
-        let _guard = tokio::time::timeout(SYNC_TIMEOUT, self.charging_sync_lock.lock())
+        self.synchronize_charging_spots_with_client(&ChargingHttpClient::production()?, token)
             .await
-            .map_err(|_| MobileChargingError::Network)?;
-        synchronize_once_with_timeout(
-            &ChargingHttpClient::production()?,
-            self.inner.clone(),
+    }
+
+    /// Synchronizes against a local development service using the normal durable sync path.
+    ///
+    /// # Errors
+    /// Rejects origins that are not HTTP loopback, or returns a typed sync/setup error.
+    pub async fn synchronize_charging_spots_at_loopback(
+        &self,
+        token: String,
+        base_url: String,
+    ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+        self.synchronize_charging_spots_with_client(
+            &ChargingHttpClient::loopback(&base_url)?,
             token,
-            SYNC_TIMEOUT.saturating_sub(started.elapsed()),
         )
         .await
     }
@@ -997,12 +1047,20 @@ impl RideDatabaseHandle {
     pub async fn refresh_charging_directory(
         &self,
     ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-        tokio::time::timeout(SYNC_TIMEOUT, async {
-            let _guard = self.charging_sync_lock.lock().await;
-            refresh_directory_once(&ChargingHttpClient::production()?, self.inner.clone()).await
-        })
-        .await
-        .map_err(|_| MobileChargingError::Network)?
+        self.refresh_charging_directory_with_client(&ChargingHttpClient::production()?)
+            .await
+    }
+
+    /// Refreshes public directory pages from a local development service.
+    ///
+    /// # Errors
+    /// Rejects origins that are not HTTP loopback, or returns a typed network or storage error.
+    pub async fn refresh_charging_directory_at_loopback(
+        &self,
+        base_url: String,
+    ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+        self.refresh_charging_directory_with_client(&ChargingHttpClient::loopback(&base_url)?)
+            .await
     }
 
     /// Lists local drafts blocked by a server conflict or validation rejection.
@@ -1129,6 +1187,48 @@ mod tests {
         std::env::temp_dir().join(format!("cutout-charging-{label}-{}.sqlite", Uuid::new_v4()))
     }
 
+    fn database_handle_for_test(
+        path: &std::path::Path,
+    ) -> Result<RideDatabaseHandle, Box<dyn std::error::Error>> {
+        let inner = persistence::RideDatabase::open(path)?;
+        Ok(RideDatabaseHandle {
+            marker_writer: persistence::RideSessionMarkerWriter::new(inner.clone()),
+            inner,
+            charging_sync_lock: tokio::sync::Mutex::new(()),
+            pending_bms_writes: std::sync::Mutex::new(crate::PendingBmsVoltageWrites {
+                next_request_id: 1,
+                writes: std::collections::VecDeque::new(),
+            }),
+        })
+    }
+
+    // Persistence owns one process-wide worker, so every client phase shuts it down before the
+    // next independent database path is opened.
+    async fn synchronize_path(
+        client: &ChargingHttpClient,
+        path: &std::path::Path,
+        token: &str,
+    ) -> Result<MobileChargingSyncSummaryDto, Box<dyn std::error::Error>> {
+        let database = persistence::RideDatabase::open(path)?;
+        let result = synchronize(client, database.clone(), token.to_owned()).await;
+        let shutdown = database.shutdown();
+        let summary = result?;
+        shutdown?;
+        Ok(summary)
+    }
+
+    async fn refresh_path(
+        client: &ChargingHttpClient,
+        path: &std::path::Path,
+    ) -> Result<MobileChargingSyncSummaryDto, Box<dyn std::error::Error>> {
+        let database = persistence::RideDatabase::open(path)?;
+        let result = refresh_directory(client, database.clone()).await;
+        let shutdown = database.shutdown();
+        let summary = result?;
+        shutdown?;
+        Ok(summary)
+    }
+
     #[test]
     fn sync_timeout_without_initial_progress_returns_network_error() {
         assert_eq!(
@@ -1142,6 +1242,19 @@ mod tests {
         Ok(ride_maps::NewChargingSpot::new(
             coordinate,
             "Ask at the front desk",
+            ride_maps::ChargingCost::Free,
+        )?)
+    }
+
+    fn test_input_with_note(
+        latitude: f64,
+        longitude: f64,
+        note: &str,
+    ) -> Result<ride_maps::NewChargingSpot, Box<dyn std::error::Error>> {
+        let coordinate = ride_maps::Coordinate::from_degrees(latitude, longitude)?;
+        Ok(ride_maps::NewChargingSpot::new(
+            coordinate,
+            note,
             ride_maps::ChargingCost::Free,
         )?)
     }
@@ -1205,6 +1318,555 @@ mod tests {
 
     async fn unavailable() -> StatusCode {
         StatusCode::SERVICE_UNAVAILABLE
+    }
+
+    #[tokio::test]
+    async fn loopback_ffi_entrypoints_share_the_validated_sync_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = database_path("loopback-ffi-entrypoints");
+        let server_path = database_path("loopback-ffi-server");
+        let server = cutout_server::Store::open(&server_path)?;
+        let (base_url, task) = start_server(cutout_server::router(server)).await?;
+        let identity = mobile_register_charging_identity_at_loopback(base_url.clone()).await?;
+        let handle = database_handle_for_test(&path)?;
+
+        let refreshed = handle
+            .refresh_charging_directory_at_loopback(base_url.clone())
+            .await?;
+        assert_eq!(refreshed.downloaded, 0);
+        assert_eq!(refreshed.pending_count, 0);
+
+        let synchronized = handle
+            .synchronize_charging_spots_at_loopback(identity.token, base_url)
+            .await?;
+        assert_eq!(synchronized.uploaded, 0);
+        assert_eq!(synchronized.pending_count, 0);
+        assert_eq!(
+            synchronized.outcome,
+            finished(MobileChargingSyncResult::Synced)
+        );
+
+        handle.shutdown()?;
+        drop(handle);
+        task.abort();
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(server_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loopback_ffi_entrypoints_reject_untrusted_origins()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert!(matches!(
+            mobile_register_charging_identity_at_loopback("http://example.test/".to_owned()).await,
+            Err(MobileChargingError::Network)
+        ));
+
+        let path = database_path("loopback-ffi-reject-origin");
+        let handle = database_handle_for_test(&path)?;
+        assert_eq!(
+            handle
+                .synchronize_charging_spots_at_loopback(
+                    "0".repeat(64),
+                    "https://127.0.0.1/".to_owned(),
+                )
+                .await,
+            Err(MobileChargingError::Network)
+        );
+        assert_eq!(
+            handle
+                .refresh_charging_directory_at_loopback("http://localhost/".to_owned())
+                .await,
+            Err(MobileChargingError::Network)
+        );
+
+        handle.shutdown()?;
+        drop(handle);
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn independent_clients_converge_through_durable_outboxes_and_tombstones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scenario = MultiClientScenario::start().await?;
+        let spot = scenario.create_after_offline_retry().await?;
+        scenario.voter_reads_and_votes_up(spot).await?;
+        let stale_page = scenario.voter_replaces_and_clears_vote(spot).await?;
+        scenario.owner_edit_converges(spot).await?;
+        let (stale_id, reviewed_revision, local_edit) =
+            scenario.owner_edit_creates_and_conflicts(spot).await?;
+        scenario
+            .owner_edit_rebases_and_converges(spot, stale_id, reviewed_revision, local_edit)
+            .await?;
+        scenario
+            .withdrawal_reaches_voter_without_resurrection(spot, stale_page)
+            .await?;
+        scenario.cleanup();
+        Ok(())
+    }
+
+    struct MultiClientScenario {
+        server_path: PathBuf,
+        owner_path: PathBuf,
+        voter_path: PathBuf,
+        concurrent_owner_path: PathBuf,
+        client: ChargingHttpClient,
+        task: tokio::task::JoinHandle<()>,
+        owner_token: String,
+        voter_token: String,
+    }
+
+    #[derive(Clone, Copy)]
+    struct PublishedTestSpot {
+        point_id: persistence::MapPointId,
+        remote_id: ride_maps::ChargingSpotId,
+    }
+
+    struct StaleTestPage {
+        cursor: persistence::ChargingChangeCursor,
+        entry: persistence::ChargingDirectoryEntry,
+    }
+
+    impl MultiClientScenario {
+        async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+            let server_path = database_path("multi-client-server");
+            let server = cutout_server::Store::open(&server_path)?;
+            let (base_url, task) = start_server(cutout_server::router(server)).await?;
+            let client = ChargingHttpClient::loopback(&base_url)?;
+            let owner_token = register(&client).await?.token;
+            let voter_token = register(&client).await?.token;
+            Ok(Self {
+                server_path,
+                owner_path: database_path("multi-client-owner"),
+                voter_path: database_path("multi-client-voter"),
+                concurrent_owner_path: database_path("multi-client-owner-clone"),
+                client,
+                task,
+                owner_token,
+                voter_token,
+            })
+        }
+
+        async fn create_after_offline_retry(
+            &self,
+        ) -> Result<PublishedTestSpot, Box<dyn std::error::Error>> {
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let created = owner.save_charging_spot(test_input()?)?;
+            let queued = owner
+                .next_charging_operation()?
+                .ok_or("create was not queued")?;
+            let (offline_url, offline_task) =
+                start_server(Router::new().route("/v1/charging-spots", post(unavailable))).await?;
+            let failure = upload_operation(
+                &ChargingHttpClient::loopback(&offline_url)?,
+                &owner,
+                &self.owner_token,
+                queued.clone(),
+            )
+            .await;
+            offline_task.abort();
+            assert_eq!(failure, Err(MobileChargingError::Network));
+            assert_eq!(owner.charging_outbox_count()?, 1);
+            owner.shutdown()?;
+
+            let reopened = persistence::RideDatabase::open(&self.owner_path)?;
+            assert_eq!(reopened.next_charging_operation()?, Some(queued));
+            reopened.shutdown()?;
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!((sync.uploaded, sync.pending_count), (1, 0));
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let spot = owner
+                .charging_spot(created.point_id)?
+                .ok_or("owner spot missing after create")?;
+            assert_eq!(spot.input, Some(test_input()?));
+            assert_eq!(spot.remote_revision.get(), 1);
+            assert_eq!(spot.pending_operations, 0);
+            let remote_id = spot.remote_id.ok_or("create receipt omitted identity")?;
+            owner.shutdown()?;
+            Ok(PublishedTestSpot {
+                point_id: created.point_id,
+                remote_id,
+            })
+        }
+
+        async fn voter_reads_and_votes_up(
+            &self,
+            published: PublishedTestSpot,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let remote_id = published.remote_id;
+            let sync = refresh_path(&self.client, &self.voter_path).await?;
+            assert_eq!(sync.downloaded, 1);
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let point_id = persistence::MapPointId::from_uuid(remote_id.as_uuid());
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missed created spot")?;
+            assert_eq!(spot.input, Some(test_input()?));
+            assert!(!spot.owned);
+            assert_eq!(
+                voter.charging_changes_cursor()?.get(),
+                spot.change_sequence.get()
+            );
+            let receipt = voter.vote_charging_spot(
+                point_id,
+                spot.local_revision,
+                Some(ride_maps::ChargingVote::Up),
+            )?;
+            assert_eq!(
+                voter
+                    .next_charging_operation()?
+                    .ok_or("up vote missing")?
+                    .id,
+                receipt.operation_id
+            );
+            voter.shutdown()?;
+
+            let sync = synchronize_path(&self.client, &self.voter_path, &self.voter_token).await?;
+            assert_eq!(sync.uploaded, 1);
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter spot missing after up vote")?;
+            assert_eq!(spot.vote, Some(ride_maps::ChargingVote::Up));
+            assert_eq!((spot.votes_up, spot.votes_down), (1, 0));
+            assert!(!spot.pending_vote);
+            voter.shutdown()?;
+
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!(sync.downloaded, 1);
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let spot = owner
+                .charging_spot(published.point_id)?
+                .ok_or("owner spot missing after voter up")?;
+            assert_eq!(spot.vote, None);
+            assert_eq!((spot.votes_up, spot.votes_down), (1, 0));
+            owner.shutdown()?;
+            Ok(())
+        }
+
+        async fn voter_replaces_and_clears_vote(
+            &self,
+            published: PublishedTestSpot,
+        ) -> Result<StaleTestPage, Box<dyn std::error::Error>> {
+            let point_id = persistence::MapPointId::from_uuid(published.remote_id.as_uuid());
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missing before down vote")?;
+            let receipt = voter.vote_charging_spot(
+                point_id,
+                spot.local_revision,
+                Some(ride_maps::ChargingVote::Down),
+            )?;
+            assert_eq!(
+                voter
+                    .next_charging_operation()?
+                    .ok_or("down vote missing")?
+                    .id,
+                receipt.operation_id
+            );
+            voter.shutdown()?;
+            synchronize_path(&self.client, &self.voter_path, &self.voter_token).await?;
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missing after down vote")?;
+            assert_eq!(spot.vote, Some(ride_maps::ChargingVote::Down));
+            assert_eq!((spot.votes_up, spot.votes_down), (0, 1));
+            voter.shutdown()?;
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!(sync.downloaded, 1);
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let spot = owner
+                .charging_spot(published.point_id)?
+                .ok_or("owner missing after down vote")?;
+            assert_eq!((spot.votes_up, spot.votes_down), (0, 1));
+            owner.shutdown()?;
+
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missing before clear")?;
+            let receipt = voter.vote_charging_spot(point_id, spot.local_revision, None)?;
+            assert_eq!(
+                voter
+                    .next_charging_operation()?
+                    .ok_or("clear vote missing")?
+                    .id,
+                receipt.operation_id
+            );
+            voter.shutdown()?;
+            synchronize_path(&self.client, &self.voter_path, &self.voter_token).await?;
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missing after clear")?;
+            assert_eq!(spot.vote, None);
+            assert_eq!((spot.votes_up, spot.votes_down), (0, 0));
+            assert!(!spot.pending_vote);
+            let stale_cursor = voter.charging_changes_cursor()?;
+            let page: ChangesPageResponse = self
+                .client
+                .request(
+                    Method::GET,
+                    "v1/charging-spots/changes?after=0&limit=10",
+                    None,
+                    None,
+                )
+                .await?;
+            assert_eq!(stale_cursor.get(), page.next_cursor);
+            let stale_entry = state_entry(
+                page.items
+                    .into_iter()
+                    .find(|entry| entry.id == published.remote_id.as_uuid().to_string())
+                    .ok_or("spot missing from pre-edit feed snapshot")?,
+            )?;
+            assert_eq!(stale_entry.input, Some(test_input()?));
+            voter.shutdown()?;
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!(sync.downloaded, 1);
+            Ok(StaleTestPage {
+                cursor: stale_cursor,
+                entry: stale_entry,
+            })
+        }
+
+        async fn owner_edit_converges(
+            &self,
+            published: PublishedTestSpot,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let point_id = published.point_id;
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let spot = owner
+                .charging_spot(point_id)?
+                .ok_or("owner spot missing after votes")?;
+            assert_eq!(spot.vote, None);
+            assert_eq!((spot.votes_up, spot.votes_down), (0, 0));
+            let edited = test_input_with_note(39.7401, -104.9912, "Use the west entrance")?;
+            let receipt =
+                owner.edit_charging_spot(point_id, spot.local_revision, edited.clone())?;
+            assert_eq!(
+                owner.next_charging_operation()?.ok_or("edit missing")?.id,
+                receipt.operation_id
+            );
+            owner.shutdown()?;
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!(sync.uploaded, 1);
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let spot = owner.charging_spot(point_id)?.ok_or("owner edit missing")?;
+            assert_eq!(spot.input, Some(edited.clone()));
+            assert_eq!(spot.remote_revision.get(), 2);
+            owner.shutdown()?;
+            let sync = refresh_path(&self.client, &self.voter_path).await?;
+            assert_eq!(sync.downloaded, 1);
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(persistence::MapPointId::from_uuid(
+                    published.remote_id.as_uuid(),
+                ))?
+                .ok_or("voter missing owner edit")?;
+            assert_eq!(spot.input, Some(edited));
+            assert_eq!(spot.remote_revision.get(), 2);
+            voter.shutdown()?;
+            Ok(())
+        }
+
+        async fn owner_edit_creates_and_conflicts(
+            &self,
+            published: PublishedTestSpot,
+        ) -> Result<
+            (
+                persistence::ChargingOperationId,
+                persistence::ChargingRevision,
+                ride_maps::NewChargingSpot,
+            ),
+            Box<dyn std::error::Error>,
+        > {
+            let point_id = published.point_id;
+            std::fs::copy(&self.owner_path, &self.concurrent_owner_path)?;
+            let local_edit = test_input_with_note(39.742, -104.993, "Use the east entrance")?;
+            let clone = persistence::RideDatabase::open(&self.concurrent_owner_path)?;
+            let base = clone.charging_spot(point_id)?.ok_or("clone spot missing")?;
+            assert_eq!(base.remote_revision.get(), 2);
+            let receipt =
+                clone.edit_charging_spot(point_id, base.local_revision, local_edit.clone())?;
+            let stale = clone
+                .next_charging_operation()?
+                .ok_or("clone edit missing")?;
+            assert_eq!(stale.id, receipt.operation_id);
+            clone.shutdown()?;
+            let winning_edit = test_input_with_note(39.741, -104.992, "Use the north entrance")?;
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let base = owner
+                .charging_spot(point_id)?
+                .ok_or("owner spot missing before concurrent edit")?;
+            let receipt =
+                owner.edit_charging_spot(point_id, base.local_revision, winning_edit.clone())?;
+            assert_eq!(
+                owner
+                    .next_charging_operation()?
+                    .ok_or("owner edit missing")?
+                    .id,
+                receipt.operation_id
+            );
+            owner.shutdown()?;
+            let sync = synchronize_path(&self.client, &self.owner_path, &self.owner_token).await?;
+            assert_eq!(sync.uploaded, 1);
+            let owner = persistence::RideDatabase::open(&self.owner_path)?;
+            let winner = owner
+                .charging_spot(point_id)?
+                .ok_or("winning edit missing")?;
+            assert_eq!(winner.input, Some(winning_edit));
+            assert_eq!(winner.remote_revision.get(), 3);
+            owner.shutdown()?;
+
+            let conflict =
+                synchronize_path(&self.client, &self.concurrent_owner_path, &self.owner_token)
+                    .await?;
+            assert_eq!(
+                conflict.outcome,
+                finished(MobileChargingSyncResult::Conflict)
+            );
+            let clone = persistence::RideDatabase::open(&self.concurrent_owner_path)?;
+            let blocked = clone.list_blocked_charging_operations()?;
+            assert_eq!(blocked.len(), 1);
+            let blocked = blocked.into_iter().next().ok_or("blocked edit missing")?;
+            assert_eq!(blocked.operation.id, stale.id);
+            assert_eq!(
+                blocked.operation.action,
+                persistence::ChargingAction::Edit(local_edit.clone())
+            );
+            let reviewed_revision = blocked.local_revision;
+            let stale_id = blocked.operation.id;
+            clone.shutdown()?;
+            Ok((stale_id, reviewed_revision, local_edit))
+        }
+
+        async fn owner_edit_rebases_and_converges(
+            &self,
+            published: PublishedTestSpot,
+            stale_id: persistence::ChargingOperationId,
+            reviewed_revision: persistence::ChargingRevision,
+            local_edit: ride_maps::NewChargingSpot,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let point_id = published.point_id;
+            let remote_id = published.remote_id;
+            let clone = persistence::RideDatabase::open(&self.concurrent_owner_path)?;
+            clone.resolve_charging_operation(
+                stale_id,
+                reviewed_revision,
+                persistence::ChargingOperationResolution::RebaseKeepingLocal,
+            )?;
+            let rebased = clone
+                .next_charging_operation()?
+                .ok_or("rebased edit missing")?;
+            assert_ne!(rebased.id, stale_id);
+            assert_eq!(
+                rebased.target,
+                persistence::ChargingTarget::Existing {
+                    id: remote_id,
+                    expected_revision: persistence::ChargingRevision::new(3)?,
+                }
+            );
+            clone.shutdown()?;
+            let sync =
+                synchronize_path(&self.client, &self.concurrent_owner_path, &self.owner_token)
+                    .await?;
+            assert_eq!(sync.uploaded, 1);
+            let clone = persistence::RideDatabase::open(&self.concurrent_owner_path)?;
+            let spot = clone
+                .charging_spot(point_id)?
+                .ok_or("rebased spot missing")?;
+            assert_eq!(clone.charging_outbox_count()?, 0);
+            assert_eq!(spot.input, Some(local_edit));
+            assert_eq!(spot.remote_revision.get(), 4);
+            assert_eq!(spot.pending_operations, 0);
+            clone.shutdown()?;
+            let sync = refresh_path(&self.client, &self.voter_path).await?;
+            assert_eq!(sync.downloaded, 1);
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(persistence::MapPointId::from_uuid(remote_id.as_uuid()))?
+                .ok_or("voter missing rebased edit")?;
+            assert_eq!(
+                spot.input,
+                Some(test_input_with_note(
+                    39.742,
+                    -104.993,
+                    "Use the east entrance"
+                )?)
+            );
+            assert_eq!(spot.remote_revision.get(), 4);
+            voter.shutdown()?;
+            Ok(())
+        }
+
+        async fn withdrawal_reaches_voter_without_resurrection(
+            &self,
+            published: PublishedTestSpot,
+            stale_page: StaleTestPage,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let point_id = published.point_id;
+            let remote_id = published.remote_id;
+            let clone = persistence::RideDatabase::open(&self.concurrent_owner_path)?;
+            let spot = clone
+                .charging_spot(point_id)?
+                .ok_or("clone spot missing before withdrawal")?;
+            let receipt = clone.withdraw_charging_spot(point_id, spot.local_revision)?;
+            assert_eq!(
+                clone
+                    .next_charging_operation()?
+                    .ok_or("withdrawal missing")?
+                    .id,
+                receipt.operation_id
+            );
+            clone.shutdown()?;
+            let sync =
+                synchronize_path(&self.client, &self.concurrent_owner_path, &self.owner_token)
+                    .await?;
+            assert_eq!(sync.uploaded, 1);
+            let sync = refresh_path(&self.client, &self.voter_path).await?;
+            assert_eq!(sync.downloaded, 1);
+            let point_id = persistence::MapPointId::from_uuid(remote_id.as_uuid());
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("voter missing withdrawn spot")?;
+            assert_eq!(spot.status, persistence::ChargingStatus::Withdrawn);
+            assert_eq!(spot.input, None);
+            assert_eq!(spot.remote_id, Some(remote_id));
+            let cursor = voter.charging_changes_cursor()?;
+            assert_eq!(cursor.get(), spot.change_sequence.get());
+            let stale_cursor = stale_page.cursor;
+            assert!(cursor > stale_cursor);
+            assert!(matches!(
+                voter.apply_charging_changes_page(vec![stale_page.entry], stale_cursor),
+                Err(persistence::StorageError::ChargingInvalidInput)
+            ));
+            voter.shutdown()?;
+            let voter = persistence::RideDatabase::open(&self.voter_path)?;
+            let spot = voter
+                .charging_spot(point_id)?
+                .ok_or("tombstone lost after stale rejection")?;
+            assert_eq!(spot.status, persistence::ChargingStatus::Withdrawn);
+            assert_eq!(spot.input, None);
+            assert_eq!(voter.charging_outbox_count()?, 0);
+            voter.shutdown()?;
+            Ok(())
+        }
+
+        fn cleanup(self) {
+            self.task.abort();
+            for path in [
+                self.server_path,
+                self.owner_path,
+                self.voter_path,
+                self.concurrent_owner_path,
+            ] {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
 
     async fn large_response() -> Json<serde_json::Value> {

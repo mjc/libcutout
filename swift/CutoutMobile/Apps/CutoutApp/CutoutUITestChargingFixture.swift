@@ -5,6 +5,10 @@
     import MapKit
 
     enum CutoutUITestChargingFixture {
+        static var isServiceSyncRequested: Bool {
+            CommandLine.arguments.contains("--ui-test-charging-service-sync")
+        }
+
         static var isEnabled: Bool {
             if ChargingAcceptanceEnvironment.databaseID != nil { return true }
             #if os(iOS) && targetEnvironment(simulator)
@@ -25,7 +29,7 @@
         }
 
         static func runIfRequested(database: RideDatabaseHandle) async throws {
-            guard isEnabled else { return }
+            guard isEnabled, !isServiceSyncRequested else { return }
             let bounds = MobileGeoBoundsDto(
                 minimumLatitudeDegrees: 39.72, maximumLatitudeDegrees: 39.76,
                 minimumLongitudeDegrees: -105.01, maximumLongitudeDegrees: -104.97
