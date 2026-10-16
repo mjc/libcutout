@@ -62,133 +62,232 @@
 
         static func runIfRequested(database: RideDatabaseHandle) async throws {
             switch screen {
-            case .rideTracking:
-                try await seedActiveDenverRide(database: database)
             case .chargingMap:
                 try await seedFictionalChargingSpots(database: database)
-            case .eucMain, .rgb, .tune, .none:
+            case .eucMain, .rgb, .tune, .rideTracking, .none:
                 break
             }
         }
 
-        private static func seedActiveDenverRide(database: RideDatabaseHandle) async throws {
-            try await Task.detached(priority: .utility) {
-                let nowWall = UInt64(Date().timeIntervalSince1970 * 1_000)
-                let nowMonotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
-                let duration: UInt64 = 300_000
-                let sampleInterval: UInt64 = 1_000
-                guard nowWall > duration, nowMonotonic > duration else {
-                    throw CocoaError(.coderInvalidValue)
-                }
-                let startedWall = nowWall - duration
-                let startedMonotonic = nowMonotonic - duration
-                let core = MobileRideMapCore.withDatabase(database: database)
-                guard core.initializationError() == nil,
-                    try core.restore(atMs: nowMonotonic) == nil
-                else { throw CocoaError(.coderInvalidValue) }
-                let started = try core.startGpsOnly(atMs: startedMonotonic)
-                guard let recording = started.recordingToken else {
-                    throw CocoaError(.coderInvalidValue)
-                }
-                // A synthetic route on the public Platte River Trail, smoothed into evenly
-                // spaced one-second samples for a five-minute ride.
-                let anchors: [(latitude: Double, longitude: Double)] = [
-                    (39.72860, -105.01659),
-                    (39.72942, -105.01714),
-                    (39.73162, -105.01741),
-                    (39.73504, -105.01738),
-                    (39.73768, -105.01824),
-                    (39.73898, -105.01826),
-                    (39.73944, -105.01795),
-                    (39.74299, -105.01669),
-                    (39.74285, -105.01612),
-                    (39.74471, -105.01532),
-                    (39.74694, -105.01523),
-                    (39.74949, -105.01485),
-                    (39.74988, -105.01456),
-                    (39.75022, -105.01365),
-                    (39.75135, -105.01201),
-                    (39.75393, -105.00885),
-                    (39.75436, -105.00937),
-                    (39.75490, -105.00875),
-                ]
-                var cumulativeDistanceMeters = [0.0]
-                for index in 1..<anchors.count {
-                    let distance = Self.distanceMeters(from: anchors[index - 1], to: anchors[index])
-                    cumulativeDistanceMeters.append(cumulativeDistanceMeters[index - 1] + distance)
-                }
-                let totalDistanceMeters = cumulativeDistanceMeters.last ?? 0
-                guard totalDistanceMeters > 0 else { throw CocoaError(.coderInvalidValue) }
-                let sampleCount = Int(duration / sampleInterval) + 1
-                let speedMetersPerSecond = totalDistanceMeters / (Double(duration) / 1_000)
-                for index in 0..<sampleCount {
-                    let elapsed = UInt64(index) * sampleInterval
-                    let traveledDistanceMeters = totalDistanceMeters * Double(elapsed) / Double(duration)
-                    let endIndex = min(
-                        cumulativeDistanceMeters.firstIndex(where: { $0 >= traveledDistanceMeters }) ?? anchors.count
-                            - 1,
-                        anchors.count - 1
-                    )
-                    let startIndex = max(0, endIndex - 1)
-                    let segmentDistanceMeters =
-                        cumulativeDistanceMeters[endIndex] - cumulativeDistanceMeters[startIndex]
-                    let fraction =
-                        segmentDistanceMeters > 0
-                        ? (traveledDistanceMeters - cumulativeDistanceMeters[startIndex]) / segmentDistanceMeters
-                        : 0
-                    let start = anchors[startIndex]
-                    let end = anchors[endIndex]
-                    let latitude = start.latitude + (end.latitude - start.latitude) * fraction
-                    let longitude = start.longitude + (end.longitude - start.longitude) * fraction
-                    let wallClockUnixMs = startedWall + elapsed
-                    let monotonicMs = startedMonotonic + elapsed
-                    let sample = MobilePhoneLocationSampleDto(
-                        wallClockUnixMs: wallClockUnixMs,
-                        sourceTimestampUnixSeconds: Double(wallClockUnixMs) / 1_000,
-                        latitudeDegrees: latitude,
-                        longitudeDegrees: longitude,
-                        altitudeMeters: 1_600,
-                        horizontalAccuracyMeters: 4,
-                        verticalAccuracyMeters: 6,
-                        speedMetersPerSecond: speedMetersPerSecond,
-                        speedAccuracyMetersPerSecond: 0.2,
-                        courseDegrees: nil,
-                        courseAccuracyDegrees: nil
-                    )
-                    let outcomes = try core.ingestLocationCallbackWithOutcomes(
-                        recording: recording,
-                        receiptMonotonicMs: monotonicMs,
-                        receiptWallClockUnixMs: wallClockUnixMs,
-                        samples: [sample]
-                    )
-                    guard outcomes.count == 1,
-                        case .accepted = outcomes[0].decision
-                    else { throw CocoaError(.coderInvalidValue) }
-                }
-                guard let snapshot = try core.currentSnapshot(atMs: nowMonotonic),
-                    snapshot.state == .active,
-                    snapshot.summary.pointCount == UInt64(sampleCount),
-                    snapshot.summary.distanceMeters > 3_000,
-                    snapshot.summary.durationMilliseconds == duration,
-                    case .complete = snapshot.summary.elapsedTime,
-                    case .complete = snapshot.summary.movingTime
-                else { throw CocoaError(.coderInvalidValue) }
+        static func prepareRideTrackingIfRequested(state: MobileRideMapState) async throws -> Task<Void, Never>? {
+            guard screen == .rideTracking else { return nil }
+            return try await Task.detached(priority: .utility) {
+                try prepareRideTracking(state: state)
             }.value
         }
 
-        private static func distanceMeters(
-            from first: (latitude: Double, longitude: Double),
-            to second: (latitude: Double, longitude: Double)
-        ) -> Double {
-            let radiansPerDegree = Double.pi / 180
-            let latitudeDelta = (second.latitude - first.latitude) * radiansPerDegree
-            let longitudeDelta = (second.longitude - first.longitude) * radiansPerDegree
-            let firstLatitude = first.latitude * radiansPerDegree
-            let secondLatitude = second.latitude * radiansPerDegree
-            let haversine =
-                sin(latitudeDelta / 2) * sin(latitudeDelta / 2)
-                + cos(firstLatitude) * cos(secondLatitude) * sin(longitudeDelta / 2) * sin(longitudeDelta / 2)
-            return 6_371_000 * 2 * atan2(sqrt(haversine), sqrt(1 - haversine))
+        private static func prepareRideTracking(state: MobileRideMapState) throws -> Task<Void, Never> {
+            let nowWall = UInt64(Date().timeIntervalSince1970 * 1_000)
+            let nowMonotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+            let duration: UInt64 = 300_000
+            guard nowWall > duration, nowMonotonic > duration else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            let startedWall = nowWall - duration
+            let startedMonotonic = nowMonotonic - duration
+            let route = try DenverRoute()
+            let started = try state.startGpsOnly(atMs: startedMonotonic)
+            guard let recording = started.recordingToken else { throw CocoaError(.coderInvalidValue) }
+            let speedMetersPerSecond = route.totalDistanceMeters / (Double(duration) / 1_000)
+
+            var lastMonotonic = startedMonotonic
+            for elapsed in stride(from: UInt64(0), through: duration, by: 1_000) {
+                let monotonic = startedMonotonic + elapsed
+                let wall = startedWall + elapsed
+                try record(
+                    route: route,
+                    elapsed: elapsed,
+                    startedWall: startedWall,
+                    receiptMonotonic: monotonic,
+                    receiptWall: wall,
+                    speedMetersPerSecond: speedMetersPerSecond,
+                    state: state,
+                    recording: recording
+                )
+                lastMonotonic = monotonic
+            }
+
+            // Setup and navigation consume real time. Fill that synthetic interval with
+            // consecutive route evidence before publishing the model to the UI.
+            let catchUpDeadline = Date().addingTimeInterval(10)
+            while true {
+                let current = monotonicMillisecondsNow()
+                guard current >= lastMonotonic, current - lastMonotonic <= 10_000,
+                    Date() < catchUpDeadline
+                else { throw CocoaError(.coderInvalidValue) }
+                guard current - lastMonotonic > 1_000 else { break }
+                let next = lastMonotonic + 1_000
+                try record(
+                    route: route,
+                    elapsed: next - startedMonotonic,
+                    startedWall: startedWall,
+                    receiptMonotonic: next,
+                    receiptWall: startedWall + (next - startedMonotonic),
+                    speedMetersPerSecond: speedMetersPerSecond,
+                    state: state,
+                    recording: recording
+                )
+                lastMonotonic = next
+            }
+
+            let snapshot = state.currentSnapshot(atMs: monotonicMillisecondsNow())
+            guard let snapshot, snapshot.rideID == recording.rideId, snapshot.state == .active,
+                snapshot.summary.pointCount >= 301,
+                snapshot.summary.distanceMeters > 3_000,
+                snapshot.summary.durationMilliseconds >= duration,
+                case .complete = snapshot.summary.elapsedTime,
+                case .complete = snapshot.summary.movingTime
+            else { throw CocoaError(.coderInvalidValue) }
+
+            let feedStartMonotonic = lastMonotonic
+            return Task.detached(priority: .utility) {
+                var cursor = feedStartMonotonic
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                    guard !Task.isCancelled else { return }
+                    let current = monotonicMillisecondsNow()
+                    guard current >= cursor, current - cursor <= 10_000 else { return }
+                    while current - cursor >= 1_000 {
+                        guard !Task.isCancelled else { return }
+                        let next = cursor + 1_000
+                        do {
+                            try record(
+                                route: route,
+                                elapsed: next - startedMonotonic,
+                                startedWall: startedWall,
+                                receiptMonotonic: next,
+                                receiptWall: startedWall + (next - startedMonotonic),
+                                speedMetersPerSecond: speedMetersPerSecond,
+                                state: state,
+                                recording: recording
+                            )
+                        } catch { return }
+                        cursor = next
+                    }
+                }
+            }
+        }
+
+        private struct Coordinate: Sendable {
+            let latitude: Double
+            let longitude: Double
+        }
+
+        private struct DenverRoute: Sendable {
+            let anchors: [Coordinate] = [
+                Coordinate(latitude: 39.72860, longitude: -105.01659),
+                Coordinate(latitude: 39.72942, longitude: -105.01714),
+                Coordinate(latitude: 39.73162, longitude: -105.01741),
+                Coordinate(latitude: 39.73504, longitude: -105.01738),
+                Coordinate(latitude: 39.73768, longitude: -105.01824),
+                Coordinate(latitude: 39.73898, longitude: -105.01826),
+                Coordinate(latitude: 39.73944, longitude: -105.01795),
+                Coordinate(latitude: 39.74299, longitude: -105.01669),
+                Coordinate(latitude: 39.74285, longitude: -105.01612),
+                Coordinate(latitude: 39.74471, longitude: -105.01532),
+                Coordinate(latitude: 39.74694, longitude: -105.01523),
+                Coordinate(latitude: 39.74949, longitude: -105.01485),
+                Coordinate(latitude: 39.74988, longitude: -105.01456),
+                Coordinate(latitude: 39.75022, longitude: -105.01365),
+                Coordinate(latitude: 39.75135, longitude: -105.01201),
+                Coordinate(latitude: 39.75393, longitude: -105.00885),
+                Coordinate(latitude: 39.75436, longitude: -105.00937),
+                Coordinate(latitude: 39.75490, longitude: -105.00875),
+            ]
+            let cumulativeDistanceMeters: [Double]
+            let totalDistanceMeters: Double
+
+            init() throws {
+                var cumulative = [0.0]
+                for index in 1..<anchors.count {
+                    cumulative.append(
+                        cumulative[index - 1] + Self.distanceMeters(from: anchors[index - 1], to: anchors[index]))
+                }
+                guard let total = cumulative.last, total > 0 else { throw CocoaError(.coderInvalidValue) }
+                cumulativeDistanceMeters = cumulative
+                totalDistanceMeters = total
+            }
+
+            func coordinate(at elapsed: UInt64) -> Coordinate {
+                let distance = totalDistanceMeters * (Double(elapsed % 600_000) / 300_000)
+                let traveled = distance <= totalDistanceMeters ? distance : 2 * totalDistanceMeters - distance
+                let endIndex = min(
+                    cumulativeDistanceMeters.firstIndex(where: { $0 >= traveled }) ?? anchors.count - 1,
+                    anchors.count - 1
+                )
+                let startIndex = max(0, endIndex - 1)
+                let segmentDistance = cumulativeDistanceMeters[endIndex] - cumulativeDistanceMeters[startIndex]
+                let fraction =
+                    segmentDistance > 0 ? (traveled - cumulativeDistanceMeters[startIndex]) / segmentDistance : 0
+                let start = anchors[startIndex]
+                let end = anchors[endIndex]
+                return Coordinate(
+                    latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+                    longitude: start.longitude + (end.longitude - start.longitude) * fraction
+                )
+            }
+
+            private static func distanceMeters(from first: Coordinate, to second: Coordinate) -> Double {
+                let radiansPerDegree = Double.pi / 180
+                let latitudeDelta = (second.latitude - first.latitude) * radiansPerDegree
+                let longitudeDelta = (second.longitude - first.longitude) * radiansPerDegree
+                let firstLatitude = first.latitude * radiansPerDegree
+                let secondLatitude = second.latitude * radiansPerDegree
+                let haversine =
+                    sin(latitudeDelta / 2) * sin(latitudeDelta / 2)
+                    + cos(firstLatitude) * cos(secondLatitude) * sin(longitudeDelta / 2) * sin(longitudeDelta / 2)
+                return 6_371_000 * 2 * atan2(sqrt(haversine), sqrt(1 - haversine))
+            }
+        }
+
+        private static func record(
+            route: DenverRoute,
+            elapsed: UInt64,
+            startedWall: UInt64,
+            receiptMonotonic: UInt64,
+            receiptWall: UInt64,
+            speedMetersPerSecond: Double,
+            state: MobileRideMapState,
+            recording: MobileRideMapRecordingTokenDto
+        ) throws {
+            let coordinate = route.coordinate(at: elapsed)
+            let sample = MobilePhoneLocationSampleDto(
+                wallClockUnixMs: startedWall + elapsed,
+                sourceTimestampUnixSeconds: nil,
+                latitudeDegrees: coordinate.latitude,
+                longitudeDegrees: coordinate.longitude,
+                altitudeMeters: 1_600,
+                horizontalAccuracyMeters: 4,
+                verticalAccuracyMeters: 6,
+                speedMetersPerSecond: speedMetersPerSecond,
+                speedAccuracyMetersPerSecond: 0.2,
+                courseDegrees: nil,
+                courseAccuracyDegrees: nil
+            )
+            let outcomes = try state.ingestLocationCallbackOutcomes(
+                recordingToken: recording,
+                receiptMonotonicMs: receiptMonotonic,
+                receiptWallClockUnixMs: receiptWall,
+                samples: [sample]
+            )
+            let accepted = outcomes.filter {
+                if case .accepted = $0.decision { return true }
+                return false
+            }
+            guard accepted.count == 1,
+                let acceptedRequest = accepted[0].requestID,
+                accepted[0].rideID == recording.rideId,
+                outcomes.allSatisfy({ outcome in
+                    guard outcome.requestID == acceptedRequest else { return false }
+                    if case .pending = outcome.decision { return true }
+                    if case .accepted = outcome.decision { return outcome.requestID == acceptedRequest }
+                    return false
+                })
+            else { throw CocoaError(.coderInvalidValue) }
+        }
+
+        private static func monotonicMillisecondsNow() -> UInt64 {
+            UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
         }
 
         static func seedFictionalChargingSpots(database: RideDatabaseHandle) async throws {

@@ -350,11 +350,13 @@ final class CutoutAppModel {
     private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
     private var phoneAlarmAuthorizationGeneration: UInt64 = 0
+    @ObservationIgnored private var websiteScreenshotRideFeed: Task<Void, Never>?
 
     isolated deinit {
         rideMapRestoreTask?.cancel()
         musicHistoryRestoreTask?.cancel()
         restorationMarkerLoadTask?.cancel()
+        websiteScreenshotRideFeed?.cancel()
         stopMusicMonitoring()
     }
 
@@ -394,6 +396,13 @@ final class CutoutAppModel {
         let selectedDeviceStore = DevicePickerSelectionStore()
         let restoredDeviceSelection = await selectedDeviceStore.load()
         try Task.checkCancellation()
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+            let websiteScreenshotRideFeed = try await CutoutWebsiteScreenshotFixture.prepareRideTrackingIfRequested(
+                state: state
+            )
+        #else
+            let websiteScreenshotRideFeed: Task<Void, Never>? = nil
+        #endif
         let historyQueryProvider: RideHistoryQueryProvider?
         #if DEBUG && os(iOS) && targetEnvironment(simulator)
             historyQueryProvider = CutoutUITestHistoryQueryFixture.provider(
@@ -418,7 +427,8 @@ final class CutoutAppModel {
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
             phoneAlarmDelivery: makePhoneRideAlarmDelivery(),
-            rideHistoryQueryProvider: historyQueryProvider
+            rideHistoryQueryProvider: historyQueryProvider,
+            websiteScreenshotRideFeed: websiteScreenshotRideFeed
         )
     }
 
@@ -484,7 +494,8 @@ final class CutoutAppModel {
         appleMusicMonitor: (any AppleMusicMonitorDriving)? = nil,
         phoneAlarmDelivery: any PhoneRideAlarmDelivering,
         rideHistoryQueryProvider: RideHistoryQueryProvider?,
-        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
+        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() },
+        websiteScreenshotRideFeed: Task<Void, Never>? = nil
     ) {
         let rideHistory = RideHistoryModel(
             stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle },
@@ -497,6 +508,7 @@ final class CutoutAppModel {
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        self.websiteScreenshotRideFeed = websiteScreenshotRideFeed
         chargingStops = ChargingStopPromptModel(
             state: core.rideMapStateHandle, session: core.rideSessionStateHandle,
             now: { core.now().rawValue }
@@ -977,6 +989,8 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
+        websiteScreenshotRideFeed?.cancel()
+        websiteScreenshotRideFeed = nil
         liveRide.setSceneActive(false)
         core.setPresentationActive(false)
         music.sceneDidEnterBackground()
