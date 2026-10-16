@@ -54,7 +54,10 @@ struct ChargingSpotDetailView: View {
             .presentationDetents(
                 dynamicTypeSize.isAccessibilitySize
                     ? [.large]
-                    : [.height(headerHeight > 0 && contentHeight > 0 ? headerHeight + contentHeight : 320), .large]
+                    : [.custom(ChargingDetailDetent.self), .large]
+            )
+            .environment(
+                \.chargingDetailHeight, headerHeight > 0 && contentHeight > 0 ? headerHeight + contentHeight : 320
             )
             .presentationDragIndicator(.visible)
         #endif
@@ -262,6 +265,25 @@ struct ChargingSpotDetailView: View {
         }
     }
 }
+
+#if os(iOS)
+    private struct ChargingDetailHeightKey: EnvironmentKey {
+        static let defaultValue: CGFloat = 320
+    }
+
+    extension EnvironmentValues {
+        fileprivate var chargingDetailHeight: CGFloat {
+            get { self[ChargingDetailHeightKey.self] }
+            set { self[ChargingDetailHeightKey.self] = newValue }
+        }
+    }
+
+    private struct ChargingDetailDetent: CustomPresentationDetent {
+        static func height(in context: Context) -> CGFloat? {
+            min(context.chargingDetailHeight, context.maxDetentValue)
+        }
+    }
+#endif
 
 extension ChargingSpotPresentation {
     static let connectorOptions: [(key: String, value: MobileChargingConnectorDto)] = [

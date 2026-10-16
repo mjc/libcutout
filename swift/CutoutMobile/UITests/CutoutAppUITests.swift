@@ -7265,6 +7265,37 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["charging.vote.up"].waitForExistence(timeout: 5))
     }
 
+    func testLongAccessNoteKeepsDetailActionsReachable() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 20), app.debugDescription)
+        let existingPinIDs = pinIdentifiers(in: app)
+        let note =
+            String(repeating: "Follow the path around the building to the covered seating area. ", count: 24)
+            + "The outlet is beside the last bench."
+        createFreeSpot(in: app, note: note)
+        let pinID = try XCTUnwrap(waitForNewPin(in: app, excluding: existingPinIDs), app.debugDescription)
+        app.buttons[pinID].tap()
+        app.buttons["charging.details.open"].tap()
+
+        let close = app.buttons["charging.details.done"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(close.isHittable, app.debugDescription)
+        XCTAssertTrue(app.frame.contains(close.frame), app.debugDescription)
+        attachScreenshot(app, name: "Long charging access note fits the presentation")
+        let edit = app.buttons["charging.details.edit"]
+        revealChargingControl(edit, in: app)
+        XCTAssertTrue(app.frame.contains(edit.frame), app.debugDescription)
+        XCTAssertTrue(app.buttons["charging.details.delete"].isHittable, app.debugDescription)
+        attachScreenshot(app, name: "Long charging access note scrolls to its actions")
+        edit.tap()
+        XCTAssertTrue(app.buttons["charging.editor.save"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(app.textViews["charging.editor.access-note"].value as? String, note, app.debugDescription)
+    }
+
     func testSelectedPinCanCloseWithoutChangingMapOrFilters() throws {
         continueAfterFailure = false
         let app = chargingApp()

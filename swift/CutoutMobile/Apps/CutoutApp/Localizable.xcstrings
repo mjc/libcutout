@@ -339,7 +339,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture file is unavailable." } } }
     },
     "captures.preparing" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing recording…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing file…" } } }
     },
     "captures.privacy" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Shared captures may include device identifiers, location and timing. Share only with someone you trust." } } }
