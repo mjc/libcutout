@@ -284,6 +284,11 @@ import Foundation
                 var frame = Data(repeating: 0, count: 42)
                 frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
                 frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+                #if os(iOS) && targetEnvironment(simulator)
+                    if CutoutWebsiteScreenshotFixture.screen == .tune {
+                        return [frame, Self.eucTuneSettingsReadback]
+                    }
+                #endif
                 return [frame]
             }
             return [
@@ -293,6 +298,20 @@ import Foundation
                 ])
             ]
         }
+
+        #if os(iOS) && targetEnvironment(simulator)
+            /// Captured NOSFET Aero page-8 readback used by the documented protocol decoder test.
+            /// It exercises the real settings parser and owner publication path for Tune screenshots.
+            private static let eucTuneSettingsReadback = Data([
+                0xdc, 0x5a, 0x5c, 0x47, 0x29, 0xf2, 0x00, 0x00, 0x00, 0x17, 0x00, 0x00,
+                0xab, 0x6c, 0x00, 0x17, 0x00, 0x00, 0x0b, 0xe9, 0x04, 0x5a, 0x00, 0x00,
+                0x02, 0x26, 0x02, 0x1c, 0xa8, 0xf6, 0x07, 0x80, 0x1b, 0x25, 0x00, 0x00,
+                0x80, 0xc8, 0x00, 0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x08, 0x00,
+                0x00, 0x80, 0x32, 0x00, 0x36, 0x4f, 0x37, 0x1e, 0x00, 0x00, 0x01, 0x00,
+                0x80, 0x80, 0x28, 0x06, 0x2e, 0x79, 0x64, 0x80, 0x00, 0x80, 0x80, 0x15,
+                0x40, 0xe2, 0x3a,
+            ])
+        #endif
 
         var testScript: CutoutSessionTestScript {
             let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate

@@ -86,6 +86,14 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
 
         XCTAssertTrue(element("settings.screen.eucTune").waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.buttons["settings.on.highBeam"].waitForExistence(timeout: 10), app.debugDescription)
+        let pwmTiltback = app.sliders.matching(identifier: "settings.slider.pwmTiltback").firstMatch
+        XCTAssertTrue(pwmTiltback.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(pwmTiltback.isEnabled, app.debugDescription)
+        XCTAssertTrue((pwmTiltback.value as? String ?? "").contains("79"), app.debugDescription)
+        let displayBrightness = app.sliders.matching(identifier: "settings.slider.displayBrightness").firstMatch
+        XCTAssertTrue(displayBrightness.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(displayBrightness.isEnabled, app.debugDescription)
+        XCTAssertTrue((displayBrightness.value as? String ?? "").contains("30"), app.debugDescription)
         XCTAssertTrue(app.buttons["settings.open-alarms"].exists, app.debugDescription)
         attachScreenshot(named: "tune")
     }
