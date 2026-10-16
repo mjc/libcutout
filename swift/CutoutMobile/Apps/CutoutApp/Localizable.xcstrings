@@ -119,7 +119,7 @@
     "charging.editor.location.section" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Location"}}}},
     "charging.editor.location" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Coordinates"}}}},
     "charging.editor.details.section" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Details"}}}},
-    "charging.editor.access_note" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Note"}}}},
+    "charging.editor.access_note" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Access note"}}}},
     "charging.editor.kind.charging" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Charging"}}}},
     "charging.editor.kind.food" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Charging + food"}}}},
     "charging.editor.kind.ev" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "EV charging"}}}},

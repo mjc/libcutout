@@ -513,7 +513,7 @@ struct ChargingMapContentView: View {
             }
             .overlay {
                 GeometryReader { geometry in
-                    if editor == nil, let selected,
+                    if case nil = sheetRoute, editor == nil, let selected,
                         let input = selected.input,
                         selectionIsOnMap,
                         let point = proxy.convert(
