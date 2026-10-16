@@ -359,7 +359,7 @@ import Foundation
                             voltage: Voltage(value: 120_000),
                             batteryCurrent: BatteryCurrent.currentOut(milliamps: 7_000),
                             power: Power(value: 840_000),
-                            powerFlow: .discharging,
+                            powerFlow: .discharge,
                             controllerTemperature: Temperature(value: 38_000),
                             pwm: DutyCycle(permille: 420),
                             batteryLevelReported: BatteryLevel(value: 78)

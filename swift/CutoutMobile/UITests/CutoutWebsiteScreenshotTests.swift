@@ -129,6 +129,7 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
                 "-io.cutout.music.monitoring.enabled", scene == "euc-main" ? "YES" : "NO",
                 "-io.cutout.music.compact-player.hidden", "NO",
             ] + extraArguments
+        app.launchEnvironment["CUTOUT_UI_TEST_FIXTURE"] = "euc"
         app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         app.launch()
         XCTAssertTrue(element("device-picker.screen").waitForExistence(timeout: 10), app.debugDescription)
@@ -146,20 +147,25 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
     }
 
     private func selectTab(_ id: String, title: String) {
-        let tab = app.tabBars.buttons["dashboard.nav.\(id)"]
+        let tab = navigationTab(id, title: title)
         if tab.waitForExistence(timeout: 5) {
             XCTAssertTrue(tab.isHittable, app.debugDescription)
             tab.tap()
             return
         }
 
-        let more = app.tabBars.buttons["dashboard.nav.more"]
+        let more = navigationTab("more", title: "More")
         XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
         more.tap()
         let item = element("dashboard.nav.\(id)")
         XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(item.label, title, app.debugDescription)
         item.tap()
+    }
+
+    private func navigationTab(_ id: String, title: String) -> XCUIElement {
+        let identified = app.tabBars.buttons["dashboard.nav.\(id)"]
+        return identified.exists ? identified : app.tabBars.buttons[title]
     }
 
     private func element(_ identifier: String) -> XCUIElement {
