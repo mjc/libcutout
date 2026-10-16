@@ -41,7 +41,7 @@ struct ChargingSpotDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)
-                .padding(.bottom, 28)
+                .padding(.bottom, 12)
                 .onGeometryChange(for: CGFloat.self) {
                     $0.size.height
                 } action: {
@@ -65,6 +65,7 @@ struct ChargingSpotDetailView: View {
         .sheet(isPresented: $showsContentReport) {
             if let remoteID = spot.remoteId { ChargingContentReportView(remoteID: remoteID) }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("charging.spot.details-screen")
     }
 
