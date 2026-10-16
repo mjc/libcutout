@@ -18,6 +18,7 @@ mod model;
 mod moderation;
 mod runtime;
 mod signup;
+mod signup_sync;
 mod site;
 mod store;
 
