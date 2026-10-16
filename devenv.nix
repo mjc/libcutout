@@ -234,7 +234,7 @@ in
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {
-    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
+    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];
   };
   tasks."test:ios-music-monitor" = {
@@ -323,6 +323,7 @@ in
       -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
       -scheme CutoutApp \
       -destination 'generic/platform=iOS Simulator' \
+      -jobs 2 \
       ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
   '';
   tasks."run:ios-app-on-mac" = {
