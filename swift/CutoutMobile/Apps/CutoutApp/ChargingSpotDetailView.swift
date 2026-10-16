@@ -15,68 +15,56 @@ struct ChargingSpotDetailView: View {
 
     private var input: MobileChargingInputDto? { spot.input }
     private var canEdit: Bool { spot.owned && (spot.status == .queued || spot.status == .published) }
+    private var canReport: Bool { spot.remoteId != nil && spot.status == .published }
 
     var body: some View {
         NavigationStack {
             List {
-                Section(localizedAppText("charging.details.section")) {
-                    detail("charging.details.name", input?.name ?? ChargingSpotPresentation.unknownName)
-                    detail("charging.details.access", input?.accessNote)
-                    detail(
-                        "charging.details.cost",
-                        input.map { localizedAppText($0.cost == .free ? "charging.cost.free" : "charging.cost.paid") })
-                    detail("charging.details.venue", input?.venue.map(ChargingSpotPresentation.venueName))
-                    detail("charging.details.hours", input?.hours)
-                    detail("charging.details.terms", input?.terms.map(ChargingSpotPresentation.termsName))
-                    detail("charging.details.price", input?.price.map(ChargingSpotPresentation.priceText))
-                }
-                Section(localizedAppText("charging.details.supplies")) {
-                    if let supplies = input?.supplies, !supplies.isEmpty {
-                        Text(supplies.map(ChargingSpotPresentation.supplyText).joined(separator: "\n"))
-                    } else {
-                        Text(localizedAppText("charging.spot.power.unknown"))
+                if let input {
+                    Section {
+                        Text(input.accessNote)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel(localizedAppText("charging.editor.access_note"))
+                            .accessibilityValue(input.accessNote)
+                            .accessibilityIdentifier("charging.details.access")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(localizedAppText(input.cost == .free ? "charging.cost.free" : "charging.cost.paid"))
+                                .foregroundStyle(.secondary)
+                            ForEach(input.supplies.indices, id: \.self) { index in
+                                Text(ChargingSpotPresentation.supplyText(input.supplies[index]))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        if let venue = input.venue, venue != .other {
+                            Text(ChargingSpotPresentation.venueName(venue))
+                        }
+                        detail("charging.details.hours", input.hours)
+                        detail("charging.details.terms", input.terms.map(ChargingSpotPresentation.termsName))
+                        detail("charging.details.price", input.price.map(ChargingSpotPresentation.priceText))
                     }
                 }
-                if canEdit {
+                if canEdit || canReport {
                     Section {
-                        Button(localizedAppText("charging.editor.edit")) { onEdit(spot) }
-                            .accessibilityIdentifier("charging.details.edit")
-                        Button(localizedAppText("charging.editor.delete"), role: .destructive) {
-                            confirmsDeletion = true
+                        if canEdit {
+                            Button(localizedAppText("charging.editor.edit")) { onEdit(spot) }
+                                .accessibilityIdentifier("charging.details.edit")
+                            Button(localizedAppText("charging.editor.delete"), role: .destructive) {
+                                confirmsDeletion = true
+                            }
+                            .accessibilityIdentifier("charging.details.delete")
                         }
-                        .accessibilityIdentifier("charging.details.delete")
+                        if canReport {
+                            Button(localizedAppText("charging.report.title"), systemImage: "flag") {
+                                showsContentReport = true
+                            }
+                            .accessibilityIdentifier("charging.details.report")
+                        }
                         if let errorKey {
                             Text(localizedAppText(errorKey)).foregroundStyle(.red)
                         }
                         if isDeleting { ProgressView() }
                     }
                     .disabled(isDeleting)
-                }
-                Section(localizedAppText("charging.details.community")) {
-                    detail(
-                        "charging.details.status",
-                        localizedAppText(
-                            ChargingSpotPresentation.statusKey(spot.status, pendingOperations: spot.pendingOperations)))
-                    detail(
-                        "charging.details.votes",
-                        spot.remoteId == nil
-                            ? localizedAppText("charging.spot.votes.community")
-                            : "\(spot.votesUp) ✓ · \(spot.votesDown) ×")
-                    if spot.pendingOperations > 0 {
-                        Text(localizedAppText("charging.spot.status.pending"))
-                    }
-                    detail(
-                        "charging.details.verified",
-                        spot.verifiedAtMs.map {
-                            Date(timeIntervalSince1970: Double($0) / 1_000).formatted(
-                                date: .abbreviated, time: .shortened)
-                        } ?? localizedAppText("charging.details.not_verified"))
-                    if spot.remoteId != nil, spot.status == .published {
-                        Button(localizedAppText("charging.report.title"), systemImage: "flag") {
-                            showsContentReport = true
-                        }
-                        .accessibilityIdentifier("charging.details.report")
-                    }
                 }
             }
             .navigationTitle(input?.name ?? ChargingSpotPresentation.unknownName)
@@ -102,16 +90,7 @@ struct ChargingSpotDetailView: View {
 
     @ViewBuilder private func detail(_ key: String, _ value: String?) -> some View {
         if let value, !value.isEmpty {
-            if key == "charging.details.access" {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(localizedAppText(key)).font(.caption).foregroundStyle(.secondary)
-                    Text(value).fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier(key)
-            } else {
-                LabeledContent(localizedAppText(key), value: value)
-            }
+            LabeledContent(localizedAppText(key), value: value)
         }
     }
 }
