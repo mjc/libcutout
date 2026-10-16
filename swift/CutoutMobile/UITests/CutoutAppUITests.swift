@@ -2127,14 +2127,20 @@ final class CutoutAppUITests: XCTestCase {
         executionTimeAllowance = 360
         var captureID: String?
         if createsCapture {
-            _ = try finishCaptureAndOpenArtifact()
-            app.buttons["setup.done"].tap()
-            openAccountSetup()
-            app.buttons["setup.captures"].tap()
+            enterCapture()
+            let finish = app.buttons["capture.stop"]
+            XCTAssertTrue(finish.waitForExistence(timeout: 5), app.debugDescription)
+            finish.tap()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["captures.detail"].waitForExistence(timeout: 10), app.debugDescription)
+            app.navigationBars.buttons.firstMatch.tap()
             let capture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
                 .firstMatch
             XCTAssertTrue(capture.waitForExistence(timeout: 10), app.debugDescription)
             captureID = capture.identifier
+            capture.tap()
+            assertStoredCaptureDetail()
+            app.navigationBars.buttons.firstMatch.tap()
             app.buttons["setup.done"].tap()
         }
         app.tabBars.buttons["Map"].tap()
@@ -2194,14 +2200,21 @@ final class CutoutAppUITests: XCTestCase {
             let retainedCapture = app.buttons[captureID]
             XCTAssertTrue(retainedCapture.waitForExistence(timeout: 10), app.debugDescription)
             retainedCapture.tap()
-            XCTAssertTrue(
-                app.descendants(matching: .any)["captures.detail"].waitForExistence(timeout: 10), app.debugDescription)
+            assertStoredCaptureDetail()
+            app.navigationBars.buttons.firstMatch.tap()
         }
         app.buttons["setup.done"].tap()
         app.tabBars.buttons["Map"].tap()
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
         let retainedRideReceipt = try XCTUnwrap((map.value as? String)?.components(separatedBy: ";").first)
         XCTAssertEqual(retainedRideReceipt, rideReceipt, "Deletion must not make the fixture reseed missing rides")
+    }
+
+    private func assertStoredCaptureDetail() {
+        XCTAssertTrue(app.navigationBars["Recording"].waitForExistence(timeout: 10), app.debugDescription)
+        let export = app.buttons["Export recording"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(export.isEnabled, app.debugDescription)
     }
 
     private func assertAccountFixtureAuthorization(status: Int) async throws {
