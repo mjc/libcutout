@@ -8,6 +8,7 @@ use std::{
     fmt,
     future::Future,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -21,7 +22,11 @@ use axum::{
 use reqwest::{Client, Response, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::Mutex,
+};
 
 const TOKEN_ENDPOINT: &str = "https://secure.soundcloud.com/oauth/token";
 const REFRESH_EARLY_SECONDS: u64 = 60;
@@ -29,11 +34,14 @@ const RETRY_DELAY_SECONDS: u64 = 120;
 const CLIENT_TOKEN_HOURLY_LIMIT: usize = 30;
 const CLIENT_TOKEN_TWELVE_HOUR_LIMIT: usize = 50;
 const TOKEN_RESPONSE_MAX_BYTES: usize = 16 * 1024;
+const CREDENTIALS_MAX_BYTES: usize = 16 * 1024;
+const TOKEN_STATE_MAX_BYTES: usize = 64 * 1024;
 const ACCESS_TOKEN_MAX_BYTES: usize = 8 * 1024;
 const MINIMUM_RETURNED_TTL_SECONDS: u64 = 16;
 const MAXIMUM_RETURNED_TTL_SECONDS: u64 = 3_600;
+static READINESS_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 struct SecretToken(String);
 
 impl SecretToken {
@@ -66,14 +74,14 @@ impl fmt::Debug for SoundCloudCredentials {
 
 impl SoundCloudCredentials {
     async fn read(path: &Path) -> Result<Self, BrokerError> {
-        let bytes = fs::read(path)
+        let bytes = read_bounded(path, CREDENTIALS_MAX_BYTES)
             .await
             .map_err(|_| BrokerError::CredentialsUnavailable)?;
         serde_json::from_slice(&bytes).map_err(|_| BrokerError::CredentialsUnavailable)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Serialize, Deserialize)]
 struct CachedToken {
     access_token: SecretToken,
     refresh_token: Option<SecretToken>,
@@ -151,7 +159,7 @@ impl fmt::Debug for TokenResponse {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Eq, PartialEq, Serialize, Deserialize, Default)]
 struct BrokerState {
     cached: Option<CachedToken>,
     #[serde(default)]
@@ -339,14 +347,19 @@ struct ProviderErrorBody {
     error: Option<String>,
 }
 
-#[derive(Debug, Error)]
-enum BrokerError {
+/// Classified broker startup, readiness, and request failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum BrokerError {
+    /// The configured credential file is missing, unreadable, or invalid.
     #[error("SoundCloud credentials are unavailable")]
     CredentialsUnavailable,
+    /// The persisted token state is missing when required or invalid.
     #[error("SoundCloud token state is unavailable")]
     StateUnavailable,
+    /// `SoundCloud` or its HTTP client is unavailable.
     #[error("SoundCloud token provider is temporarily unavailable")]
     ProviderUnavailable,
+    /// A persisted retry or grant budget is exhausted.
     #[error("SoundCloud token requests are temporarily rate limited")]
     RetryLater,
 }
@@ -359,7 +372,7 @@ struct TokenBroker<P> {
 
 impl<P: TokenProvider> TokenBroker<P> {
     async fn load(provider: P, state_path: PathBuf) -> Result<Self, BrokerError> {
-        let state = match fs::read(&state_path).await {
+        let state = match read_bounded(&state_path, TOKEN_STATE_MAX_BYTES).await {
             Ok(bytes) => {
                 serde_json::from_slice(&bytes).map_err(|_| BrokerError::StateUnavailable)?
             }
@@ -503,6 +516,9 @@ async fn write_state(path: &Path, state: &BrokerState) -> Result<(), BrokerError
         .await
         .map_err(|_| BrokerError::StateUnavailable)?;
     let bytes = serde_json::to_vec(state).map_err(|_| BrokerError::StateUnavailable)?;
+    if bytes.len() > TOKEN_STATE_MAX_BYTES {
+        return Err(BrokerError::StateUnavailable);
+    }
     let temporary = path.with_extension(format!(
         "tmp-{}-{}",
         std::process::id(),
@@ -594,6 +610,34 @@ fn router<P: TokenProvider + 'static>(broker: std::sync::Arc<TokenBroker<P>>) ->
         .with_state(broker)
 }
 
+async fn read_bounded(path: &Path, maximum: usize) -> std::io::Result<Vec<u8>> {
+    if !fs::metadata(path).await?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a regular file",
+        ));
+    }
+    let file = fs::File::open(path).await?;
+    if !file.metadata().await?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a regular file",
+        ));
+    }
+    let read_limit = u64::try_from(maximum)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid size limit"))?;
+    let mut limited = file.take(read_limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).await?;
+    if bytes.len() > maximum {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file exceeds configured size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
 fn elapsed_wall_time(base: u64, started: Instant) -> u64 {
     base.saturating_add(started.elapsed().as_secs())
 }
@@ -616,21 +660,13 @@ fn record_upstream_attempt(state: &mut BrokerState, now: u64) -> Result<(), Brok
     Ok(())
 }
 
-/// Starts the loopback-only HTTP service using systemd credential and state paths.
 /// Run the loopback-only token broker using systemd credential and state paths.
 ///
 /// # Errors
 /// Returns a static error when credentials, persisted state, listener setup, or service execution fails.
 pub async fn run_from_environment() -> Result<(), &'static str> {
-    use std::{env, net::SocketAddr, sync::Arc};
+    use std::{env, net::SocketAddr};
 
-    let credentials_directory =
-        env::var_os("CREDENTIALS_DIRECTORY").ok_or("systemd credentials are not available")?;
-    let credentials_path = PathBuf::from(credentials_directory).join("soundcloud.json");
-    let state_path = env::var_os("SOUNDCLOUD_TOKEN_STATE_FILE").map_or_else(
-        || PathBuf::from("/var/lib/soundcloud-token-broker/tokens.json"),
-        PathBuf::from,
-    );
     let listen_address = env::var("SOUNDCLOUD_BROKER_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:8787".to_owned())
         .parse::<SocketAddr>()
@@ -639,19 +675,14 @@ pub async fn run_from_environment() -> Result<(), &'static str> {
         return Err("service listen address must be loopback");
     }
 
-    let credentials = SoundCloudCredentials::read(&credentials_path)
+    let broker = MusicBroker::from_environment()
         .await
-        .map_err(|_| "SoundCloud credentials are unavailable")?;
-    let client = SoundCloudClient::new(credentials)
-        .map_err(|_| "SoundCloud client initialization failed")?;
-    let broker = TokenBroker::load(client, state_path)
-        .await
-        .map_err(|_| "SoundCloud token state is unavailable")?;
+        .map_err(startup_error_message)?;
     let listener = tokio::net::TcpListener::bind(listen_address)
         .await
         .map_err(|_| "service listener could not start")?;
 
-    axum::serve(listener, router(Arc::new(broker)))
+    axum::serve(listener, broker.router())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
@@ -659,19 +690,194 @@ pub async fn run_from_environment() -> Result<(), &'static str> {
         .map_err(|_| "service stopped unexpectedly")
 }
 
+fn startup_error_message(error: BrokerError) -> &'static str {
+    match error {
+        BrokerError::CredentialsUnavailable => "SoundCloud credentials are unavailable",
+        BrokerError::StateUnavailable | BrokerError::RetryLater => {
+            "SoundCloud token state is unavailable"
+        }
+        BrokerError::ProviderUnavailable => "SoundCloud client initialization failed",
+    }
+}
+
+/// Production broker state and router, initialized without opening a listener.
+#[derive(Clone)]
+pub struct MusicBroker {
+    broker: std::sync::Arc<TokenBroker<SoundCloudClient>>,
+    credentials_path: PathBuf,
+    state_path: PathBuf,
+}
+
+impl fmt::Debug for MusicBroker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MusicBroker")
+            .finish_non_exhaustive()
+    }
+}
+
+impl MusicBroker {
+    /// Initialize production credentials and persisted token state from the
+    /// existing systemd environment, without starting an HTTP listener.
+    ///
+    /// # Errors
+    /// Returns an initialization error when credentials, persisted state, or
+    /// the HTTP client cannot be initialized.
+    pub async fn from_environment() -> Result<Self, BrokerError> {
+        use std::env;
+
+        let credentials_directory =
+            env::var_os("CREDENTIALS_DIRECTORY").ok_or(BrokerError::CredentialsUnavailable)?;
+        let credentials_path = PathBuf::from(credentials_directory).join("soundcloud.json");
+        let state_path = env::var_os("SOUNDCLOUD_TOKEN_STATE_FILE").map_or_else(
+            || PathBuf::from("/var/lib/soundcloud-token-broker/tokens.json"),
+            PathBuf::from,
+        );
+        Self::initialize(credentials_path, state_path).await
+    }
+
+    async fn initialize(
+        credentials_path: PathBuf,
+        state_path: PathBuf,
+    ) -> Result<Self, BrokerError> {
+        let credentials = SoundCloudCredentials::read(&credentials_path).await?;
+        let client = SoundCloudClient::new(credentials)?;
+        let broker = TokenBroker::load(client, state_path.clone()).await?;
+        Ok(Self {
+            broker: std::sync::Arc::new(broker),
+            credentials_path,
+            state_path,
+        })
+    }
+
+    /// Return a cloneable Axum router backed by this broker's shared state.
+    pub fn router(&self) -> Router {
+        let broker = self.clone();
+        router(std::sync::Arc::clone(&broker.broker)).route(
+            "/readyz",
+            get(move || {
+                let broker = broker.clone();
+                async move {
+                    match broker.readiness().await {
+                        Ok(()) => StatusCode::OK,
+                        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+                    }
+                }
+            }),
+        )
+    }
+
+    /// Check the credential and persisted-state resources without contacting
+    /// `SoundCloud` or consuming a grant budget.
+    ///
+    /// # Errors
+    /// Returns an error when credentials or required persisted state are no
+    /// longer readable or valid.
+    pub async fn readiness(&self) -> Result<(), BrokerError> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            broker_readiness(&self.broker, &self.credentials_path, &self.state_path),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(BrokerError::StateUnavailable),
+        }
+    }
+}
+
+async fn broker_readiness(
+    broker: &std::sync::Arc<TokenBroker<SoundCloudClient>>,
+    credentials_path: &Path,
+    state_path: &Path,
+) -> Result<(), BrokerError> {
+    let credentials = SoundCloudCredentials::read(credentials_path).await?;
+    if credentials.client_id.is_empty() || credentials.client_secret.expose().is_empty() {
+        return Err(BrokerError::CredentialsUnavailable);
+    }
+
+    let parent = state_path.parent().ok_or(BrokerError::StateUnavailable)?;
+    let parent_metadata = fs::metadata(parent)
+        .await
+        .map_err(|_| BrokerError::StateUnavailable)?;
+    if !parent_metadata.is_dir() {
+        return Err(BrokerError::StateUnavailable);
+    }
+    let persisted = read_bounded(state_path, TOKEN_STATE_MAX_BYTES).await;
+    let state = broker.state.lock().await;
+    match persisted {
+        Ok(bytes) => {
+            let persisted_state = serde_json::from_slice::<BrokerState>(&bytes)
+                .map_err(|_| BrokerError::StateUnavailable)?;
+            if persisted_state != *state {
+                return Err(BrokerError::StateUnavailable);
+            }
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && *state == BrokerState::default() => {
+        }
+        Err(_) => return Err(BrokerError::StateUnavailable),
+    }
+    drop(state);
+
+    let parent = parent.to_path_buf();
+    tokio::task::spawn_blocking(move || probe_state_directory(&parent))
+        .await
+        .map_err(|_| BrokerError::StateUnavailable)?
+        .map_err(|_| BrokerError::StateUnavailable)
+}
+
+struct ReadinessProbe(PathBuf);
+
+impl Drop for ReadinessProbe {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn probe_state_directory(directory: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let sequence = READINESS_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_nanos();
+    let path = directory.join(format!(
+        ".cutout-readiness-{}-{timestamp}-{sequence}",
+        std::process::id()
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    let cleanup = ReadinessProbe(path);
+    let result = file.write_all(b"x");
+    drop(file);
+    result?;
+    std::fs::remove_file(&cleanup.0)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         collections::VecDeque,
+        path::PathBuf,
         sync::{
             Mutex as StdMutex,
             atomic::{AtomicUsize, Ordering},
         },
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        BrokerState, CLIENT_TOKEN_HOURLY_LIMIT, CachedToken, Future, ProviderFailure,
-        ProviderToken, SecretToken, TokenBroker, TokenProvider, remaining_lifetime,
+        BrokerError, BrokerState, CLIENT_TOKEN_HOURLY_LIMIT, CachedToken, Future, MusicBroker,
+        ProviderFailure, ProviderToken, SecretToken, TokenBroker, TokenProvider,
+        remaining_lifetime, router,
     };
 
     struct FakeProvider {
@@ -868,6 +1074,237 @@ mod tests {
         assert!(broker.get_token(1_001).await.is_err());
         assert_eq!(broker.provider.refresh_calls.load(Ordering::SeqCst), 1);
         assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn router_preserves_token_response_and_no_store_header() {
+        let provider = FakeProvider::new([], []);
+        let broker = std::sync::Arc::new(TokenBroker::in_memory(provider, BrokerState::default()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server_broker = std::sync::Arc::clone(&broker);
+        let server =
+            tokio::spawn(async move { axum::serve(listener, router(server_broker)).await });
+
+        let health = reqwest::get(format!("http://{address}/healthz"))
+            .await
+            .expect("health request");
+        assert_eq!(health.status(), reqwest::StatusCode::NO_CONTENT);
+
+        let token = reqwest::get(format!("http://{address}/v1/token"))
+            .await
+            .expect("token request");
+        assert_eq!(token.status(), reqwest::StatusCode::OK);
+        assert_eq!(token.headers()["cache-control"], "no-store");
+        let body: serde_json::Value =
+            serde_json::from_slice(&token.bytes().await.expect("token response body"))
+                .expect("token JSON");
+        assert_eq!(body["token_type"], "Bearer");
+        assert_eq!(body["expires_in"], 3_600);
+        assert!(body.get("refresh_token").is_none());
+
+        let cached = reqwest::get(format!("http://{address}/v1/token"))
+            .await
+            .expect("cached token request");
+        let cached_body: serde_json::Value =
+            serde_json::from_slice(&cached.bytes().await.expect("cached response body"))
+                .expect("cached token JSON");
+        assert_eq!(cached_body["access_token"], body["access_token"]);
+        assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 1);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn readiness_accepts_initially_missing_cache_without_requesting_a_grant() {
+        let root = test_directory("missing-cache");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("test directory");
+        let credentials_path = root.join("soundcloud.json");
+        let state_path = root.join("tokens.json");
+        tokio::fs::write(
+            &credentials_path,
+            br#"{"client_id":"test-client","client_secret":"test-secret"}"#,
+        )
+        .await
+        .expect("write credentials");
+
+        let broker = MusicBroker::initialize(credentials_path, state_path.clone())
+            .await
+            .expect("initialize broker");
+        broker.readiness().await.expect("initial readiness");
+        assert!(!state_path.exists());
+        let remaining_entries: Vec<_> = std::fs::read_dir(&root)
+            .expect("read test directory")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .collect();
+        assert_eq!(
+            remaining_entries,
+            [std::ffi::OsString::from("soundcloud.json")]
+        );
+
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test directory");
+    }
+
+    #[tokio::test]
+    async fn readiness_rejects_changed_credentials_and_unreadable_state_without_grants() {
+        let root = test_directory("readiness-resources");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("test directory");
+        let credentials_path = root.join("soundcloud.json");
+        let state_path = root.join("tokens.json");
+        tokio::fs::write(
+            &credentials_path,
+            br#"{"client_id":"test-client","client_secret":"test-secret"}"#,
+        )
+        .await
+        .expect("write credentials");
+        tokio::fs::write(&state_path, b"{}")
+            .await
+            .expect("write state");
+        let broker = MusicBroker::initialize(credentials_path.clone(), state_path.clone())
+            .await
+            .expect("initialize broker");
+        broker.readiness().await.expect("healthy resources");
+
+        tokio::fs::write(&credentials_path, b"invalid credentials")
+            .await
+            .expect("corrupt credentials");
+        assert_eq!(
+            broker.readiness().await,
+            Err(BrokerError::CredentialsUnavailable)
+        );
+        tokio::fs::write(
+            &credentials_path,
+            br#"{"client_id":"test-client","client_secret":"test-secret"}"#,
+        )
+        .await
+        .expect("restore credentials");
+        tokio::fs::write(&state_path, vec![b'x'; super::TOKEN_STATE_MAX_BYTES + 1])
+            .await
+            .expect("oversize state");
+        assert_eq!(broker.readiness().await, Err(BrokerError::StateUnavailable));
+
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test directory");
+    }
+
+    #[tokio::test]
+    async fn readiness_rejects_valid_empty_replacement_when_live_state_is_nonempty() {
+        let root = test_directory("empty-replacement");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("test directory");
+        let credentials_path = root.join("soundcloud.json");
+        let state_path = root.join("tokens.json");
+        tokio::fs::write(
+            &credentials_path,
+            br#"{"client_id":"test-client","client_secret":"test-secret"}"#,
+        )
+        .await
+        .expect("write credentials");
+        let persisted_state = serde_json::to_vec(&serde_json::json!({
+            "cached": {
+                "access_token": "cached-access",
+                "refresh_token": "cached-refresh",
+                "expires_at": u64::MAX,
+            },
+            "upstream_attempts": [1_000],
+            "client_token_attempts": [1_000],
+            "next_attempt_at": 1_120,
+        }))
+        .expect("serialize state");
+        tokio::fs::write(&state_path, &persisted_state)
+            .await
+            .expect("write state");
+        let broker = MusicBroker::initialize(credentials_path, state_path.clone())
+            .await
+            .expect("initialize broker");
+
+        broker.readiness().await.expect("initial readiness");
+        tokio::fs::write(&state_path, b"{}")
+            .await
+            .expect("replace cache with valid empty state");
+        let empty_cache_result = broker.readiness().await;
+
+        tokio::fs::write(&state_path, &persisted_state)
+            .await
+            .expect("restore persisted state");
+        let restored_cache_result = broker.readiness().await;
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test directory");
+        assert_eq!(empty_cache_result, Err(BrokerError::StateUnavailable));
+        restored_cache_result.expect("readiness after restore");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_rejects_read_only_token_state_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if running_as_root() {
+            return;
+        }
+
+        let root = test_directory("read-only-state-directory");
+        tokio::fs::create_dir_all(&root)
+            .await
+            .expect("test directory");
+        let credentials_path = root.join("soundcloud.json");
+        let state_path = root.join("tokens.json");
+        tokio::fs::write(
+            &credentials_path,
+            br#"{"client_id":"test-client","client_secret":"test-secret"}"#,
+        )
+        .await
+        .expect("write credentials");
+        tokio::fs::write(&state_path, b"{}")
+            .await
+            .expect("write state");
+        let broker = MusicBroker::initialize(credentials_path, state_path)
+            .await
+            .expect("initialize broker");
+        broker.readiness().await.expect("initial readiness");
+
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500))
+            .expect("make state directory read-only");
+        let readiness_result = broker.readiness().await;
+
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .expect("restore state directory permissions");
+        tokio::fs::remove_dir_all(root)
+            .await
+            .expect("remove test directory");
+        assert_eq!(readiness_result, Err(BrokerError::StateUnavailable));
+    }
+
+    #[cfg(unix)]
+    fn running_as_root() -> bool {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .is_ok_and(|output| {
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "0"
+            })
+    }
+
+    fn test_directory(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "cutout-soundcloud-broker-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ))
     }
 
     #[test]
