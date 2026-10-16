@@ -1,0 +1,364 @@
+{
+  "skip": "Saltar al contenido",
+  "navigation": "Navegación principal",
+  "language": "Idioma del sitio",
+  "menu": "Abrir navegación",
+  "get": "Obtener CutOut",
+  "nav": {
+    "app": "La aplicación",
+    "guide": "Cómo funciona",
+    "support": "Ayuda",
+    "about": "Sobre CutOut"
+  },
+  "hero": {
+    "eyebrow": "Para quienes conducen vehículos eléctricos personales",
+    "title": "Conoce",
+    "accent": "tu recorrido.",
+    "fullTitle": "Conoce tu recorrido",
+    "body": "Consulta los datos del recorrido, controla tus luces y tu cámara, y vuelve a ver la ruta y la música que acompañaron el día.",
+    "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
+    "stampTitle": "Creado por un rider.",
+    "stampBody": "Con la comunidad de vehículos eléctricos."
+  },
+  "preview": {
+    "label": "Captura próximamente",
+    "dialogTag": "Alfa",
+    "dialogTitle": "CutOut está en fase alfa.",
+    "dialogBody": "La descarga pública aún no está disponible. Sigue el proyecto en GitHub para conocer las novedades.",
+    "updates": "Seguir el proyecto",
+    "close": "Cerrar"
+  },
+  "vehicles": {
+    "tag": "Tipos de vehículos",
+    "title": "Para todos los tipos de PEV.",
+    "body": "El desarrollador tiene Onewheels con VESC y Refloat, y EUCs. Para los demás tipos necesitamos capturas de datos de la comunidad. Las funciones dependen del modelo y del firmware.",
+    "owned": "Hardware del desarrollador",
+    "needed": "Necesitamos capturas de la comunidad",
+    "items": [
+      {
+        "name": "VESC Onewheel",
+        "detail": "Con firmware Refloat",
+        "kind": "onewheel",
+        "owned": true
+      },
+      {
+        "name": "EUC",
+        "detail": "Monociclo eléctrico",
+        "kind": "euc",
+        "owned": true
+      },
+      {
+        "name": "Eskate",
+        "detail": "Monopatín eléctrico",
+        "kind": "eskate",
+        "owned": false
+      },
+      {
+        "name": "Scooter",
+        "detail": "Patinete eléctrico",
+        "kind": "scooter",
+        "owned": false
+      },
+      {
+        "name": "Ebike",
+        "detail": "Bicicleta eléctrica",
+        "kind": "ebike",
+        "owned": false
+      },
+      {
+        "name": "Emoto",
+        "detail": "Motocicleta eléctrica",
+        "kind": "emoto",
+        "owned": false
+      }
+    ],
+    "link": "Ayuda a añadir soporte para tu PEV"
+  },
+  "featuresTag": "Durante todo el recorrido",
+  "featuresTitle": "Los detalles que necesitas, cuando los necesitas.",
+  "featuresBody": "Velocidad y batería mientras conduces. Rutas y detalles cuando terminas.",
+  "features": [
+    {
+      "title": "Datos en directo",
+      "body": "Velocidad, batería, potencia, temperatura y margen PWM de un vistazo, con las lecturas de tu PEV."
+    },
+    {
+      "title": "Historial de recorridos",
+      "body": "Vuelve a ver tu circuito favorito, sigue la ruta que hiciste y consulta la velocidad, la distancia y los detalles del recorrido."
+    },
+    {
+      "title": "Carga de la comunidad",
+      "body": "Encuentra puntos de carga compartidos por otros riders. Consulta enchufes, acceso y precios antes de ir, y añade los lugares que te han ayudado."
+    }
+  ],
+  "steps": [
+    {
+      "title": "Conecta tu PEV.",
+      "body": "Conecta tu PEV compatible por Bluetooth para ver sus lecturas y controles."
+    },
+    {
+      "title": "Sal a rodar.",
+      "body": "Registra la ruta y los datos del dispositivo. Consulta la pantalla cuando lo necesites y mantén la atención en el camino."
+    },
+    {
+      "title": "Revísalo después.",
+      "body": "Abre los recorridos guardados, consulta la ruta y descubre qué hizo diferente a cada salida."
+    }
+  ],
+  "stepsLink": "Descubre cómo funciona un recorrido",
+  "cta": "Lleva CutOut en tu próximo recorrido.",
+  "footer": {
+    "description": "Una aplicación para tus recorridos en vehículos eléctricos personales. Desarrollada en abierto.",
+    "privacy": "Privacidad",
+    "built": "Para riders. Con la comunidad."
+  },
+  "guide": {
+    "title": "Un recorrido,\nde principio a fin.",
+    "body": "Conecta tu PEV, registra el recorrido y vuelve a los detalles después.",
+    "contents": "En esta página",
+    "sections": [
+      {
+        "short": "Antes de salir",
+        "title": "Empieza por tu dispositivo.",
+        "body": "Elige tu PEV entre los dispositivos Bluetooth cercanos. Consulta sus lecturas, comprueba la batería y cambia los ajustes disponibles para tu modelo.",
+        "points": [
+          "Los Onewheels con VESC utilizan firmware Refloat.",
+          "Las funciones de los EUCs dependen del modelo y del firmware.",
+          "Los demás tipos necesitan capturas de la comunidad; consulta la lista.",
+          "Configura las luces RGB externas y una cámara Wi-Fi compatible antes de salir."
+        ],
+        "preview": "Selección del dispositivo"
+      },
+      {
+        "short": "Durante el recorrido",
+        "title": "Basta con una mirada.",
+        "body": "La pantalla de conducción reúne las lecturas en directo. Registra la ruta y los datos de la rueda, y consulta los puntos de carga cuando planees una parada.",
+        "points": [
+          "Velocidad, batería y otra telemetría disponible.",
+          "Registro de rutas e historial guardado.",
+          "Controla tu música y guarda qué escuchas por el camino.",
+          "Según tu equipo, también tienes ajustes del modelo, detalles de la batería e información del recorrido en la pantalla bloqueada."
+        ],
+        "preview": "Pantalla de conducción"
+      },
+      {
+        "short": "Al terminar",
+        "title": "El recorrido sigue ahí.",
+        "body": "Abre un recorrido guardado para ver dónde estuviste, cómo fue la salida y qué estabas escuchando.",
+        "points": [
+          "Explora el mapa y los recorridos guardados.",
+          "Revisa los datos después de parar.",
+          "Encuentra las canciones que acompañaron tu recorrido."
+        ],
+        "preview": "Detalle del recorrido"
+      }
+    ],
+    "compatibilityTitle": "¿Funciona con tu PEV?",
+    "compatibilityBody": "Busca tu tipo de vehículo en la lista de PEV y consulta las preguntas frecuentes para conocer los detalles de dispositivos y firmware.",
+    "compatibilityLink": "Consultar las preguntas de compatibilidad"
+  },
+  "support": {
+    "title": "Una ayuda\npara el camino.",
+    "body": "Compatibilidad, luces, cámaras, música y el proyecto detrás de la aplicación. Encuentra una respuesta o contacta con nosotros.",
+    "search": "Buscar en las preguntas",
+    "faq": "Preguntas frecuentes",
+    "empty": "No hay preguntas que coincidan. Prueba otra palabra o contacta con el proyecto.",
+    "contactTitle": "¿Necesitas más ayuda?",
+    "contactBody": "Haz una pregunta o comunica un problema en el proyecto público de GitHub.",
+    "contactLink": "Pedir ayuda en GitHub",
+    "publicNote": "Los informes de GitHub son públicos y requieren una cuenta. No publiques ubicaciones privadas, credenciales ni archivos de diagnóstico.",
+    "reportNote": "Para un problema con un punto de carga, utiliza la acción privada Reportar de la aplicación.",
+    "questions": [
+      {
+        "title": "¿Para qué tipos de PEV es CutOut?",
+        "body": "CutOut está pensado para Onewheels con VESC y Refloat, EUCs, eskates, scooters, ebikes y emotos. El desarrollador tiene hardware VESC Onewheel + Refloat y EUC. Los demás tipos necesitan capturas de datos de la comunidad. Las funciones de cada modelo y firmware requieren implementación y validación."
+      },
+      {
+        "title": "¿Se admitirán dispositivos con comunicaciones cifradas?",
+        "body": "No. CutOut no admitirá dispositivos cuyos fabricantes cifren sus comunicaciones. Los dispositivos sin cifrado del mismo fabricante se pueden considerar por separado."
+      },
+      {
+        "title": "¿Cómo puedo ayudar a añadir soporte para mi PEV?",
+        "body": "Necesitamos capturas de datos de eskates, scooters, ebikes y emotos. Contacta con el proyecto indicando el modelo y el firmware para pedir instrucciones. No publiques capturas privadas en un informe público de GitHub: pueden contener identificadores del dispositivo y ubicación."
+      },
+      {
+        "title": "¿Funciona con un Onewheel de fábrica?",
+        "body": "La electrónica original de Onewheel no es compatible. CutOut admite vehículos con VESC y firmware Refloat."
+      },
+      {
+        "title": "¿Qué luces RGB por Bluetooth son compatibles?",
+        "body": "Los dispositivos MELK ya son compatibles y tenemos previsto añadir más. El objetivo es admitir todos los dispositivos RGB por Bluetooth sin cifrado. Elige colores, blanco, brillo y efectos compatibles, y guarda tus ajustes con nombre. Los efectos disponibles dependen del controlador y del firmware."
+      },
+      {
+        "title": "¿Qué cámaras Wi-Fi funcionan con CutOut?",
+        "body": "CutOut funciona actualmente con FreedConn R3 Pro y firmware R3V1. Puedes ver la imagen y explorar los archivos; los controles de vídeo y fotografía dependen del firmware. Otros modelos y versiones no están confirmados. Un chip Novatek no garantiza la compatibilidad."
+      },
+      {
+        "title": "¿Y otras cámaras Wi-Fi?",
+        "body": "Estos modelos son posibles candidatos, no dispositivos con compatibilidad confirmada en CutOut. Algunos tienen protocolos de control Novatek documentados; otros se incluyen porque se ha documentado su hardware Novatek y su conexión Wi-Fi. La compatibilidad puede variar según la versión y el firmware. Los sistemas instalados en el vehículo pueden necesitar alimentación externa.",
+        "items": [
+          {
+            "title": "SJCAM SJ4000 WiFi y SJ5000X Elite",
+            "body": "Una investigación original documenta controles HTTP y vista previa RTSP relacionados.",
+            "url": "https://github.com/Zsub/SJCam-API/blob/master/README.md",
+            "link": "Investigación de la API"
+          },
+          {
+            "title": "SJCAM SJ5000 WiFi",
+            "body": "El manual del fabricante identifica hardware Novatek; protocolo de control sin verificar.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ5000X-Elite-user-manual-2022.11.28.pdf",
+            "link": "Manual del fabricante"
+          },
+          {
+            "title": "SJCAM SJ6 Legend",
+            "body": "Cámara de acción Wi-Fi con Novatek; protocolo de control sin verificar.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ6-LEGEND-user-manual-2022.11.28.pdf",
+            "link": "Manual del fabricante"
+          },
+          {
+            "title": "SJCAM SJ8 Air y SJ8 Plus",
+            "body": "Hardware Novatek; protocolo sin verificar. Esta entrada no incluye SJ8 Pro.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ8-Air-SJ8-Pro-user-manual-2022.11.28.pdf",
+            "link": "Manual del fabricante"
+          },
+          {
+            "title": "SJCAM C100 y C100+",
+            "body": "Cámaras Wi-Fi pequeñas con Novatek; protocolo sin verificar.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/C100-C100-user-manual-2022.11.28.pdf",
+            "link": "Manual del fabricante"
+          },
+          {
+            "title": "SJCAM C200",
+            "body": "Cámara de acción Wi-Fi compacta con Novatek; protocolo sin verificar.",
+            "url": "https://www.sjcam.com/cameras/action-cameras/c200",
+            "link": "Especificaciones del fabricante"
+          },
+          {
+            "title": "SJCAM A10",
+            "body": "Cámara corporal Wi-Fi con Novatek; protocolo sin verificar.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/A10-user-manual-2022.11.28.pdf",
+            "link": "Manual del fabricante"
+          },
+          {
+            "title": "GitUp Git2",
+            "body": "Cámara de acción Wi-Fi con Novatek; firmware y funcionamiento en CutOut sin verificar.",
+            "url": "https://pdt.static.globalsources.com/IMAGES/PDT/SPEC/384/K1146180384.pdf",
+            "link": "Especificaciones del producto"
+          },
+          {
+            "title": "GitUp Git1, Git2P y G3 Duo",
+            "body": "Más cámaras de acción Wi-Fi candidatas. Hay que verificar el hardware, el firmware y los controles; no tienen compatibilidad confirmada en CutOut.",
+            "url": "https://www.isix.cz/user/documents/upload/Git3/G3%20Manual%20Final%20version2017.9.30edited.pdf",
+            "link": "Manual de G3 Duo"
+          },
+          {
+            "title": "INNOVV K2",
+            "body": "Una investigación original del firmware documenta comandos HTTP de estilo Novatek relacionados. El firmware exacto y las funciones en CutOut siguen sin verificar.",
+            "url": "https://forum.innovv.com/forums/discussion/station-mode/",
+            "link": "Investigación original del firmware"
+          },
+          {
+            "title": "INNOVV K6",
+            "body": "Cámara Wi-Fi con Novatek y variantes para bicicleta y motocicleta; protocolo sin verificar.",
+            "url": "https://forum.innovv.com/forums/discussion/k6-products/",
+            "link": "Desarrollo contado por el fabricante"
+          },
+          {
+            "title": "INNOVV K7",
+            "body": "Una investigación del firmware describe controles Novatek CarDV relacionados. Los comandos y el funcionamiento en CutOut necesitan validación.",
+            "url": "https://github.com/Prinsessen/innovv-k7-autodump-/blob/main/docs/FIRMWARE_ANALYSIS.md",
+            "link": "Investigación del firmware"
+          }
+        ]
+      },
+      {
+        "title": "¿Por qué CutOut es de código abierto?",
+        "body": "Queremos facilitar mejores aplicaciones para PEV. Compartir los protocolos y las bibliotecas permite que otros desarrolladores se centren en sus propias ideas. También estamos creando una aplicación que nos guste usar y que le resulte útil a la comunidad. Los recorridos reales ayudan a mejorar las bibliotecas compartidas."
+      },
+      {
+        "title": "¿Puedo crear mi propia aplicación con las bibliotecas?",
+        "body": "Sí. Todo el código de CutOut es abierto, incluidas las bibliotecas Rust y los enlaces para aplicaciones móviles. El proyecto está en fase alfa: las API siguen cambiando y la compatibilidad depende del modelo y del firmware. El código incluye documentación y ejemplos para empezar.",
+        "items": [
+          {
+            "title": "CutOut en GitHub",
+            "body": "Código, documentación de las bibliotecas y ejemplos.",
+            "url": "https://github.com/mjc/libcutout",
+            "link": "Explora el proyecto"
+          }
+        ]
+      },
+      {
+        "title": "¿Se envían los diagnósticos Bluetooth automáticamente?",
+        "body": "No. Las capturas Bluetooth se inician manualmente en una función de diagnóstico independiente. Tú decides si quieres compartir una captura. Puede contener identificadores del dispositivo y ubicación; no publiques archivos privados en informes públicos."
+      },
+      {
+        "title": "¿Dónde se guardan mis recorridos?",
+        "body": "Tus recorridos se guardan en tu teléfono. Abre el historial para consultar las rutas y los detalles registrados."
+      },
+      {
+        "title": "¿Puedo ver qué escuchaba durante un recorrido?",
+        "body": "Sí. Activa el historial musical para guardar las canciones que escuchas durante el recorrido. CutOut guarda los datos de las canciones con tu recorrido, no el audio."
+      },
+      {
+        "title": "¿Puedo registrar un recorrido sin conectar un PEV?",
+        "body": "Sí. Inicia un recorrido solo con GPS para registrar la ruta sin conectar un dispositivo. Las lecturas del vehículo están disponibles al conectar un PEV compatible."
+      },
+      {
+        "title": "¿Se garantiza que los puntos de carga estén disponibles?",
+        "body": "Los puntos de carga y sus notas de acceso provienen de la comunidad. Lee los detalles, comprueba la compatibilidad con tu cargador y confirma el acceso con el establecimiento cuando sea necesario."
+      },
+      {
+        "title": "¿Qué ocurre al eliminar mi cuenta de la comunidad?",
+        "body": "Se eliminan los registros privados asociados a la cuenta. Los puntos de carga públicos conservan su contenido y pasan a Anonymous; puedes eliminarlos manualmente antes si lo deseas. Los recorridos y las capturas Bluetooth se quedan en el dispositivo. La política explica los justificantes y la retención de copias de seguridad."
+      }
+    ]
+  },
+  "soundtrack": {
+    "tag": "La música del camino",
+    "title": "¿Cuál fue tu banda sonora?",
+    "body": "Guarda qué escuchabas durante cada recorrido. Vuelve a descubrir las canciones que acompañaron tu ruta favorita.",
+    "preview": "Las canciones de tu recorrido"
+  },
+  "accessories": [
+    {
+      "tag": "Iluminación RGB externa por Bluetooth",
+      "title": "Dale tu propio color.",
+      "body": "Elige los colores, ajusta el brillo y encuentra el efecto que va con tu equipo. Guarda tus combinaciones favoritas para el próximo recorrido.",
+      "preview": "Iluminación RGB externa y ajustes guardados",
+      "link": "Ver luces compatibles"
+    },
+    {
+      "tag": "Cámaras Wi-Fi",
+      "title": "Tu cámara, aquí mismo.",
+      "body": "Ve la imagen de una cámara Wi-Fi compatible, inicia o detén la grabación y toma fotos desde CutOut. Explora los archivos de la cámara y descarga los vídeos que quieras conservar.",
+      "preview": "Vista previa, controles y archivos de la cámara",
+      "link": "Ver cámaras compatibles"
+    }
+  ],
+  "openSource": {
+    "tag": "Desarrollado en abierto",
+    "title": "Crea algo propio.",
+    "body": "El código de CutOut es abierto. Aprovecha sus protocolos y bibliotecas para PEV y dedica más tiempo a tus propias ideas.",
+    "link": "Conoce el proyecto"
+  },
+  "about": {
+    "title": "Mejores recorridos.\nMás espacio para ideas.",
+    "body": "CutOut es una aplicación creada por un rider, con la comunidad de PEV. Todo el código es abierto y el proyecto está en fase alfa.",
+    "sections": [
+      {
+        "title": "Mejores aplicaciones para PEV.",
+        "body": "Queremos mejores aplicaciones para todos los PEV. Compartir el trabajo de protocolos y las bibliotecas da a otros desarrolladores más tiempo para probar nuevas ideas."
+      },
+      {
+        "title": "Una aplicación para salir a rodar.",
+        "body": "Estamos creando una aplicación que nos guste usar y que le resulte útil a la comunidad. Los recorridos y dispositivos reales también ayudan a mejorar las bibliotecas compartidas."
+      },
+      {
+        "title": "Construye sobre lo que ya existe.",
+        "body": "Usa las bibliotecas Rust de protocolos de dispositivos y accesorios, datos de recorridos, mapas, metadatos musicales y almacenamiento, con enlaces para aplicaciones móviles. Las API están en fase alfa y siguen cambiando."
+      }
+    ],
+    "source": "Explora el código y las bibliotecas",
+    "faq": "Lee las preguntas sobre el proyecto"
+  }
+}
