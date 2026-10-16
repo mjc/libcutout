@@ -150,7 +150,7 @@ def create_points() -> list[dict]:
 
 def run_ui_test(evidence: Path, udid: str, test: str, size: str, log_name: str) -> None:
     selector = f"CutoutAppUITests/CutoutAppUITests/{test}"
-    command = ["scripts/run-ios-ui-tests.sh", "--timeout", "1200", "--appearance", "light",
+    command = ["scripts/run-ios-ui-tests.sh", "--verbose", "--timeout", "1200", "--appearance", "light",
                "--content-size", size, "-destination", f"platform=iOS Simulator,id={udid}",
                "-jobs", "2", "-only-testing:" + selector]
     with (evidence / log_name).open("w") as log:

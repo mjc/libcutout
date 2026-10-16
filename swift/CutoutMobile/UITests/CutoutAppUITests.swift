@@ -2178,7 +2178,7 @@ final class CutoutAppUITests: XCTestCase {
         scrollElementFrameIntoViewport(submit, in: confirmation, maxScrolls: 12)
         XCTAssertTrue(submit.isHittable, app.debugDescription)
         submit.tap()
-        let completed = app.descendants(matching: .any)["setup.account.deleted"]
+        let completed = app.staticTexts["setup.account.deleted"]
         scrollElementFrameIntoViewport(completed, in: setup, maxScrolls: 12)
         XCTAssertTrue(completed.waitForExistence(timeout: 30), app.debugDescription)
         try await assertAccountFixtureAuthorization(status: 401)
