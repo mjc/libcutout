@@ -113,7 +113,8 @@
             let receipt = try database.confirmPevcapImport(preview: preview, createdAtMilliseconds: 1_700_000_000_100)
             XCTAssertFalse(receipt.duplicate)
             let managed = URL(fileURLWithPath: receipt.managedArtifactPath)
-            XCTAssertTrue(managed.path.hasPrefix(library.path + "/"))
+            XCTAssertTrue(
+                managed.resolvingSymlinksInPath().path.hasPrefix(library.resolvingSymlinksInPath().path + "/"))
             XCTAssertEqual(try Data(contentsOf: managed), bytes)
             XCTAssertEqual(try mode(managed) & 0o222, 0)
             let originalInode = try inode(managed)
@@ -151,7 +152,9 @@
             let originalInode = try inode(managed)
             let receipt = try database.confirmPevcapImport(preview: preview, createdAtMilliseconds: 1_700_000_000_100)
             XCTAssertFalse(receipt.duplicate)
-            XCTAssertEqual(receipt.managedArtifactPath, managed.path)
+            XCTAssertEqual(
+                URL(fileURLWithPath: receipt.managedArtifactPath).resolvingSymlinksInPath().path,
+                managed.resolvingSymlinksInPath().path)
             XCTAssertEqual(try inode(managed), originalInode)
             XCTAssertEqual(try mode(managed), 0o440)
             XCTAssertEqual(try Data(contentsOf: managed), bytes)
@@ -169,7 +172,7 @@
             let directory = parent.appendingPathComponent("cutout-staging-test-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             print("Capture staging runtime: \(ProcessInfo.processInfo.operatingSystemVersionString); \(directory.path)")
-            return directory.resolvingSymlinksInPath()
+            return directory
         }
 
         private func captureBuilder() -> MobilePevcapCaptureBuilder {
