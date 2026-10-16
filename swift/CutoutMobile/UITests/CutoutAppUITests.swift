@@ -7850,6 +7850,14 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5), app.debugDescription)
         let done = app.buttons["charging.editor.keyboard.done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5), app.debugDescription)
+        let keyboardPresented = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let frame = keyboard.frame
+                return frame.height > 0 && frame.minY > app.frame.minY
+                    && frame.maxY <= app.frame.maxY + 1
+            }, object: keyboard
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardPresented], timeout: 5), .completed, app.debugDescription)
         XCTAssertTrue(done.isHittable, done.debugDescription)
         XCTAssertGreaterThanOrEqual(done.frame.height, 44, done.debugDescription)
         XCTAssertLessThanOrEqual(
