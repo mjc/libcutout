@@ -26,6 +26,46 @@ enum ChargingCommunitySyncDebugEnablement {
     }
 }
 
+#if DEBUG
+    private struct ChargingCommunityAccountDeletionUITestFixture {
+        let baseURL: URL
+        let credential: ChargingCommunityCredential
+        let keychainID: String
+
+        static var isRequested: Bool {
+            CommandLine.arguments.contains("--ui-test-account-deletion")
+        }
+
+        static var supportsFixture: Bool {
+            #if targetEnvironment(simulator)
+                true
+            #else
+                false
+            #endif
+        }
+
+        static var current: Self? {
+            guard isRequested, supportsFixture else { return nil }
+            let environment = ProcessInfo.processInfo.environment
+            guard
+                let baseURLString = environment["CUTOUT_UI_TEST_ACCOUNT_BASE_URL"],
+                let baseURL = URL(string: baseURLString),
+                baseURL.scheme == "http",
+                ["127.0.0.1", "::1"].contains(baseURL.host?.lowercased() ?? ""),
+                baseURL.port != nil,
+                let identityID = environment["CUTOUT_UI_TEST_ACCOUNT_ID"], !identityID.isEmpty,
+                let token = environment["CUTOUT_UI_TEST_ACCOUNT_TOKEN"], !token.isEmpty,
+                let keychainID = environment["CUTOUT_UI_TEST_ACCOUNT_KEYCHAIN_ID"], !keychainID.isEmpty
+            else { return nil }
+            return Self(
+                baseURL: baseURL,
+                credential: ChargingCommunityCredential(identityID: identityID, token: token),
+                keychainID: keychainID
+            )
+        }
+    }
+#endif
+
 struct ChargingCommunityCredential: Codable, Equatable, Sendable {
     let identityID: String
     let token: String
@@ -34,12 +74,16 @@ struct ChargingCommunityCredential: Codable, Equatable, Sendable {
 enum ChargingCredentialRecord: Equatable, Sendable {
     case registrationStarted
     case ready(ChargingCommunityCredential)
+    case deletionPending(ChargingCommunityCredential)
+    case deleted
 }
 
 protocol ChargingCredentialStore: Sendable {
     func load() async throws -> ChargingCredentialRecord?
     func beginRegistration() async throws -> Bool
     func save(_ credential: ChargingCommunityCredential) async throws
+    func markDeletionPending(_ credential: ChargingCommunityCredential) async throws
+    func finishDeletion(token: String) async throws
 }
 
 enum ChargingCredentialStoreError: Error, Equatable {
@@ -48,27 +92,58 @@ enum ChargingCredentialStoreError: Error, Equatable {
 }
 
 struct KeychainChargingCredentialStore: ChargingCredentialStore {
-    private static let account = "charging-community-identity-v1"
+    static let productionAccount = "charging-community-identity-v1"
+    private let keychainAccount: String
+
+    init(account: String = Self.productionAccount) {
+        keychainAccount = account
+    }
 
     func load() async throws -> ChargingCredentialRecord? {
-        try await Task.detached(priority: .userInitiated) {
-            try Self.loadSynchronously()
+        let account = keychainAccount
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.loadSynchronously(account: account)
         }.value
     }
 
     func beginRegistration() async throws -> Bool {
-        try await Task.detached(priority: .userInitiated) {
-            try Self.beginRegistrationSynchronously()
+        let account = keychainAccount
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.beginRegistrationSynchronously(account: account)
         }.value
     }
 
     func save(_ credential: ChargingCommunityCredential) async throws {
+        let account = keychainAccount
         try await Task.detached(priority: .userInitiated) {
-            try Self.saveSynchronously(credential)
+            try Self.saveSynchronously(credential, account: account)
         }.value
     }
 
-    private static var query: [String: Any] {
+    func markDeletionPending(_ credential: ChargingCommunityCredential) async throws {
+        let account = keychainAccount
+        try await Task.detached(priority: .userInitiated) {
+            try Self.markDeletionPendingSynchronously(credential, account: account)
+        }.value
+    }
+
+    func finishDeletion(token: String) async throws {
+        let account = keychainAccount
+        try await Task.detached(priority: .userInitiated) {
+            try Self.finishDeletionSynchronously(token: token, account: account)
+        }.value
+    }
+
+    #if DEBUG
+        func seedIfMissing(_ credential: ChargingCommunityCredential) async throws -> Bool {
+            let account = keychainAccount
+            return try await Task.detached(priority: .userInitiated) {
+                try Self.seedSynchronously(credential, account: account)
+            }.value
+        }
+    #endif
+
+    private static func query(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Bundle.main.bundleIdentifier ?? "io.cutout.mobile",
@@ -76,8 +151,8 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
         ]
     }
 
-    private static func loadSynchronously() throws -> ChargingCredentialRecord? {
-        var request = query
+    private static func loadSynchronously(account: String) throws -> ChargingCredentialRecord? {
+        var request = query(account: account)
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -96,6 +171,13 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
                     throw ChargingCredentialStoreError.unavailable
                 }
                 return .ready(ChargingCommunityCredential(identityID: identityID, token: token))
+            case .deletionPending:
+                guard let identityID = stored.identityID, let token = stored.token else {
+                    throw ChargingCredentialStoreError.unavailable
+                }
+                return .deletionPending(ChargingCommunityCredential(identityID: identityID, token: token))
+            case .deleted:
+                return .deleted
             }
         } catch let error as ChargingCredentialStoreError {
             throw error
@@ -104,9 +186,9 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
         }
     }
 
-    private static func beginRegistrationSynchronously() throws -> Bool {
+    private static func beginRegistrationSynchronously(account: String) throws -> Bool {
         let data = try JSONEncoder().encode(StoredCredential(phase: .registrationStarted))
-        var request = query
+        var request = query(account: account)
         request[kSecValueData as String] = data
         request[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(request as CFDictionary, nil)
@@ -115,8 +197,8 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
         throw storeError(status)
     }
 
-    private static func saveSynchronously(_ credential: ChargingCommunityCredential) throws {
-        guard try loadSynchronously() == .registrationStarted else {
+    private static func saveSynchronously(_ credential: ChargingCommunityCredential, account: String) throws {
+        guard try loadSynchronously(account: account) == .registrationStarted else {
             throw ChargingCredentialStoreError.unavailable
         }
         let data = try JSONEncoder().encode(
@@ -125,11 +207,57 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
             )
         )
         let status = SecItemUpdate(
-            query as CFDictionary,
+            query(account: account) as CFDictionary,
             [kSecValueData as String: data] as CFDictionary
         )
         guard status == errSecSuccess else { throw storeError(status) }
     }
+
+    private static func markDeletionPendingSynchronously(
+        _ credential: ChargingCommunityCredential, account: String
+    ) throws {
+        let current = try loadSynchronously(account: account)
+        guard current == .ready(credential) || current == .deletionPending(credential) else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        let data = try JSONEncoder().encode(
+            StoredCredential(phase: .deletionPending, identityID: credential.identityID, token: credential.token)
+        )
+        let status = SecItemUpdate(
+            query(account: account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecSuccess else { throw storeError(status) }
+    }
+
+    private static func finishDeletionSynchronously(token: String, account: String) throws {
+        guard case .deletionPending(let credential) = try loadSynchronously(account: account), credential.token == token
+        else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        // Preserve the item as a tombstone so account admission cannot recreate an identity.
+        let data = try JSONEncoder().encode(StoredCredential(phase: .deleted))
+        let status = SecItemUpdate(
+            query(account: account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecSuccess else { throw storeError(status) }
+    }
+
+    #if DEBUG
+        private static func seedSynchronously(
+            _ credential: ChargingCommunityCredential, account: String
+        ) throws -> Bool {
+            let data = try JSONEncoder().encode(
+                StoredCredential(
+                    phase: .ready, identityID: credential.identityID, token: credential.token
+                )
+            )
+            var request = query(account: account)
+            request[kSecValueData as String] = data
+            request[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let status = SecItemAdd(request as CFDictionary, nil)
+            if status == errSecSuccess { return true }
+            if status == errSecDuplicateItem { return false }
+            throw storeError(status)
+        }
+    #endif
 
     private static func storeError(_ status: OSStatus) -> ChargingCredentialStoreError {
         status == errSecInteractionNotAllowed || status == errSecAuthFailed ? .locked : .unavailable
@@ -139,6 +267,8 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
         enum Phase: String, Codable {
             case registrationStarted
             case ready
+            case deletionPending
+            case deleted
         }
 
         let phase: Phase
@@ -167,6 +297,8 @@ enum ChargingCommunitySyncStatus: Equatable, Sendable {
     case throttled
     case storageUnavailable
     case registrationUncertain
+    case deletionPending
+    case deleted
 }
 
 @MainActor
@@ -182,7 +314,7 @@ final class ChargingCommunitySync {
 
     private static func makeShared() -> ChargingCommunitySync {
         ChargingCommunitySync(
-            credentialStore: KeychainChargingCredentialStore(),
+            credentialStore: defaultCredentialStore(),
             registerIdentity: {
                 let identity = try await mobileRegisterChargingIdentity()
                 return ChargingCommunityCredential(
@@ -217,6 +349,18 @@ final class ChargingCommunitySync {
         )
     }
 
+    private static func defaultCredentialStore() -> KeychainChargingCredentialStore {
+        #if DEBUG
+            if ChargingCommunityAccountDeletionUITestFixture.isRequested {
+                return KeychainChargingCredentialStore(
+                    account: ChargingCommunityAccountDeletionUITestFixture.current?.keychainID
+                        ?? "charging-community-ui-test-unconfigured"
+                )
+            }
+        #endif
+        return KeychainChargingCredentialStore()
+    }
+
     private static func waitForRetry(_ duration: Duration) async throws {
         try await Task.sleep(for: duration)
     }
@@ -229,6 +373,7 @@ final class ChargingCommunitySync {
     private let sleep: Sleep
     private let enabled: @MainActor () -> Bool
     private var activeTask: Task<ChargingCommunitySyncStatus, Never>?
+    private var accountDeletionInProgress = false
     private var runGeneration: UInt64 = 0
     private var syncRunState = MobileChargingSyncRunState(
         round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
@@ -260,7 +405,7 @@ final class ChargingCommunitySync {
 
     @discardableResult
     func run(explicitRetry: Bool = false) async -> ChargingCommunitySyncStatus {
-        guard enabled() else { return status }
+        guard enabled(), !accountDeletionInProgress else { return status }
         if let activeTask { return await activeTask.value }
 
         runGeneration &+= 1
@@ -278,6 +423,34 @@ final class ChargingCommunitySync {
         activeTask?.cancel()
         activeTask = nil
         runGeneration &+= 1
+    }
+
+    func cancelAndWait() async {
+        let task = activeTask
+        cancel()
+        if let task { _ = await task.value }
+    }
+
+    func pauseForAccountDeletion() async {
+        accountDeletionInProgress = true
+        await cancelAndWait()
+    }
+
+    func resumeAfterUnmarkedDeletionFailure() {
+        accountDeletionInProgress = false
+    }
+
+    func allowPublicRefreshAfterDeletion() {
+        accountDeletionInProgress = false
+        syncRunState = MobileChargingSyncRunState(
+            round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
+        )
+        status = .deleted
+    }
+
+    func allowPublicRefreshWhileDeletionPending() {
+        accountDeletionInProgress = false
+        status = .deletionPending
     }
 
     private func perform(explicitRetry: Bool) async -> ChargingCommunitySyncStatus {
@@ -315,6 +488,8 @@ final class ChargingCommunitySync {
                 }
             case .publicRefresh:
                 await refreshUnauthenticatedDirectory()
+                if case .deleted = stored { return .deleted }
+                if case .deletionPending = stored { return .deletionPending }
                 return .storageUnavailable
             case .requireExplicitRetry:
                 await refreshUnauthenticatedDirectory()
@@ -426,6 +601,8 @@ final class ChargingCommunitySync {
         switch record {
         case .ready: .ready
         case .registrationStarted: .registrationStarted
+        case .deletionPending: .deletionPending
+        case .deleted: .deleted
         case nil: .missing
         }
     }
@@ -457,5 +634,170 @@ final class ChargingCommunitySync {
         }
         guard let error = error as? MobileChargingError else { return .storageUnavailable }
         return status(for: mobileChargingSyncResult(error: error))
+    }
+}
+
+enum ChargingCommunityAccountDeletionState: Equatable, Sendable {
+    case loading
+    case noAccount
+    case active
+    case registrationUncertain
+    case deleting
+    case deletionPending
+    case deleted
+    case failed
+}
+
+@MainActor
+@Observable
+final class ChargingCommunityAccountDeletion {
+    typealias DeleteAccount = @MainActor (String) async throws -> UInt64
+    typealias SeedCredentialIfMissing = @MainActor (ChargingCommunityCredential) async throws -> Bool
+
+    static let shared = makeShared()
+
+    private static func makeShared() -> ChargingCommunityAccountDeletion {
+        #if DEBUG
+            if ChargingCommunityAccountDeletionUITestFixture.isRequested {
+                guard let fixture = ChargingCommunityAccountDeletionUITestFixture.current else {
+                    return ChargingCommunityAccountDeletion(
+                        credentialStore: KeychainChargingCredentialStore(
+                            account: "charging-community-ui-test-unconfigured"
+                        ),
+                        sync: .shared,
+                        deleteAccount: { _ in throw ChargingCredentialStoreError.unavailable }
+                    )
+                }
+                let store = KeychainChargingCredentialStore(account: fixture.keychainID)
+                return ChargingCommunityAccountDeletion(
+                    credentialStore: store,
+                    sync: .shared,
+                    deleteAccount: { token in
+                        guard token == fixture.credential.token else {
+                            throw MobileChargingError.Unauthorized
+                        }
+                        let database = try await RustPersistenceStore.open()
+                        let receipt = try await database.deleteCommunityAccountAtLoopback(
+                            token: token, baseUrl: fixture.baseURL.absoluteString
+                        )
+                        return receipt.completedAtMilliseconds
+                    },
+                    seedCredential: fixture.credential,
+                    seedCredentialIfMissing: { credential in
+                        try await store.seedIfMissing(credential)
+                    }
+                )
+            }
+        #endif
+
+        let store = KeychainChargingCredentialStore()
+        return ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: .shared,
+            deleteAccount: { token in
+                let database = try await RustPersistenceStore.open()
+                let receipt = try await database.deleteCommunityAccount(token: token)
+                return receipt.completedAtMilliseconds
+            }
+        )
+    }
+
+    private let credentialStore: any ChargingCredentialStore
+    private let sync: ChargingCommunitySync
+    private let submitDeletion: DeleteAccount
+    private let seedCredential: ChargingCommunityCredential?
+    private let seedCredentialIfMissing: SeedCredentialIfMissing?
+    private var generation: UInt64 = 0
+    private(set) var state: ChargingCommunityAccountDeletionState = .loading
+    private(set) var lastError: String?
+    private(set) var completedAtMilliseconds: UInt64?
+
+    init(
+        credentialStore: any ChargingCredentialStore,
+        sync: ChargingCommunitySync,
+        deleteAccount: @escaping DeleteAccount,
+        seedCredential: ChargingCommunityCredential? = nil,
+        seedCredentialIfMissing: SeedCredentialIfMissing? = nil
+    ) {
+        self.credentialStore = credentialStore
+        self.sync = sync
+        self.submitDeletion = deleteAccount
+        self.seedCredential = seedCredential
+        self.seedCredentialIfMissing = seedCredentialIfMissing
+    }
+
+    func refresh() async {
+        guard state != .deleting else { return }
+        generation &+= 1
+        let currentGeneration = generation
+        state = .loading
+        lastError = nil
+        do {
+            var record = try await credentialStore.load()
+            if record == nil, let seedCredential, let seedCredentialIfMissing {
+                _ = try await seedCredentialIfMissing(seedCredential)
+                record = try await credentialStore.load()
+            }
+            guard currentGeneration == generation else { return }
+            switch record {
+            case .ready: state = .active
+            case .deletionPending: state = .deletionPending
+            case .deleted: state = .deleted
+            case .registrationStarted: state = .registrationUncertain
+            case nil: state = .noAccount
+            }
+        } catch {
+            guard currentGeneration == generation else { return }
+            state = .failed
+            lastError = error.localizedDescription
+        }
+    }
+
+    func deleteAccount() async {
+        guard state == .active || state == .deletionPending else { return }
+        var deletionWasMarked = state == .deletionPending
+        generation &+= 1
+        let currentGeneration = generation
+        state = .deleting
+        lastError = nil
+        do {
+            let record = try await credentialStore.load()
+            let credential: ChargingCommunityCredential
+            switch record {
+            case .ready(let saved), .deletionPending(let saved):
+                credential = saved
+            case .deleted:
+                state = .deleted
+                return
+            case .registrationStarted, nil:
+                state = .noAccount
+                return
+            }
+
+            await sync.pauseForAccountDeletion()
+            guard currentGeneration == generation else { return }
+            if record == .ready(credential) {
+                try await credentialStore.markDeletionPending(credential)
+            }
+            deletionWasMarked = true
+            guard currentGeneration == generation else { return }
+            let completedAt = try await submitDeletion(credential.token)
+            guard currentGeneration == generation else { return }
+            completedAtMilliseconds = completedAt
+            try await credentialStore.finishDeletion(token: credential.token)
+            guard currentGeneration == generation else { return }
+            state = .deleted
+            sync.allowPublicRefreshAfterDeletion()
+        } catch {
+            guard currentGeneration == generation else { return }
+            if deletionWasMarked {
+                state = .deletionPending
+                sync.allowPublicRefreshWhileDeletionPending()
+            } else {
+                state = .active
+                sync.resumeAfterUnmarkedDeletionFailure()
+            }
+            lastError = error.localizedDescription
+        }
     }
 }

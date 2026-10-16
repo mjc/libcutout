@@ -7,8 +7,11 @@ import SwiftUI
 
 struct AppSetupView: View {
     let model: CutoutAppModel
+    let onAccountDeleted: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showsSoundCloud = false
+    @State private var confirmsAccountDeletion = false
+    @State private var accountDeletion: ChargingCommunityAccountDeletion
     @State private var path: [Destination]
 
     private enum Destination: Hashable {
@@ -16,8 +19,15 @@ struct AppSetupView: View {
         case captures
     }
 
-    init(model: CutoutAppModel, opensMusic: Bool = false) {
+    init(
+        model: CutoutAppModel,
+        opensMusic: Bool = false,
+        accountDeletion: ChargingCommunityAccountDeletion = .shared,
+        onAccountDeleted: @escaping () -> Void
+    ) {
         self.model = model
+        self.onAccountDeleted = onAccountDeleted
+        _accountDeletion = State(initialValue: accountDeletion)
         _path = State(initialValue: opensMusic ? [.music] : [])
     }
 
@@ -80,8 +90,67 @@ struct AppSetupView: View {
                     }
                     .accessibilityIdentifier("setup.captures")
                 }
+                Section(localizedAppText("setup.account.section")) {
+                    switch accountDeletion.state {
+                    case .loading:
+                        LabeledContent(localizedAppText("setup.account.status")) {
+                            ProgressView()
+                        }
+                    case .noAccount:
+                        Text(localizedAppText("setup.account.no_account"))
+                            .foregroundStyle(.secondary)
+                    case .active:
+                        Text(localizedAppText("setup.account.active"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        if let error = accountDeletion.lastError {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                    case .registrationUncertain:
+                        Text(localizedAppText("setup.account.registration_uncertain"))
+                            .foregroundStyle(.secondary)
+                    case .deleting:
+                        LabeledContent(localizedAppText("setup.account.deleting")) {
+                            ProgressView()
+                        }
+                    case .deletionPending:
+                        Text(localizedAppText("setup.account.retry_description"))
+                            .foregroundStyle(.red)
+                        if let error = accountDeletion.lastError {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                        Button(localizedAppText("setup.account.retry"), role: .destructive) {
+                            submitAccountDeletion()
+                        }
+                        .accessibilityIdentifier("setup.account.retry")
+                    case .deleted:
+                        Label(
+                            localizedAppText("setup.account.deleted"),
+                            systemImage: "checkmark.circle.fill"
+                        )
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("setup.account.deleted")
+                    case .failed:
+                        Text(localizedAppText("setup.account.load_failed"))
+                            .foregroundStyle(.red)
+                        if let error = accountDeletion.lastError {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                        Button(localizedAppText("setup.account.reload")) {
+                            Task { await accountDeletion.refresh() }
+                        }
+                        .accessibilityIdentifier("setup.account.reload")
+                    }
+                    if accountDeletion.state == .active {
+                        Button(localizedAppText("setup.account.delete"), role: .destructive) {
+                            confirmsAccountDeletion = true
+                        }
+                        .accessibilityIdentifier("setup.account.delete")
+                    }
+                }
             }
             .task { await model.loadRideAutostartSetting() }
+            .task { await accountDeletion.refresh() }
             .formStyle(.grouped)
             .navigationTitle(localizedAppText("picker.section.setup"))
             .accessibilityIdentifier("setup.screen")
@@ -134,6 +203,37 @@ struct AppSetupView: View {
                     }
             }
         }
+        .sheet(isPresented: $confirmsAccountDeletion) {
+            NavigationStack {
+                Form {
+                    Section {
+                        Text(localizedAppText("setup.account.confirm_message"))
+                        Text(localizedAppText("setup.account.before_delete"))
+                    }
+                    Section {
+                        Text(localizedAppText("setup.account.local_data"))
+                        Text(localizedAppText("setup.account.retention"))
+                    }
+                    Section {
+                        Button(localizedAppText("setup.account.confirm_delete"), role: .destructive) {
+                            confirmsAccountDeletion = false
+                            submitAccountDeletion()
+                        }
+                        .accessibilityIdentifier("setup.account.confirm-delete")
+                    }
+                }
+                .navigationTitle(localizedAppText("setup.account.confirm_title"))
+                .accessibilityIdentifier("setup.account.confirmation")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(localizedAppText("common.cancel")) {
+                            confirmsAccountDeletion = false
+                        }
+                        .accessibilityIdentifier("setup.account.cancel-delete")
+                    }
+                }
+            }
+        }
         .tint(PevDashboardColors.yellow)
     }
 
@@ -149,6 +249,15 @@ struct AppSetupView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("setup.done")
+        }
+    }
+
+    private func submitAccountDeletion() {
+        Task {
+            await accountDeletion.deleteAccount()
+            if accountDeletion.state == .deleted {
+                onAccountDeleted()
+            }
         }
     }
 }
