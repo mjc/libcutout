@@ -7192,9 +7192,10 @@ final class ChargingMapDeviceUITests: XCTestCase {
         #if !targetEnvironment(simulator)
             throw XCTSkip("Charging service acceptance requires Simulator")
         #endif
-        let baseURL = try XCTUnwrap(
-            ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_CHARGING_SERVICE_BASE_URL"].flatMap(URL.init(string:)),
-            "Run scripts/run-charging-service-ui-tests.py")
+        guard let baseURLString = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_CHARGING_SERVICE_BASE_URL"] else {
+            throw XCTSkip("Run scripts/run-charging-service-ui-tests.py")
+        }
+        let baseURL = try XCTUnwrap(URL(string: baseURLString), "Invalid charging service base URL")
         let runID = UUID().uuidString
         let owner = serviceSyncApp(baseURL: baseURL, clientID: runID + "-a")
         let voter = serviceSyncApp(baseURL: baseURL, clientID: runID + "-b")

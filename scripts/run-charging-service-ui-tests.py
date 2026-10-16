@@ -10,6 +10,7 @@ import http.server
 import json
 import os
 import platform
+import signal
 import shutil
 import socket
 import sqlite3
@@ -37,7 +38,53 @@ HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriz
 
 def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
     environment = {**os.environ, "CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0"}
-    return subprocess.run(command, cwd=ROOT, check=True, env=environment, **kwargs)
+    kwargs.setdefault("timeout", 600)
+    return run_process_group(command, cwd=ROOT, check=True, env=environment, **kwargs)
+
+
+def run_process_group(command: list[str], *, timeout: float, check: bool = False, **kwargs) -> subprocess.CompletedProcess:
+    process = subprocess.Popen(command, start_new_session=True, **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        time.sleep(1)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
+        raise
+    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    if check and process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+    return result
+
+
+def shutdown_simulator(udid: str) -> None:
+    shutdown = subprocess.run(["xcrun", "simctl", "shutdown", udid], cwd=ROOT,
+                              timeout=30, capture_output=True, text=True)
+    if shutdown.returncode == 0:
+        return
+
+    devices = subprocess.run(["xcrun", "simctl", "list", "devices", "--json"], cwd=ROOT,
+                             timeout=30, capture_output=True, text=True)
+    if devices.returncode == 0:
+        try:
+            groups = json.loads(devices.stdout)["devices"].values()
+            if any(device.get("udid") == udid and device.get("state") == "Shutdown"
+                   for group in groups for device in group):
+                return
+        except (KeyError, TypeError, ValueError):
+            pass
+    detail = shutdown.stderr.strip() or f"exit status {shutdown.returncode}"
+    if devices.returncode != 0:
+        detail += "; simulator state check failed: " + (devices.stderr.strip() or
+                                                         f"exit status {devices.returncode}")
+    raise RuntimeError(f"Could not shut down Simulator {udid}: {detail}")
 
 
 def check_environment(udid: str | None) -> dict:
@@ -52,7 +99,7 @@ def check_environment(udid: str | None) -> dict:
     device = None
     if udid is not None:
         devices = json.loads(subprocess.check_output(
-            ["xcrun", "simctl", "list", "devices", "available", "--json"], text=True
+            ["xcrun", "simctl", "list", "devices", "available", "--json"], text=True, timeout=30
         ))
         device = next((item for runtime, group in devices["devices"].items() if ".iOS-" in runtime
                        for item in group if item["udid"] == udid and item["isAvailable"]), None)
@@ -323,7 +370,8 @@ def main() -> int:
     evidence.mkdir(parents=True)
     database = evidence / "charging-service.sqlite"
     receipt = {"started_at": datetime.now(timezone.utc).isoformat(),
-               "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+               "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                                                           text=True, timeout=30).strip(),
                "source_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
                                  for path in [Path(__file__), ROOT / "swift/CutoutMobile/UITests/CutoutAppUITests.swift",
                                               ROOT / "swift/CutoutMobile/Tests/CutoutAppTests/ChargingServiceSyncTests.swift",
@@ -345,7 +393,8 @@ def main() -> int:
     original_error: BaseException | None = None
     try:
         with (evidence / "cargo-build.log").open("w") as log:
-            run(["cargo", "build", "--locked", "-p", "cutout-server"], stdout=log, stderr=subprocess.STDOUT)
+            run(["cargo", "build", "--locked", "-p", "cutout-server"], stdout=log,
+                stderr=subprocess.STDOUT, timeout=600)
         binary = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/cutout-server"
         if not binary.is_file():
             raise RuntimeError(f"Built cutout-server binary not found: {binary}")
@@ -370,15 +419,17 @@ def main() -> int:
             if args.native_only:
                 command = ["bash", "scripts/run-swift-package-tests.sh", "--filter", "ChargingServiceSyncTests"]
                 log_name = "native-test.log"
+                test_timeout = 1800
             else:
                 command = ["bash", "scripts/run-ios-ui-tests.sh", "--verbose", "--timeout", "1200", "--appearance", "light",
                            "--content-size", "large",
                            "-destination", f"platform=iOS Simulator,id={args.simulator_udid}", "-jobs", "2",
                            "-only-testing:" + SELECTOR]
                 log_name = "ui-test.log"
+                test_timeout = 1500
             with (evidence / log_name).open("w") as test_log:
-                subprocess.run(command, cwd=ROOT, check=True, env=test_environment,
-                               stdout=test_log, stderr=subprocess.STDOUT)
+                run_process_group(command, cwd=ROOT, check=True, env=test_environment,
+                                  stdout=test_log, stderr=subprocess.STDOUT, timeout=test_timeout)
             result = readback(database)
             result["proxy"] = state.snapshot()
             result["public_list_status"], result["public_list"] = api("/v1/charging-spots")
@@ -420,8 +471,7 @@ def main() -> int:
         if proxy_thread is not None:
             cleanup(lambda: proxy_thread.join(timeout=5))
         if args.simulator_udid is not None:
-            cleanup(lambda: subprocess.run(["xcrun", "simctl", "shutdown", args.simulator_udid], cwd=ROOT,
-                                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            cleanup(lambda: shutdown_simulator(args.simulator_udid))
         if cleanup_errors:
             receipt["cleanup_errors"] = cleanup_errors
             receipt["outcome"] = "failed"
