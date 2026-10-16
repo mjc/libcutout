@@ -418,7 +418,10 @@ final class CutoutAppUITests: XCTestCase {
             let consent = app.switches["setup.diagnostics.automatic"]
             XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
             scrollElementFrameIntoViewport(consent, in: app.collectionViews.firstMatch, maxScrolls: 8)
-            return consent
+            let control = consent.switches.firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(control.isHittable, app.debugDescription)
+            return control
         }
 
         func waitForValue(_ value: String, of control: XCUIElement) {
