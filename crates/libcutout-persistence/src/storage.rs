@@ -4141,7 +4141,12 @@ impl RideDatabase {
             }) {
                 Ok(Some(receipt)) => {
                     publication.validate_duplicate(&receipt)?;
-                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+                    validate_existing_pevcap_confirmation(
+                        self.path.as_ref(),
+                        &receipt,
+                        preview,
+                        publication,
+                    )?;
                     return Ok(PevcapImportReceipt {
                         duplicate: false,
                         ..receipt
@@ -4175,7 +4180,7 @@ impl RideDatabase {
         publication: &CapturePublication,
     ) -> Result<PevcapImportReceipt, StorageError> {
         publication.validate_duplicate(&receipt)?;
-        validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+        validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview, publication)?;
         capture_data::store(self, preview, preview.source_path())?;
         self.request(|reply| Command::PublishCaptureData {
             digest: preview.artifact_digest.clone(),
@@ -7811,6 +7816,7 @@ fn validate_existing_pevcap_confirmation(
     database_path: &Path,
     receipt: &PevcapImportReceipt,
     preview: &PevcapImportPreview,
+    publication: &CapturePublication,
 ) -> Result<(), StorageError> {
     let directory = pevcap_import_directory(database_path);
     ensure_managed_pevcap_directory(&directory)?;
@@ -7824,16 +7830,22 @@ fn validate_existing_pevcap_confirmation(
     let managed_preview =
         preflight_pevcap(&receipt.managed_artifact_path, preview.encoding(), limits)
             .map_err(|_| StorageError::PevcapPreviewChanged)?;
-    let outcome_matches = match &receipt.recording {
-        Some(_) => {
-            receipt.location_count == 0
-                && receipt.ride_id.is_none()
-                && receipt.outcome == PevcapImportOutcome::CaptureOnly
+    // A submission derivative retains GPS bytes without deriving a ride. An existing ordinary
+    // import of the same bytes still has its original ride and must retain import validation.
+    let submission_capture_only = match publication {
+        CapturePublication::SubmissionSnapshot => {
+            receipt.outcome == PevcapImportOutcome::CaptureOnly
         }
-        None => {
-            receipt.location_count == managed_preview.location_count
-                && receipt.outcome == managed_preview.outcome
-        }
+        CapturePublication::Import | CapturePublication::Recording(_) => false,
+    };
+    let capture_only = receipt.recording.is_some() || submission_capture_only;
+    let outcome_matches = if capture_only {
+        receipt.location_count == 0
+            && receipt.ride_id.is_none()
+            && receipt.outcome == PevcapImportOutcome::CaptureOnly
+    } else {
+        receipt.location_count == managed_preview.location_count
+            && receipt.outcome == managed_preview.outcome
     };
     if receipt.artifact_digest != managed_preview.artifact_digest
         || receipt.record_count != managed_preview.record_count

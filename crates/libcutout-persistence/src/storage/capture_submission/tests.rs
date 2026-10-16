@@ -155,6 +155,128 @@ fn retain(database: &RideDatabase, receipt: &SavedDatabaseCapture, origin: Captu
         .unwrap();
 }
 
+fn gps_recording(database: &RideDatabase, directory: &std::path::Path) -> LiveCaptureId {
+    let writer = recording(database, directory);
+    assert_eq!(
+        writer.record_location(
+            cutout_core::PevcapLocationSample::new(
+                MonotonicTimestamp::new(10),
+                cutout_core::PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_010,
+                    latitude_degrees: 39.7,
+                    longitude_degrees: -104.9,
+                    altitude_meters: 1.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+                None,
+                None,
+            )
+            .unwrap()
+        ),
+        CaptureWriteOutcome::Accepted
+    );
+    let (id, receipt) = finished(writer);
+    retain(database, &receipt, CaptureOrigin::Manual);
+    id
+}
+
+#[test]
+fn capture_submission_gps_snapshot_prepare_recovers_after_publication_before_status_insert() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let id = gps_recording(&database, directory.path());
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let snapshot = directory.path().join("snapshot.jsonl");
+    database.export_live_capture(id, &snapshot).unwrap();
+    let bytes = std::fs::read(&snapshot).unwrap();
+    let preview = database
+        .preflight_pevcap(&snapshot, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.location_count(), 1);
+    let receipt = database
+        .confirm_pevcap_publication(
+            &preview,
+            1_700_000_001_000,
+            &CapturePublication::SubmissionSnapshot,
+        )
+        .unwrap();
+    assert!(receipt.ride_id.is_none());
+    assert_eq!(receipt.location_count, 0);
+    assert!(receipt.recording.is_none());
+    assert!(database.capture_submission(source).unwrap().is_none());
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    // The derivative committed, but its Send status did not: retry must reuse those bytes.
+    let prepared = reopened.prepare_capture_submission(source).unwrap();
+    assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
+    assert!(prepared.categories.location);
+    assert_eq!(prepared.metadata.sha256, receipt.artifact_digest);
+    assert_eq!(
+        reopened.prepare_capture_submission(source).unwrap(),
+        prepared
+    );
+    assert_eq!(
+        reopened
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides(),
+        []
+    );
+    let recovered = directory.path().join("recovered.jsonl");
+    reopened
+        .export_pevcap_capture(&prepared.metadata.sha256, &recovered)
+        .unwrap();
+    assert_eq!(std::fs::read(recovered).unwrap(), bytes);
+    // Ordinary GPS import validation must not reinterpret this derivative as a derived ride.
+    assert!(matches!(
+        reopened.confirm_pevcap_import(&preview, 1_700_000_002_000),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+}
+
+#[test]
+fn capture_submission_reuses_existing_gps_import_receipt() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let id = gps_recording(&database, directory.path());
+    let snapshot = directory.path().join("snapshot.jsonl");
+    database.export_live_capture(id, &snapshot).unwrap();
+    let preview = database
+        .preflight_pevcap(&snapshot, PevcapEncoding::Jsonl)
+        .unwrap();
+    let imported = database
+        .confirm_pevcap_import(&preview, 1_700_000_001_000)
+        .unwrap();
+    let ride_id = imported
+        .ride_id
+        .expect("GPS import must retain its derived ride");
+    assert_eq!(imported.location_count, 1);
+
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    assert!(prepared.categories.location);
+    assert_eq!(prepared.metadata.sha256, imported.artifact_digest);
+    let rides = database
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(rides.rides().len(), 1);
+    assert_eq!(rides.rides()[0].id(), ride_id);
+    let duplicate = database
+        .confirm_pevcap_import(&preview, 1_700_000_002_000)
+        .unwrap();
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.ride_id, Some(ride_id));
+    assert_eq!(duplicate.location_count, 1);
+}
+
 #[test]
 fn capture_submission_prepares_unknown_decoder_without_gps_and_reuses_durable_identity() {
     let directory = tempfile::tempdir().unwrap();

@@ -13,11 +13,11 @@ credential is invalid. There is no background expiry worker; cleanup therefore
 occurs when that route is next called.
 
 The server currently stores contributor credentials, charging spots, votes,
-operation receipts, quotas, authored reports, moderation audit entries, and
+operation receipts, quotas, authored reports, moderation audit entries,
 verification idempotency records, and explicit private diagnostic capture
-submissions. It has no published-route table, ride-backup, or outbox service.
+submissions. It has no published-route table or ride-backup service.
 Deletion removes the contributor
-row, credential, votes, operation receipts, quotas, authored reports, and
+row, credential, votes, operation receipts, quotas, authored reports,
 verification records, private capture bytes, their metadata and receipts,
 cancellation tombstones, capture request quotas, and the private capture review
 capability. It anonymizes moderation audit authors as the system
@@ -40,7 +40,8 @@ recreate it. Wrong-owner access returns not found. Private capture review needs
 the separately provisioned `identity --private-capture-reviewer` capability;
 charging moderation alone does not permit access. The upload API permits up to
 512 MiB per capture, 1 GiB retained per owner, and 10 GiB retained globally, with
-two concurrent transfers and bounded request budgets. It uses private staging
+two concurrent transfers globally, one per account, and bounded request budgets.
+It uses private staging
 files, removed on failure and reclaimed on service startup, then commits bytes
 and the receipt together in SQLite. Request cancellation can race with a
 completed commit; receipt lookup or explicit DELETE reconciles that outcome.

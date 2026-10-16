@@ -4700,6 +4700,94 @@ fn pevcap_confirmation_reconciles_a_committed_finish_response_loss() {
 }
 
 #[test]
+fn capture_submission_gps_snapshot_recovers_lost_publication_response() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let writer = LiveCaptureWriter::start_with_database(
+        directory.path().join("private-original.jsonl"),
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "unsupported-wheel",
+        None,
+        &LiveCaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+        database.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        writer.try_send_record(
+            PevcapRecord::inbound_notification(
+                MonotonicTimestamp::new(10),
+                GattChannel::from_bytes([0x11; 16]),
+                GattChannel::from_bytes([0x22; 16]),
+                vec![0xff, 0x00, 0xa5],
+            )
+            .with_phone_location(PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_010,
+                latitude_degrees: 39.7,
+                longitude_degrees: -104.9,
+                altitude_meters: 1.0,
+                horizontal_accuracy_meters: Some(3.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: None,
+                course_accuracy_degrees: None,
+            })
+        ),
+        CaptureWriteOutcome::Accepted
+    );
+    let crate::CaptureWriterFinish::DatabaseFinished {
+        live_capture_id,
+        receipt,
+        ..
+    } = writer.finish_without_export().unwrap()
+    else {
+        panic!("database completion required");
+    };
+    database
+        .retain_finished_database_capture(
+            &receipt,
+            cutout_core::CaptureOrigin::Manual,
+            Some("Unverified advertisement"),
+            WallClockUnixTimestamp::new(1_700_000_001_000),
+        )
+        .unwrap();
+    let source = crate::CaptureSubmissionSource::LiveCapture(live_capture_id);
+    let expected_path = directory.path().join("expected.jsonl");
+    database
+        .export_live_capture(live_capture_id, &expected_path)
+        .unwrap();
+    let expected_bytes = std::fs::read(expected_path).unwrap();
+
+    RideDatabase::fail_next_pevcap_finish_response_for_test();
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert!(prepared.categories.location);
+    assert_eq!(prepared.phase, crate::CaptureSubmissionPhase::Prepared);
+    assert_eq!(
+        database.prepare_capture_submission(source).unwrap(),
+        prepared
+    );
+    assert_eq!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides(),
+        []
+    );
+    let recovered_path = directory.path().join("recovered.jsonl");
+    database
+        .export_pevcap_capture(&prepared.metadata.sha256, &recovered_path)
+        .unwrap();
+    assert_eq!(std::fs::read(recovered_path).unwrap(), expected_bytes);
+    assert!(!directory.path().join("private-original.jsonl").exists());
+}
+
+#[test]
 fn duplicate_pevcap_confirmation_rejects_tampered_reviewed_facts() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(

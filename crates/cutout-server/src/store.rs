@@ -8,6 +8,7 @@ use rusqlite::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     path::Path,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -36,6 +37,7 @@ pub struct Store {
     connection: Arc<Mutex<Connection>>,
     work: Arc<Semaphore>,
     pub(crate) capture_uploads: Arc<Semaphore>,
+    capture_actors: Arc<Mutex<HashSet<String>>>,
     pub(crate) capture_staging: Arc<std::path::PathBuf>,
 }
 
@@ -92,6 +94,7 @@ impl Store {
             connection: Arc::new(Mutex::new(connection)),
             work: Arc::new(Semaphore::new(32)),
             capture_uploads: Arc::new(Semaphore::new(2)),
+            capture_actors: Arc::new(Mutex::new(HashSet::new())),
             capture_staging: Arc::new(staging.into()),
         })
     }

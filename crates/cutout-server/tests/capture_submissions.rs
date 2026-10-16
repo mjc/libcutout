@@ -589,6 +589,22 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
         )
         .await;
     }
+    let inspector = rusqlite::Connection::open(&database).expect("inspector");
+    let owner_id: String = inspector
+        .query_row(
+            "SELECT id FROM contributors WHERE token_hash=?1",
+            [format!("{:x}", Sha256::digest(owner.as_bytes()))],
+            |row| row.get(0),
+        )
+        .expect("owner identity");
+    let principal = format!("capture-upload:{owner_id}");
+    let (previous_window, previous_attempts): (u64, u64) = inspector
+        .query_row(
+            "SELECT window_start_ms,count FROM quotas WHERE principal=?1 AND period_ms=3600000",
+            [&principal],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("two completed upload admissions");
     let operation = Uuid::new_v4().to_string();
     let bytes = capture();
     let metadata = serde_json::to_string(&metadata(&bytes, "manual")).expect("metadata");
@@ -610,14 +626,19 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
         .await
         .expect("partial body");
     // The durable attempt budget establishes that the request reached authenticated admission.
-    let inspector = rusqlite::Connection::open(&database).expect("inspector");
-    tokio::time::timeout(std::time::Duration::from_secs(5),async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            let attempts:u64=inspector.query_row("SELECT coalesce(sum(count),0) FROM quotas WHERE principal LIKE 'capture-upload:%'",[],|row|row.get(0)).expect("budget");
-            if attempts>=3 {break}
+            let (window,attempts):(u64,u64)=inspector.query_row(
+                "SELECT window_start_ms,count FROM quotas WHERE principal=?1 AND period_ms=3600000",
+                [&principal],|row|Ok((row.get(0)?,row.get(1)?))).expect("owner hourly budget");
+            if window != previous_window || attempts > previous_attempts {
+                break;
+            }
             tokio::task::yield_now().await;
         }
-    }).await.expect("upload admitted");
+    })
+    .await
+    .expect("upload admitted");
     let path = format!("/v1/capture-submissions/{operation}");
     assert_eq!(
         server.request(Method::DELETE, &path, &owner).await.status(),

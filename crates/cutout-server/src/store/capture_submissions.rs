@@ -7,8 +7,10 @@ use cutout_core::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::{
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
@@ -18,11 +20,31 @@ const GLOBAL_BYTES: u64 = 10 * OWNER_BYTES;
 const STAGING_PREFIX: &str = "cutout-capture-";
 pub(crate) const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
+/// One actor and one global slot, retired together by their sole owner.
+#[derive(Debug)]
+pub(crate) struct CaptureTransferLease {
+    actor_id: String,
+    actors: Arc<Mutex<HashSet<String>>>,
+    global: Option<OwnedSemaphorePermit>,
+}
+
+impl Drop for CaptureTransferLease {
+    fn drop(&mut self) {
+        let mut actors = match self.actors.lock() {
+            Ok(actors) => actors,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        actors.remove(&self.actor_id);
+        // Retire both slots before another transfer for this actor can enter.
+        drop(self.global.take());
+    }
+}
+
 /// Owns both temporary bytes and admission until all detached blocking work finishes.
 #[derive(Debug)]
 pub(crate) struct StagedCapture {
     pub(crate) path: PathBuf,
-    _permit: OwnedSemaphorePermit,
+    _permit: CaptureTransferLease,
 }
 impl Drop for StagedCapture {
     fn drop(&mut self) {
@@ -69,6 +91,24 @@ fn staging_directory(path: &Path) -> Result<(), Error> {
 }
 
 impl Store {
+    pub(crate) fn capture_transfer(&self, actor: &Actor) -> Result<CaptureTransferLease, Error> {
+        let mut actors = self.capture_actors.lock().map_err(|_| Error::Unavailable)?;
+        if actors.contains(&actor.id) {
+            return Err(Error::Throttled);
+        }
+        let global = self
+            .capture_uploads
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Throttled)?;
+        actors.insert(actor.id.clone());
+        Ok(CaptureTransferLease {
+            actor_id: actor.id.clone(),
+            actors: self.capture_actors.clone(),
+            global: Some(global),
+        })
+    }
+
     pub(crate) async fn capture_transfer_budget(&self, actor: Actor) -> Result<(), Error> {
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
@@ -131,12 +171,11 @@ impl Store {
         .map_err(|_| Error::Unavailable)?
     }
 
-    pub(crate) async fn stage_capture(&self) -> Result<(StagedCapture, tokio::fs::File), Error> {
-        let permit = self
-            .capture_uploads
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::Throttled)?;
+    pub(crate) async fn stage_capture(
+        &self,
+        actor: &Actor,
+    ) -> Result<(StagedCapture, tokio::fs::File), Error> {
+        let permit = self.capture_transfer(actor)?;
         let directory = self.capture_staging.clone();
         let (stage, file) = tokio::task::spawn_blocking(move || {
             staging_directory(&directory)?;
@@ -275,13 +314,29 @@ impl Store {
         self.call(move |connection| {
             let transaction = connection.transaction().map_err(db_error)?;
             authorize_content(&transaction, &actor, &operation)?;
-            transaction
+            let rowid = transaction
                 .query_row(
-                    "SELECT substr(payload,?2,?3) FROM capture_submissions WHERE operation_id=?1",
-                    params![operation, offset + 1, DOWNLOAD_CHUNK],
+                    "SELECT rowid FROM capture_submissions WHERE operation_id=?1",
+                    [operation],
                     |row| row.get(0),
                 )
-                .map_err(db_error)
+                .map_err(db_error)?;
+            let blob = transaction
+                .blob_open(
+                    rusqlite::MAIN_DB,
+                    "capture_submissions",
+                    "payload",
+                    rowid,
+                    true,
+                )
+                .map_err(db_error)?;
+            let position = usize::try_from(offset).map_err(|_| Error::Invalid)?;
+            let mut chunk = vec![0; blob.len().saturating_sub(position).min(DOWNLOAD_CHUNK)];
+            if !chunk.is_empty() {
+                blob.read_at_exact(&mut chunk, position).map_err(db_error)?;
+            }
+            blob.close().map_err(db_error)?;
+            Ok(chunk)
         })
         .await
     }
@@ -432,13 +487,33 @@ mod tests {
     use super::*;
     use crate::store::{Registration, Role};
 
+    async fn contributor(store: &Store) -> Actor {
+        let identity = store
+            .identity(Registration::Operator {
+                role: Role::Contributor,
+            })
+            .await
+            .expect("contributor");
+        store.authenticate(identity.token).await.expect("actor")
+    }
+
     #[tokio::test]
     async fn capture_staging_leases_bound_uploads_and_cleanup_partial_files() {
         let directory = tempfile::TempDir::new().expect("directory");
         let store = Store::open(&directory.path().join("server.sqlite")).expect("store");
-        let (first, file) = store.stage_capture().await.expect("first");
-        let (second, second_file) = store.stage_capture().await.expect("second");
-        assert_eq!(store.stage_capture().await.err(), Some(Error::Throttled));
+        let first_actor = contributor(&store).await;
+        let second_actor = contributor(&store).await;
+        let third_actor = contributor(&store).await;
+        let (first, file) = store.stage_capture(&first_actor).await.expect("first");
+        assert_eq!(
+            store.stage_capture(&first_actor).await.err(),
+            Some(Error::Throttled)
+        );
+        let (second, second_file) = store.stage_capture(&second_actor).await.expect("second");
+        assert_eq!(
+            store.stage_capture(&third_actor).await.err(),
+            Some(Error::Throttled)
+        );
         let path = first.path.clone();
         #[cfg(unix)]
         {
@@ -451,7 +526,10 @@ mod tests {
         drop(file);
         drop(first);
         assert!(!path.exists());
-        let (replacement, replacement_file) = store.stage_capture().await.expect("released lease");
+        let (replacement, replacement_file) = store
+            .stage_capture(&first_actor)
+            .await
+            .expect("released lease");
         drop((second_file, second, replacement_file, replacement));
         assert_eq!(
             fs::read_dir(store.capture_staging.as_ref())
@@ -561,7 +639,8 @@ mod tests {
     async fn capture_restart_cleanup_removes_only_owned_staging_names() {
         let directory = tempfile::TempDir::new().expect("directory");
         let store = Store::open(&directory.path().join("server.sqlite")).expect("store");
-        let (stage, file) = store.stage_capture().await.expect("stage");
+        let actor = contributor(&store).await;
+        let (stage, file) = store.stage_capture(&actor).await.expect("stage");
         let staging = stage
             .path
             .parent()
