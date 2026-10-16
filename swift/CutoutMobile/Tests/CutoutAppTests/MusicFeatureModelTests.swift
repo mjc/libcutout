@@ -317,34 +317,38 @@ final class MusicFeatureModelTests: XCTestCase {
         _ = try state.discard()
     }
 
-    func testStopWaitsForSQLiteHistoryWithoutABluetoothCaptureReceipt() async throws {
+    func testStopWaitsForAcceptedHistoryWithoutABluetoothCaptureReceipt() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
         let state = MobileRideMapState()
         let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
-        let model = makeModel(state: state, defaults: suite.defaults)
+        let identityHeld = expectation(description: "accepted history observation awaits its original ride identity")
+        var releaseIdentity: CheckedContinuation<Void, Never>?
+        defer { releaseIdentity?.resume() }
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            correlationRideIDReader: {
+                identityHeld.fulfill()
+                await withCheckedContinuation { releaseIdentity = $0 }
+                return ride.rideID
+            })
         let adoptionError = await model.adoptHistoryForNewRideAsync()
         XCTAssertNil(adoptionError)
-        var connection: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(MobileRideMapState.debugDatabasePath, &connection), SQLITE_OK)
-        defer {
-            sqlite3_exec(connection, "ROLLBACK", nil, nil, nil)
-            sqlite3_close(connection)
-        }
-        XCTAssertEqual(sqlite3_exec(connection, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK)
-
         let pending = try XCTUnwrap(
             model.submitObservation(
                 observation(atMs: 200, identifier: "sqlite-before-stop"),
                 wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7))
-        // Capture the admitted prefix before yielding to its asynchronous SQLite work.
+        await fulfillment(of: [identityHeld], timeout: 2)
+        // Hold accepted work before its real SQLite receipt. An external writer lock
+        // can fail a deferred read-to-write upgrade instead of delaying that receipt.
         let stop = try state.beginLifecycleCommand(
             event: .stop, expected: XCTUnwrap(ride.commandToken), atMs: 300)
         try await Task.sleep(for: .milliseconds(50))
         if case .completed = try state.pollLifecycleCommand(stop) {
-            XCTFail("Stop must await its accepted SQLite history while the database write is held")
+            XCTFail("Stop must await its accepted observation's SQLite history receipt")
         }
-        XCTAssertEqual(sqlite3_exec(connection, "COMMIT", nil, nil, nil), SQLITE_OK)
+        releaseIdentity?.resume()
+        releaseIdentity = nil
 
         let accepted = await pending.value
         XCTAssertTrue(accepted)

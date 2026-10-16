@@ -256,7 +256,7 @@ in
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForSQLiteHistoryWithoutABluetoothCaptureReceipt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForAcceptedHistoryWithoutABluetoothCaptureReceipt \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testProviderResetMakesUnsettledAcceptedObservationFailStopExplicitly \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOptionalOldMusicReadbackCannotDelayStopOrOverwriteNewerPresentation \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testHistoryDeletionPreventsLateReadbackFromRestoringMetadataAndKeepsLivePlayer \

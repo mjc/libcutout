@@ -1,5 +1,5 @@
 use crate::{Error, model::SpotInput};
-use cutout_ride_maps::{ChargingConnector, ChargingSupply};
+use cutout_ride_maps::{ChargingConnector, ChargingPrice, ChargingSupply};
 
 // This baseline filters explicit abuse before publication. Reports and moderator removal
 // cover context, languages and evasions a vocabulary filter cannot reliably classify.
@@ -41,6 +41,7 @@ pub(crate) fn validate(input: &SpotInput) -> Result<(), Error> {
     let mut text = std::iter::once(input.access_note.as_str())
         .chain(input.name.as_deref())
         .chain(input.hours.as_deref())
+        .chain(input.price.as_ref().map(ChargingPrice::currency))
         .chain(
             input
                 .supplies

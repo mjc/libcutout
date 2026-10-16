@@ -23,6 +23,20 @@ fn regular(path: &Path) -> Result<bool, StorageError> {
     let metadata = fs::symlink_metadata(path)?;
     Ok(metadata.is_file() && !metadata.file_type().is_symlink())
 }
+// An old receipt can outlive its sole managed file. Only absence is already clean;
+// unreadable, nonregular and symlink sources must remain visible cleanup failures.
+fn open_file_only_capture(path: &Path) -> Result<Option<File>, StorageError> {
+    let opened: Result<File, StorageError> = (|| {
+        if !regular(path)? {
+            return Err(StorageError::InvalidPath);
+        }
+        Ok(File::open(path)?)
+    })();
+    match opened {
+        Err(StorageError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        result => result.map(Some),
+    }
+}
 fn digest(file: &mut File) -> Result<(String, u64), StorageError> {
     file.seek(SeekFrom::Start(0))?;
     let mut hash = Sha256::new();
@@ -181,10 +195,10 @@ pub(super) fn purge_imports(
                 bytes: std::io::Cursor::new(Vec::new()),
             })
         } else {
-            if !regular(&old_owned)? {
-                return Err(StorageError::InvalidPath);
-            }
-            Box::new(File::open(&old_owned)?)
+            let Some(file) = open_file_only_capture(&old_owned)? else {
+                continue;
+            };
+            Box::new(file)
         };
         let mut stage = NamedTempFile::new_in(&directory)?;
         let mut checked = CheckedReader {
@@ -323,4 +337,167 @@ fn relink(
     transaction.execute("UPDATE pevcap_captures SET receipt_digest=artifact_digest,next_sequence=?1 WHERE artifact_digest=?2",params![sequence,new])?;
     transaction.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod missing_file_tests {
+    use super::*;
+    use crate::storage::capture_music_privacy::{purge, tests::capture};
+
+    fn connection() -> Connection {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::migrate(&mut connection).unwrap();
+        connection
+    }
+
+    fn receipt(connection: &Connection, digest: &str, path: &Path, size: usize) {
+        connection.execute(
+            "INSERT INTO pevcap_imports(artifact_digest,artifact_path,outcome,artifact_size,record_count,location_count,imported_at_ms)
+             VALUES(?1,?2,'capture_only',?3,1,0,100)",
+            params![digest,path.to_str(),size],
+        ).unwrap();
+    }
+
+    fn finished_live_capture(connection: &Connection) -> (String, serde_json::Value) {
+        let jsonl = capture().encode(PevcapEncoding::Jsonl).unwrap();
+        let text = String::from_utf8(jsonl).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        let id = uuid::Uuid::new_v4().to_string();
+        connection.execute(
+            "INSERT INTO live_capture_sessions(capture_id,state,integrity,header_json,started_at_ms,finished_at_ms,next_sequence,stored_bytes)
+             VALUES(?1,'finished','complete',?2,0,0,2,?3)",
+            params![id,b"{}".as_slice(),2+lines[1].len()+lines[2].len()],
+        ).unwrap();
+        for (sequence, kind, payload) in [(0, "notification", lines[1]), (1, "music", lines[2])] {
+            connection.execute(
+                "INSERT INTO live_capture_events(capture_id,sequence,event_kind,receipt_monotonic_ms,payload)
+                 VALUES(?1,?2,?3,0,?4)",params![id,sequence,kind,payload.as_bytes()],
+            ).unwrap();
+        }
+        let mut expected: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        expected["record"].as_object_mut().unwrap().remove("music");
+        (id, expected)
+    }
+
+    fn assert_music_free(path: &Path, encoding: PevcapEncoding) {
+        let retained =
+            cutout_core::PevcapCapture::decode(&fs::read(path).unwrap(), encoding).unwrap();
+        assert_eq!(
+            retained.music_events,
+            Vec::<cutout_core::PevcapMusicEvent>::new()
+        );
+        assert!(retained.records[0].music.is_none());
+        assert_eq!(retained.records[0].bytes.as_ref(), [255, 0, 165]);
+    }
+
+    #[test]
+    fn missing_file_only_receipt_does_not_block_other_capture_music_cleanup() {
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let mut connection = connection();
+            let directory = tempfile::tempdir().unwrap();
+            let database = directory.path().join("rides.sqlite");
+            let managed = pevcap_import_directory(&database);
+            fs::create_dir(&managed).unwrap();
+            let extension = if encoding == PevcapEncoding::Jsonl {
+                "jsonl"
+            } else {
+                "pevcap"
+            };
+            // This legitimate pre-backfill receipt sorts first, but neither a managed
+            // original nor canonical SQLite chunks remain for it. Keep its metadata.
+            let missing = "0".repeat(64);
+            let missing_path = managed.join(format!("{missing}.{extension}"));
+            receipt(&connection, &missing, &missing_path, 100);
+            let bytes = capture().encode(encoding).unwrap();
+            let old = hex::encode(Sha256::digest(&bytes));
+            let owned = managed.join(format!("{old}.{extension}"));
+            fs::write(&owned, &bytes).unwrap();
+            receipt(&connection, &old, &owned, bytes.len());
+            connection.execute(
+                "INSERT INTO pevcap_captures(artifact_digest,receipt_digest,encoding,artifact_size,written_bytes,next_sequence)
+                 VALUES(?1,?1,?2,?3,?3,1)",
+                params![old,if encoding==PevcapEncoding::Jsonl {"jsonl"} else {"binary"},bytes.len()],
+            ).unwrap();
+            connection.execute("INSERT INTO pevcap_capture_chunks(artifact_digest,sequence,payload) VALUES(?1,0,?2)",params![old,bytes]).unwrap();
+            let (live, expected_record) = finished_live_capture(&connection);
+            let exports = directory.path().join("CaptureExports");
+            fs::create_dir(&exports).unwrap();
+            let export = exports.join(format!("capture-{}.jsonl", uuid::Uuid::new_v4()));
+            fs::write(&export, capture().encode(PevcapEncoding::Jsonl).unwrap()).unwrap();
+
+            purge(&mut connection, &database, &[exports]).unwrap();
+
+            let preserved: String = connection
+                .query_row(
+                    "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest=?1",
+                    [&missing],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(preserved, missing_path.to_str().unwrap());
+            let rewritten: String = connection
+                .query_row(
+                    "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest!=?1",
+                    [&missing],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_music_free(Path::new(&rewritten), encoding);
+            assert!(!owned.exists());
+            let payload: Vec<u8> = connection
+                .query_row(
+                    "SELECT payload FROM live_capture_events WHERE capture_id=?1 AND sequence=0",
+                    [&live],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let (codec,original):(i64,Option<i64>)=connection.query_row("SELECT payload_encoding,payload_original_bytes FROM live_capture_events WHERE capture_id=?1 AND sequence=0",[&live],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+            let decoded =
+                crate::storage::live_capture::payload::decode(payload, codec, original).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&decoded).unwrap(),
+                expected_record
+            );
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT next_sequence FROM live_capture_sessions WHERE capture_id=?1",
+                        [live],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                1
+            );
+            assert_music_free(&export, PevcapEncoding::Jsonl);
+        }
+    }
+
+    #[test]
+    fn file_only_nonregular_sources_still_fail_cleanup() {
+        for symlink in [false, true] {
+            let mut connection = connection();
+            let directory = tempfile::tempdir().unwrap();
+            let database = directory.path().join("rides.sqlite");
+            let managed = pevcap_import_directory(&database);
+            fs::create_dir(&managed).unwrap();
+            let digest = "0".repeat(64);
+            let path = managed.join(format!("{digest}.jsonl"));
+            if symlink {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(directory.path().join("missing-external"), &path)
+                    .unwrap();
+                #[cfg(not(unix))]
+                continue;
+            } else {
+                fs::create_dir(&path).unwrap();
+            }
+            receipt(&connection, &digest, &path, 100);
+            assert!(matches!(
+                purge_imports(&mut connection, &database),
+                Err(StorageError::InvalidPath)
+            ));
+            assert!(fs::symlink_metadata(path).is_ok());
+        }
+    }
 }

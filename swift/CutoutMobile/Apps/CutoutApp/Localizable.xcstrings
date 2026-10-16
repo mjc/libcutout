@@ -327,8 +327,11 @@
     "captures.file_unavailable" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture file is unavailable." } } }
     },
+    "captures.preparing" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing recording…" } } }
+    },
     "captures.privacy" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Captures may include device identifiers, location and listening history. Share only with someone you trust." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Shared captures may include device identifiers, location and timing. Share only with someone you trust." } } }
     },
     "captures.technical" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Technical Details" } } }

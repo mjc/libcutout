@@ -192,7 +192,7 @@ struct CaptureArtifactDetailView: View {
                             Task { await export.export(source: source) }
                         }
                     } else {
-                        ProgressView("Preparing recording…")
+                        ProgressView(localizedAppText("captures.preparing"))
                     }
                 } else {
                     Label(localizedAppText("captures.file_unavailable"), systemImage: "doc.badge.ellipsis")
@@ -280,7 +280,7 @@ private struct DatabaseCaptureDetailView: View {
                         Task { await export.export(id: capture.liveCaptureId) }
                     } label: {
                         if export.isExporting {
-                            ProgressView("Preparing recording…")
+                            ProgressView(localizedAppText("captures.preparing"))
                         } else {
                             Label("Export recording", systemImage: "square.and.arrow.up")
                         }
