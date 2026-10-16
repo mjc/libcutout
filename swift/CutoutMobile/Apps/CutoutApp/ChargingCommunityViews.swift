@@ -55,7 +55,7 @@ struct ChargingCommunityStatusView: View {
 extension ChargingCommunitySyncStatus {
     var messageKey: String? {
         switch self {
-        case .notStarted, .syncing, .synced: nil
+        case .notStarted, .syncing, .synced, .deleted: nil
         case .pending: "charging.sync.pending"
         case .offline: "charging.sync.offline"
         case .authenticationRequired: "charging.sync.unauthorized"
@@ -65,7 +65,6 @@ extension ChargingCommunitySyncStatus {
         case .storageUnavailable: "charging.status.storage_failed"
         case .registrationUncertain: "charging.sync.registration_interrupted"
         case .deletionPending: "charging.account.deletion_pending"
-        case .deleted: "charging.account.deleted"
         }
     }
 

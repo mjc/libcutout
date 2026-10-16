@@ -5,10 +5,13 @@ import XCTest
 
 @MainActor
 final class ChargingCommunitySyncTests: XCTestCase {
-    func testRoutineSyncHasNoStatusMessage() {
-        for status in [ChargingCommunitySyncStatus.notStarted, .syncing, .synced] {
+    func testRoutineSyncAndDeletedAccountHaveNoStatusMessage() {
+        for status in [ChargingCommunitySyncStatus.notStarted, .syncing, .synced, .deleted] {
             XCTAssertNil(status.messageKey)
         }
+        XCTAssertFalse(ChargingCommunitySyncStatus.deleted.canRetry)
+        XCTAssertNotNil(ChargingCommunitySyncStatus.deletionPending.messageKey)
+        XCTAssertFalse(ChargingCommunitySyncStatus.deletionPending.canRetry)
         XCTAssertNotNil(ChargingCommunitySyncStatus.offline.messageKey)
         XCTAssertNotNil(ChargingCommunitySyncStatus.conflict.messageKey)
     }
