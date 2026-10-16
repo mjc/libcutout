@@ -80,14 +80,14 @@
     {
       "scene": "ride-tracking",
       "file": "ride-tracking.png",
-      "caption": "Ride history",
+      "caption": "Ride History",
       "method": "rendered-html-mockup",
       "label": "Rendered mockup · synthetic data",
       "dimensionsPixels": {
         "width": 1290,
         "height": 2796
       },
-      "syntheticData": "Fictional recent ride cards in a history list with the map preview scrolled offscreen; search, date, and vehicle filters remain pinned.",
+      "syntheticData": "Rendered approximation of Ride History with a synthetic route, fictional recent rides, and display-only summary values: 0.6 mi, 4 min 20 sec elapsed, and 3 min 50 sec moving time. These are synthetic and are not actual ride readbacks.",
       "provenance": {
         "referenceUiRevision": "070a862781280e85ed0a49a1bf4ba696244c26b8",
         "testOutcome": "not run; rendered mockup",
@@ -108,13 +108,22 @@
           "headless": true
         },
         "visibleElements": [
+          "CutOut app shell with Map navigation",
+          "ride mode controls",
           "pinned search, date, and vehicle filters",
-          "map preview scrolled offscreen",
-          "fictional recent ride cards"
-        ]
+          "cropped native map basemap with synthetic route and start/end markers",
+          "Recent rides list with first synthetic ride selected",
+          "synthetic ride summary values shown as display-only content"
+        ],
+        "basemapSource": {
+          "relativePathFromMockupSource": "../charging-map.png",
+          "sha256": "bf12c49126065f23886a3f3889cabf5f6f38bac6a198bb03aba4ecea19ff2712",
+          "use": "Native basemap only; clean CSS crop excludes charging markers."
+        },
+        "renderedApproximation": true
       },
-      "sha256": "a9e1c65d0ad6ef290bb4d10718af113fa17cf4f296efeec0b427fefdd5d81820",
-      "assetStatus": "reviewed"
+      "assetStatus": "reviewed",
+      "sha256": "45695981098b4420ae1e43f6d341a3d806586ac339362c2de90378f0fb49081d"
     },
     {
       "scene": "charging-map",

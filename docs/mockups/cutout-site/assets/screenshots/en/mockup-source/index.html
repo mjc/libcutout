@@ -18,6 +18,7 @@
       </div>
       <header class="navigation-bar">
         <button class="back-button" type="button"><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" /></svg> Back</button>
+        <span class="navigation-brand">CutOut</span>
         <span class="navigation-title" id="navigation-title">Tune</span>
       </header>
 
@@ -71,23 +72,33 @@
           <div class="history-filter-row"><button>Last 30 days <i>⌄</i></button><span class="filter-divider"></span><button>All vehicles <i>⌄</i></button><span class="filter-divider"></span><button class="clear-filter" aria-label="Clear filters">×</button></div>
         </div>
         <div class="history-scroll" id="history-scroll">
+          <div class="history-map" role="img" aria-label="Synthetic ride route on an Apple Maps basemap">
+            <img src="../charging-map.png" alt="" />
+            <svg class="history-route" viewBox="0 0 430 270" aria-hidden="true">
+              <path class="route-shadow" d="M78 208 L103 186 L132 177 L153 157 L176 145 L198 124 L222 111 L249 89 L268 70" />
+              <path class="route-stroke" d="M78 208 L103 186 L132 177 L153 157 L176 145 L198 124 L222 111 L249 89 L268 70" />
+              <g class="history-marker start-marker" transform="translate(78 208)"><circle class="marker-base" r="13"/><circle class="marker-ring" r="10"/><circle class="marker-core" r="4"/><rect class="marker-label" x="-22" y="-43" width="44" height="18" rx="5"/><text x="0" y="-31">Start</text></g>
+              <g class="history-marker end-marker" transform="translate(268 70)"><circle class="marker-base" r="13"/><circle class="marker-ring" r="10"/><circle class="marker-core" r="4"/><rect class="marker-label" x="-32" y="-43" width="64" height="18" rx="5"/><text x="0" y="-31">Ride end</text></g>
+            </svg>
+            <div class="map-attribution"><span class="apple-mark" aria-hidden="true"></span> Maps <a href="#legal">Legal</a></div>
+          </div>
           <section class="history-list" aria-label="Recent rides">
             <h2>Recent rides</h2>
-            <article class="history-row">
+            <article class="history-row selected-row" aria-selected="true">
               <div class="history-primary"><strong>Oct 16, 2026 at 6:42 AM</strong><span>NOSFET Aero</span></div>
-              <div class="history-measures"><strong>2.1 mi</strong><span>Elapsed 5 min 20 sec</span><span>Moving 5 min 20 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
+              <div class="history-measures"><strong>0.6 mi</strong><span>Elapsed time: 4 min 20 sec</span><span>Moving time: 3 min 50 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
             </article>
             <article class="history-row">
               <div class="history-primary"><strong>Oct 15, 2026 at 5:18 PM</strong><span>Refloat Onewheel</span></div>
-              <div class="history-measures"><strong>4.8 mi</strong><span>Elapsed 18 min 42 sec</span><span>Moving 16 min 31 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
+              <div class="history-measures"><strong>4.8 mi</strong><span>Elapsed time: 18 min 42 sec</span><span>Moving time: 16 min 31 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
             </article>
             <article class="history-row">
               <div class="history-primary"><strong>Oct 12, 2026 at 9:07 AM</strong><span>NOSFET Aero</span></div>
-              <div class="history-measures"><strong>7.3 mi</strong><span>Elapsed 31 min 05 sec</span><span>Moving 28 min 46 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
+              <div class="history-measures"><strong>7.3 mi</strong><span>Elapsed time: 31 min 05 sec</span><span>Moving time: 28 min 46 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
             </article>
             <article class="history-row">
               <div class="history-primary"><strong>Oct 10, 2026 at 4:26 PM</strong><span>Refloat Onewheel</span></div>
-              <div class="history-measures"><strong>3.6 mi</strong><span>Elapsed 14 min 12 sec</span><span>Moving 12 min 58 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
+              <div class="history-measures"><strong>3.6 mi</strong><span>Elapsed time: 14 min 12 sec</span><span>Moving time: 12 min 58 sec</span></div><span class="row-chevron" aria-hidden="true">›</span>
             </article>
           </section>
         </div>
