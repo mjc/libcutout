@@ -75,20 +75,23 @@
             try await Task.detached(priority: .utility) {
                 let nowWall = UInt64(Date().timeIntervalSince1970 * 1_000)
                 let nowMonotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
-                let startOffset: UInt64 = 300_000
-                guard nowWall > startOffset, nowMonotonic > startOffset else {
+                let duration: UInt64 = 300_000
+                let sampleInterval: UInt64 = 1_000
+                guard nowWall > duration, nowMonotonic > duration else {
                     throw CocoaError(.coderInvalidValue)
                 }
-                let startedWall = nowWall - startOffset
-                let startedMonotonic = nowMonotonic - startOffset
-                let rideID = try database.createRideWithMonotonicStart(
-                    source: .live,
-                    createdAtMilliseconds: startedWall,
-                    monotonicCreatedAtMilliseconds: startedMonotonic
-                )
-                _ = try database.transition(id: rideID, event: .start, monotonicAtMilliseconds: startedMonotonic)
+                let startedWall = nowWall - duration
+                let startedMonotonic = nowMonotonic - duration
+                let core = MobileRideMapCore.withDatabase(database: database)
+                guard core.initializationError() == nil,
+                    try core.restore(atMs: nowMonotonic) == nil
+                else { throw CocoaError(.coderInvalidValue) }
+                let started = try core.startGpsOnly(atMs: startedMonotonic)
+                guard let recording = started.recordingToken else {
+                    throw CocoaError(.coderInvalidValue)
+                }
                 // A synthetic route on the public Platte River Trail, smoothed into evenly
-                // spaced samples for a five-minute ride.
+                // spaced one-second samples for a five-minute ride.
                 let anchors: [(latitude: Double, longitude: Double)] = [
                     (39.72860, -105.01659),
                     (39.72942, -105.01714),
@@ -116,8 +119,11 @@
                 }
                 let totalDistanceMeters = cumulativeDistanceMeters.last ?? 0
                 guard totalDistanceMeters > 0 else { throw CocoaError(.coderInvalidValue) }
-                for index in 0...50 {
-                    let traveledDistanceMeters = totalDistanceMeters * Double(index) / 50
+                let sampleCount = Int(duration / sampleInterval) + 1
+                let speedMetersPerSecond = totalDistanceMeters / (Double(duration) / 1_000)
+                for index in 0..<sampleCount {
+                    let elapsed = UInt64(index) * sampleInterval
+                    let traveledDistanceMeters = totalDistanceMeters * Double(elapsed) / Double(duration)
                     let endIndex = min(
                         cumulativeDistanceMeters.firstIndex(where: { $0 >= traveledDistanceMeters }) ?? anchors.count
                             - 1,
@@ -134,22 +140,38 @@
                     let end = anchors[endIndex]
                     let latitude = start.latitude + (end.latitude - start.latitude) * fraction
                     let longitude = start.longitude + (end.longitude - start.longitude) * fraction
-                    let elapsed = UInt64(Double(startOffset) * traveledDistanceMeters / totalDistanceMeters)
-                    let admitted = try database.appendLocation(
-                        id: rideID,
-                        location: MobileRideLocationDto(
-                            latitudeDegrees: latitude,
-                            longitudeDegrees: longitude,
-                            monotonicMilliseconds: startedMonotonic + elapsed,
-                            wallClockUnixMilliseconds: startedWall + elapsed,
-                            horizontalAccuracyMillimetres: 4_000,
-                            source: .live
-                        )
+                    let wallClockUnixMs = startedWall + elapsed
+                    let monotonicMs = startedMonotonic + elapsed
+                    let sample = MobilePhoneLocationSampleDto(
+                        wallClockUnixMs: wallClockUnixMs,
+                        sourceTimestampUnixSeconds: Double(wallClockUnixMs) / 1_000,
+                        latitudeDegrees: latitude,
+                        longitudeDegrees: longitude,
+                        altitudeMeters: 1_600,
+                        horizontalAccuracyMeters: 4,
+                        verticalAccuracyMeters: 6,
+                        speedMetersPerSecond: speedMetersPerSecond,
+                        speedAccuracyMetersPerSecond: 0.2,
+                        courseDegrees: nil,
+                        courseAccuracyDegrees: nil
                     )
-                    guard admitted == .accepted else { throw CocoaError(.coderInvalidValue) }
+                    let outcomes = try core.ingestLocationCallbackWithOutcomes(
+                        recording: recording,
+                        receiptMonotonicMs: monotonicMs,
+                        receiptWallClockUnixMs: wallClockUnixMs,
+                        samples: [sample]
+                    )
+                    guard outcomes.count == 1,
+                        case .accepted = outcomes[0].decision
+                    else { throw CocoaError(.coderInvalidValue) }
                 }
-                guard let record = try database.findRide(rideId: rideID),
-                    record.state == .active, record.summary.pointCount == 51
+                guard let snapshot = try core.currentSnapshot(atMs: nowMonotonic),
+                    snapshot.state == .active,
+                    snapshot.summary.pointCount == UInt64(sampleCount),
+                    snapshot.summary.distanceMeters > 3_000,
+                    snapshot.summary.durationMilliseconds == duration,
+                    case .complete = snapshot.summary.elapsedTime,
+                    case .complete = snapshot.summary.movingTime
                 else { throw CocoaError(.coderInvalidValue) }
             }.value
         }
