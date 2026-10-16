@@ -57,7 +57,7 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AlphaSignupCommand {
-    /// List the bounded sync queue without printing applicant fields.
+    /// List sync and removal status; matched removal requests include the applicant email.
     Status,
     /// Retry a failed sync for one request.
     Retry { request_id: String },

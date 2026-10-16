@@ -670,10 +670,6 @@ impl Store {
                 ).map_err(db_error)?;
                 transaction.execute("INSERT INTO alpha_signup_outbox(request_id,state) VALUES (?1,'pending')", [&request_id]).map_err(db_error)?;
             }
-            transaction.execute(
-                "UPDATE alpha_signup_removal_requests SET signup_id=?1,status='pending' WHERE email_hash=?2 AND status='unmatched'",
-                rusqlite::params![request_id, request.email_hash],
-            ).map_err(db_error)?;
             let receipt_id = Uuid::new_v4().to_string();
             transaction.execute(
                 "INSERT INTO alpha_signup_idempotency(idempotency_key,payload_hash,request_id,receipt_id) VALUES (?1,?2,?3,?4)",
@@ -1060,6 +1056,43 @@ mod tests {
                 .iter()
                 .any(|record| record["status"] == "unmatched" && record["email"].is_null())
         );
+    }
+
+    #[tokio::test]
+    async fn removal_claim_before_signup_stays_unmatched_after_later_signup() {
+        let directory = tempfile::TempDir::new().expect("database tempdir");
+        let store = Store::open(&directory.path().join("alpha.sqlite")).expect("store");
+        store
+            .accept_removal_request(
+                Uuid::new_v4().to_string(),
+                hash(b"later@example.com"),
+                hash(b"later@example.com"),
+            )
+            .await
+            .expect("unmatched removal request");
+        let signup_id = seed_signup(&store, "later@example.com").await;
+        let status = store
+            .signup_removal_status()
+            .await
+            .expect("operator status");
+        assert!(status.iter().any(|record| {
+            record["status"] == "unmatched"
+                && record["email"].is_null()
+                && record["signup_request_id"].is_null()
+        }));
+        let linked: u32 = store
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT count(*) FROM alpha_signup_removal_requests WHERE signup_id=?1",
+                        [&signup_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_error)
+            })
+            .await
+            .expect("linked request count");
+        assert_eq!(linked, 0);
     }
 
     #[tokio::test]
