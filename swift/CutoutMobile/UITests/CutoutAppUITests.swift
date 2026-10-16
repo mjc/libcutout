@@ -2632,7 +2632,13 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
         }
 
-        let detail = try finishCaptureAndOpenArtifact()
+        // Database captures finish durably before an explicit file export.
+        enterCapture()
+        let finish = app.buttons["capture.stop"]
+        waitForReady(finish)
+        finish.tap()
+        let detail = app.descendants(matching: .any)["captures.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
         let review = app.buttons["captures.send.review"]
         scrollElementFrameIntoViewport(review, in: detail, maxScrolls: 12)
         waitForReady(review)
@@ -2663,9 +2669,6 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(cancelled.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
-        let share = app.descendants(matching: .any)["captures.share"]
-        scrollElementFrameIntoViewport(share, in: detail, maxScrolls: 12)
-        waitForReady(share)
         retainCaptureScreenshot("Private Send declined and cancelled; local capture retained")
 
         app.navigationBars.buttons.firstMatch.tap()
