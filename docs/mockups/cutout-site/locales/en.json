@@ -423,7 +423,7 @@
     "privacyCloudflareTitle": "Spam protection",
     "privacyCloudflare": "Cloudflare Turnstile checks browser and interaction signals to help protect this form. It does not verify who owns an email address. The form does not include your email or PEV details in the challenge data.",
     "privacyRetentionTitle": "Retention",
-    "privacyRetention": "Active signup requests with no invitation recorded are removed from the server database and matching private project document after 90 days. Historical copies may remain in backups or other records under separate retention policies.",
+    "privacyRetention": "Signup requests are removed from the server database and matching private project document after 90 days. Historical copies may remain in backups or other records under separate retention policies.",
     "privacyContact": "For the project’s other privacy information, see the existing Privacy Policy.",
     "privacyPolicyLink": "Open the Privacy Policy",
     "privacyBack": "Return to the alpha request",

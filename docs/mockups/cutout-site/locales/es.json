@@ -423,7 +423,7 @@
     "privacyCloudflareTitle": "Protección contra correo no deseado",
     "privacyCloudflare": "Cloudflare Turnstile comprueba señales del navegador y de interacción para ayudar a proteger este formulario. No verifica quién es dueño de un correo electrónico. El formulario no incluye tu correo ni tus datos del PEV en los datos de la comprobación.",
     "privacyRetentionTitle": "Conservación",
-    "privacyRetention": "Las solicitudes de registro activas sin una invitación registrada se eliminan de la base de datos del servidor y del documento privado correspondiente después de 90 días. Las copias históricas pueden permanecer en copias de seguridad u otros registros conforme a políticas de conservación independientes.",
+    "privacyRetention": "Las solicitudes de registro se eliminan de la base de datos del servidor y del documento privado correspondiente después de 90 días. Las copias históricas pueden permanecer en copias de seguridad u otros registros conforme a políticas de conservación independientes.",
     "privacyContact": "Para consultar otra información sobre privacidad del proyecto, visita la Política de privacidad actual.",
     "privacyPolicyLink": "Abrir la Política de privacidad",
     "privacyBack": "Volver a la solicitud de la alfa",
