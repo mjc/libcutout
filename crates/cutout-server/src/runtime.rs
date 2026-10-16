@@ -45,6 +45,21 @@ enum Command {
     },
     /// Check that the database is readable and passes SQLite's quick check.
     Check,
+    /// Inspect and operate the private alpha signup outbox from the server host.
+    AlphaSignup {
+        #[command(subcommand)]
+        command: AlphaSignupCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AlphaSignupCommand {
+    /// List sync and removal status; matched removal requests include the applicant email.
+    Status,
+    /// Retry a failed sync for one request.
+    Retry { request_id: String },
+    /// Remove one request from Lific and the local database.
+    Withdraw { request_id: String },
 }
 
 /// Runs the service/operator command selected by CLI arguments.
@@ -60,9 +75,10 @@ pub async fn run_from_arguments() -> Result<(), Error> {
 fn open_store(arguments: &Arguments) -> Result<Store, Error> {
     match &arguments.command {
         Command::Serve { .. } | Command::Identity { .. } => Store::open(&arguments.database),
-        Command::Revoke { .. } | Command::Backup { .. } | Command::Check => {
-            Store::open_existing(&arguments.database)
-        }
+        Command::Revoke { .. }
+        | Command::Backup { .. }
+        | Command::Check
+        | Command::AlphaSignup { .. } => Store::open_existing(&arguments.database),
     }
 }
 
@@ -85,6 +101,24 @@ async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
         Command::Revoke { identity } => store.revoke(id(&identity)?).await,
         Command::Backup { output } => store.backup(output).await,
         Command::Check => store.check().await,
+        Command::AlphaSignup { command } => match command {
+            AlphaSignupCommand::Status => {
+                let status = serde_json::json!({
+                    "sync": store.signup_sync_status().await?,
+                    "removal_requests": store.signup_removal_status().await?,
+                });
+                serde_json::to_writer(std::io::stdout().lock(), &status)
+                    .map_err(|_| Error::Unavailable)
+            }
+            AlphaSignupCommand::Retry { request_id } => {
+                store.retry_signup_sync_local(id(&request_id)?).await
+            }
+            AlphaSignupCommand::Withdraw { request_id } => {
+                store
+                    .request_signup_withdrawal_local(id(&request_id)?)
+                    .await
+            }
+        },
     }
 }
 
@@ -93,12 +127,23 @@ async fn serve(
     trusted_proxy: Option<IpAddr>,
     store: Store,
 ) -> Result<(), Error> {
+    let lific_worker = crate::signup_sync::LificSync::from_env();
+    let signup_state = match (
+        crate::signup::SignupState::enabled_from_env(),
+        lific_worker.is_some(),
+    ) {
+        (Some(state), true) => state,
+        _ => crate::signup::SignupState::from_env(),
+    };
+    if let Some(lific) = lific_worker {
+        tokio::spawn(crate::signup_sync::run_worker(store.clone(), lific));
+    }
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .map_err(|_| Error::Unavailable)?;
     let address = listener.local_addr().map_err(|_| Error::Unavailable)?;
     tracing::info!(%address, "charging directory listening");
-    let router = build_router(store, trusted_proxy);
+    let router = build_router_with_signup(store, trusted_proxy, signup_state);
     axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
@@ -108,10 +153,15 @@ async fn serve(
     .map_err(|_| Error::Unavailable)
 }
 
-fn build_router(store: Store, trusted_proxy: Option<IpAddr>) -> axum::Router {
+fn build_router_with_signup(
+    store: Store,
+    trusted_proxy: Option<IpAddr>,
+    signup: crate::signup::SignupState,
+) -> axum::Router {
     match trusted_proxy {
-        Some(proxy) => crate::router(store).layer(axum::Extension(crate::TrustedProxy(proxy))),
-        None => crate::router(store),
+        Some(proxy) => crate::http::router_with_signup_state(store, signup)
+            .layer(axum::Extension(crate::TrustedProxy(proxy))),
+        None => crate::http::router_with_signup_state(store, signup),
     }
 }
 

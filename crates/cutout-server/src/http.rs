@@ -21,7 +21,7 @@ use axum::{
 use serde::Serialize;
 use std::net::IpAddr;
 
-mod registration;
+pub(crate) mod registration;
 
 /// A proxy peer allowed to supply one client address through `X-Real-IP`.
 /// The proxy must overwrite that header rather than forwarding caller input.
@@ -66,9 +66,19 @@ impl IntoResponse for Error {
 /// to overwrite `X-Real-IP` with the client address. Other peers cannot select
 /// their budget by sending forwarding headers.
 pub fn router(store: Store) -> Router {
+    router_with_signup_state(store, crate::signup::SignupState::from_env())
+}
+
+pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::SignupState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/readyz", get(ready))
+        .route("/v1/alpha-signup/config", get(crate::signup::public_config))
+        .route("/v1/alpha-signup/requests", post(crate::signup::submit))
+        .route(
+            "/v1/alpha-signup-removals",
+            post(crate::signup::submit_removal),
+        )
         .route("/v1/identities", post(registration::identity))
         .route(
             "/v1/identities/current",
@@ -90,8 +100,22 @@ pub fn router(store: Store) -> Router {
             get(moderator_spot).put(moderate),
         )
         .route("/v1/moderation/audit", get(audit))
+        .route("/v1/moderation/alpha-signups", get(alpha_signups))
+        .route(
+            "/v1/moderation/alpha-signup-removals",
+            get(alpha_signup_removals),
+        )
+        .route(
+            "/v1/moderation/alpha-signups/{id}/retry",
+            post(retry_alpha_signup),
+        )
+        .route(
+            "/v1/moderation/alpha-signups/{id}",
+            delete(withdraw_alpha_signup),
+        )
         .merge(crate::site::router())
         .layer(DefaultBodyLimit::max(32 * 1024))
+        .layer(axum::Extension(signup))
         .layer(axum::middleware::from_fn(deadline))
         .with_state(store)
 }
@@ -297,4 +321,44 @@ async fn audit(
     let actor = moderator_actor(&store, &headers).await?;
     let query = query.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok(Json(store.audit(actor, query).await?))
+}
+
+async fn alpha_signups(
+    State(store): State<Store>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, Error> {
+    let actor = moderator_actor(&store, &headers).await?;
+    Ok(Json(store.moderator_signup_sync_status(actor).await?))
+}
+
+async fn alpha_signup_removals(
+    State(store): State<Store>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, Error> {
+    let actor = moderator_actor(&store, &headers).await?;
+    Ok(Json(store.moderator_signup_removal_status(actor).await?))
+}
+
+async fn retry_alpha_signup(
+    State(store): State<Store>,
+    Path(target): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, Error> {
+    let actor = moderator_actor(&store, &headers).await?;
+    store
+        .moderator_retry_signup_sync(actor, id(&target)?)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn withdraw_alpha_signup(
+    State(store): State<Store>,
+    Path(target): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, Error> {
+    let actor = moderator_actor(&store, &headers).await?;
+    store
+        .moderator_request_signup_withdrawal(actor, id(&target)?)
+        .await?;
+    Ok(StatusCode::ACCEPTED)
 }

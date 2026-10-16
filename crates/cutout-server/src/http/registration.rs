@@ -43,7 +43,7 @@ pub(super) async fn delete_current(
     Ok(Json(store.delete_current(token).await?))
 }
 
-fn registration_source(
+pub(crate) fn registration_source(
     peer: IpAddr,
     trusted_proxy: Option<TrustedProxy>,
     headers: &HeaderMap,
