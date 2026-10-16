@@ -987,13 +987,11 @@ mod tests {
         verify_task.abort();
     }
 
-    #[tokio::test]
-    async fn removal_requests_are_generic_idempotent_review_records_and_complete_on_withdrawal() {
-        let directory = tempfile::TempDir::new().expect("database tempdir");
-        let store = Store::open(&directory.path().join("alpha.sqlite")).expect("store");
+    async fn seed_signup(store: &Store, email: &str) -> String {
+        let email_hash = hash(email.to_ascii_lowercase().as_bytes());
         let signup = ValidRequest::try_from(Request {
             idempotency_key: Uuid::new_v4().to_string(),
-            email: "rider@example.com".into(),
+            email: email.into(),
             pev_type: None,
             pev_model: "Model".into(),
             requested_accessories: String::new(),
@@ -1003,12 +1001,30 @@ mod tests {
         })
         .expect("valid signup");
         store.accept_signup(signup).await.expect("accept signup");
+        store
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT id FROM alpha_signup_requests WHERE email_hash=?1",
+                        [&email_hash],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_error)
+            })
+            .await
+            .expect("signup id")
+    }
 
+    #[tokio::test]
+    async fn removal_receipts_are_generic_idempotent_and_operator_visible() {
+        let directory = tempfile::TempDir::new().expect("database tempdir");
+        let store = Store::open(&directory.path().join("alpha.sqlite")).expect("store");
+        seed_signup(&store, "rider@example.com").await;
         let email_hash = hash(b"rider@example.com");
         let payload_hash = hash(b"rider@example.com");
         let key = Uuid::new_v4().to_string();
         let known = store
-            .accept_removal_request(key.clone(), payload_hash.clone(), email_hash.clone())
+            .accept_removal_request(key.clone(), payload_hash.clone(), email_hash)
             .await
             .expect("known removal request");
         let retry = store
@@ -1017,6 +1033,7 @@ mod tests {
             .expect("retry lookup")
             .expect("stored receipt");
         assert_eq!(known.request_id, retry.request_id);
+        assert!(Uuid::parse_str(&known.request_id).is_ok());
 
         let unknown = store
             .accept_removal_request(
@@ -1028,8 +1045,7 @@ mod tests {
             .expect("unknown removal request");
         assert_eq!(known.status, unknown.status);
         assert_ne!(known.request_id, unknown.request_id);
-        assert!(!known.request_id.is_empty());
-        assert!(!unknown.request_id.is_empty());
+        assert!(Uuid::parse_str(&unknown.request_id).is_ok());
         let status = store
             .signup_removal_status()
             .await
@@ -1042,21 +1058,25 @@ mod tests {
         assert!(
             status
                 .iter()
-                .any(|record| { record["status"] == "unmatched" && record["email"].is_null() })
+                .any(|record| record["status"] == "unmatched" && record["email"].is_null())
         );
+    }
 
-        let signup_id: String = store
-            .call(move |connection| {
-                connection
-                    .query_row(
-                        "SELECT id FROM alpha_signup_requests WHERE email_hash=?1",
-                        [&email_hash],
-                        |row| row.get(0),
-                    )
-                    .map_err(db_error)
-            })
+    #[tokio::test]
+    async fn completed_withdrawal_scrubs_email_hash_and_payload_hash_but_keeps_receipt() {
+        let directory = tempfile::TempDir::new().expect("database tempdir");
+        let store = Store::open(&directory.path().join("alpha.sqlite")).expect("store");
+        let signup_id = seed_signup(&store, "rider@example.com").await;
+        let key = Uuid::new_v4().to_string();
+        let payload_hash = hash(b"rider@example.com");
+        let receipt = store
+            .accept_removal_request(
+                key.clone(),
+                payload_hash.clone(),
+                hash(b"rider@example.com"),
+            )
             .await
-            .expect("signup id");
+            .expect("removal request");
         store
             .remove_withdrawn_signup(signup_id)
             .await
@@ -1101,7 +1121,7 @@ mod tests {
             .await
             .expect("completed request replay")
             .expect("completed receipt retained");
-        assert_eq!(completed_retry.request_id, known.request_id);
+        assert_eq!(completed_retry.request_id, receipt.request_id);
     }
 
     #[tokio::test]
