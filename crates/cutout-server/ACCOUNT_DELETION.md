@@ -28,8 +28,9 @@ this server schema. Local rides and Bluetooth captures live on the device and
 are outside this API.
 
 The system principal has a fixed identifier, a non-credential sentinel hash,
-and a revocation timestamp. Authentication rejects it because it is revoked;
-the sentinel is not a bearer credential. Operator revocation remains a separate
+and a revocation timestamp. Authentication and write authorization explicitly
+reject this identifier independently of its revocation flag; the sentinel is
+not a bearer credential. Operator revocation remains a separate
 access-revocation command and does not perform this cleanup or ownership
 transfer.
 

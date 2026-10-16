@@ -5,10 +5,13 @@ import XCTest
 
 @MainActor
 final class ChargingCommunitySyncTests: XCTestCase {
-    func testRoutineSyncHasNoStatusMessage() {
-        for status in [ChargingCommunitySyncStatus.notStarted, .syncing, .synced] {
+    func testRoutineSyncAndDeletedAccountHaveNoStatusMessage() {
+        for status in [ChargingCommunitySyncStatus.notStarted, .syncing, .synced, .deleted] {
             XCTAssertNil(status.messageKey)
         }
+        XCTAssertFalse(ChargingCommunitySyncStatus.deleted.canRetry)
+        XCTAssertNotNil(ChargingCommunitySyncStatus.deletionPending.messageKey)
+        XCTAssertFalse(ChargingCommunitySyncStatus.deletionPending.canRetry)
         XCTAssertNotNil(ChargingCommunitySyncStatus.offline.messageKey)
         XCTAssertNotNil(ChargingCommunitySyncStatus.conflict.messageKey)
     }
@@ -398,6 +401,291 @@ final class ChargingCommunitySyncTests: XCTestCase {
         XCTAssertEqual(dateReads, 2)
         XCTAssertEqual(sync.lastUpdated, cachedDate)
     }
+
+    func testNoIdentityStaysUnregisteredAndCredentialRemainsUntilConfirmation() async throws {
+        let store = MemoryDeletionCredentialStore()
+        var deletionCalls = 0
+        let deletion = ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: makeDeletionTestSync(store: store),
+            deleteAccount: { _ in
+                deletionCalls += 1
+                return 1
+            }
+        )
+
+        await deletion.refresh()
+        XCTAssertEqual(deletion.state, .noAccount)
+        let emptyRecord = try await store.load()
+        XCTAssertNil(emptyRecord)
+        await deletion.deleteAccount()
+        XCTAssertEqual(deletionCalls, 0)
+        let stillEmptyRecord = try await store.load()
+        XCTAssertNil(stillEmptyRecord)
+
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let activeStore = MemoryDeletionCredentialStore(initial: .ready(credential))
+        let cancelledFlow = ChargingCommunityAccountDeletion(
+            credentialStore: activeStore,
+            sync: makeDeletionTestSync(store: activeStore),
+            deleteAccount: { _ in
+                XCTFail("Confirmation was cancelled, so deletion must not be submitted")
+                return 1
+            }
+        )
+        await cancelledFlow.refresh()
+        XCTAssertEqual(cancelledFlow.state, .active)
+        let activeRecord = try await activeStore.load()
+        XCTAssertEqual(activeRecord, .ready(credential))
+    }
+
+    func testConfirmedDeletionKeepsCredentialUntilSuccessThenStoresTombstone() async throws {
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let store = MemoryDeletionCredentialStore(initial: .ready(credential))
+        var submittedTokens = [String]()
+        let deletion = ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: makeDeletionTestSync(store: store),
+            deleteAccount: { token in
+                let recordDuringRequest = try await store.load()
+                XCTAssertEqual(recordDuringRequest, .deletionPending(credential))
+                submittedTokens.append(token)
+                return 42
+            }
+        )
+
+        await deletion.refresh()
+        await deletion.deleteAccount()
+
+        XCTAssertEqual(submittedTokens, ["secret"])
+        XCTAssertEqual(deletion.state, .deleted)
+        XCTAssertEqual(deletion.completedAtMilliseconds, 42)
+        let recordAfterSuccess = try await store.load()
+        XCTAssertEqual(recordAfterSuccess, .deleted)
+    }
+
+    func testAmbiguousFailureSurvivesRelaunchAndRetriesWithTheOriginalCredential() async throws {
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let store = MemoryDeletionCredentialStore(initial: .ready(credential))
+        var firstAttempt = true
+        let firstLaunch = ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: makeDeletionTestSync(store: store),
+            deleteAccount: { _ in
+                if firstAttempt {
+                    firstAttempt = false
+                    throw MobileChargingError.Network
+                }
+                return 84
+            }
+        )
+
+        await firstLaunch.refresh()
+        await firstLaunch.deleteAccount()
+        XCTAssertEqual(firstLaunch.state, .deletionPending)
+        let recordAfterAmbiguousFailure = try await store.load()
+        XCTAssertEqual(recordAfterAmbiguousFailure, .deletionPending(credential))
+
+        let relaunched = ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: makeDeletionTestSync(store: store),
+            deleteAccount: { token in
+                XCTAssertEqual(token, credential.token)
+                return 85
+            }
+        )
+        await relaunched.refresh()
+        XCTAssertEqual(relaunched.state, .deletionPending)
+        await relaunched.deleteAccount()
+        XCTAssertEqual(relaunched.state, .deleted)
+        let recordAfterRetry = try await store.load()
+        XCTAssertEqual(recordAfterRetry, .deleted)
+    }
+
+    func testKeychainCleanupFailureRemainsRetryable() async throws {
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let store = MemoryDeletionCredentialStore(initial: .ready(credential), failFinishDeletionCount: 1)
+        var deletionCalls = 0
+        let deletion = ChargingCommunityAccountDeletion(
+            credentialStore: store,
+            sync: makeDeletionTestSync(store: store),
+            deleteAccount: { _ in
+                deletionCalls += 1
+                return UInt64(deletionCalls)
+            }
+        )
+
+        await deletion.refresh()
+        await deletion.deleteAccount()
+        XCTAssertEqual(deletion.state, .deletionPending)
+        let recordAfterCleanupFailure = try await store.load()
+        XCTAssertEqual(recordAfterCleanupFailure, .deletionPending(credential))
+        await deletion.deleteAccount()
+        XCTAssertEqual(deletion.state, .deleted)
+        XCTAssertEqual(deletionCalls, 2)
+        let recordAfterCleanupRetry = try await store.load()
+        XCTAssertEqual(recordAfterCleanupRetry, .deleted)
+    }
+
+    func testConfirmedDeletionClearsObsoleteSyncCounts() async throws {
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let store = MemoryDeletionCredentialStore(initial: .ready(credential))
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                XCTFail("Deletion must not register an account")
+                throw MobileChargingError.Unauthorized
+            },
+            synchronize: { _ in
+                ChargingCommunitySyncCounts(
+                    pendingCount: 2, downloaded: 3, uploaded: 1,
+                    outcome: .finished(result: .pending)
+                )
+            },
+            sleep: { _ in }, enabled: { true }
+        )
+        _ = await sync.run()
+        XCTAssertEqual(sync.pendingCount, 2)
+        let deletion = ChargingCommunityAccountDeletion(
+            credentialStore: store, sync: sync, deleteAccount: { _ in 42 }
+        )
+        await deletion.refresh()
+        await deletion.deleteAccount()
+        XCTAssertEqual(deletion.state, .deleted)
+        XCTAssertEqual(sync.status, .deleted)
+        XCTAssertEqual(sync.pendingCount, 0)
+        XCTAssertEqual(sync.downloaded, 0)
+        XCTAssertEqual(sync.uploaded, 0)
+    }
+
+    func testPendingDeletionFailureResumesOnlyPublicRefreshInTheSameProcess() async throws {
+        for failsCleanup in [false, true] {
+            let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+            let store = MemoryDeletionCredentialStore(
+                initial: .ready(credential), failFinishDeletionCount: failsCleanup ? 1 : 0
+            )
+            var publicRefreshes = 0
+            let sync = ChargingCommunitySync(
+                credentialStore: store,
+                registerIdentity: {
+                    XCTFail("Pending deletion must not register a replacement account")
+                    throw MobileChargingError.Unauthorized
+                },
+                synchronize: { _ in
+                    XCTFail("Pending deletion must not synchronize with the old credential")
+                    throw MobileChargingError.Unauthorized
+                },
+                refreshDirectory: {
+                    publicRefreshes += 1
+                    return ChargingCommunitySyncCounts(
+                        pendingCount: 0, downloaded: 0, uploaded: 0,
+                        outcome: .finished(result: .synced)
+                    )
+                },
+                sleep: { _ in }, enabled: { true }
+            )
+            let deletion = ChargingCommunityAccountDeletion(
+                credentialStore: store, sync: sync,
+                deleteAccount: { _ in
+                    if !failsCleanup { throw MobileChargingError.Network }
+                    return 42
+                }
+            )
+            await deletion.refresh()
+            await deletion.deleteAccount()
+            XCTAssertEqual(deletion.state, .deletionPending)
+            XCTAssertEqual(sync.status, .deletionPending)
+            let status = await sync.run(explicitRetry: true)
+            XCTAssertEqual(status, .deletionPending)
+            XCTAssertEqual(publicRefreshes, 1)
+        }
+    }
+
+    func testDeletedTombstonePreventsRegistrationAndOldIdentitySync() async throws {
+        let store = MemoryDeletionCredentialStore(initial: .deleted)
+        var registrations = 0
+        var syncCalls = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                registrations += 1
+                return ChargingCommunityCredential(identityID: "new", token: "new-token")
+            },
+            synchronize: { _ in
+                syncCalls += 1
+                return ChargingCommunitySyncCounts(
+                    pendingCount: 0, downloaded: 0, uploaded: 0,
+                    outcome: .finished(result: .synced)
+                )
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+
+        let result = await sync.run()
+        XCTAssertEqual(result, .deleted)
+        XCTAssertEqual(registrations, 0)
+        XCTAssertEqual(syncCalls, 0)
+    }
+
+    private func makeDeletionTestSync(store: any ChargingCredentialStore) -> ChargingCommunitySync {
+        ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                XCTFail("Deletion must not register an account")
+                return .init(identityID: "", token: "")
+            },
+            synchronize: { _ in
+                ChargingCommunitySyncCounts(
+                    pendingCount: 0, downloaded: 0, uploaded: 0,
+                    outcome: .finished(result: .synced)
+                )
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+    }
+}
+
+private actor MemoryDeletionCredentialStore: ChargingCredentialStore {
+    private var record: ChargingCredentialRecord?
+    private var finishDeletionFailures: Int
+
+    init(initial: ChargingCredentialRecord? = nil, failFinishDeletionCount: Int = 0) {
+        record = initial
+        finishDeletionFailures = failFinishDeletionCount
+    }
+
+    func load() async throws -> ChargingCredentialRecord? { record }
+
+    func beginRegistration() async throws -> Bool {
+        guard record == nil else { return false }
+        record = .registrationStarted
+        return true
+    }
+
+    func save(_ credential: ChargingCommunityCredential) async throws {
+        guard record == .registrationStarted else { throw ChargingCredentialStoreError.unavailable }
+        record = .ready(credential)
+    }
+
+    func markDeletionPending(_ credential: ChargingCommunityCredential) async throws {
+        guard record == .ready(credential) || record == .deletionPending(credential) else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deletionPending(credential)
+    }
+
+    func finishDeletion(token: String) async throws {
+        guard case .deletionPending(let credential) = record, credential.token == token else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        if finishDeletionFailures > 0 {
+            finishDeletionFailures -= 1
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deleted
+    }
 }
 
 private actor MemoryChargingCredentialStore: ChargingCredentialStore {
@@ -438,6 +726,20 @@ private actor MemoryChargingCredentialStore: ChargingCredentialStore {
             throw ChargingCredentialStoreError.unavailable
         }
         record = .ready(credential)
+    }
+
+    func markDeletionPending(_ credential: ChargingCommunityCredential) async throws {
+        guard record == .ready(credential) || record == .deletionPending(credential) else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deletionPending(credential)
+    }
+
+    func finishDeletion(token: String) async throws {
+        guard case .deletionPending(let credential) = record, credential.token == token else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deleted
     }
 }
 

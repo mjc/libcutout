@@ -2161,6 +2161,127 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testPickerSurfaceHomeMapRouteAccountDeletionRetainsLocalData() async throws {
+        try await assertAccountDeletionRetainsLocalData(createsCapture: true)
+    }
+
+    func testPickerSurfaceHomeMapRouteAccountDeletionAtAccessibilityDynamicTypeRetainsLocalData() async throws {
+        try await assertAccountDeletionRetainsLocalData(createsCapture: false)
+    }
+
+    private func assertAccountDeletionRetainsLocalData(createsCapture: Bool) async throws {
+        executionTimeAllowance = 360
+        var captureID: String?
+        if createsCapture {
+            enterCapture()
+            let finish = app.buttons["capture.stop"]
+            XCTAssertTrue(finish.waitForExistence(timeout: 5), app.debugDescription)
+            finish.tap()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["captures.detail"].waitForExistence(timeout: 10), app.debugDescription)
+            app.navigationBars.buttons.firstMatch.tap()
+            let capture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+                .firstMatch
+            XCTAssertTrue(capture.waitForExistence(timeout: 10), app.debugDescription)
+            captureID = capture.identifier
+            capture.tap()
+            assertStoredCaptureDetail()
+            app.navigationBars.buttons.firstMatch.tap()
+            app.buttons["setup.done"].tap()
+        }
+        app.tabBars.buttons["Map"].tap()
+        let map = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
+        let rideReceipt = try XCTUnwrap((map.value as? String)?.components(separatedBy: ";").first)
+        XCTAssertTrue(rideReceipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededRideIDs = rideReceipt.dropFirst("saved-rides:".count).split(separator: ",")
+        XCTAssertEqual(seededRideIDs.count, 2, "The preservation check requires saved ride identifiers")
+        app.tabBars.buttons["Devices"].tap()
+        openAccountSetup()
+        let delete = app.buttons["setup.account.delete"]
+        let setup = app.descendants(matching: .any)["setup.screen"]
+        scrollElementFrameIntoViewport(delete, in: setup, maxScrolls: 12)
+        XCTAssertTrue(delete.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(delete.isHittable, app.debugDescription)
+        delete.tap()
+        let confirmation = app.descendants(matching: .any)["setup.account.confirmation"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(
+            confirmation.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Anonymous")).firstMatch
+                .exists, app.debugDescription)
+        let cancel = app.buttons["setup.account.cancel-delete"]
+        XCTAssertTrue(cancel.isHittable, app.debugDescription)
+        let consent = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        consent.name = "account-deletion-anonymous-public-contributions-confirmation"
+        consent.lifetime = .keepAlways
+        add(consent)
+        cancel.tap()
+        try await assertAccountFixtureAuthorization(status: 403)
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["setup.account.deleted"].exists)
+        delete.tap()
+        let submit = app.buttons["setup.account.confirm-delete"]
+        scrollElementFrameIntoViewport(submit, in: confirmation, maxScrolls: 12)
+        XCTAssertTrue(submit.isHittable, app.debugDescription)
+        submit.tap()
+        let completed = app.staticTexts["setup.account.deleted"]
+        scrollElementFrameIntoViewport(completed, in: setup, maxScrolls: 12)
+        XCTAssertTrue(completed.waitForExistence(timeout: 30), app.debugDescription)
+        try await assertAccountFixtureAuthorization(status: 401)
+        XCTAssertFalse(delete.exists, app.debugDescription)
+        let result = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        result.name = "account-deletion-confirmed-with-public-contributions-retained"
+        result.lifetime = .keepAlways
+        add(result)
+        app.terminate()
+        app.launch()
+        openAccountSetup()
+        scrollElementFrameIntoViewport(completed, in: setup, maxScrolls: 12)
+        XCTAssertTrue(completed.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(delete.exists, app.debugDescription)
+        if let captureID {
+            let captures = app.buttons["setup.captures"]
+            scrollElementFrameIntoViewport(captures, in: setup, maxScrolls: 12)
+            captures.tap()
+            let retainedCapture = app.buttons[captureID]
+            XCTAssertTrue(retainedCapture.waitForExistence(timeout: 10), app.debugDescription)
+            retainedCapture.tap()
+            assertStoredCaptureDetail()
+            app.navigationBars.buttons.firstMatch.tap()
+        }
+        app.buttons["setup.done"].tap()
+        app.tabBars.buttons["Map"].tap()
+        XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
+        let retainedRideReceipt = try XCTUnwrap((map.value as? String)?.components(separatedBy: ";").first)
+        XCTAssertEqual(retainedRideReceipt, rideReceipt, "Deletion must not make the fixture reseed missing rides")
+    }
+
+    private func assertStoredCaptureDetail() {
+        XCTAssertTrue(app.navigationBars["Recording"].waitForExistence(timeout: 10), app.debugDescription)
+        let export = app.buttons["Export recording"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(export.isEnabled, app.debugDescription)
+    }
+
+    private func assertAccountFixtureAuthorization(status: Int) async throws {
+        let origin = try XCTUnwrap(app.launchEnvironment["CUTOUT_UI_TEST_ACCOUNT_BASE_URL"])
+        let url = try XCTUnwrap(URL(string: origin + "v1/moderation/audit"))
+        let token = try XCTUnwrap(app.launchEnvironment["CUTOUT_UI_TEST_ACCOUNT_TOKEN"])
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        // A contributor is authenticated but forbidden from moderation; after deletion it is unauthorized.
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, status)
+    }
+
+    private func openAccountSetup() {
+        let gear = app.buttons["device-picker.open-setup"]
+        XCTAssertTrue(gear.waitForExistence(timeout: 8), app.debugDescription)
+        gear.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["setup.screen"].waitForExistence(timeout: 8), app.debugDescription)
+    }
+
     func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
         // Traverse both pages and verify selection, reentry, filters, and relaunch in one scenario.
         executionTimeAllowance = 360
@@ -5874,6 +5995,12 @@ final class CutoutAppUITests: XCTestCase {
         // Launch-argument defaults persist in the app domain. Set the requested
         // category on every launch so a prior AX fixture cannot change this case.
         var arguments = fixture.launchArguments + ["-UIPreferredContentSizeCategoryName", rideTextSizeCategory]
+        if name.contains("AccountDeletion") {
+            arguments += [
+                "--ui-test-account-deletion", "--seed-ui-test-ride-history",
+                "-io.cutout.music.monitoring.enabled", "NO", "-CUTOUT_UI_TEST_MUSIC", "silent",
+            ]
+        }
         if name.contains("PickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable") {
             arguments.append("--seed-ui-test-live-route")
         }
@@ -5976,6 +6103,15 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchEnvironment: [String: String] {
         var environment = fixture.launchEnvironment
+        if name.contains("AccountDeletion") {
+            let accessible = name.contains("AtAccessibilityDynamicType")
+            environment["CUTOUT_UI_TEST_ACCOUNT_BASE_URL"] = "http://127.0.0.1:45987/"
+            environment["CUTOUT_UI_TEST_ACCOUNT_ID"] =
+                accessible
+                ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
+            environment["CUTOUT_UI_TEST_ACCOUNT_TOKEN"] = String(repeating: accessible ? "e" : "c", count: 64)
+            environment["CUTOUT_UI_TEST_ACCOUNT_KEYCHAIN_ID"] = "account-deletion-ui-test-\(UUID().uuidString)"
+        }
         if name.contains("HomeMapConfirmedIdle") || name.contains("PickerSurfaceHomeMapRoute")
             || name.contains("PickerSurfaceSavedHistory")
         {

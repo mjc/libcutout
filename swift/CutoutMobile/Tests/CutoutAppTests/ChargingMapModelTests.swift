@@ -1261,6 +1261,20 @@ private actor ChargingModelCredentialStore: ChargingCredentialStore {
         }
         record = .ready(credential)
     }
+
+    func markDeletionPending(_ credential: ChargingCommunityCredential) async throws {
+        guard record == .ready(credential) || record == .deletionPending(credential) else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deletionPending(credential)
+    }
+
+    func finishDeletion(token: String) async throws {
+        guard case .deletionPending(let credential) = record, credential.token == token else {
+            throw ChargingCredentialStoreError.unavailable
+        }
+        record = .deleted
+    }
 }
 
 private actor ChargingNearbyGate {
