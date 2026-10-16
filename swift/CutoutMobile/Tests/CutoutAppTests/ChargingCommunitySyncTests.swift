@@ -911,6 +911,64 @@ final class ChargingContentReportTests: XCTestCase {
         }
     }
 
+    func testAccountDeletionABARejectsStaleLostClaimCredentialAfterPublicRefreshResumes() async throws {
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        for completesDeletion in [false, true] {
+            let entered = expectation(description: "second report credential load suspended")
+            let gate = ReportCredentialLoadGate(entered: entered)
+            let store = MemoryChargingCredentialStore(
+                loseRegistrationClaim: true,
+                recordAfterLostClaim: .ready(credential),
+                beforeLoad: { await gate.suspendSecondLoad() }
+            )
+            let sync = reportSync(store: store)
+            let report = Task { try await sync.credentialForReport() }
+            await fulfillment(of: [entered], timeout: 2)
+
+            await sync.pauseForAccountDeletion()
+            try await store.markDeletionPending(credential)
+            if completesDeletion {
+                try await store.finishDeletion(token: credential.token)
+                sync.allowPublicRefreshAfterDeletion()
+            } else {
+                sync.allowPublicRefreshWhileDeletionPending()
+            }
+            await gate.resume()
+
+            do {
+                _ = try await report.value
+                XCTFail("A stale credential must not cross completed or pending deletion")
+            } catch {
+                XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+            }
+        }
+    }
+
+    func testAccountDeletionRejectsFirstCredentialSnapshotAfterDeletionCompletes() async throws {
+        let entered = expectation(description: "first report credential load suspended")
+        let gate = ReportCredentialLoadGate(entered: entered)
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let store = MemoryChargingCredentialStore(
+            initial: .ready(credential), beforeLoad: { await gate.suspend() }
+        )
+        let sync = reportSync(store: store)
+        let report = Task { try await sync.credentialForReport() }
+        await fulfillment(of: [entered], timeout: 2)
+
+        await sync.pauseForAccountDeletion()
+        try await store.markDeletionPending(credential)
+        try await store.finishDeletion(token: credential.token)
+        sync.allowPublicRefreshAfterDeletion()
+        await gate.resume()
+
+        do {
+            _ = try await report.value
+            XCTFail("A stale first-load credential must not cross completed deletion")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+        }
+    }
+
     private func reportSync(store: any ChargingCredentialStore) -> ChargingCommunitySync {
         ChargingCommunitySync(
             credentialStore: store,

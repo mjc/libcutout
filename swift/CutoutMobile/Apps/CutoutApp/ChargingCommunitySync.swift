@@ -374,6 +374,7 @@ final class ChargingCommunitySync {
     private let enabled: @MainActor () -> Bool
     private var activeTask: Task<ChargingCommunitySyncStatus, Never>?
     private var accountDeletionInProgress = false
+    private var accountDeletionGeneration: UInt64 = 0
     private var runGeneration: UInt64 = 0
     private var syncRunState = MobileChargingSyncRunState(
         round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
@@ -422,9 +423,12 @@ final class ChargingCommunitySync {
     /// An explicit report can register a contributor without uploading queued edits.
     func credentialForReport() async throws -> ChargingCommunityCredential {
         guard enabled(), !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        let deletionGeneration = accountDeletionGeneration
         let stored = try await credentialStore.load()
         try Task.checkCancellation()
-        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        guard !accountDeletionInProgress, accountDeletionGeneration == deletionGeneration else {
+            throw MobileChargingError.Unavailable
+        }
         let selectedCredential: ChargingCommunityCredential
         switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: false) {
         case .synchronize:
@@ -445,7 +449,9 @@ final class ChargingCommunitySync {
             throw MobileChargingError.Unauthorized
         }
         try Task.checkCancellation()
-        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        guard !accountDeletionInProgress, accountDeletionGeneration == deletionGeneration else {
+            throw MobileChargingError.Unavailable
+        }
         return selectedCredential
     }
 
@@ -462,6 +468,7 @@ final class ChargingCommunitySync {
     }
 
     func pauseForAccountDeletion() async {
+        accountDeletionGeneration &+= 1
         accountDeletionInProgress = true
         await cancelAndWait()
     }
