@@ -70,15 +70,43 @@ pub fn router(store: Store) -> Router {
 }
 
 pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::SignupState) -> Router {
+    finish_router(
+        Router::new()
+            .route("/healthz", get(|| async { StatusCode::OK }))
+            .route("/readyz", get(ready))
+            .merge(charging_routes())
+            .merge(site_routes()),
+        store,
+        signup,
+    )
+}
+
+/// Charging API router for host-isolated combined deployments.
+pub(crate) fn charging_router(store: Store) -> Router {
+    finish_router(
+        Router::new()
+            .route("/healthz", get(|| async { StatusCode::OK }))
+            .route("/readyz", get(ready))
+            .merge(charging_routes()),
+        store,
+        crate::signup::SignupState::from_env(),
+    )
+}
+
+/// Website and signup router for the separately hosted public site.
+pub(crate) fn site_router(store: Store, signup: crate::signup::SignupState) -> Router {
+    finish_router(
+        Router::new()
+            .route("/healthz", get(|| async { StatusCode::OK }))
+            .route("/readyz", get(ready))
+            .merge(site_routes()),
+        store,
+        signup,
+    )
+}
+
+fn charging_routes() -> Router<Store> {
     Router::new()
-        .route("/healthz", get(|| async { StatusCode::OK }))
-        .route("/readyz", get(ready))
-        .route("/v1/alpha-signup/config", get(crate::signup::public_config))
-        .route("/v1/alpha-signup/requests", post(crate::signup::submit))
-        .route(
-            "/v1/alpha-signup-removals",
-            post(crate::signup::submit_removal),
-        )
         .route("/v1/identities", post(registration::identity))
         .route(
             "/v1/identities/current",
@@ -100,6 +128,16 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
             get(moderator_spot).put(moderate),
         )
         .route("/v1/moderation/audit", get(audit))
+}
+
+fn site_routes() -> Router<Store> {
+    Router::new()
+        .route("/v1/alpha-signup/config", get(crate::signup::public_config))
+        .route("/v1/alpha-signup/requests", post(crate::signup::submit))
+        .route(
+            "/v1/alpha-signup-removals",
+            post(crate::signup::submit_removal),
+        )
         .route("/v1/moderation/alpha-signups", get(alpha_signups))
         .route(
             "/v1/moderation/alpha-signup-removals",
@@ -114,6 +152,14 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
             delete(withdraw_alpha_signup),
         )
         .merge(crate::site::router())
+}
+
+fn finish_router(
+    router: Router<Store>,
+    store: Store,
+    signup: crate::signup::SignupState,
+) -> Router {
+    router
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(axum::Extension(signup))
         .layer(axum::middleware::from_fn(deadline))
