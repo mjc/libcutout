@@ -13,7 +13,14 @@ const playwrightPath = process.env.PLAYWRIGHT_MODULE || "playwright";
 const { chromium } = require(playwrightPath);
 const sourcePath = path.join(__dirname, "index.html");
 const outputDirectory = path.resolve(__dirname, "..");
-const scenes = ["rgb", "tune", "ride-tracking"];
+const availableScenes = ["tune", "ride-tracking"];
+const requestedScenes = process.argv.slice(2);
+const scenes = requestedScenes.length === 0 ? ["tune", "ride-tracking"] : requestedScenes;
+for (const scene of scenes) {
+  if (!availableScenes.includes(scene)) {
+    throw new Error(`Unknown scene "${scene}". Choose: ${availableScenes.join(", ")}`);
+  }
+}
 
 async function main() {
   if (!fs.existsSync(executablePath)) {

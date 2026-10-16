@@ -27,37 +27,20 @@
     },
     {
       "scene": "rgb",
-      "file": "rgb.png",
-      "caption": "RGB lighting",
-      "method": "rendered-html-mockup",
-      "label": "Rendered mockup · synthetic data",
+      "file": "rgb.jpg",
+      "caption": "RGB Effects",
+      "method": "user-provided-native-screenshot",
+      "label": "User-provided app screenshot",
       "dimensionsPixels": {
-        "width": 1290,
-        "height": 2796
+        "width": 590,
+        "height": 1280
       },
-      "assetStatus": "reviewed",
-      "syntheticData": "Static mockup of fictional accessory controls. Display values, including the color wheel, are synthetic and are not actual wheel readbacks.",
+      "visibleState": "Effects tab selected; Flow effect selected.",
       "provenance": {
-        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
-        "testOutcome": "not run; rendered mockup",
-        "renderer": {
-          "method": "Playwright-rendered HTML mockup",
-          "sourceFile": "mockup-source/index.html",
-          "rendererScript": "mockup-source/render.cjs",
-          "command": "node mockup-source/render.cjs",
-          "environment": [
-            "CUTOUT_BROWSER_EXECUTABLE",
-            "PLAYWRIGHT_MODULE"
-          ],
-          "viewportCssPixels": {
-            "width": 430,
-            "height": 932
-          },
-          "deviceScaleFactor": 3,
-          "headless": true
-        }
+        "source": "User-provided JPEG, used unedited."
       },
-      "sha256": "4defdd4ddc46fe38112246cabfcde0a1d14ab75ca5716064c0b13b258cf740fc"
+      "sha256": "4ccd93de00e90a09a6eac9c8805310a5381ff4ddf67860fe9bbff8dc428f1eed",
+      "assetStatus": "reviewed"
     },
     {
       "scene": "tune",
@@ -97,16 +80,17 @@
     {
       "scene": "ride-tracking",
       "file": "ride-tracking.png",
-      "caption": "Ride tracking",
-      "method": "rendered-hybrid-mockup",
+      "caption": "Ride history",
+      "method": "rendered-html-mockup",
       "label": "Rendered mockup · synthetic data",
       "dimensionsPixels": {
         "width": 1290,
         "height": 2796
       },
-      "assetStatus": "reviewed",
-      "syntheticData": "Synthetic 18-anchor ride on public Platte River Trail geometry; 2.1 mi, 5 min 20 sec elapsed and moving time, 24.7 mph. Summary values are synthetic, not native ride telemetry.",
+      "syntheticData": "Fictional recent ride cards in a history list with the map preview scrolled offscreen; search, date, and vehicle filters remain pinned.",
       "provenance": {
+        "referenceUiRevision": "070a862781280e85ed0a49a1bf4ba696244c26b8",
+        "testOutcome": "not run; rendered mockup",
         "renderer": {
           "method": "Playwright-rendered HTML mockup",
           "sourceFile": "mockup-source/index.html",
@@ -123,23 +107,14 @@
           "deviceScaleFactor": 3,
           "headless": true
         },
-        "nativeReference": {
-          "file": "mockup-source/ride-map-reference.png",
-          "sha256": "4065bda48b18b236af974f8c8b8ac5e9ef41e2317f88381a3d8842df2ffbaba2",
-          "testSourceRevision": "89dfa2e5f61ff4e4a9e159f5ee8c43b09b86f3f2",
-          "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
-          "testIdentifier": "CutoutWebsiteScreenshotTests/testRideTracking()",
-          "referenceOnly": true,
-          "assertionsAppliedToRenderedMockup": false
-        },
-        "routeSource": "https://github.com/JasonSanford/denver-bike-routes/blob/master/routes.geojson",
-        "routeFeature": "Littleton to REI Flagship - Downtown Denver",
-        "routeAnchorCount": 18,
-        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
-        "testOutcome": "not run; rendered mockup",
-        "mockupAssertions": "No XCTest assertions were applied to this rendered image."
+        "visibleElements": [
+          "pinned search, date, and vehicle filters",
+          "map preview scrolled offscreen",
+          "fictional recent ride cards"
+        ]
       },
-      "sha256": "c6560aa4f53af968029cb197d57410e128e82ce6f08f8f6c3298d67f5e7f0c8f"
+      "sha256": "a9e1c65d0ad6ef290bb4d10718af113fa17cf4f296efeec0b427fefdd5d81820",
+      "assetStatus": "reviewed"
     },
     {
       "scene": "charging-map",
