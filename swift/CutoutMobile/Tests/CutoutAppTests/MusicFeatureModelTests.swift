@@ -127,6 +127,92 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(state.currentMusicHistory()?.events.count, 0)
     }
 
+    func testSpotifyCommandsAreUnavailableDuringDisconnect() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        defer {
+            _ = try? state.stop(atMs: 500)
+            _ = try? state.discard()
+        }
+        let providerStore = MusicProviderSelectionStore(defaults: suite.defaults)
+        providerStore.set(.spotify)
+        let cleanupStarted = expectation(description: "disconnect cleanup suspended")
+        var releaseCleanup: CheckedContinuation<Bool, Never>?
+        var dispatchedCommands = 0
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            providerSelectionStore: providerStore,
+            providerCommandHandler: { _, _ in
+                dispatchedCommands += 1
+                return .accepted
+            },
+            prepareCaptureMetadataCleanup: {
+                await withCheckedContinuation { continuation in
+                    releaseCleanup = continuation
+                    cleanupStarted.fulfill()
+                }
+            }
+        )
+
+        let disconnect = Task { await model.disconnectSpotify() }
+        await fulfillment(of: [cleanupStarted], timeout: 2)
+        let outcome = await model.handleCommand(.play)
+        releaseCleanup?.resume(returning: true)
+        let disconnected = await disconnect.value
+
+        XCTAssertTrue(disconnected)
+        XCTAssertEqual(outcome, .unavailable)
+        XCTAssertEqual(dispatchedCommands, 0)
+    }
+
+    func testSpotifyCommandFinishingAfterDisconnectIsUnavailable() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        defer {
+            _ = try? state.stop(atMs: 500)
+            _ = try? state.discard()
+        }
+        var spotify = observation(atMs: 110).snapshot
+        spotify.provider = .spotify
+        spotify.item = MobileMusicItemDto(
+            identifier: "spotify:track:4uLU6hMCjMI75M1A2tKUQC", title: "Spotify track", artist: "Artist")
+        _ = try state.recordMusicEvent(
+            snapshot: spotify, kind: .play, monotonicAtMs: 110,
+            wallClockAtMs: 1_700_000_000_110, clockUncertaintyMs: 5)
+        XCTAssertEqual(state.currentMusicHistory()?.events.count, 1)
+        let providerStore = MusicProviderSelectionStore(defaults: suite.defaults)
+        providerStore.set(.spotify)
+        let commandStarted = expectation(description: "Spotify command suspended")
+        var releaseCommand: CheckedContinuation<MusicCommandOutcome, Never>?
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            providerSelectionStore: providerStore,
+            providerCommandHandler: { _, _ in
+                await withCheckedContinuation { continuation in
+                    releaseCommand = continuation
+                    commandStarted.fulfill()
+                }
+            }
+        )
+
+        let command = Task { await model.handleCommand(.play) }
+        await fulfillment(of: [commandStarted], timeout: 2)
+        let disconnected = await model.disconnectSpotify()
+        releaseCommand?.resume(returning: .accepted)
+        let outcome = await command.value
+
+        XCTAssertTrue(disconnected)
+        XCTAssertEqual(outcome, .unavailable)
+        XCTAssertNil(model.commandFeedback)
+        XCTAssertEqual(state.currentMusicHistory()?.events.count, 0)
+    }
+
     func testNativeSoundCloudRefusesUnavailableCommandsAndAcceptsAvailablePause() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -1647,6 +1733,7 @@ final class MusicFeatureModelTests: XCTestCase {
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
         providerCommandHandler: MusicProviderCommandHandler? = nil,
+        prepareCaptureMetadataCleanup: @escaping @MainActor () async -> Bool = { true },
         spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil,
         historySnapshotReader: MusicHistorySnapshotReader? = nil,
         correlationRideIDReader: (@MainActor () async -> String?)? = nil
@@ -1668,6 +1755,7 @@ final class MusicFeatureModelTests: XCTestCase {
             invalidateHistoryForDeletion: invalidateHistory,
             selectedHistoryRideID: selectedRideID,
             clearSelectedHistoryMusic: clearSelectedHistoryMusic,
+            prepareCaptureMetadataCleanup: prepareCaptureMetadataCleanup,
             captureDirectories: [captureDirectory.path],
             setRideHistoryError: setRideHistoryError,
             appleMonitor: appleMonitor,

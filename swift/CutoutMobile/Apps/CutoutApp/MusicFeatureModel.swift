@@ -91,6 +91,7 @@ final class MusicFeatureModel {
     @ObservationIgnored private var historyPreferenceSaveError: MobileRideMapError?
     @ObservationIgnored private var historyReadbackRevisionStorage: UInt64 = 0
     @ObservationIgnored private var historyDiagnosticDeletionRevision: UInt64 = 0
+    @ObservationIgnored private var spotifyDisconnectRevision: UInt64 = 0
     @ObservationIgnored private var closedHistoryReadTask: Task<Void, Never>?
     @ObservationIgnored private var closedHistoryReadRequested = false
 
@@ -496,6 +497,7 @@ final class MusicFeatureModel {
     }
 
     func refreshSnapshot() {
+        guard !(selectedProvider == .spotify && isDisconnectingSpotify) else { return }
         if selectedProvider.profile.interface == .appHandoffOnly {
             settingsNowPlaying = projectedNowPlaying()
             return
@@ -631,6 +633,7 @@ final class MusicFeatureModel {
     @discardableResult
     func disconnectSpotify() async -> Bool {
         guard !isDisconnectingSpotify else { return false }
+        spotifyDisconnectRevision &+= 1
         isDisconnectingSpotify = true
         defer {
             advanceHistoryReadbackRevision()
@@ -743,6 +746,10 @@ final class MusicFeatureModel {
 
     func handleCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedProvider
+        #if canImport(SpotifyiOS) && os(iOS)
+            let commandDisconnectRevision = spotifyDisconnectRevision
+        #endif
+        guard !(commandProvider == .spotify && isDisconnectingSpotify) else { return .unavailable }
         if commandProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil, command != .openProvider {
             let requestID = beginCommandFeedback()
             guard projectedNowPlaying()?.isCommandAvailable(command) == true else {
@@ -768,7 +775,7 @@ final class MusicFeatureModel {
         #if canImport(MediaPlayer) && os(iOS)
             if command == .openProvider {
                 let result = await performProviderCommand(command, provider: commandProvider)
-                return finishCommand(result, provider: commandProvider, requestID: requestID)
+                return finishProviderCommand(result, provider: commandProvider, requestID: requestID)
             }
         #endif
         guard let nowPlaying else {
@@ -778,7 +785,10 @@ final class MusicFeatureModel {
                         let outcome = await spotifyProvider.perform(
                             command,
                             onChange: { [weak self] in
-                                self?.refreshSnapshot()
+                                guard let self,
+                                    self.isCurrentSpotifyObservation(disconnectRevision: commandDisconnectRevision)
+                                else { return }
+                                self.refreshSnapshot()
                             },
                             onHandoffStarted: { [weak self] in
                                 self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
@@ -786,7 +796,7 @@ final class MusicFeatureModel {
                             onCommandFailure: { [weak self] in
                                 self?.finishSpotifyHandoffFailure(feedbackRequest, provider: commandProvider)
                             })
-                        return finishCommand(
+                        return finishProviderCommand(
                             outcome,
                             provider: commandProvider,
                             requestID: feedbackRequest.id
@@ -794,7 +804,7 @@ final class MusicFeatureModel {
                     }
                 #endif
                 let outcome = await performProviderCommand(command, provider: commandProvider)
-                return finishCommand(
+                return finishProviderCommand(
                     outcome,
                     provider: commandProvider,
                     requestID: feedbackRequest.id
@@ -812,7 +822,10 @@ final class MusicFeatureModel {
                     result = await spotifyProvider.perform(
                         command,
                         onChange: { [weak self] in
-                            self?.refreshSnapshot()
+                            guard let self,
+                                self.isCurrentSpotifyObservation(disconnectRevision: commandDisconnectRevision)
+                            else { return }
+                            self.refreshSnapshot()
                         },
                         onHandoffStarted: { [weak self] in
                             self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
@@ -826,11 +839,33 @@ final class MusicFeatureModel {
             #else
                 result = await performProviderCommand(command, provider: nowPlaying.provider)
             #endif
-            if result == .accepted { refreshSnapshot() }
-            return finishCommand(result, provider: commandProvider, requestID: feedbackRequest.id)
+            if result == .accepted, commandProvider != .spotify || isCurrentSpotifyCommand(feedbackRequest.id) {
+                refreshSnapshot()
+            }
+            return finishProviderCommand(result, provider: commandProvider, requestID: feedbackRequest.id)
         #else
             return finishCommand(.unavailable, provider: commandProvider, requestID: requestID)
         #endif
+    }
+
+    private func isCurrentSpotifyCommand(_ requestID: MobileMusicCommandFeedbackId?) -> Bool {
+        guard !isDisconnectingSpotify, let requestID else { return false }
+        return providerLifecycle.classifyCommandFeedback(id: requestID) == .current
+    }
+
+    private func isCurrentSpotifyObservation(disconnectRevision: UInt64) -> Bool {
+        !isDisconnectingSpotify
+            && selectedProvider == .spotify
+            && spotifyDisconnectRevision == disconnectRevision
+    }
+
+    private func finishProviderCommand(
+        _ outcome: MusicCommandOutcome,
+        provider: MobileMusicProviderDto,
+        requestID: MobileMusicCommandFeedbackId?
+    ) -> MusicCommandOutcome {
+        guard provider != .spotify || isCurrentSpotifyCommand(requestID) else { return .unavailable }
+        return finishCommand(outcome, provider: provider, requestID: requestID)
     }
 
     private func beginSpotifyHandoffFeedback(
@@ -1112,6 +1147,7 @@ final class MusicFeatureModel {
         clockUncertaintyMs: UInt64 = 1_000,
         historyReadback: (@MainActor () async throws -> [MobileMusicRideEventDto])? = nil
     ) -> Task<Bool, Never>? {
+        guard !(observation.snapshot.provider == .spotify && isDisconnectingSpotify) else { return nil }
         let coordinator = coordinator
         let submission = coordinator.beginObservation()
         switch submission.admission() {
