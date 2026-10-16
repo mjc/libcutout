@@ -639,12 +639,7 @@ final class MusicFeatureModel {
         // Rust retires admitted work before the ordered database cleanup.
         monitoringPreferenceStore.setEnabled(false)
         stopMonitoring()
-        let credentialsRemoved: Bool
-        #if canImport(SpotifyiOS) && os(iOS)
-            credentialsRemoved = spotifyProvider.clearAuthorization()
-        #else
-            credentialsRemoved = true
-        #endif
+        let credentialsRemoved = clearSpotifyAuthorization()
         activeSpotifyHandoffFeedbackRequest = nil
         providerLifecycle.invalidateCommandFeedback()
         commandFeedback = nil
@@ -1085,6 +1080,14 @@ final class MusicFeatureModel {
             finishObservation()
             return false
         }
+    }
+
+    private func clearSpotifyAuthorization() -> Bool {
+        #if canImport(SpotifyiOS) && os(iOS)
+            spotifyProvider.clearAuthorization()
+        #else
+            true
+        #endif
     }
 
     @discardableResult
