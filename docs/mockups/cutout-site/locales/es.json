@@ -15,20 +15,18 @@
     "title": "Conoce",
     "accent": "tu recorrido.",
     "fullTitle": "Conoce tu recorrido",
-    "body": "Tu PEV, tu ruta, tus luces y tu cámara. Datos en directo y los detalles que querrás volver a ver, todo en CutOut.",
+    "body": "Consulta los datos del recorrido, controla tus luces y tu cámara, y vuelve a ver la ruta y la música que acompañaron el día.",
     "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
     "stampTitle": "Creado por un rider.",
     "stampBody": "Con la comunidad de vehículos eléctricos."
   },
   "preview": {
-    "label": "Espacio para una captura",
-    "description": "Interfaz actual con datos de ejemplo realistas. Las capturas se prepararán después.",
-    "caption": "Solo es el espacio de la captura. Este concepto no utiliza diseños antiguos de la aplicación.",
-    "note": "Propuesta del sitio web · Capturas pendientes · Descarga sin conectar",
-    "dialogTag": "Propuesta de diseño",
-    "dialogTitle": "Aquí irá el enlace de descarga.",
-    "dialogBody": "El sitio de producción enlazará aquí al destino real de instalación. Esta maqueta no anuncia disponibilidad en App Store ni una beta pública.",
-    "close": "Volver a la propuesta"
+    "label": "Captura próximamente",
+    "dialogTag": "Alfa",
+    "dialogTitle": "CutOut está en fase alfa.",
+    "dialogBody": "La descarga pública aún no está disponible. Sigue el proyecto en GitHub para conocer las novedades.",
+    "updates": "Seguir el proyecto",
+    "close": "Cerrar"
   },
   "vehicles": {
     "tag": "Tipos de vehículos",
@@ -78,7 +76,7 @@
   },
   "featuresTag": "Durante todo el recorrido",
   "featuresTitle": "Los detalles que necesitas, cuando los necesitas.",
-  "featuresBody": "Una mirada rápida mientras conduces. Más detalles cuando paras.",
+  "featuresBody": "Velocidad y batería mientras conduces. Rutas y detalles cuando terminas.",
   "features": [
     {
       "title": "Datos en directo",
@@ -96,7 +94,7 @@
   "steps": [
     {
       "title": "Conecta tu PEV.",
-      "body": "Elige tu dispositivo compatible por Bluetooth. Las lecturas y los controles disponibles corresponden al modelo real."
+      "body": "Conecta tu PEV compatible por Bluetooth para ver sus lecturas y controles."
     },
     {
       "title": "Sal a rodar.",
@@ -116,13 +114,13 @@
   },
   "guide": {
     "title": "Un recorrido,\nde principio a fin.",
-    "body": "Conecta tu PEV, registra la salida y vuelve a los detalles después. Así encajan las funciones principales.",
+    "body": "Conecta tu PEV, registra el recorrido y vuelve a los detalles después.",
     "contents": "En esta página",
     "sections": [
       {
         "short": "Antes de salir",
         "title": "Empieza por tu dispositivo.",
-        "body": "Elige tu PEV compatible entre los dispositivos Bluetooth cercanos. CutOut presenta la información y los ajustes disponibles para ese modelo, sin prometer los mismos controles para todos los vehículos.",
+        "body": "Elige tu PEV entre los dispositivos Bluetooth cercanos. Consulta sus lecturas, comprueba la batería y cambia los ajustes disponibles para tu modelo.",
         "points": [
           "Los Onewheels con VESC utilizan firmware Refloat.",
           "Las funciones de los EUCs dependen del modelo y del firmware.",
@@ -156,7 +154,7 @@
       }
     ],
     "compatibilityTitle": "¿Funciona con tu PEV?",
-    "compatibilityBody": "CutOut está pensado para VESC Onewheel + Refloat, EUC, eskate, scooter, ebike y emoto. El desarrollador tiene hardware de las dos primeras categorías; las demás necesitan capturas de la comunidad. No se admiten comunicaciones cifradas por el fabricante.",
+    "compatibilityBody": "Busca tu tipo de vehículo en la lista de PEV y consulta las preguntas frecuentes para conocer los detalles de dispositivos y firmware.",
     "compatibilityLink": "Consultar las preguntas de compatibilidad"
   },
   "support": {
@@ -185,7 +183,7 @@
       },
       {
         "title": "¿Funciona con un Onewheel de fábrica?",
-        "body": "Aquí el alcance de Onewheel es un vehículo con VESC y firmware Refloat. No se afirma compatibilidad con la electrónica original de Onewheel ni con protocolos cifrados por el fabricante."
+        "body": "La electrónica original de Onewheel no es compatible. CutOut admite vehículos con VESC y firmware Refloat."
       },
       {
         "title": "¿Qué luces RGB por Bluetooth son compatibles?",
@@ -193,11 +191,11 @@
       },
       {
         "title": "¿Qué cámaras Wi-Fi funcionan con CutOut?",
-        "body": "El perfil actual es FreedConn R3 Pro con firmware R3V1. Ofrece vista previa y acceso a los archivos, con controles de vídeo y fotografía cuando el firmware los permite. Otros modelos y versiones necesitan validación; un procesador Novatek no garantiza la compatibilidad."
+        "body": "CutOut funciona actualmente con FreedConn R3 Pro y firmware R3V1. Puedes ver la imagen y explorar los archivos; los controles de vídeo y fotografía dependen del firmware. Otros modelos y versiones no están confirmados. Un chip Novatek no garantiza la compatibilidad."
       },
       {
-        "title": "¿Qué otras cámaras Wi-Fi se están investigando?",
-        "body": "Estas cámaras de acción, corporales y para bicicleta o motocicleta son candidatas, no dispositivos con compatibilidad confirmada en CutOut. Algunas tienen investigaciones publicadas sobre un protocolo Novatek relacionado; de otras solo se ha confirmado el hardware Novatek y la conexión Wi-Fi. Hay que probar el firmware y las funciones de cada una. Los sistemas instalados en el vehículo pueden necesitar alimentación externa.",
+        "title": "¿Y otras cámaras Wi-Fi?",
+        "body": "Estos modelos son posibles candidatos, no dispositivos con compatibilidad confirmada en CutOut. Algunos tienen protocolos de control Novatek documentados; otros se incluyen porque se ha documentado su hardware Novatek y su conexión Wi-Fi. La compatibilidad puede variar según la versión y el firmware. Los sistemas instalados en el vehículo pueden necesitar alimentación externa.",
         "items": [
           {
             "title": "SJCAM SJ4000 WiFi y SJ5000X Elite",
@@ -275,11 +273,11 @@
       },
       {
         "title": "¿Por qué CutOut es de código abierto?",
-        "body": "El objetivo principal es facilitar mejores aplicaciones para todos los PEV. Compartimos el trabajo de protocolos y las bibliotecas para que otros desarrolladores se centren en sus propias ideas. También queremos una aplicación que le guste a su creador y que la comunidad quiera usar. Hacer una aplicación muy buena ayuda a que las bibliotecas compartidas sean útiles."
+        "body": "Queremos facilitar mejores aplicaciones para PEV. Compartir los protocolos y las bibliotecas permite que otros desarrolladores se centren en sus propias ideas. También estamos creando una aplicación que nos guste usar y que le resulte útil a la comunidad. Los recorridos reales ayudan a mejorar las bibliotecas compartidas."
       },
       {
         "title": "¿Puedo crear mi propia aplicación con las bibliotecas?",
-        "body": "Sí. Todo el código de CutOut es abierto, incluidas las bibliotecas Rust y los enlaces para aplicaciones móviles. El proyecto está en fase alfa: las API pueden cambiar y tener el código no significa que todos los dispositivos y funciones estén listos. Empieza por el código y los ejemplos.",
+        "body": "Sí. Todo el código de CutOut es abierto, incluidas las bibliotecas Rust y los enlaces para aplicaciones móviles. El proyecto está en fase alfa: las API siguen cambiando y la compatibilidad depende del modelo y del firmware. El código incluye documentación y ejemplos para empezar.",
         "items": [
           {
             "title": "CutOut en GitHub",
@@ -339,8 +337,8 @@
   ],
   "openSource": {
     "tag": "Desarrollado en abierto",
-    "title": "Las buenas ideas se comparten.",
-    "body": "Todo el código de CutOut es abierto. Las bibliotecas que hacen posible la aplicación dan a otros desarrolladores de PEV un punto de partida, con el trabajo de protocolos ya en marcha.",
+    "title": "Crea algo propio.",
+    "body": "El código de CutOut es abierto. Aprovecha sus protocolos y bibliotecas para PEV y dedica más tiempo a tus propias ideas.",
     "link": "Conoce el proyecto"
   },
   "about": {
@@ -349,11 +347,11 @@
     "sections": [
       {
         "title": "Mejores aplicaciones para PEV.",
-        "body": "El objetivo principal es facilitar que todo el mundo cree mejores aplicaciones para PEV. Compartir el trabajo de protocolos y las bibliotecas permite que otros desarrolladores dediquen más tiempo a sus propias ideas."
+        "body": "Queremos mejores aplicaciones para todos los PEV. Compartir el trabajo de protocolos y las bibliotecas da a otros desarrolladores más tiempo para probar nuevas ideas."
       },
       {
         "title": "Una aplicación para salir a rodar.",
-        "body": "El segundo objetivo es crear una aplicación que le guste a su creador y que la comunidad quiera usar. La mejor forma de lograrlo es hacer una aplicación muy buena. Los recorridos y dispositivos reales también mejoran las bibliotecas compartidas."
+        "body": "Estamos creando una aplicación que nos guste usar y que le resulte útil a la comunidad. Los recorridos y dispositivos reales también ayudan a mejorar las bibliotecas compartidas."
       },
       {
         "title": "Construye sobre lo que ya existe.",

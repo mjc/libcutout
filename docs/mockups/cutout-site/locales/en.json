@@ -15,20 +15,18 @@
     "title": "Know",
     "accent": "your ride.",
     "fullTitle": "Know your ride",
-    "body": "Your PEV, your route, your lights, your camera. Live ride data and the details worth coming back to, all in CutOut.",
+    "body": "See your ride data, control your lights and camera, and look back at the route and music that made the day.",
     "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
     "stampTitle": "Made by a rider.",
     "stampBody": "Built with the PEV community."
   },
   "preview": {
-    "label": "Screenshot placeholder",
-    "description": "Current app interface, with realistic sample data. To be captured later.",
-    "caption": "Screenshot space only. No older app layouts are used in this concept.",
-    "note": "Website design preview · Screenshots are placeholders · Download is not connected",
-    "dialogTag": "Design preview",
-    "dialogTitle": "This is the download entry point.",
-    "dialogBody": "The production site will link to the actual installation destination here. This mockup does not claim App Store or public beta availability.",
-    "close": "Back to the preview"
+    "label": "Screenshot coming soon",
+    "dialogTag": "Alpha",
+    "dialogTitle": "CutOut is in alpha.",
+    "dialogBody": "Public downloads are not available yet. Follow the project on GitHub for release updates.",
+    "updates": "Follow the project",
+    "close": "Close"
   },
   "vehicles": {
     "tag": "PEV coverage",
@@ -78,7 +76,7 @@
   },
   "featuresTag": "Along for the whole ride",
   "featuresTitle": "The details you need. When you need them.",
-  "featuresBody": "Check in at a glance while riding. Look a little closer when you stop.",
+  "featuresBody": "Speed and battery while you ride. Routes and ride details when you’re done.",
   "features": [
     {
       "title": "Live ride data",
@@ -96,7 +94,7 @@
   "steps": [
     {
       "title": "Connect your PEV.",
-      "body": "Choose your supported device over Bluetooth. The available readings and controls follow the actual model."
+      "body": "Connect your supported PEV over Bluetooth to see its readings and controls."
     },
     {
       "title": "Go for a ride.",
@@ -116,13 +114,13 @@
   },
   "guide": {
     "title": "A ride, from\nstart to finish.",
-    "body": "Connect your PEV, record the ride, and return to the details later. Here is where the main pieces fit.",
+    "body": "Connect your PEV, record the ride, and come back to the details later.",
     "contents": "On this page",
     "sections": [
       {
         "short": "Before the ride",
         "title": "Start with your device.",
-        "body": "Pick your supported PEV from the nearby Bluetooth devices. CutOut presents the information and settings available for that model, rather than promising the same controls for every vehicle.",
+        "body": "Choose your PEV from the nearby Bluetooth devices. See its readings, check the battery and adjust the settings available for your model.",
         "points": [
           "VESC Onewheels use Refloat firmware.",
           "EUC capabilities depend on the model and firmware.",
@@ -156,7 +154,7 @@
       }
     ],
     "compatibilityTitle": "Does it work with your PEV?",
-    "compatibilityBody": "CutOut is intended for VESC Onewheel + Refloat, EUC, eskate, scooter, ebike and emoto. The developer owns the first two categories; the others need community data captures. Manufacturer-encrypted communications are not supported.",
+    "compatibilityBody": "Check the PEV coverage list for your vehicle type, then see the FAQ for device and firmware details.",
     "compatibilityLink": "Read the compatibility FAQ"
   },
   "support": {
@@ -185,7 +183,7 @@
       },
       {
         "title": "Does a stock Onewheel work?",
-        "body": "The Onewheel scope here is a VESC-powered build running Refloat. This does not claim support for stock Onewheel electronics or manufacturer-encrypted protocols."
+        "body": "Stock Onewheel electronics are not supported. CutOut’s Onewheel support is for VESC-powered builds running Refloat."
       },
       {
         "title": "Which Bluetooth RGB lights work?",
@@ -193,11 +191,11 @@
       },
       {
         "title": "Which Wi-Fi cameras work with CutOut?",
-        "body": "The current camera profile is FreedConn R3 Pro with R3V1 firmware. It supports live preview and camera media access, with recording and still-photo controls when the firmware offers them. Other models and firmware need validation; a Novatek processor alone does not establish compatibility."
+        "body": "CutOut currently works with the FreedConn R3 Pro running R3V1 firmware. Preview the camera and browse its footage; recording and photo controls depend on the firmware. Other models and revisions are not confirmed. A Novatek chip alone does not establish compatibility."
       },
       {
-        "title": "Which other Wi-Fi cameras are being researched?",
-        "body": "These action, body and bicycle/motorcycle cameras are compatibility candidates, not confirmed CutOut support. Some have published research on a related Novatek control protocol; others have only confirmed Novatek hardware and Wi-Fi. Exact firmware and camera functions still need testing. Vehicle-mounted systems may need external power.",
+        "title": "What about other Wi-Fi cameras?",
+        "body": "These models are possible candidates, not confirmed CutOut support. Some have documented Novatek control protocols; others are listed because their Novatek hardware and Wi-Fi are documented. Compatibility can vary by revision and firmware. Vehicle-mounted systems may need external power.",
         "items": [
           {
             "title": "SJCAM SJ4000 WiFi and SJ5000X Elite",
@@ -275,11 +273,11 @@
       },
       {
         "title": "Why is CutOut open source?",
-        "body": "The primary goal is to make it easier to build better apps for all PEVs. We share the protocol work and libraries so other developers can focus on their own ideas. We also want a CutOut app its creator likes and the community wants to use. Building a very good app helps make those shared libraries useful."
+        "body": "We want to make it easier to build better PEV apps. Sharing the protocol work and libraries lets other developers focus on their own ideas. We are also building an app we enjoy using and the community finds useful. Real rides help improve the shared libraries, too."
       },
       {
         "title": "Can I build my own app with the libraries?",
-        "body": "Yes. All CutOut code is open source today, including reusable Rust libraries and mobile bindings. The project is in alpha: APIs can change, and source availability does not mean every device or feature is ready. Start with the source and examples.",
+        "body": "Yes. All CutOut code is open source, including reusable Rust libraries and mobile bindings. The project is in alpha: APIs are still changing, and device coverage varies by model and firmware. The source includes documentation and examples to help you get started.",
         "items": [
           {
             "title": "CutOut on GitHub",
@@ -339,8 +337,8 @@
   ],
   "openSource": {
     "tag": "Built in the open",
-    "title": "Good ideas are worth sharing.",
-    "body": "All CutOut code is open source. The libraries behind the app give other PEV developers a place to start, with the protocol work already underway.",
+    "title": "Build something of your own.",
+    "body": "The code behind CutOut is open source. Build on its PEV protocols and libraries, and spend more time on your own ideas.",
     "link": "Meet the project"
   },
   "about": {
@@ -349,11 +347,11 @@
     "sections": [
       {
         "title": "Better PEV apps.",
-        "body": "The primary goal is to make it easier for everyone to build better PEV apps. Share the protocol work and useful libraries so the next developer can spend more time on their own ideas."
+        "body": "We want every PEV app to be better. Sharing the protocol work and useful libraries gives other developers more time to try new ideas."
       },
       {
         "title": "An app worth riding with.",
-        "body": "The next goal is to build a CutOut app its creator likes and the community wants to use. The best way to get there is to build a very good app. Real rides and real devices also make the shared libraries better."
+        "body": "We are building an app we enjoy using and the community finds useful. Real rides and devices help improve the shared libraries, too."
       },
       {
         "title": "Build on what is here.",
