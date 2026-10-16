@@ -1535,9 +1535,34 @@ fn export_database_capture(
         .database
         .live_capture_page(capture.id, None, limit)
         .map_err(|error| format!("could not read finalized live capture: {error}"))?;
+    export_database_capture_from_pages(path, first_page, state, limit, |after_sequence, limit| {
+        capture
+            .database
+            .live_capture_page(capture.id, after_sequence, limit)
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn export_database_capture_from_pages(
+    path: &Path,
+    first_page: crate::storage::LiveCaptureSnapshot,
+    state: &CaptureWriterState,
+    limit: QueryLimit,
+    mut read_page: impl FnMut(
+        Option<u64>,
+        QueryLimit,
+    ) -> Result<crate::storage::LiveCaptureSnapshot, String>,
+) -> Result<String, String> {
     if first_page.state == LiveCaptureState::Active {
         return Err("live capture must be inactive before export".into());
     }
+    let expected_id = first_page.id;
+    let expected_state = first_page.state;
+    let expected_integrity = first_page.integrity;
+    let expected_header = first_page.header_json.clone();
+    let expected_started_at_ms = first_page.started_at_ms;
+    let expected_finished_at_ms = first_page.finished_at_ms;
+    let expected_next_sequence = first_page.next_sequence;
 
     let mut created = false;
     let result = (|| {
@@ -1559,11 +1584,19 @@ fn export_database_capture(
         loop {
             let snapshot = match page.take() {
                 Some(snapshot) => snapshot,
-                None => capture
-                    .database
-                    .live_capture_page(capture.id, after_sequence, limit)
+                None => read_page(after_sequence, limit)
                     .map_err(|error| format!("could not continue live capture export: {error}"))?,
             };
+            if snapshot.id != expected_id
+                || snapshot.state != expected_state
+                || snapshot.integrity != expected_integrity
+                || snapshot.header_json != expected_header
+                || snapshot.started_at_ms != expected_started_at_ms
+                || snapshot.finished_at_ms != expected_finished_at_ms
+                || snapshot.next_sequence != expected_next_sequence
+            {
+                return Err("live capture changed during export".into());
+            }
             for event in &snapshot.events {
                 let mut retained = Vec::new();
                 crate::storage::sanitize_capture_music(
