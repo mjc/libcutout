@@ -51,6 +51,7 @@ final class ChargingContentReportModel {
             switch error {
             case .InvalidMetadata: key = "charging.report.invalid_details"
             case .Unauthorized: key = "charging.report.identity_required"
+            case .Unavailable: key = "charging.report.unavailable"
             case .Throttled: key = "charging.report.throttled"
             default: key = "charging.report.failed"
             }

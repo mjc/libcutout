@@ -812,6 +812,16 @@ final class ChargingContentReportTests: XCTestCase {
         XCTAssertEqual(submissions, 0)
     }
 
+    func testReportPresentsPausedOrDeletedPublicIdentityAsUnavailable() async {
+        let model = ChargingContentReportModel(remoteID: UUID().uuidString) { _ in
+            throw MobileChargingError.Unavailable
+        }
+
+        await model.send()
+
+        XCTAssertEqual(model.state, .failed("charging.report.unavailable"))
+    }
+
     func testExplicitReportRegistersAndPersistsWithoutSyncingQueuedContributions() async throws {
         let store = MemoryChargingCredentialStore()
         let credential = ChargingCommunityCredential(
@@ -876,6 +886,31 @@ final class ChargingContentReportTests: XCTestCase {
         }
     }
 
+    func testAccountDeletionRejectsCredentialFromRegistrationClaimRace() async throws {
+        let entered = expectation(description: "second report credential load suspended")
+        let gate = ReportCredentialLoadGate(entered: entered)
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let store = MemoryChargingCredentialStore(
+            loseRegistrationClaim: true,
+            recordAfterLostClaim: .ready(credential),
+            beforeLoad: { await gate.suspendSecondLoad() }
+        )
+        let sync = reportSync(store: store)
+        let report = Task { try await sync.credentialForReport() }
+        await fulfillment(of: [entered], timeout: 2)
+
+        await sync.pauseForAccountDeletion()
+        try await store.markDeletionPending(credential)
+        await gate.resume()
+
+        do {
+            _ = try await report.value
+            XCTFail("A report must not return a credential after deletion admission closes")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+        }
+    }
+
     private func reportSync(store: any ChargingCredentialStore) -> ChargingCommunitySync {
         ChargingCommunitySync(
             credentialStore: store,
@@ -908,17 +943,51 @@ final class ChargingContentReportTests: XCTestCase {
         }
         XCTAssertEqual(registrations, 0)
     }
+
+    func testReportPublicRefreshAdmissionDoesNotRecreateDeletedIdentities() async {
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        for record in [ChargingCredentialRecord.deletionPending(credential), .deleted] {
+            let store = MemoryChargingCredentialStore(initial: record)
+            var registrations = 0
+            let sync = ChargingCommunitySync(
+                credentialStore: store,
+                registerIdentity: {
+                    registrations += 1
+                    throw MobileChargingError.Network
+                },
+                synchronize: { _ in throw MobileChargingError.Network },
+                sleep: { _ in }, enabled: { true }
+            )
+            do {
+                _ = try await sync.credentialForReport()
+                XCTFail("Public refresh admission must not recreate a deleted identity")
+            } catch {
+                XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+            }
+            XCTAssertEqual(registrations, 0)
+        }
+    }
 }
 
 private actor ReportCredentialLoadGate {
     private let entered: XCTestExpectation
     private var continuation: CheckedContinuation<Void, Never>?
+    private var loadCount = 0
 
     init(entered: XCTestExpectation) {
         self.entered = entered
     }
 
     func suspend() async {
+        await withCheckedContinuation {
+            continuation = $0
+            entered.fulfill()
+        }
+    }
+
+    func suspendSecondLoad() async {
+        loadCount += 1
+        guard loadCount == 2 else { return }
         await withCheckedContinuation {
             continuation = $0
             entered.fulfill()

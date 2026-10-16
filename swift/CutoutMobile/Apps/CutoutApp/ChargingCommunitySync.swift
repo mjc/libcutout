@@ -425,19 +425,28 @@ final class ChargingCommunitySync {
         let stored = try await credentialStore.load()
         try Task.checkCancellation()
         guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        let selectedCredential: ChargingCommunityCredential
         switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: false) {
         case .synchronize:
             guard case .ready(let credential) = stored else { throw MobileChargingError.Unauthorized }
-            return credential
+            selectedCredential = credential
         case .beginRegistration:
-            if try await credentialStore.beginRegistration() { return try await registerAndPersist() }
-            guard case .ready(let credential) = try await credentialStore.load() else {
-                throw MobileChargingError.Unauthorized
+            if try await credentialStore.beginRegistration() {
+                selectedCredential = try await registerAndPersist()
+            } else {
+                guard case .ready(let credential) = try await credentialStore.load() else {
+                    throw MobileChargingError.Unauthorized
+                }
+                selectedCredential = credential
             }
-            return credential
-        case .registerIdentity, .publicRefresh, .requireExplicitRetry:
+        case .publicRefresh:
+            throw MobileChargingError.Unavailable
+        case .registerIdentity, .requireExplicitRetry:
             throw MobileChargingError.Unauthorized
         }
+        try Task.checkCancellation()
+        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        return selectedCredential
     }
 
     func cancel() {

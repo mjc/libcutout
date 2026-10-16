@@ -31,6 +31,7 @@
     "charging.report.receipt" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Report ID"}}}},
     "charging.report.invalid_details" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Shorten the details or remove unsupported characters."}}}},
     "charging.report.identity_required" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "A community identity is needed. Use Retry in the map’s community status, then try again."}}}},
+    "charging.report.unavailable" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reporting is unavailable for this account."}}}},
     "charging.report.throttled" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Too many reports. Please try again later."}}}},
     "charging.report.failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The report could not be confirmed. Retry sends the same report."}}}},
     "setup.diagnostics.automatic" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Automatic Bluetooth diagnostics"}}}},
