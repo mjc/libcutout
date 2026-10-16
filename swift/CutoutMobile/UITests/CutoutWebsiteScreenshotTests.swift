@@ -5,6 +5,9 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUp() async throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Website screenshot tests are restricted to Simulator")
+        #endif
         try await super.setUp()
         continueAfterFailure = false
         executionTimeAllowance = 180

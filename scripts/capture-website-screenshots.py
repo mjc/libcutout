@@ -31,6 +31,20 @@ CASES = {
 }
 RESULT_PATTERN = re.compile(r"\(([^()]*\.xcresult)\)")
 GIT_STATUS_PATHS = ["--", ".", ":(exclude)docs/mockups/cutout-site/assets/screenshots/en"]
+DEFAULT_DESTINATION = "platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest"
+
+
+def effective_destination(environment: dict[str, str]) -> str:
+    return (
+        environment.get("CUTOUT_IOS_TEST_DESTINATION")
+        or environment.get("CUTOUT_IOS_SIMULATOR_DESTINATION")
+        or DEFAULT_DESTINATION
+    )
+
+
+def require_simulator_destination(destination: str) -> None:
+    if destination != "platform=iOS Simulator" and not destination.startswith("platform=iOS Simulator,"):
+        raise SystemExit("Screenshot capture requires an iOS Simulator destination; physical-device destinations are refused.")
 
 
 def run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
@@ -83,6 +97,7 @@ def device_metadata(summary: dict) -> tuple[dict, str | None]:
 def main() -> int:
     if sys.platform != "darwin" or os.uname().machine != "arm64":
         raise SystemExit("Screenshot capture requires the supported Apple Silicon Devenv host.")
+    require_simulator_destination(effective_destination(os.environ))
     devenv_root = os.environ.get("DEVENV_ROOT")
     if not devenv_root or Path(devenv_root).resolve() != ROOT:
         raise SystemExit("Run from the repository Devenv: devenv shell -- python3 scripts/capture-website-screenshots.py")
