@@ -31,7 +31,7 @@ final class MusicFeatureModelTests: XCTestCase {
             snapshot: observation(atMs: 120).snapshot, kind: .play, monotonicAtMs: 120,
             wallClockAtMs: 1_700_000_000_120, clockUncertaintyMs: 5)
         let model = makeModel(state: state, defaults: suite.defaults)
-        model.synchronizeHistory(try state.currentMusicHistory())
+        model.synchronizeHistory(state.currentMusicHistory())
         model.settingsNowPlaying = MusicNowPlaying(snapshot: spotify)
 
         let disconnected = await model.disconnectSpotify()
@@ -40,7 +40,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertFalse(MusicMonitoringPreferenceStore(defaults: suite.defaults).isEnabled)
         XCTAssertNil(model.settingsNowPlaying)
         XCTAssertEqual(model.timelineEvents.map(\.provider), [.appleMusic])
-        XCTAssertEqual(try state.currentMusicHistory()?.events.map(\.provider), [.appleMusic])
+        XCTAssertEqual(state.currentMusicHistory()?.events.map(\.provider), [.appleMusic])
         XCTAssertEqual(state.currentSnapshot()?.rideID, started.rideID)
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
         XCTAssertFalse(model.isDisconnectingSpotify)
@@ -77,13 +77,13 @@ final class MusicFeatureModelTests: XCTestCase {
         let failed = await model.disconnectSpotify()
         XCTAssertFalse(failed)
         XCTAssertFalse(preference.isEnabled)
-        XCTAssertEqual(try state.currentMusicHistory()?.events.map(\.provider), [.spotify])
+        XCTAssertEqual(state.currentMusicHistory()?.events.map(\.provider), [.spotify])
         XCTAssertEqual(sqlite3_exec(connection, "DROP TRIGGER reject_spotify_delete", nil, nil, nil), SQLITE_OK)
 
         let retried = await model.disconnectSpotify()
         XCTAssertTrue(retried)
         XCTAssertFalse(preference.isEnabled)
-        XCTAssertEqual(try state.currentMusicHistory()?.events.count, 0)
+        XCTAssertEqual(state.currentMusicHistory()?.events.count, 0)
     }
 
     func testSpotifyDisconnectRejectsAnObservationWhoseHistoryReadbackFinishesLate() async throws {
@@ -124,7 +124,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertFalse(accepted)
         XCTAssertNil(model.settingsNowPlaying)
         XCTAssertTrue(model.timelineEvents.isEmpty)
-        XCTAssertEqual(try state.currentMusicHistory()?.events.count, 0)
+        XCTAssertEqual(state.currentMusicHistory()?.events.count, 0)
     }
 
     func testNativeSoundCloudRefusesUnavailableCommandsAndAcceptsAvailablePause() async throws {
