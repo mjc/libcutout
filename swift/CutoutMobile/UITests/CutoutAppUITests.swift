@@ -7186,6 +7186,186 @@ private enum ConnectedDeviceFamily: Equatable {
 final class ChargingMapDeviceUITests: XCTestCase {
     private let acceptanceDatabaseID = UUID().uuidString
 
+    func testTwoClientsConvergeThroughService() async throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 360
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Charging service acceptance requires Simulator")
+        #endif
+        guard let baseURLString = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_CHARGING_SERVICE_BASE_URL"] else {
+            throw XCTSkip("Run scripts/run-charging-service-ui-tests.py")
+        }
+        let baseURL = try XCTUnwrap(URL(string: baseURLString), "Invalid charging service base URL")
+        let runID = UUID().uuidString
+        let owner = serviceSyncApp(baseURL: baseURL, clientID: runID + "-a")
+        let voter = serviceSyncApp(baseURL: baseURL, clientID: runID + "-b")
+        defer {
+            owner.terminate()
+            voter.terminate()
+        }
+        let originalNote = "Service sync outlet."
+        let updatedNote = "Service sync outlet. Use the north entrance."
+
+        openCharging(owner)
+        XCTAssertTrue(owner.buttons["charging.empty.add"].waitForExistence(timeout: 20), owner.debugDescription)
+        createFreeSpot(in: owner, note: originalNote)
+        var serviceState = try await waitForServiceState(at: baseURL) { $0.spot?.access_note == originalNote }
+        owner.terminate()
+
+        openCharging(voter)
+        let voterPin = servicePin(in: voter)
+        XCTAssertTrue(voterPin.waitForExistence(timeout: 20), voter.debugDescription)
+        voterPin.tap()
+        XCTAssertTrue(voter.staticTexts["charging.selected.access-note"].label.contains(originalNote))
+        for (buttonID, up, down) in [
+            ("charging.vote.up", 1, 0), ("charging.vote.down", 0, 1),
+            ("charging.vote.down", 0, 0),
+        ] {
+            let button = voter.buttons[buttonID]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), voter.debugDescription)
+            button.tap()
+            let previousSequence = serviceState.change_sequence
+            serviceState = try await waitForServiceState(at: baseURL) {
+                $0.change_sequence > previousSequence && $0.spot?.votes.up == up && $0.spot?.votes.down == down
+            }
+        }
+        attachScreenshot(voter, name: "Independent client reads and votes on the service spot")
+        voter.terminate()
+
+        openCharging(owner)
+        XCTAssertTrue(servicePin(in: owner).waitForExistence(timeout: 20), owner.debugDescription)
+        try await setServiceOffline(true, at: baseURL)
+        servicePin(in: owner).tap()
+        openServiceDetails(in: owner, actionID: "charging.details.edit")
+        owner.buttons["charging.details.edit"].tap()
+        let access = owner.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+        revealChargingControl(access, in: owner, direction: .down)
+        access.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
+        access.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: originalNote.count) + updatedNote)
+        XCTAssertEqual(access.value as? String, updatedNote, owner.debugDescription)
+        dismissChargingKeyboard(in: owner)
+        owner.buttons["charging.editor.save"].tap()
+        XCTAssertTrue(owner.buttons["charging.sync.retry"].waitForExistence(timeout: 20), owner.debugDescription)
+        owner.terminate()
+
+        openCharging(owner)
+        XCTAssertTrue(servicePin(in: owner).waitForExistence(timeout: 20), owner.debugDescription)
+        servicePin(in: owner).tap()
+        XCTAssertTrue(
+            owner.staticTexts["charging.selected.access-note"].label.contains(updatedNote), owner.debugDescription)
+        let ownerRetry = owner.buttons["charging.sync.retry"]
+        XCTAssertTrue(ownerRetry.waitForExistence(timeout: 20), owner.debugDescription)
+        attachScreenshot(owner, name: "Queued offline edit survives app relaunch")
+        try await setServiceOffline(false, at: baseURL)
+        ownerRetry.tap()
+        _ = try await waitForServiceState(at: baseURL) { $0.spot?.access_note == updatedNote }
+        owner.terminate()
+
+        try await setServiceOffline(true, at: baseURL)
+        openCharging(voter)
+        XCTAssertTrue(servicePin(in: voter).waitForExistence(timeout: 20), voter.debugDescription)
+        servicePin(in: voter).tap()
+        XCTAssertTrue(
+            voter.staticTexts["charging.selected.access-note"].label.contains(originalNote), voter.debugDescription)
+        let voterRetry = voter.buttons["charging.sync.retry"]
+        XCTAssertTrue(voterRetry.waitForExistence(timeout: 20), voter.debugDescription)
+        try await setServiceOffline(false, at: baseURL)
+        voterRetry.tap()
+        let updated = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", updatedNote),
+            object: voter.staticTexts["charging.selected.access-note"])
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 20), .completed, voter.debugDescription)
+        attachScreenshot(voter, name: "Cached client converges to the owner's edit after reconnecting")
+        voter.terminate()
+
+        openCharging(owner)
+        XCTAssertTrue(servicePin(in: owner).waitForExistence(timeout: 20), owner.debugDescription)
+        servicePin(in: owner).tap()
+        openServiceDetails(in: owner, actionID: "charging.details.delete")
+        owner.buttons["charging.details.delete"].tap()
+        let confirm = owner.sheets.buttons["Delete spot"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), owner.debugDescription)
+        confirm.tap()
+        _ = try await waitForServiceState(at: baseURL) { $0.status == "withdrawn" }
+        owner.terminate()
+
+        openCharging(voter)
+        XCTAssertTrue(voter.buttons["charging.empty.add"].waitForExistence(timeout: 20), voter.debugDescription)
+        XCTAssertFalse(servicePin(in: voter).exists, voter.debugDescription)
+        attachScreenshot(voter, name: "Withdrawal removes the other client's cached pin")
+    }
+
+    private struct ServiceSpot: Decodable {
+        struct Votes: Decodable {
+            let up: Int
+            let down: Int
+        }
+        let access_note: String
+        let votes: Votes
+    }
+
+    private struct ServiceState: Decodable {
+        let status: String
+        let change_sequence: UInt64
+        let spot: ServiceSpot?
+    }
+
+    private struct ServicePage: Decodable { let items: [ServiceState] }
+
+    private func serviceSyncApp(baseURL: URL, clientID: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--charging-acceptance", "--ui-test-charging-service-sync"]
+        app.launchEnvironment["CUTOUT_CHARGING_ACCEPTANCE_DATABASE_ID"] = UUID().uuidString
+        app.launchEnvironment["CUTOUT_UI_TEST_CHARGING_SERVICE_CLIENT_ID"] = clientID
+        app.launchEnvironment["CUTOUT_UI_TEST_CHARGING_SERVICE_BASE_URL"] = baseURL.absoluteString
+        return app
+    }
+
+    private func servicePin(in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "charging.pin.")).firstMatch
+    }
+
+    private func openServiceDetails(in app: XCUIApplication, actionID: String) {
+        let detailsButton = app.buttons["charging.details.open"]
+        XCTAssertTrue(detailsButton.waitForExistence(timeout: 10), app.debugDescription)
+        detailsButton.tap()
+
+        let detailsScreen = app.descendants(matching: .any)["charging.spot.details-screen"]
+        XCTAssertTrue(detailsScreen.waitForExistence(timeout: 10), app.debugDescription)
+
+        let action = app.buttons[actionID]
+        let actionReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in action.exists && action.isHittable },
+            object: action)
+        XCTAssertEqual(XCTWaiter.wait(for: [actionReady], timeout: 10), .completed, app.debugDescription)
+    }
+
+    private func waitForServiceState(
+        at baseURL: URL, matching predicate: (ServiceState) -> Bool
+    ) async throws -> ServiceState {
+        let url = baseURL.appending(path: "v1/charging-spots/changes")
+            .appending(queryItems: [URLQueryItem(name: "after", value: "0"), URLQueryItem(name: "limit", value: "100")])
+        let deadline = Date().addingTimeInterval(25)
+        repeat {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let page = try JSONDecoder().decode(ServicePage.self, from: data)
+            if let state = page.items.first(where: predicate) { return state }
+            try await Task.sleep(for: .milliseconds(200))
+        } while Date() < deadline
+        XCTFail("The service did not converge to the expected spot state")
+        throw URLError(.timedOut)
+    }
+
+    private func setServiceOffline(_ offline: Bool, at baseURL: URL) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "__test/offline"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["offline": offline])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
     func testEmptyResultsDoNotResizeTheMapOrRestartLoading() throws {
         continueAfterFailure = false
         let app = chargingApp()
