@@ -356,7 +356,7 @@ pub enum BrokerError {
     /// The persisted token state is missing when required or invalid.
     #[error("SoundCloud token state is unavailable")]
     StateUnavailable,
-    /// SoundCloud or its HTTP client is unavailable.
+    /// `SoundCloud` or its HTTP client is unavailable.
     #[error("SoundCloud token provider is temporarily unavailable")]
     ProviderUnavailable,
     /// A persisted retry or grant budget is exhausted.
@@ -693,9 +693,10 @@ pub async fn run_from_environment() -> Result<(), &'static str> {
 fn startup_error_message(error: BrokerError) -> &'static str {
     match error {
         BrokerError::CredentialsUnavailable => "SoundCloud credentials are unavailable",
-        BrokerError::StateUnavailable => "SoundCloud token state is unavailable",
+        BrokerError::StateUnavailable | BrokerError::RetryLater => {
+            "SoundCloud token state is unavailable"
+        }
         BrokerError::ProviderUnavailable => "SoundCloud client initialization failed",
-        BrokerError::RetryLater => "SoundCloud token state is unavailable",
     }
 }
 
@@ -750,7 +751,6 @@ impl MusicBroker {
     }
 
     /// Return a cloneable Axum router backed by this broker's shared state.
-    #[must_use]
     pub fn router(&self) -> Router {
         let broker = self.clone();
         router(std::sync::Arc::clone(&broker.broker)).route(
@@ -768,7 +768,7 @@ impl MusicBroker {
     }
 
     /// Check the credential and persisted-state resources without contacting
-    /// SoundCloud or consuming a grant budget.
+    /// `SoundCloud` or consuming a grant budget.
     ///
     /// # Errors
     /// Returns an error when credentials or required persisted state are no
@@ -1247,11 +1247,11 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn readiness_rejects_read_only_token_state_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
         if running_as_root() {
             return;
         }
-
-        use std::os::unix::fs::PermissionsExt;
 
         let root = test_directory("read-only-state-directory");
         tokio::fs::create_dir_all(&root)

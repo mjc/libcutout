@@ -169,10 +169,9 @@ fn validate_listener(command: &Command) -> Result<(), Error> {
         listen,
         ..
     } = command
+        && !listen.ip().is_loopback()
     {
-        if !listen.ip().is_loopback() {
-            return Err(Error::Invalid);
-        }
+        return Err(Error::Invalid);
     }
     Ok(())
 }

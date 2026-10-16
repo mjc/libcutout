@@ -91,7 +91,6 @@ impl PublicVhosts {
 /// The transport peer must be supplied by `into_make_service_with_connect_info`;
 /// the configured proxy must overwrite `Host` with the canonical public host
 /// and strip forwarding or internal routing metadata.
-#[must_use]
 pub fn router(vhosts: PublicVhosts, music: Router, rides: Router, site: Router) -> Router {
     Router::new().fallback(dispatch).with_state(DispatchState {
         vhosts,
