@@ -186,11 +186,14 @@ struct CaptureArtifactDetailView: View {
                             Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
                         }
                         .accessibilityIdentifier("captures.share")
+                    } else if export.isExporting {
+                        ProgressView(localizedAppText("captures.preparing"))
                     } else if let error = export.error {
                         Text(error).foregroundStyle(PevColors.warningText)
                         Button(localizedAppText("captures.share")) {
                             Task { await export.export(source: source) }
                         }
+                        .disabled(export.isExporting)
                     } else {
                         ProgressView(localizedAppText("captures.preparing"))
                     }
