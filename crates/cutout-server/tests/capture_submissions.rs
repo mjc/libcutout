@@ -861,3 +861,382 @@ async fn private_capture_and_signup_moderation_keep_independent_permissions() {
         bytes
     );
 }
+
+struct CombinedCaptureServer {
+    child: std::process::Child,
+    address: std::net::SocketAddr,
+    client: Client,
+}
+
+fn combined_capture_music_fixture(directory: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let credentials = directory.join("credentials");
+    std::fs::create_dir(&credentials).expect("combined credentials directory");
+    std::fs::write(
+        credentials.join("soundcloud.json"),
+        br#"{"client_id":"fixture-client","client_secret":"fixture-secret"}"#,
+    )
+    .expect("combined credentials");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let state = directory.join("music-tokens.json");
+    std::fs::write(
+        &state,
+        serde_json::to_vec(&json!({
+            "cached": {
+                "access_token": "fixture-cached-access-token",
+                "refresh_token": "fixture-unused-refresh-token",
+                "expires_at": now + 86_400
+            },
+            "upstream_attempts": [],
+            "client_token_attempts": [],
+            "next_attempt_at": now + 3_600
+        }))
+        .expect("cached music state"),
+    )
+    .expect("music state file");
+    (credentials, state)
+}
+
+impl CombinedCaptureServer {
+    async fn start(directory: &Path, database: &Path) -> Self {
+        use std::{
+            net::TcpListener,
+            process::{Command, Stdio},
+            time::Duration,
+        };
+        let (credentials, state) = combined_capture_music_fixture(directory);
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("reserve port");
+        let address = reserved.local_addr().expect("reserved address");
+        drop(reserved);
+        let child = Command::new(env!("CARGO_BIN_EXE_cutout-server"))
+            .arg("--database")
+            .arg(database)
+            .args(["serve", "--music", "--listen"])
+            .arg(address.to_string())
+            .args(["--trusted-proxy", "127.0.0.1"])
+            .env("CREDENTIALS_DIRECTORY", credentials)
+            .env("SOUNDCLOUD_TOKEN_STATE_FILE", state)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("combined capture server");
+        let mut server = Self {
+            child,
+            address,
+            client: Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("combined client"),
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = server.child.try_wait().expect("server status") {
+                use std::io::Read;
+                let mut stderr = String::new();
+                if let Some(mut pipe) = server.child.stderr.take() {
+                    pipe.read_to_string(&mut stderr)
+                        .expect("startup diagnostics");
+                }
+                panic!("combined server exited before readiness ({status}): {stderr}");
+            }
+            if let Ok(response) = server
+                .request(Method::GET, "music.cutout.lol", "/readyz", "")
+                .send()
+                .await
+                && response.status() == StatusCode::OK
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "combined server readiness deadline"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        for host in ["rides.cutout.lol", "cutout.lol"] {
+            expect_status(
+                server
+                    .request(Method::GET, host, "/readyz", "")
+                    .send()
+                    .await
+                    .expect("host readiness"),
+                StatusCode::OK,
+            )
+            .await;
+        }
+        server
+    }
+
+    fn request(
+        &self,
+        method: Method,
+        host: &str,
+        path: &str,
+        token: &str,
+    ) -> reqwest::RequestBuilder {
+        let request = self
+            .client
+            .request(method, format!("http://{}{path}", self.address))
+            .header("host", host);
+        if token.is_empty() {
+            request
+        } else {
+            request.bearer_auth(token)
+        }
+    }
+}
+
+impl Drop for CombinedCaptureServer {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+async fn combined_capture_headers(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    while !bytes.ends_with(b"\r\n\r\n") {
+        let byte = stream.read_u8().await.expect("HTTP response header byte");
+        bytes.push(byte);
+        assert!(bytes.len() <= 16 * 1024, "bounded response headers");
+    }
+    bytes
+}
+
+async fn combined_capture_slow_put(
+    server: &CombinedCaptureServer,
+    operation: &str,
+    owner: &str,
+    bytes: &[u8],
+) -> Value {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(server.address)
+        .await
+        .expect("slow upload connection");
+    let encoded = serde_json::to_string(&metadata(bytes, "manual")).expect("slow upload metadata");
+    let headers = format!(
+        "PUT /v1/capture-submissions/{operation} HTTP/1.1\r\nHost: rides.cutout.lol\r\nAuthorization: Bearer {owner}\r\nContent-Type: application/x-ndjson\r\nx-cutout-capture: {encoded}\r\nContent-Length: {}\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n",
+        bytes.len()
+    );
+    stream
+        .write_all(headers.as_bytes())
+        .await
+        .expect("slow upload headers");
+    let interim = tokio::time::timeout(
+        Duration::from_secs(5),
+        combined_capture_headers(&mut stream),
+    )
+    .await
+    .expect("body admission response");
+    assert!(
+        interim.starts_with(b"HTTP/1.1 100 Continue\r\n"),
+        "rides capture PUT must reach its body handler before publication: {}",
+        String::from_utf8_lossy(&interim)
+    );
+    let half = bytes.len() / 2;
+    stream
+        .write_all(&bytes[..half])
+        .await
+        .expect("first capture body fragment");
+    // Cross the directory's five-second deadline, within the capture idle budget.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    stream
+        .write_all(&bytes[half..])
+        .await
+        .expect("final capture body fragment");
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut response))
+        .await
+        .expect("capture publication deadline")
+        .expect("capture publication response");
+    assert!(
+        response.starts_with(b"HTTP/1.1 201 Created\r\n"),
+        "capture must outlive the directory deadline and publish: {}",
+        String::from_utf8_lossy(&response)
+    );
+    let start = response
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .expect("publication header terminator")
+        + 4;
+    serde_json::from_slice(&response[start..]).expect("publication receipt")
+}
+
+#[tokio::test]
+async fn private_capture_combined_rides_host_streams_past_directory_deadline_and_isolates_review() {
+    let directory = TempDir::new().expect("directory");
+    let database = directory.path().join("server.sqlite");
+    let moderator = provision(&database, "--moderator");
+    let reviewer = provision(&database, "--private-capture-reviewer");
+    let server = CombinedCaptureServer::start(directory.path(), &database).await;
+    let identity = expect_status(
+        server
+            .request(Method::POST, "rides.cutout.lol", "/v1/identities", "")
+            .header("x-real-ip", "192.0.2.1")
+            .send()
+            .await
+            .expect("rides registration"),
+        StatusCode::CREATED,
+    )
+    .await
+    .json::<Value>()
+    .await
+    .expect("owner identity");
+    let owner = identity["token"].as_str().expect("owner bearer");
+    let mut bytes = capture();
+    let record = std::str::from_utf8(&bytes)
+        .expect("capture text")
+        .lines()
+        .last()
+        .expect("record")
+        .to_owned();
+    for _ in 0..300 {
+        bytes.extend_from_slice(record.as_bytes());
+        bytes.push(b'\n');
+    }
+    assert!(bytes.len() > 32 * 1024);
+    cutout_core::validate_capture_submission(bytes.as_slice(), cutout_core::PevcapEncoding::Jsonl)
+        .expect("valid music-free upload fixture");
+    let operation = Uuid::new_v4().to_string();
+    let receipt = combined_capture_slow_put(&server, &operation, owner, &bytes).await;
+    assert_eq!(receipt["operation_id"], operation);
+    assert_eq!(receipt["sha256"], metadata(&bytes, "manual")["sha256"]);
+    assert_eq!(receipt["bytes"], bytes.len());
+    assert!(
+        receipt["received_at_milliseconds"]
+            .as_u64()
+            .is_some_and(|time| time > 0)
+    );
+    let path = format!("/v1/capture-submissions/{operation}");
+    let recovered = expect_status(
+        server
+            .request(Method::GET, "rides.cutout.lol", &path, owner)
+            .send()
+            .await
+            .expect("receipt lookup"),
+        StatusCode::OK,
+    )
+    .await
+    .json::<Value>()
+    .await
+    .expect("durable receipt");
+    assert_eq!(recovered, receipt);
+    let content_path = format!("{path}/content");
+    assert_combined_capture_review(
+        &server,
+        owner,
+        &reviewer,
+        &moderator,
+        &content_path,
+        &bytes,
+        &receipt,
+    )
+    .await;
+    assert_combined_capture_host_isolation(&server, &path, &content_path, &reviewer).await;
+}
+
+async fn assert_combined_capture_review(
+    server: &CombinedCaptureServer,
+    owner: &str,
+    reviewer: &str,
+    moderator: &str,
+    content_path: &str,
+    bytes: &[u8],
+    receipt: &Value,
+) {
+    for token in [owner, reviewer] {
+        let response = expect_status(
+            server
+                .request(Method::GET, "rides.cutout.lol", content_path, token)
+                .send()
+                .await
+                .expect("private content"),
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(
+            response.bytes().await.expect("exact payload").as_ref(),
+            bytes
+        );
+    }
+    expect_status(
+        server
+            .request(Method::GET, "rides.cutout.lol", content_path, moderator)
+            .send()
+            .await
+            .expect("moderator content"),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    expect_status(
+        server
+            .request(
+                Method::GET,
+                "rides.cutout.lol",
+                "/v1/capture-submissions",
+                moderator,
+            )
+            .send()
+            .await
+            .expect("moderator list"),
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    let page = expect_status(
+        server
+            .request(
+                Method::GET,
+                "rides.cutout.lol",
+                "/v1/capture-submissions",
+                reviewer,
+            )
+            .send()
+            .await
+            .expect("reviewer list"),
+        StatusCode::OK,
+    )
+    .await
+    .json::<Value>()
+    .await
+    .expect("private list");
+    assert_eq!(
+        page["submissions"].as_array().expect("submissions").len(),
+        1
+    );
+    assert_eq!(&page["submissions"][0]["receipt"], receipt);
+}
+
+async fn assert_combined_capture_host_isolation(
+    server: &CombinedCaptureServer,
+    path: &str,
+    content_path: &str,
+    reviewer: &str,
+) {
+    for host in ["cutout.lol", "music.cutout.lol"] {
+        for (method, route) in [
+            (Method::GET, "/v1/capture-submissions"),
+            (Method::GET, path),
+            (Method::GET, content_path),
+            (Method::PUT, path),
+            (Method::DELETE, path),
+        ] {
+            expect_status(
+                server
+                    .request(method, host, route, reviewer)
+                    .send()
+                    .await
+                    .expect("other host capture route"),
+                StatusCode::NOT_FOUND,
+            )
+            .await;
+        }
+    }
+}

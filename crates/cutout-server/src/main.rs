@@ -4,7 +4,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
     if let Err(error) = cutout_server::run_from_arguments().await {
-        tracing::error!(%error, "charging directory command failed");
+        tracing::error!(%error, "server command failed");
         std::process::exit(1);
     }
 }
