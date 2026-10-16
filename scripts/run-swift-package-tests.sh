@@ -8,6 +8,7 @@ fi
 
 arguments=("$@")
 forwarded_arguments=()
+has_explicit_jobs=false
 for ((index = 0; index < ${#arguments[@]}; index++)); do
   case "${arguments[$index]}" in
     --arch)
@@ -22,9 +23,17 @@ for ((index = 0; index < ${#arguments[@]}; index++)); do
       echo "Swift package test runners support only the native arm64 target" >&2
       exit 2
       ;;
+    --jobs | --jobs=* | -j | -j[0-9]*)
+      has_explicit_jobs=true
+      forwarded_arguments+=("${arguments[$index]}")
+      ;;
     *) forwarded_arguments+=("${arguments[$index]}") ;;
   esac
 done
+
+if [[ "$has_explicit_jobs" == false ]]; then
+  forwarded_arguments=(--jobs 2 "${forwarded_arguments[@]+"${forwarded_arguments[@]}"}")
+fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log_directory="$root/target/test-logs"
