@@ -37,7 +37,9 @@ pub(super) fn check_active(connection: &Connection) -> Result<(), StorageError> 
         {
             after = sequence;
             let bytes = payload::decode(bytes, encoding, original)?;
-            if kind == "music" || transform::line(&bytes)?.1 {
+            if kind == "music"
+                || !matches!(transform::line(&bytes)?, transform::LineOutcome::Unchanged)
+            {
                 return Err(StorageError::LiveCaptureInputInvalid(
                     "stop and save the active legacy capture before removing music metadata",
                 ));
@@ -69,18 +71,19 @@ pub(super) fn purge(connection: &mut Connection) -> Result<(), StorageError> {
         {
             after = sequence;
             let bytes = payload::decode(bytes, encoding, original)?;
-            let (retained, changed) = transform::line(&bytes)?;
-            if kind == "music" || retained.is_none() {
-                transaction.execute(
-                    "DELETE FROM live_capture_events WHERE capture_id=?1 AND sequence=?2",
-                    params![id, sequence],
-                )?;
-                continue;
-            }
-            if changed {
-                let retained = retained.ok_or_else(transform::invalid)?;
-                let encoded = payload::encode(&retained)?;
-                transaction.execute("UPDATE live_capture_events SET payload=?1,payload_encoding=?2,payload_original_bytes=?3 WHERE capture_id=?4 AND sequence=?5",params![encoded.bytes.as_ref(),encoded.encoding,encoded.original_bytes,id,sequence])?;
+            match (kind.as_str(), transform::line(&bytes)?) {
+                ("music", _) | (_, transform::LineOutcome::Removed) => {
+                    transaction.execute(
+                        "DELETE FROM live_capture_events WHERE capture_id=?1 AND sequence=?2",
+                        params![id, sequence],
+                    )?;
+                    continue;
+                }
+                (_, transform::LineOutcome::Unchanged) => {}
+                (_, transform::LineOutcome::Rewritten(retained)) => {
+                    let encoded = payload::encode(&retained)?;
+                    transaction.execute("UPDATE live_capture_events SET payload=?1,payload_encoding=?2,payload_original_bytes=?3 WHERE capture_id=?4 AND sequence=?5",params![encoded.bytes.as_ref(),encoded.encoding,encoded.original_bytes,id,sequence])?;
+                }
             }
             if sequence != next {
                 // Destination slots are already empty: visit the original sequence in order.

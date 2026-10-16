@@ -62,10 +62,16 @@ fn strip_record(bytes: &[u8]) -> Result<(Vec<u8>, bool), StorageError> {
     Ok((serialize(&value)?, true))
 }
 
-/// Returns None for standalone music; otherwise retains original bytes unless changed.
-pub(super) fn line(bytes: &[u8]) -> Result<(Option<Vec<u8>>, bool), StorageError> {
+pub(super) enum LineOutcome {
+    Unchanged,
+    Removed,
+    Rewritten(Vec<u8>),
+}
+
+/// Classifies one JSONL line while retaining unchanged input bytes at the caller.
+pub(super) fn line(bytes: &[u8]) -> Result<LineOutcome, StorageError> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
-        return Ok((Some(bytes.to_vec()), false));
+        return Ok(LineOutcome::Unchanged);
     }
     let mut value = object(bytes)?;
     let kinds: Vec<String> = value
@@ -75,10 +81,10 @@ pub(super) fn line(bytes: &[u8]) -> Result<(Option<Vec<u8>>, bool), StorageError
         .map(|(_, raw)| serde_json::from_str(raw.get()).map_err(|_| invalid()))
         .collect::<Result<_, _>>()?;
     if kinds.iter().any(|kind| kind == "music") {
-        return Ok((None, true));
+        return Ok(LineOutcome::Removed);
     }
     if !kinds.iter().any(|kind| kind == "record") {
-        return Ok((Some(bytes.to_vec()), false));
+        return Ok(LineOutcome::Unchanged);
     }
     let mut changed = false;
     for (key, raw) in &mut value.0 {
@@ -92,13 +98,13 @@ pub(super) fn line(bytes: &[u8]) -> Result<(Option<Vec<u8>>, bool), StorageError
         }
     }
     if !changed {
-        return Ok((Some(bytes.to_vec()), false));
+        return Ok(LineOutcome::Unchanged);
     }
     let mut output = serialize(&value)?;
     if bytes.ends_with(b"\n") {
         output.push(b'\n');
     }
-    Ok((Some(output), true))
+    Ok(LineOutcome::Rewritten(output))
 }
 
 fn read_u32(source: &mut impl Read) -> Result<u32, StorageError> {
@@ -143,6 +149,27 @@ fn mark(bytes: &[u8], digest: &str) -> Result<Vec<u8>, StorageError> {
     ));
     serialize(&value)
 }
+fn write_jsonl_line(
+    output: &mut impl Write,
+    bytes: &[u8],
+    provenance: Option<&str>,
+) -> Result<(), StorageError> {
+    if let Some(digest) = provenance.filter(|_| {
+        object(bytes).is_ok_and(|object| {
+            object.0.iter().any(|(key, value)| {
+                key == "kind"
+                    && serde_json::from_str::<String>(value.get())
+                        .is_ok_and(|value| value == "header")
+            })
+        })
+    }) {
+        output.write_all(&mark(bytes, digest)?)?;
+        output.write_all(b"\n")?;
+    } else {
+        output.write_all(bytes)?;
+    }
+    Ok(())
+}
 pub(super) fn remove_with_provenance(
     source: &mut impl Read,
     output: &mut impl Write,
@@ -165,22 +192,14 @@ pub(super) fn remove_with_provenance(
                 if count as u64 > JSON_LIMIT {
                     return Err(invalid());
                 }
-                let (retained, removed) = line(&bytes)?;
-                changed |= removed;
-                if let Some(bytes) = retained {
-                    if let Some(digest) = provenance.filter(|_| {
-                        object(&bytes).is_ok_and(|o| {
-                            o.0.iter().any(|(key, value)| {
-                                key == "kind"
-                                    && serde_json::from_str::<String>(value.get())
-                                        .is_ok_and(|value| value == "header")
-                            })
-                        })
-                    }) {
-                        output.write_all(&mark(&bytes, digest)?)?;
-                        output.write_all(b"\n")?;
-                    } else {
-                        output.write_all(&bytes)?;
+                match line(&bytes)? {
+                    LineOutcome::Removed => changed = true,
+                    LineOutcome::Unchanged => {
+                        write_jsonl_line(output, &bytes, provenance)?;
+                    }
+                    LineOutcome::Rewritten(retained) => {
+                        changed = true;
+                        write_jsonl_line(output, &retained, provenance)?;
                     }
                 }
             }

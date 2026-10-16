@@ -1556,12 +1556,7 @@ fn export_database_capture_from_pages(
     if first_page.state == LiveCaptureState::Active {
         return Err("live capture must be inactive before export".into());
     }
-    let expected_id = first_page.id;
-    let expected_state = first_page.state;
-    let expected_integrity = first_page.integrity;
-    let expected_header = first_page.header_json.clone();
-    let expected_started_at_ms = first_page.started_at_ms;
-    let expected_finished_at_ms = first_page.finished_at_ms;
+    // Inactive captures have a fixed event total; cleanup that reindexes rows lowers it.
     let expected_next_sequence = first_page.next_sequence;
 
     let mut created = false;
@@ -1587,14 +1582,7 @@ fn export_database_capture_from_pages(
                 None => read_page(after_sequence, limit)
                     .map_err(|error| format!("could not continue live capture export: {error}"))?,
             };
-            if snapshot.id != expected_id
-                || snapshot.state != expected_state
-                || snapshot.integrity != expected_integrity
-                || snapshot.header_json != expected_header
-                || snapshot.started_at_ms != expected_started_at_ms
-                || snapshot.finished_at_ms != expected_finished_at_ms
-                || snapshot.next_sequence != expected_next_sequence
-            {
+            if snapshot.next_sequence != expected_next_sequence {
                 return Err("live capture changed during export".into());
             }
             for event in &snapshot.events {
