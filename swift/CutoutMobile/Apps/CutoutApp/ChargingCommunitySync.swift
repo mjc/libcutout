@@ -421,9 +421,10 @@ final class ChargingCommunitySync {
 
     /// An explicit report can register a contributor without uploading queued edits.
     func credentialForReport() async throws -> ChargingCommunityCredential {
-        guard enabled() else { throw MobileChargingError.Unavailable }
+        guard enabled(), !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
         let stored = try await credentialStore.load()
         try Task.checkCancellation()
+        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
         switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: false) {
         case .synchronize:
             guard case .ready(let credential) = stored else { throw MobileChargingError.Unauthorized }
