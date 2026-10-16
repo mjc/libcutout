@@ -796,7 +796,6 @@ async fn broker_readiness(
         return Err(BrokerError::CredentialsUnavailable);
     }
 
-    let state = broker.state.lock().await;
     let parent = state_path.parent().ok_or(BrokerError::StateUnavailable)?;
     let parent_metadata = fs::metadata(parent)
         .await
@@ -804,7 +803,9 @@ async fn broker_readiness(
     if !parent_metadata.is_dir() {
         return Err(BrokerError::StateUnavailable);
     }
-    match read_bounded(state_path, TOKEN_STATE_MAX_BYTES).await {
+    let persisted = read_bounded(state_path, TOKEN_STATE_MAX_BYTES).await;
+    let state = broker.state.lock().await;
+    match persisted {
         Ok(bytes) => {
             let persisted_state = serde_json::from_slice::<BrokerState>(&bytes)
                 .map_err(|_| BrokerError::StateUnavailable)?;
