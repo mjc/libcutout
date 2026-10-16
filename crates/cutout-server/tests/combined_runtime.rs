@@ -176,6 +176,7 @@ async fn assert_charging_authentication(client: &Client, address: SocketAddr) {
         .await
         .expect("delete charging identity");
     assert_eq!(deleted.status(), StatusCode::OK);
+    let receipt: Value = deleted.json().await.expect("deletion receipt JSON");
     let repeated = client
         .delete(format!("http://{address}/v1/identities/current"))
         .header(HOST, RIDES_HOST)
@@ -185,7 +186,24 @@ async fn assert_charging_authentication(client: &Client, address: SocketAddr) {
         .send()
         .await
         .expect("retry charging identity deletion");
-    assert_eq!(repeated.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(repeated.status(), StatusCode::OK);
+    let repeated_receipt: Value = repeated
+        .json()
+        .await
+        .expect("replayed deletion receipt JSON");
+    assert_eq!(repeated_receipt, receipt);
+
+    let revoked = client
+        .get(format!(
+            "http://{address}/v1/charging-spots/00000000-0000-4000-8000-000000000111/vote"
+        ))
+        .header(HOST, RIDES_HOST)
+        .header("x-real-ip", "192.0.2.1")
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("use revoked charging identity");
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
 }
 
 async fn assert_readiness_isolation(
@@ -195,6 +213,9 @@ async fn assert_readiness_isolation(
 ) {
     let database =
         rusqlite::Connection::open(&fixture.database_path).expect("open readiness database");
+    let schema_version: u32 = database
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read charging database schema version");
     database
         .pragma_update(None, "user_version", 0)
         .expect("make charging database unready");
@@ -211,7 +232,7 @@ async fn assert_readiness_isolation(
         );
     }
     database
-        .pragma_update(None, "user_version", 5)
+        .pragma_update(None, "user_version", schema_version)
         .expect("restore charging database version");
     assert_eq!(
         request(client, address, RIDES_HOST, "/readyz")
