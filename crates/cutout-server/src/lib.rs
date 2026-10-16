@@ -17,6 +17,7 @@ mod http;
 mod model;
 mod moderation;
 mod runtime;
+mod site;
 mod store;
 
 pub use http::{TrustedProxy, router};

@@ -1,0 +1,211 @@
+{
+  "skip": "Saltar al contenido",
+  "navigation": "Navegación principal",
+  "language": "Idioma del sitio",
+  "menu": "Abrir navegación",
+  "get": "Obtener CutOut",
+  "nav": {
+    "app": "La aplicación",
+    "guide": "Cómo funciona",
+    "support": "Ayuda"
+  },
+  "hero": {
+    "eyebrow": "Para quienes conducen vehículos eléctricos personales",
+    "title": "Conoce",
+    "accent": "tu recorrido.",
+    "fullTitle": "Conoce tu recorrido",
+    "body": "Datos en directo, rutas guardadas y puntos de carga de la comunidad. CutOut reúne los detalles útiles para que disfrutes del recorrido.",
+    "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
+    "stampTitle": "Creado por un rider.",
+    "stampBody": "Con la comunidad de vehículos eléctricos."
+  },
+  "preview": {
+    "label": "Espacio para una captura",
+    "description": "Interfaz actual con datos de ejemplo realistas. Las capturas se prepararán después.",
+    "caption": "Solo es el espacio de la captura. Este concepto no utiliza diseños antiguos de la aplicación.",
+    "note": "Propuesta del sitio web · Capturas pendientes · Descarga sin conectar",
+    "dialogTag": "Propuesta de diseño",
+    "dialogTitle": "Aquí irá el enlace de descarga.",
+    "dialogBody": "El sitio de producción enlazará aquí al destino real de instalación. Esta maqueta no anuncia disponibilidad en App Store ni una beta pública.",
+    "close": "Volver a la propuesta"
+  },
+  "vehicles": {
+    "tag": "Tipos de vehículos",
+    "title": "Para todos los tipos de PEV.",
+    "body": "El desarrollador tiene Onewheels con VESC y Refloat, y EUCs. Para los demás tipos necesitamos capturas de datos de la comunidad. Las funciones dependen del modelo y del firmware.",
+    "owned": "Hardware del desarrollador",
+    "needed": "Necesitamos capturas de la comunidad",
+    "items": [
+      {
+        "name": "VESC Onewheel",
+        "detail": "Con firmware Refloat",
+        "kind": "onewheel",
+        "owned": true
+      },
+      {
+        "name": "EUC",
+        "detail": "Monociclo eléctrico",
+        "kind": "euc",
+        "owned": true
+      },
+      {
+        "name": "Eskate",
+        "detail": "Monopatín eléctrico",
+        "kind": "eskate",
+        "owned": false
+      },
+      {
+        "name": "Scooter",
+        "detail": "Patinete eléctrico",
+        "kind": "scooter",
+        "owned": false
+      },
+      {
+        "name": "Ebike",
+        "detail": "Bicicleta eléctrica",
+        "kind": "ebike",
+        "owned": false
+      },
+      {
+        "name": "Emoto",
+        "detail": "Motocicleta eléctrica",
+        "kind": "emoto",
+        "owned": false
+      }
+    ],
+    "link": "Ayuda a añadir soporte para tu PEV"
+  },
+  "featuresTag": "Durante todo el recorrido",
+  "featuresTitle": "Los detalles que necesitas, cuando los necesitas.",
+  "featuresBody": "Una mirada rápida mientras conduces. Más detalles cuando paras.",
+  "features": [
+    {
+      "title": "Datos en directo",
+      "body": "Velocidad, batería, potencia, temperatura y margen PWM de un vistazo, con las lecturas de tu PEV."
+    },
+    {
+      "title": "Historial de recorridos",
+      "body": "Vuelve a ver tu circuito favorito, sigue la ruta que hiciste y consulta la velocidad, la distancia y los detalles del recorrido."
+    },
+    {
+      "title": "Carga de la comunidad",
+      "body": "Encuentra puntos de carga compartidos por otros riders. Consulta enchufes, acceso y precios antes de ir, y añade los lugares que te han ayudado."
+    }
+  ],
+  "steps": [
+    {
+      "title": "Conecta tu PEV.",
+      "body": "Elige tu dispositivo compatible por Bluetooth. Las lecturas y los controles disponibles corresponden al modelo real."
+    },
+    {
+      "title": "Sal a rodar.",
+      "body": "Registra la ruta y los datos del dispositivo. Consulta la pantalla cuando lo necesites y mantén la atención en el camino."
+    },
+    {
+      "title": "Revísalo después.",
+      "body": "Abre los recorridos guardados, consulta la ruta y descubre qué hizo diferente a cada salida."
+    }
+  ],
+  "stepsLink": "Descubre cómo funciona un recorrido",
+  "cta": "Lleva CutOut en tu próximo recorrido.",
+  "footer": {
+    "description": "Una aplicación para tus recorridos en vehículos eléctricos personales. Desarrollada en abierto.",
+    "privacy": "Privacidad",
+    "built": "Para riders. Con la comunidad."
+  },
+  "guide": {
+    "title": "Un recorrido,\nde principio a fin.",
+    "body": "Conecta tu PEV, registra la salida y vuelve a los detalles después. Así encajan las funciones principales.",
+    "contents": "En esta página",
+    "sections": [
+      {
+        "short": "Antes de salir",
+        "title": "Empieza por tu dispositivo.",
+        "body": "Elige tu PEV compatible entre los dispositivos Bluetooth cercanos. CutOut presenta la información y los ajustes disponibles para ese modelo, sin prometer los mismos controles para todos los vehículos.",
+        "points": [
+          "Los Onewheels con VESC utilizan firmware Refloat.",
+          "Las funciones de los EUCs dependen del modelo y del firmware.",
+          "Los demás tipos necesitan capturas de la comunidad; consulta la lista."
+        ],
+        "preview": "Selección del dispositivo"
+      },
+      {
+        "short": "Durante el recorrido",
+        "title": "Basta con una mirada.",
+        "body": "La pantalla de conducción reúne las lecturas en directo. Registra la ruta y los datos de la rueda, y consulta los puntos de carga cuando planees una parada.",
+        "points": [
+          "Velocidad, batería y otra telemetría disponible.",
+          "Registro de rutas e historial guardado.",
+          "Controla tu música y guarda qué escuchas por el camino."
+        ],
+        "preview": "Pantalla de conducción"
+      },
+      {
+        "short": "Al terminar",
+        "title": "El recorrido sigue ahí.",
+        "body": "Abre un recorrido guardado para ver dónde estuviste, cómo fue la salida y qué estabas escuchando.",
+        "points": [
+          "Explora el mapa y los recorridos guardados.",
+          "Revisa los datos después de parar.",
+          "Encuentra las canciones que acompañaron tu recorrido."
+        ],
+        "preview": "Detalle del recorrido"
+      }
+    ],
+    "compatibilityTitle": "¿Funciona con tu PEV?",
+    "compatibilityBody": "CutOut está pensado para VESC Onewheel + Refloat, EUC, eskate, scooter, ebike y emoto. El desarrollador tiene hardware de las dos primeras categorías; las demás necesitan capturas de la comunidad. No se admiten comunicaciones cifradas por el fabricante.",
+    "compatibilityLink": "Consultar las preguntas de compatibilidad"
+  },
+  "support": {
+    "title": "Una ayuda\npara el camino.",
+    "body": "Compatibilidad, grabación, carga y privacidad. Empieza aquí o contacta con el proyecto.",
+    "search": "Buscar en las preguntas",
+    "faq": "Preguntas frecuentes",
+    "empty": "No hay preguntas que coincidan. Prueba otra palabra o contacta con el proyecto.",
+    "contactTitle": "¿Necesitas más ayuda?",
+    "contactBody": "Haz una pregunta o comunica un problema en el proyecto público de GitHub.",
+    "contactLink": "Pedir ayuda en GitHub",
+    "publicNote": "Los informes de GitHub son públicos y requieren una cuenta. No publiques ubicaciones privadas, credenciales ni archivos de diagnóstico.",
+    "reportNote": "Para un problema con un punto de carga, utiliza la acción privada Reportar de la aplicación.",
+    "questions": [
+      {
+        "title": "¿Para qué tipos de PEV es CutOut?",
+        "body": "CutOut está pensado para Onewheels con VESC y Refloat, EUCs, eskates, scooters, ebikes y emotos. El desarrollador tiene hardware VESC Onewheel + Refloat y EUC. Los demás tipos necesitan capturas de datos de la comunidad. Las funciones de cada modelo y firmware requieren implementación y validación."
+      },
+      {
+        "title": "¿Se admitirán dispositivos con comunicaciones cifradas?",
+        "body": "No. CutOut no admitirá dispositivos cuyos fabricantes cifren sus comunicaciones. Los dispositivos sin cifrado del mismo fabricante se pueden considerar por separado."
+      },
+      {
+        "title": "¿Cómo puedo ayudar a añadir soporte para mi PEV?",
+        "body": "Necesitamos capturas de datos de eskates, scooters, ebikes y emotos. Contacta con el proyecto indicando el modelo y el firmware para pedir instrucciones. No publiques capturas privadas en un informe público de GitHub: pueden contener identificadores del dispositivo y ubicación."
+      },
+      {
+        "title": "¿Funciona con un Onewheel de fábrica?",
+        "body": "Aquí el alcance de Onewheel es un vehículo con VESC y firmware Refloat. No se afirma compatibilidad con la electrónica original de Onewheel ni con protocolos cifrados por el fabricante."
+      },
+      {
+        "title": "¿Dónde se guardan mis recorridos?",
+        "body": "Tus recorridos se guardan en tu teléfono. Abre el historial para consultar las rutas y los detalles registrados."
+      },
+      {
+        "title": "¿Puedo ver qué escuchaba durante un recorrido?",
+        "body": "Sí. Activa el historial musical para guardar las canciones que escuchas durante el recorrido. CutOut guarda los datos de las canciones con tu recorrido, no el audio."
+      },
+      {
+        "title": "¿Se garantiza que los puntos de carga estén disponibles?",
+        "body": "Los puntos de carga y sus notas de acceso provienen de la comunidad. Lee los detalles, comprueba la compatibilidad con tu cargador y confirma el acceso con el establecimiento cuando sea necesario."
+      },
+      {
+        "title": "¿Qué ocurre al eliminar mi cuenta de la comunidad?",
+        "body": "Se eliminan los registros privados asociados a la cuenta. Los puntos de carga públicos conservan su contenido y pasan a Anonymous; puedes eliminarlos manualmente antes si lo deseas. Los recorridos y las capturas Bluetooth se quedan en el dispositivo. La política explica los justificantes y la retención de copias de seguridad."
+      }
+    ]
+  },
+  "soundtrack": {
+    "tag": "La música del camino",
+    "title": "¿Cuál fue tu banda sonora?",
+    "body": "Guarda qué estabas escuchando y dónde sonó cada canción. Vuelve a descubrir la música que acompañó cada recorrido.",
+    "preview": "Canciones a lo largo de tu ruta"
+  }
+}
