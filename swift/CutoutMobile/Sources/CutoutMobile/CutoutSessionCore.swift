@@ -801,13 +801,15 @@ public final class CutoutSessionCore: NSObject {
         public convenience init(
             testScript: CutoutSessionTestScript,
             rideMapState: MobileRideMapState? = nil,
+            database: RideDatabaseHandle? = nil,
             selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
         ) {
             self.init(
                 clock: MonotonicClock(),
                 testScript: testScript,
                 selectedDeviceStore: selectedDeviceStore,
-                rideMapState: rideMapState
+                rideMapState: rideMapState,
+                database: database
             )
         }
 

@@ -123,6 +123,34 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testScriptedSessionUsesExplicitDatabaseForDurableDiagnosticConsent() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preference = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preference.automaticDiagnosticRecordingEnabled()
+        defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
+        _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: false)
+        let script = CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil)
+        let core = CutoutSessionCore(
+            testScript: script, rideMapState: MobileRideMapState(database: database), database: database)
+
+        XCTAssertFalse(try core.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        try await core.setAutomaticDiagnosticRecordingEnabled(true)
+        XCTAssertTrue(try preference.automaticDiagnosticRecordingEnabled())
+
+        let restored = CutoutSessionCore(
+            testScript: script, rideMapState: MobileRideMapState(database: database), database: database)
+        XCTAssertTrue(try restored.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        try await restored.setAutomaticDiagnosticRecordingEnabled(false)
+        XCTAssertFalse(try preference.automaticDiagnosticRecordingEnabled())
+
+        let unavailable = CutoutSessionCore(testScript: script)
+        XCTAssertFalse(try unavailable.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        do {
+            try await unavailable.setAutomaticDiagnosticRecordingEnabled(true)
+            XCTFail("A fixture without storage must not acknowledge uncommitted consent")
+        } catch MobileRideDatabaseError.StorageFailure {}
+    }
+
     func testDiagnosticWithdrawalFinishesOnlyAutomaticWriterAndPreservesRideAndConnection() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)

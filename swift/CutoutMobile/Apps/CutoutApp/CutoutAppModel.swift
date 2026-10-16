@@ -405,7 +405,7 @@ final class CutoutAppModel {
             let permitsStoredDeviceAutoPairing = true
         #endif
         return CutoutAppModel(
-            core: makeSessionDriver(rideMapState: state),
+            core: makeSessionDriver(rideMapState: state, database: database),
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: selectedDeviceStore,
             restoredDeviceSelection: restoredDeviceSelection,
@@ -1406,11 +1406,16 @@ final class CutoutAppModel {
     }
 
     private static func makeSessionDriver(
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        database: RideDatabaseHandle? = nil
     ) -> any CutoutSessionDriving {
         #if DEBUG
             if let fixture = uiTestFixture {
-                return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
+                return CutoutSessionCore(
+                    testScript: fixture.testScript,
+                    rideMapState: rideMapState,
+                    database: fixture == .rideMapStorageUnavailable ? nil : database
+                )
             }
         #endif
         if let rideMapState {
