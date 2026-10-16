@@ -7412,8 +7412,10 @@ final class ChargingMapDeviceUITests: XCTestCase {
         app.buttons["charging.details.open"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["charging.spot.details-screen"].waitForExistence(timeout: 5))
         let savedAccess = app.descendants(matching: .any)["charging.details.access"].firstMatch
+        XCTAssertTrue(savedAccess.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(
-            (savedAccess.label + (savedAccess.value as? String ?? "")).contains("Outlet beside the north entrance."))
+            (savedAccess.label + (savedAccess.value as? String ?? "")).contains("Outlet beside the north entrance."),
+            app.debugDescription)
         app.buttons["charging.details.done"].tap()
         createdPin = app.buttons[newPinID]
         XCTAssertTrue(createdPin.waitForExistence(timeout: 5), app.debugDescription)
@@ -7775,6 +7777,11 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
         beginChargingPlacement(in: app)
+        // Keep the new spot separate from the seeded Library pin so taps select the intended annotation.
+        map.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.25)).press(
+            forDuration: 0.1,
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.25))
+        )
         let confirmPlacement = app.buttons["charging.placement.confirm"]
         XCTAssertTrue(confirmPlacement.waitForExistence(timeout: 5), app.debugDescription)
         confirmPlacement.tap()
