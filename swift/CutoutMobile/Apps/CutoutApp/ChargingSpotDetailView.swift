@@ -12,6 +12,7 @@ struct ChargingSpotDetailView: View {
     @State private var confirmsDeletion = false
     @State private var showsContentReport = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var input: MobileChargingInputDto? { spot.input }
     private var canEdit: Bool { spot.owned && (spot.status == .queued || spot.status == .published) }
@@ -19,61 +20,55 @@ struct ChargingSpotDetailView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if let input {
-                    Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let input {
                         Text(input.accessNote)
+                            .font(.body)
+                            .lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityLabel(localizedAppText("charging.editor.access_note"))
                             .accessibilityValue(input.accessNote)
                             .accessibilityIdentifier("charging.details.access")
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(localizedAppText(input.cost == .free ? "charging.cost.free" : "charging.cost.paid"))
-                                .foregroundStyle(.secondary)
-                            ForEach(input.supplies.indices, id: \.self) { index in
-                                Text(ChargingSpotPresentation.supplyText(input.supplies[index]))
-                                    .fixedSize(horizontal: false, vertical: true)
+
+                        powerSummary(input)
+
+                        VStack(alignment: .leading, spacing: 16) {
+                            if let venue = input.venue, venue != .other {
+                                Label(
+                                    ChargingSpotPresentation.venueName(venue),
+                                    systemImage: "mappin.and.ellipse"
+                                )
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(PevColors.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
                             }
+                            detail("charging.details.hours", input.hours, symbol: "clock")
+                            detail("charging.details.terms", input.terms.map(ChargingSpotPresentation.termsName))
+                            detail("charging.details.price", input.price.map(ChargingSpotPresentation.priceText))
                         }
-                        if let venue = input.venue, venue != .other {
-                            Text(ChargingSpotPresentation.venueName(venue))
-                        }
-                        detail("charging.details.hours", input.hours)
-                        detail("charging.details.terms", input.terms.map(ChargingSpotPresentation.termsName))
-                        detail("charging.details.price", input.price.map(ChargingSpotPresentation.priceText))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    actionArea
                 }
-                if canEdit || canReport {
-                    Section {
-                        if canEdit {
-                            Button(localizedAppText("charging.editor.edit")) { onEdit(spot) }
-                                .accessibilityIdentifier("charging.details.edit")
-                            Button(localizedAppText("charging.editor.delete"), role: .destructive) {
-                                confirmsDeletion = true
-                            }
-                            .accessibilityIdentifier("charging.details.delete")
-                        }
-                        if canReport {
-                            Button(localizedAppText("charging.report.title"), systemImage: "flag") {
-                                showsContentReport = true
-                            }
-                            .accessibilityIdentifier("charging.details.report")
-                        }
-                        if let errorKey {
-                            Text(localizedAppText(errorKey)).foregroundStyle(.red)
-                        }
-                        if isDeleting { ProgressView() }
-                    }
-                    .disabled(isDeleting)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
             }
+            .scrollIndicators(.hidden)
+            .background(PevColors.pageBackground)
             .navigationTitle(input?.name ?? ChargingSpotPresentation.unknownName)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
+                .presentationDragIndicator(.visible)
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(localizedAppText("ride.readings.done")) { dismiss() }
+                        .disabled(isDeleting)
                         .accessibilityIdentifier("charging.details.done")
                 }
             }
@@ -88,9 +83,133 @@ struct ChargingSpotDetailView: View {
         .accessibilityIdentifier("charging.spot.details-screen")
     }
 
-    @ViewBuilder private func detail(_ key: String, _ value: String?) -> some View {
+    private func powerSummary(_ input: MobileChargingInputDto) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(localizedAppText(input.cost == .free ? "charging.cost.free" : "charging.cost.paid"))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(PevColors.primaryText)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(
+                    (input.cost == .free ? PevColors.green : PevColors.yellow).opacity(0.16),
+                    in: Capsule()
+                )
+
+            ForEach(input.supplies.indices, id: \.self) { index in
+                let supply = input.supplies[index]
+                HStack(alignment: .center, spacing: 12) {
+                    if let connector = firstRealConnector(in: supply) {
+                        ChargingConnectorIcon(connector: connector, size: 24)
+                            .foregroundStyle(PevColors.brand)
+                            .frame(width: 44, height: 44)
+                            .background(PevColors.yellow.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    Text(ChargingSpotPresentation.supplyText(supply))
+                        .font(.headline)
+                        .foregroundStyle(PevColors.primaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(PevColors.cardStroke.opacity(0.7), lineWidth: 1)
+        }
+    }
+
+    private func firstRealConnector(in supply: MobileChargingSupplyDto) -> MobileChargingConnectorDto? {
+        supply.connectors.first { connector in
+            if case .unknown = connector { return false }
+            return true
+        }
+    }
+
+    @ViewBuilder private var actionArea: some View {
+        if canEdit || canReport {
+            VStack(alignment: .leading, spacing: 12) {
+                if canEdit {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            editButton
+                            deleteButton
+                        }
+                        VStack(alignment: .trailing, spacing: 10) {
+                            editButton
+                            deleteButton
+                        }
+                    }
+                }
+                if canReport {
+                    Button {
+                        showsContentReport = true
+                    } label: {
+                        Label(localizedAppText("charging.report.title"), systemImage: "flag")
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("charging.details.report")
+                }
+                if let errorKey {
+                    Text(localizedAppText(errorKey))
+                        .foregroundStyle(PevColors.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if isDeleting { ProgressView() }
+            }
+            .disabled(isDeleting)
+        }
+    }
+
+    private var editButton: some View {
+        Button {
+            onEdit(spot)
+        } label: {
+            Label(localizedAppText("charging.editor.edit"), systemImage: "pencil")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .tint(PevColors.yellow)
+        .foregroundStyle(.black)
+        .accessibilityIdentifier("charging.details.edit")
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) {
+            confirmsDeletion = true
+        } label: {
+            Image(systemName: "trash")
+                .frame(minWidth: 48, minHeight: 48)
+        }
+        .buttonStyle(.bordered)
+        .tint(PevColors.red)
+        .accessibilityLabel(localizedAppText("charging.editor.delete"))
+        .accessibilityIdentifier("charging.details.delete")
+    }
+
+    @ViewBuilder private func detail(_ key: String, _ value: String?, symbol: String? = nil) -> some View {
         if let value, !value.isEmpty {
-            LabeledContent(localizedAppText(key), value: value)
+            VStack(alignment: .leading, spacing: 5) {
+                if let symbol {
+                    Label(localizedAppText(key), systemImage: symbol)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(PevColors.muted)
+                } else {
+                    Text(localizedAppText(key))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(PevColors.muted)
+                }
+                Text(value)
+                    .font(.body)
+                    .foregroundStyle(PevColors.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
