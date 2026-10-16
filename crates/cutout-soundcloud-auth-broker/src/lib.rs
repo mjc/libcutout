@@ -8,6 +8,7 @@ use std::{
     fmt,
     future::Future,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -38,8 +39,9 @@ const TOKEN_STATE_MAX_BYTES: usize = 64 * 1024;
 const ACCESS_TOKEN_MAX_BYTES: usize = 8 * 1024;
 const MINIMUM_RETURNED_TTL_SECONDS: u64 = 16;
 const MAXIMUM_RETURNED_TTL_SECONDS: u64 = 3_600;
+static READINESS_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 struct SecretToken(String);
 
 impl SecretToken {
@@ -79,7 +81,7 @@ impl SoundCloudCredentials {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Serialize, Deserialize)]
 struct CachedToken {
     access_token: SecretToken,
     refresh_token: Option<SecretToken>,
@@ -157,7 +159,7 @@ impl fmt::Debug for TokenResponse {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Eq, PartialEq, Serialize, Deserialize, Default)]
 struct BrokerState {
     cached: Option<CachedToken>,
     #[serde(default)]
@@ -609,6 +611,12 @@ fn router<P: TokenProvider + 'static>(broker: std::sync::Arc<TokenBroker<P>>) ->
 }
 
 async fn read_bounded(path: &Path, maximum: usize) -> std::io::Result<Vec<u8>> {
+    if !fs::metadata(path).await?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a regular file",
+        ));
+    }
     let file = fs::File::open(path).await?;
     if !file.metadata().await?.is_file() {
         return Err(std::io::Error::new(
@@ -659,13 +667,6 @@ fn record_upstream_attempt(state: &mut BrokerState, now: u64) -> Result<(), Brok
 pub async fn run_from_environment() -> Result<(), &'static str> {
     use std::{env, net::SocketAddr};
 
-    let credentials_directory =
-        env::var_os("CREDENTIALS_DIRECTORY").ok_or("systemd credentials are not available")?;
-    let credentials_path = PathBuf::from(credentials_directory).join("soundcloud.json");
-    let state_path = env::var_os("SOUNDCLOUD_TOKEN_STATE_FILE").map_or_else(
-        || PathBuf::from("/var/lib/soundcloud-token-broker/tokens.json"),
-        PathBuf::from,
-    );
     let listen_address = env::var("SOUNDCLOUD_BROKER_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:8787".to_owned())
         .parse::<SocketAddr>()
@@ -674,14 +675,9 @@ pub async fn run_from_environment() -> Result<(), &'static str> {
         return Err("service listen address must be loopback");
     }
 
-    let broker = MusicBroker::initialize(credentials_path, state_path)
+    let broker = MusicBroker::from_environment()
         .await
-        .map_err(|error| match error {
-            BrokerError::CredentialsUnavailable => "SoundCloud credentials are unavailable",
-            BrokerError::StateUnavailable => "SoundCloud token state is unavailable",
-            BrokerError::ProviderUnavailable => "SoundCloud client initialization failed",
-            BrokerError::RetryLater => "SoundCloud token state is unavailable",
-        })?;
+        .map_err(startup_error_message)?;
     let listener = tokio::net::TcpListener::bind(listen_address)
         .await
         .map_err(|_| "service listener could not start")?;
@@ -692,6 +688,15 @@ pub async fn run_from_environment() -> Result<(), &'static str> {
         })
         .await
         .map_err(|_| "service stopped unexpectedly")
+}
+
+fn startup_error_message(error: BrokerError) -> &'static str {
+    match error {
+        BrokerError::CredentialsUnavailable => "SoundCloud credentials are unavailable",
+        BrokerError::StateUnavailable => "SoundCloud token state is unavailable",
+        BrokerError::ProviderUnavailable => "SoundCloud client initialization failed",
+        BrokerError::RetryLater => "SoundCloud token state is unavailable",
+    }
 }
 
 /// Production broker state and router, initialized without opening a listener.
@@ -791,13 +796,7 @@ async fn broker_readiness(
         return Err(BrokerError::CredentialsUnavailable);
     }
 
-    let state_is_required = {
-        let state = broker.state.lock().await;
-        state.cached.is_some()
-            || !state.upstream_attempts.is_empty()
-            || !state.client_token_attempts.is_empty()
-            || state.next_attempt_at != 0
-    };
+    let state = broker.state.lock().await;
     let parent = state_path.parent().ok_or(BrokerError::StateUnavailable)?;
     let parent_metadata = fs::metadata(parent)
         .await
@@ -806,12 +805,60 @@ async fn broker_readiness(
         return Err(BrokerError::StateUnavailable);
     }
     match read_bounded(state_path, TOKEN_STATE_MAX_BYTES).await {
-        Ok(bytes) => serde_json::from_slice::<BrokerState>(&bytes)
-            .map(|_| ())
-            .map_err(|_| BrokerError::StateUnavailable),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !state_is_required => Ok(()),
-        Err(_) => Err(BrokerError::StateUnavailable),
+        Ok(bytes) => {
+            let persisted_state = serde_json::from_slice::<BrokerState>(&bytes)
+                .map_err(|_| BrokerError::StateUnavailable)?;
+            if persisted_state != *state {
+                return Err(BrokerError::StateUnavailable);
+            }
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && *state == BrokerState::default() => {
+        }
+        Err(_) => return Err(BrokerError::StateUnavailable),
     }
+    drop(state);
+
+    let parent = parent.to_path_buf();
+    tokio::task::spawn_blocking(move || probe_state_directory(&parent))
+        .await
+        .map_err(|_| BrokerError::StateUnavailable)?
+        .map_err(|_| BrokerError::StateUnavailable)
+}
+
+struct ReadinessProbe(PathBuf);
+
+impl Drop for ReadinessProbe {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn probe_state_directory(directory: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let sequence = READINESS_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(std::io::Error::other)?
+        .as_nanos();
+    let path = directory.join(format!(
+        ".cutout-readiness-{}-{timestamp}-{sequence}",
+        std::process::id()
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    let cleanup = ReadinessProbe(path);
+    let result = file.write_all(b"x");
+    drop(file);
+    result?;
+    std::fs::remove_file(&cleanup.0)
 }
 
 #[cfg(test)]
