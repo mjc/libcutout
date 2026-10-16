@@ -23,7 +23,7 @@ struct AppSetupView: View {
         model: CutoutAppModel,
         opensMusic: Bool = false,
         accountDeletion: ChargingCommunityAccountDeletion = .shared,
-        onAccountDeleted: @escaping () -> Void = {}
+        onAccountDeleted: @escaping () -> Void
     ) {
         self.model = model
         self.onAccountDeleted = onAccountDeleted

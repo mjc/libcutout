@@ -66,7 +66,9 @@ struct ContentView: View {
                 case .music:
                     AppMusicPlayerView(model: model, onOpenSettings: { presentedSheet = .musicSettings })
                 case .musicSettings:
-                    AppSetupView(model: model, opensMusic: true)
+                    AppSetupView(model: model, opensMusic: true) {
+                        rideMapPresentation.charging.communityAccountDeletionCompleted()
+                    }
                 }
             }
             .safeAreaInset(edge: .top) {
