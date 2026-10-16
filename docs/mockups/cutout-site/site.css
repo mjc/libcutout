@@ -143,6 +143,9 @@
   .support-layout { display:grid; grid-template-columns:1fr 330px; gap:100px; align-items:start; padding-block:60px 100px; }
   .search { display:flex; align-items:center; gap:12px; border:1px solid #adb5a3; border-radius:6px; padding:0 18px; background:white; margin-bottom:35px; }
   .search input { flex:1; min-width:0; border:0; min-height:56px; background:transparent; outline-offset:0; color:var(--ink); font-size:15px; }
+  .about-heading { font-size:27px; margin-bottom:16px; }
+  .faq details ul { margin:0; padding:0 20px 25px; font-size:15px; color:var(--muted); line-height:1.8; overflow-wrap:anywhere; }
+  .faq details li + li { margin-top:18px; }
   .faq-heading { margin-bottom:25px; font-size:27px; }
   .faq details { border-top:1px solid var(--line); }
   .faq details:last-child { border-bottom:1px solid var(--line); }
