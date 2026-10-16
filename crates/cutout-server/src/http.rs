@@ -21,7 +21,7 @@ use axum::{
 use serde::Serialize;
 use std::net::IpAddr;
 
-mod registration;
+pub(crate) mod registration;
 
 /// A proxy peer allowed to supply one client address through `X-Real-IP`.
 /// The proxy must overwrite that header rather than forwarding caller input.
@@ -66,9 +66,15 @@ impl IntoResponse for Error {
 /// to overwrite `X-Real-IP` with the client address. Other peers cannot select
 /// their budget by sending forwarding headers.
 pub fn router(store: Store) -> Router {
+    router_with_signup_state(store, crate::signup::SignupState::from_env())
+}
+
+pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::SignupState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/readyz", get(ready))
+        .route("/v1/alpha-signup/config", get(crate::signup::public_config))
+        .route("/v1/alpha-signup/requests", post(crate::signup::submit))
         .route("/v1/identities", post(registration::identity))
         .route(
             "/v1/identities/current",
@@ -92,6 +98,7 @@ pub fn router(store: Store) -> Router {
         .route("/v1/moderation/audit", get(audit))
         .merge(crate::site::router())
         .layer(DefaultBodyLimit::max(32 * 1024))
+        .layer(axum::Extension(signup))
         .layer(axum::middleware::from_fn(deadline))
         .with_state(store)
 }

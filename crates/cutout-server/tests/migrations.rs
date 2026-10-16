@@ -45,7 +45,7 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
 }
 
 #[test]
-fn schema_one_receives_the_additive_account_deletion_migration() {
+fn schema_one_receives_the_additive_signup_and_account_deletion_migrations() {
     let directory = TempDir::new().expect("directory");
     let path = directory.path().join("schema-one.sqlite");
     let connection = Connection::open(&path).expect("database");
@@ -60,7 +60,7 @@ fn schema_one_receives_the_additive_account_deletion_migration() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     let (token_hash, revoked_at_ms): (String, Option<u64>) = connection
         .query_row(
             "SELECT token_hash, revoked_at_ms FROM contributors
@@ -77,4 +77,10 @@ fn schema_one_receives_the_additive_account_deletion_migration() {
         })
         .expect("deletion receipts table");
     assert_eq!(receipts, 0);
+    let outbox: u64 = connection
+        .query_row("SELECT COUNT(*) FROM alpha_signup_outbox", [], |row| {
+            row.get(0)
+        })
+        .expect("signup outbox table");
+    assert_eq!(outbox, 0);
 }

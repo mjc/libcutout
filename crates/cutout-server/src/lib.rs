@@ -17,6 +17,7 @@ mod http;
 mod model;
 mod moderation;
 mod runtime;
+mod signup;
 mod site;
 mod store;
 
