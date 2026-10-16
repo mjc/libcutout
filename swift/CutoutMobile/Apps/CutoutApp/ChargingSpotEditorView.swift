@@ -91,7 +91,7 @@ struct ChargingSpotEditorView: View {
                             focusedField = nil
                         } label: {
                             Text(localizedAppText("charging.editor.keyboard.done"))
-                            .frame(minWidth: 44, minHeight: 44)
+                            .frame(minWidth: 48, minHeight: 48)
                             .contentShape(Rectangle())
                         }
                         .accessibilityIdentifier("charging.editor.keyboard.done")
