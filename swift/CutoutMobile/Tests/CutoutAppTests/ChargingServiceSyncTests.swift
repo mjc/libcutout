@@ -132,11 +132,14 @@ final class ChargingServiceSyncTests: XCTestCase {
         XCTAssertEqual(afterClearA.votesDown, 0)
 
         let editedNote = "Edited \(note)"
+        let editedSupply = MobileChargingSupplyDto(
+            voltageVolts: 120, connectors: [.nema515], outletCount: 2
+        )
         let editResult = try await withClient(path: pathA, credentials: credentialsA, baseURL: baseURL) {
             database, sync in
             _ = try await database.editChargingSpot(
                 id: localID, expectedRevision: afterClearA.localRevision,
-                fields: self.input(note: editedNote)
+                fields: self.input(note: editedNote, supplies: [editedSupply])
             )
             return await sync.run()
         }
@@ -149,6 +152,10 @@ final class ChargingServiceSyncTests: XCTestCase {
             return try XCTUnwrap(spotValue)
         }
         XCTAssertEqual(editedB.input?.accessNote, editedNote)
+        let cachedSupply = try XCTUnwrap(editedB.input?.supplies.first)
+        XCTAssertEqual(cachedSupply.voltageVolts, 120)
+        XCTAssertEqual(cachedSupply.connectors, [.nema515])
+        XCTAssertEqual(cachedSupply.outletCount, 2)
 
         let withdrawalResult = try await withClient(path: pathA, credentials: credentialsA, baseURL: baseURL) {
             database, sync in
@@ -219,11 +226,13 @@ final class ChargingServiceSyncTests: XCTestCase {
         }
     }
 
-    private func input(note: String) -> MobileChargingInputDto {
+    private func input(
+        note: String, supplies: [MobileChargingSupplyDto] = []
+    ) -> MobileChargingInputDto {
         MobileChargingInputDto(
             coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.7392, longitudeDegrees: -104.9903),
             accessNote: note, cost: .free, name: nil, venue: nil, hours: nil,
-            terms: nil, price: nil, supplies: []
+            terms: nil, price: nil, supplies: supplies
         )
     }
 
