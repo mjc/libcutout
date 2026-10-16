@@ -133,49 +133,87 @@ fn music(at: u64) -> MobilePevcapMusicEventDto {
 }
 
 #[test]
-fn automatic_capture_music_occurrences_and_link_transitions_reset_the_baseline() {
-    let capture = capture(MobileCaptureOriginDto::Automatic, |builder| {
-        for at in 110..=111 {
-            decoded_notification(builder, at, stationary_snapshot(at));
-        }
-        assert_eq!(
-            builder.record_music_event(music(112)),
-            MobileCaptureWriteOutcomeDto::Accepted
+fn automatic_capture_omits_music_and_preserves_material_baselines_and_link_resets() {
+    for (policy, expected_times) in [
+        (MobileMusicHistoryPolicyDto::Disabled, &[10, 15, 16, 17][..]),
+        (
+            MobileMusicHistoryPolicyDto::HumanReadable,
+            &[10, 13, 15, 16, 17, 20][..],
+        ),
+    ] {
+        let capture = capture_with_setup(
+            |builder| {
+                assert!(builder.set_recording_origin(MobileCaptureOriginDto::Automatic));
+                assert!(builder.set_music_history_policy(policy));
+            },
+            |builder| {
+                for at in 110..=111 {
+                    decoded_notification(builder, at, stationary_snapshot(at));
+                }
+                assert_eq!(
+                    builder.record_music_event(music(112)),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
+                for at in 113..=114 {
+                    decoded_notification(builder, at, stationary_snapshot(at));
+                }
+                assert_eq!(
+                    builder.record_link_down(ms(115)),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
+                assert_eq!(
+                    builder.record_link_up(ms(116), None),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
+                for at in 117..=118 {
+                    decoded_notification(builder, at, stationary_snapshot(at));
+                }
+                for _ in 0..2 {
+                    assert_eq!(
+                        builder.record_music_event(music(119)),
+                        MobileCaptureWriteOutcomeDto::Accepted
+                    );
+                }
+                for at in 120..=121 {
+                    decoded_notification(builder, at, stationary_snapshot(at));
+                }
+            },
         );
-        for at in 113..=114 {
-            decoded_notification(builder, at, stationary_snapshot(at));
-        }
+        // App startup disables music, so ignored provider observations cannot reset
+        // its telemetry baseline. Explicit legacy music still resets that generic
+        // writer baseline, but no music metadata belongs in either exported capture.
+        assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
+        assert!(capture.records.iter().all(|record| record.music.is_none()));
         assert_eq!(
-            builder.record_link_down(ms(115)),
-            MobileCaptureWriteOutcomeDto::Accepted
+            capture
+                .records
+                .iter()
+                .map(|record| record.monotonic_ms.get())
+                .collect::<Vec<_>>(),
+            expected_times
         );
-        assert_eq!(
-            builder.record_link_up(ms(116), None),
-            MobileCaptureWriteOutcomeDto::Accepted
-        );
-        for at in 117..=118 {
-            decoded_notification(builder, at, stationary_snapshot(at));
-        }
-        for _ in 0..2 {
-            assert_eq!(
-                builder.record_music_event(music(119)),
-                MobileCaptureWriteOutcomeDto::Accepted
-            );
-        }
-        for at in 120..=121 {
-            decoded_notification(builder, at, stationary_snapshot(at));
-        }
-    });
-    assert_eq!(capture.records.len(), 6);
-    assert_eq!(capture.music_events.len(), 3);
-    assert_eq!(
-        capture
+        let notifications: Vec<_> = capture
             .records
             .iter()
-            .map(|record| record.monotonic_ms.get())
-            .collect::<Vec<_>>(),
-        [10, 13, 15, 16, 17, 20]
-    );
+            .filter(|record| record.direction == cutout_core::PevcapDirection::Inbound)
+            .collect();
+        assert_eq!(notifications.len(), expected_times.len() - 2);
+        assert!(notifications.iter().all(|record| {
+            record.bytes.as_ref() == [0xaa, 0xbb] && record.semantic_telemetry.is_some()
+        }));
+        assert_eq!(
+            capture
+                .records
+                .iter()
+                .filter(|record| record.direction != cutout_core::PevcapDirection::Inbound)
+                .map(|record| (record.monotonic_ms.get(), record.direction))
+                .collect::<Vec<_>>(),
+            [
+                (15, cutout_core::PevcapDirection::LinkDown),
+                (16, cutout_core::PevcapDirection::LinkUp),
+            ]
+        );
+    }
 }
 
 #[test]

@@ -68,10 +68,7 @@ impl MobilePevcapCaptureBuilder {
                 {
                     return false;
                 }
-                matches!(
-                    writer.flush_outcome(),
-                    crate::persistence::CaptureFlushOutcome::Flushed
-                )
+                writer.flush_outcome() == crate::persistence::CaptureFlushOutcome::Flushed
             }
             CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(Err(_)) => false,
         }
@@ -116,6 +113,7 @@ mod tests {
             "test-wheel".to_owned(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(100));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert!(
             !builder.prepare_music_metadata_cleanup(),
