@@ -22,7 +22,7 @@ CASES = {
     "tune": ("testTune", "EUC fixture with high-beam setting controls"),
     "ride-tracking": (
         "testRideTracking",
-        "51 synthetic samples over five minutes on Denver's public Platte River Trail route",
+        "301 seeded one-second samples; native fixture continuation may add samples before capture",
     ),
     "charging-map": (
         "testChargingMap",
