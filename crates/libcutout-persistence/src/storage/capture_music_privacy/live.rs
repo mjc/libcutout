@@ -38,7 +38,10 @@ pub(super) fn check_active(connection: &Connection) -> Result<(), StorageError> 
             after = sequence;
             let bytes = payload::decode(bytes, encoding, original)?;
             if kind == "music"
-                || !matches!(transform::line(&bytes)?, transform::LineOutcome::Unchanged)
+                || match transform::line(&bytes)? {
+                    transform::LineOutcome::Unchanged => false,
+                    transform::LineOutcome::Removed | transform::LineOutcome::Rewritten(_) => true,
+                }
             {
                 return Err(StorageError::LiveCaptureInputInvalid(
                     "stop and save the active legacy capture before removing music metadata",
