@@ -7235,7 +7235,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(servicePin(in: owner).waitForExistence(timeout: 20), owner.debugDescription)
         try await setServiceOffline(true, at: baseURL)
         servicePin(in: owner).tap()
-        owner.buttons["charging.details.open"].tap()
+        openServiceDetails(in: owner, actionID: "charging.details.edit")
         owner.buttons["charging.details.edit"].tap()
         let access = owner.descendants(matching: .any)["charging.editor.access-note"].firstMatch
         revealChargingControl(access, in: owner, direction: .down)
@@ -7280,7 +7280,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         openCharging(owner)
         XCTAssertTrue(servicePin(in: owner).waitForExistence(timeout: 20), owner.debugDescription)
         servicePin(in: owner).tap()
-        owner.buttons["charging.details.open"].tap()
+        openServiceDetails(in: owner, actionID: "charging.details.delete")
         owner.buttons["charging.details.delete"].tap()
         let confirm = owner.sheets.buttons["Delete spot"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), owner.debugDescription)
@@ -7322,6 +7322,21 @@ final class ChargingMapDeviceUITests: XCTestCase {
 
     private func servicePin(in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "charging.pin.")).firstMatch
+    }
+
+    private func openServiceDetails(in app: XCUIApplication, actionID: String) {
+        let detailsButton = app.buttons["charging.details.open"]
+        XCTAssertTrue(detailsButton.waitForExistence(timeout: 10), app.debugDescription)
+        detailsButton.tap()
+
+        let detailsScreen = app.descendants(matching: .any)["charging.spot.details-screen"]
+        XCTAssertTrue(detailsScreen.waitForExistence(timeout: 10), app.debugDescription)
+
+        let action = app.buttons[actionID]
+        let actionReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in action.exists && action.isHittable },
+            object: action)
+        XCTAssertEqual(XCTWaiter.wait(for: [actionReady], timeout: 10), .completed, app.debugDescription)
     }
 
     private func waitForServiceState(
