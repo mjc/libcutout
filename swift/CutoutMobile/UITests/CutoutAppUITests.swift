@@ -7780,7 +7780,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         // Keep the new spot separate from the seeded Library pin so taps select the intended annotation.
         map.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.25)).press(
             forDuration: 0.1,
-            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.25))
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.57, dy: 0.25))
         )
         let confirmPlacement = app.buttons["charging.placement.confirm"]
         XCTAssertTrue(confirmPlacement.waitForExistence(timeout: 5), app.debugDescription)
