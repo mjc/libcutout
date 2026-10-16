@@ -406,6 +406,52 @@ final class CutoutAppUITests: XCTestCase {
         try verifySetupNavigation()
     }
 
+    func testPickerSurfaceDiagnosticsConsentPersistsAndPolicyLinksAreReachable() {
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+
+        func openDiagnostics() -> XCUIElement {
+            let setup = app.buttons["device-picker.open-setup"]
+            XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
+            setup.tap()
+            let consent = app.switches["setup.diagnostics.automatic"]
+            XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
+            scrollElementFrameIntoViewport(consent, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            let control = consent.switches.firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(control.isHittable, app.debugDescription)
+            return control
+        }
+
+        func waitForValue(_ value: String, of control: XCUIElement) {
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed, app.debugDescription)
+        }
+
+        let consent = openDiagnostics()
+        waitForValue("0", of: consent)
+        consent.tap()
+        waitForValue("1", of: consent)
+        app.buttons["setup.done"].tap()
+        app.terminate()
+        app.launch()
+
+        let restored = openDiagnostics()
+        waitForValue("1", of: restored)
+        restored.tap()
+        waitForValue("0", of: restored)
+        for identifier in ["setup.privacy-policy", "setup.support"] {
+            let link = app.descendants(matching: .any)[identifier]
+            scrollElementFrameIntoViewport(link, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            XCTAssertTrue(link.exists && link.isHittable, app.debugDescription)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Diagnostics consent and privacy-contact links"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testRideMapShowsUnavailableStorageWithoutFalseEmptyStateOrStart() throws {
         let map = app.tabBars.buttons["Map"]
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
@@ -7219,6 +7265,43 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["charging.vote.up"].waitForExistence(timeout: 5))
     }
 
+    func testLongAccessNoteKeepsDetailActionsReachable() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 20), app.debugDescription)
+        let existingPinIDs = pinIdentifiers(in: app)
+        let note =
+            String(repeating: "Follow the path around the building to the covered seating area. ", count: 24)
+            + "The outlet is beside the last bench."
+        createFreeSpot(in: app, note: note)
+        let pinID = try XCTUnwrap(waitForNewPin(in: app, excluding: existingPinIDs), app.debugDescription)
+        app.buttons[pinID].tap()
+        app.buttons["charging.details.open"].tap()
+
+        let close = app.buttons["charging.details.done"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(close.isHittable, app.debugDescription)
+        XCTAssertTrue(app.frame.contains(close.frame), app.debugDescription)
+        attachScreenshot(app, name: "Long charging access note fits the presentation")
+        let edit = app.buttons["charging.details.edit"]
+        let details = app.descendants(matching: .any)["charging.spot.details-screen"].firstMatch
+        let scroll = details.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists, app.debugDescription)
+        for _ in 0..<8 where !edit.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(edit.isHittable, app.debugDescription)
+        XCTAssertTrue(app.frame.contains(edit.frame), app.debugDescription)
+        XCTAssertTrue(app.buttons["charging.details.delete"].isHittable, app.debugDescription)
+        attachScreenshot(app, name: "Long charging access note scrolls to its actions")
+        edit.tap()
+        XCTAssertTrue(app.buttons["charging.editor.save"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(
+            app.descendants(matching: .any)["charging.editor.access-note"].firstMatch.value as? String,
+            note, app.debugDescription)
+    }
+
     func testSelectedPinCanCloseWithoutChangingMapOrFilters() throws {
         continueAfterFailure = false
         let app = chargingApp()
@@ -7366,8 +7449,10 @@ final class ChargingMapDeviceUITests: XCTestCase {
         app.buttons["charging.details.open"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["charging.spot.details-screen"].waitForExistence(timeout: 5))
         let savedAccess = app.descendants(matching: .any)["charging.details.access"].firstMatch
+        XCTAssertTrue(savedAccess.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(
-            (savedAccess.label + (savedAccess.value as? String ?? "")).contains("Outlet beside the north entrance."))
+            (savedAccess.label + (savedAccess.value as? String ?? "")).contains("Outlet beside the north entrance."),
+            app.debugDescription)
         app.buttons["charging.details.done"].tap()
         createdPin = app.buttons[newPinID]
         XCTAssertTrue(createdPin.waitForExistence(timeout: 5), app.debugDescription)
@@ -7729,6 +7814,11 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
         beginChargingPlacement(in: app)
+        // Keep the new spot separate from the seeded Library pin so taps select the intended annotation.
+        map.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.25)).press(
+            forDuration: 0.1,
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.57, dy: 0.25))
+        )
         let confirmPlacement = app.buttons["charging.placement.confirm"]
         XCTAssertTrue(confirmPlacement.waitForExistence(timeout: 5), app.debugDescription)
         confirmPlacement.tap()

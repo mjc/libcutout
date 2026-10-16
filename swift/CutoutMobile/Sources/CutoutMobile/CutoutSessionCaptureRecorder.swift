@@ -2,23 +2,6 @@ import CutoutMobileFFI
 import Foundation
 import Synchronization
 
-struct CaptureMusicContext: Equatable {
-    private(set) var current: MobilePevcapMusicEventDto?
-
-    mutating func update(_ observation: MobilePevcapMusicEventDto?) {
-        current = observation
-    }
-
-    mutating func take() -> MobilePevcapMusicEventDto? {
-        defer { current = nil }
-        return current
-    }
-
-    mutating func reset() {
-        current = nil
-    }
-}
-
 struct CaptureWriterCompletion {
     let generation: CaptureGeneration
     let completion: MobileCaptureCompletionDto
@@ -55,7 +38,6 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     var currentGeneration: CaptureGeneration? { get }
     var activeFileURL: URL? { get }
     var hasWriter: Bool { get }
-    var currentMusicObservation: MobilePevcapMusicEventDto? { get }
     #if DEBUG
         var finishWriterGate: (() -> Void)? { get set }
     #endif
@@ -73,10 +55,10 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func startSynthetic(generation: CaptureGeneration, fileURL: URL, progress: CaptureProgress)
     func finishSynthetic()
     func publishStarted()
-    func resetMusicContext()
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
+    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool
     @discardableResult func publishProgress() -> CaptureProgress
     func publishFailure()
     func writerStatus() -> MobileCaptureWriterStatusDto?
@@ -92,8 +74,6 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto
-    func recordMusicObservation(_ observation: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto
-    func updateMusicPolicy(_ policy: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto
     func setResolvedIdentity(
         _ identity: MobileResolvedIdentityDto,
         evidence: String?,
@@ -110,6 +90,10 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func elapsedMilliseconds(since startedAt: MonotonicMilliseconds) -> UInt64
 }
 
+extension CutoutSessionCaptureRecording {
+    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool { { true } }
+}
+
 /// Owns PEVCAP writer state and capture-local timing; Rust/Core retain lifecycle and failure policy.
 final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private let clock: MonotonicClock
@@ -123,8 +107,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private var notificationCount: UInt64 = 0
     private var builder: MobilePevcapCaptureBuilder?
     private var fileURL: URL?
-    private var musicContext = CaptureMusicContext()
-    private var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
+    private let writerCompletionGroup = DispatchGroup()
     private var captureOrigin = MobileCaptureOriginDto.automatic
     private var advertisedName: String?
 
@@ -135,7 +118,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     var currentGeneration: CaptureGeneration? { presentation.currentGeneration }
     var activeFileURL: URL? { fileURL }
     var hasWriter: Bool { builder != nil }
-    var currentMusicObservation: MobilePevcapMusicEventDto? { musicContext.current }
 
     init(
         clock: MonotonicClock,
@@ -176,12 +158,12 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
                     evidence: evidence,
                     annotations: annotations,
                     origin: origin,
-                    musicHistoryPolicy: musicHistoryPolicy
+                    musicHistoryPolicy: .disabled
                 ),
                 database: database
             )
             let startedAt = clock.now()
-            let admitted = try prepared.start(monotonicMs: startedAt.rawValue, musicContext: musicContext.current)
+            let admitted = try prepared.start(monotonicMs: startedAt.rawValue, musicContext: nil)
             let builder = admitted.builder
             let url = URL(fileURLWithPath: admitted.path)
 
@@ -193,7 +175,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             self.builder = builder
             fileURL = url
             locationWriter.withLock { $0 = ActiveCaptureLocationWriter(generation: generation, builder: builder) }
-            musicContext.reset()
             return true
         } catch {
             return false
@@ -220,8 +201,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         publish(.finished(generation: generation, fileURL: fileURL))
     }
 
-    func resetMusicContext() { musicContext.reset() }
-
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto {
         builder?.addAnnotation(annotation: annotation) ?? .accepted
     }
@@ -232,6 +211,18 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     }
 
     func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }
+
+    /// Snapshot native writer ownership on the BLE queue; wait only on a background executor.
+    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool {
+        let active = builder
+        let completions = writerCompletionGroup
+        return {
+            completions.wait()
+            guard active?.prepareMusicMetadataCleanup() ?? true else { return false }
+            completions.wait()
+            return true
+        }
+    }
 
     @discardableResult
     func publishProgress() -> CaptureProgress {
@@ -331,22 +322,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         ) ?? .accepted
     }
 
-    func recordMusicObservation(_ observation: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto {
-        musicContext.update(observation)
-        guard let builder else { return .accepted }
-        guard let observation else {
-            _ = builder.setMusicContext(music: nil)
-            return .accepted
-        }
-        return builder.recordMusicEvent(music: observation)
-    }
-
-    func updateMusicPolicy(_ policy: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto {
-        musicHistoryPolicy = policy
-        _ = builder?.setMusicHistoryPolicy(policy: policy)
-        return .accepted
-    }
-
     func setResolvedIdentity(
         _ identity: MobileResolvedIdentityDto,
         evidence: String?,
@@ -385,7 +360,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     }
 
     func finish(publishesResult: Bool, priorWriteOutcome: MobileCaptureWriteOutcomeDto) {
-        musicContext.reset()
         guard let builder else { return }
         let generation = currentGeneration ?? .legacy
         let origin = captureOrigin
@@ -398,11 +372,14 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         presentation.end()
 
         let completionHandler = onWriterCompletion
+        let completions = writerCompletionGroup
+        completions.enter()
         let wallClock = wallClock
         #if DEBUG
             let finishWriterGate = finishWriterGate
         #endif
         let finish = DispatchWorkItem {
+            defer { completions.leave() }
             #if DEBUG
                 finishWriterGate?()
             #endif

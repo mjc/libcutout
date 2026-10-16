@@ -161,6 +161,20 @@ impl CaptureSessionLifecycle {
         })
     }
 
+    /// Identifies the optional automatic writer affected by diagnostic consent withdrawal.
+    /// Manual captures and ride recording retain their own user authorization.
+    #[must_use]
+    pub fn automatic_capture_to_finish(&self) -> Option<CaptureGeneration> {
+        self.current
+            .filter(|attempt| {
+                attempt.origin == CaptureOrigin::Automatic
+                    && (attempt.stage == CaptureStage::Starting
+                        || attempt.stage == CaptureStage::Recording
+                        || attempt.stage == CaptureStage::SaveFailed)
+            })
+            .map(|attempt| attempt.generation)
+    }
+
     /// Reserves a generation before attempting writer creation. Never wraps identity.
     pub fn begin(&mut self, origin: CaptureOrigin) -> Option<CaptureGeneration> {
         if !self.can_start() {
@@ -333,6 +347,26 @@ mod tests {
         assert!(!owner.admits_result(first));
         assert!(owner.admits_result(second));
         assert!(!owner.admits_result(CaptureGeneration::new(second.get() + 1)));
+    }
+
+    #[test]
+    fn diagnostic_withdrawal_selects_only_the_active_automatic_capture() {
+        let mut starting = CaptureSessionLifecycle::default();
+        let pending = starting.begin(CaptureOrigin::Automatic).unwrap();
+        assert_eq!(starting.automatic_capture_to_finish(), Some(pending));
+        // A constructor already authorized before withdrawal can finish on its native owner.
+        assert!(starting.writer_started(pending));
+        assert_eq!(starting.automatic_capture_to_finish(), Some(pending));
+        let (mut automatic, generation) = recording(CaptureOrigin::Automatic);
+        assert_eq!(automatic.automatic_capture_to_finish(), Some(generation));
+        assert!(automatic.retire(generation));
+        assert_eq!(automatic.automatic_capture_to_finish(), None);
+        let (manual, _) = recording(CaptureOrigin::Manual);
+        assert_eq!(manual.automatic_capture_to_finish(), None);
+        assert_eq!(
+            CaptureSessionLifecycle::default().automatic_capture_to_finish(),
+            None
+        );
     }
 
     #[test]

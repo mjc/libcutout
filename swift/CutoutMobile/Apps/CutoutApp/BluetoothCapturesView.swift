@@ -159,6 +159,7 @@ private struct CaptureArtifactRow: View {
 
 struct CaptureArtifactDetailView: View {
     let artifact: CaptureArtifact
+    @State private var export = CaptureExportModel()
 
     private var fileExists: Bool {
         artifact.fileURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
@@ -179,11 +180,23 @@ struct CaptureArtifactDetailView: View {
                 }
             }
             Section {
-                if fileExists, let fileURL = artifact.fileURL {
-                    ShareLink(item: fileURL) {
-                        Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
+                if fileExists, let source = artifact.fileURL {
+                    if let fileURL = export.fileURL {
+                        ShareLink(item: fileURL) {
+                            Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityIdentifier("captures.share")
+                    } else if export.isExporting {
+                        ProgressView(localizedAppText("captures.preparing"))
+                    } else if let error = export.error {
+                        Text(error).foregroundStyle(PevColors.warningText)
+                        Button(localizedAppText("captures.share")) {
+                            Task { await export.export(source: source) }
+                        }
+                        .disabled(export.isExporting)
+                    } else {
+                        ProgressView(localizedAppText("captures.preparing"))
                     }
-                    .accessibilityIdentifier("captures.share")
                 } else {
                     Label(localizedAppText("captures.file_unavailable"), systemImage: "doc.badge.ellipsis")
                 }
@@ -210,6 +223,9 @@ struct CaptureArtifactDetailView: View {
         .background(PevColors.pageBackground)
         .navigationTitle(localizedAppText(detailTitleKey))
         .accessibilityIdentifier("captures.detail")
+        .task(id: artifact.fileURL) {
+            if fileExists, let source = artifact.fileURL { await export.export(source: source) }
+        }
     }
 
     private var detailTitleKey: String {
@@ -267,7 +283,7 @@ private struct DatabaseCaptureDetailView: View {
                         Task { await export.export(id: capture.liveCaptureId) }
                     } label: {
                         if export.isExporting {
-                            ProgressView("Preparing recording…")
+                            ProgressView(localizedAppText("captures.preparing"))
                         } else {
                             Label("Export recording", systemImage: "square.and.arrow.up")
                         }

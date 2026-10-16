@@ -31,6 +31,9 @@ public struct MusicCompactPlayer: View {
         HStack(spacing: 8) {
             MusicTrackButton(nowPlaying: nowPlaying, action: onOpenDetails)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            if let url = nowPlaying.spotifyContentURL {
+                SpotifyContentLink(url: url)
+            }
             MusicTransportControls(nowPlaying: nowPlaying, includesPrevious: false, onCommand: onCommand)
                 .fixedSize(horizontal: true, vertical: false)
             if nowPlaying.playPauseCommand == nil && !nowPlaying.isCommandAvailable(.next)
@@ -219,6 +222,9 @@ private struct MusicTimelineRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
+            if let url = event.spotifyContentURL {
+                SpotifyContentLink(url: url)
+            }
             Text(
                 Date(timeIntervalSince1970: Double(event.wallClockAtMs) / 1_000),
                 style: .time
@@ -226,7 +232,20 @@ private struct MusicTimelineRow: View {
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.secondary)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// An independent link keeps provider content accessible beside playback and ride metadata.
+private struct SpotifyContentLink: View {
+    let url: URL
+
+    var body: some View {
+        Link("Spotify", destination: url)
+            .font(.caption)
+            .frame(minHeight: 44)
+            .accessibilityLabel(pevLocalizedText("music.spotify.content_link"))
+            .accessibilityIdentifier("music.spotify-content-link")
     }
 }
 
@@ -275,7 +294,12 @@ public struct MusicExpandedPlayer: View {
                         MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
                             .frame(maxWidth: .infinity)
                     }
-                    if nowPlaying.isCommandAvailable(.openProvider) {
+                    if let url = nowPlaying.spotifyContentURL {
+                        Link(destination: url) {
+                            Label(pevLocalizedText("music.spotify.content_link"), systemImage: "arrow.up.forward.app")
+                        }
+                        .accessibilityIdentifier("music.spotify-content-link")
+                    } else if nowPlaying.isCommandAvailable(.openProvider) {
                         Button(action: { onCommand(.openProvider) }) {
                             Label(
                                 pevLocalizedText("music.open_named_provider", nowPlaying.providerName),
@@ -355,6 +379,10 @@ public struct MusicSettingsView: View {
     let historyFailureContext: MusicHistoryFailureContext
     let onConnect: () -> Void
     let onAuthorizeSpotify: () -> Void
+    let onDisconnectSpotify: (@MainActor () async -> Bool)?
+    @State private var confirmsSpotifyDisconnect = false
+    @State private var spotifyDisconnectFailed = false
+    @State private var isDisconnectingSpotify = false
     let onPlaySoundCloud: (() -> Void)?
     let onOpenProvider: () -> Void
 
@@ -367,6 +395,7 @@ public struct MusicSettingsView: View {
         historyFailureContext: MusicHistoryFailureContext = .listeningHistory,
         onConnect: @escaping () -> Void,
         onAuthorizeSpotify: @escaping () -> Void,
+        onDisconnectSpotify: (@MainActor () async -> Bool)? = nil,
         onPlaySoundCloud: (() -> Void)? = nil,
         onOpenProvider: @escaping () -> Void
     ) {
@@ -378,6 +407,7 @@ public struct MusicSettingsView: View {
         self.historyFailureContext = historyFailureContext
         self.onConnect = onConnect
         self.onAuthorizeSpotify = onAuthorizeSpotify
+        self.onDisconnectSpotify = onDisconnectSpotify
         self.onPlaySoundCloud = onPlaySoundCloud
         self.onOpenProvider = onOpenProvider
     }
@@ -416,6 +446,12 @@ public struct MusicSettingsView: View {
                     Button(pevLocalizedText("music.authorize_spotify"), action: onAuthorizeSpotify)
                         .accessibilityIdentifier("music.authorize-spotify")
                 }
+                if selectedProvider == .spotify, onDisconnectSpotify != nil {
+                    Button(pevLocalizedText("music.spotify.disconnect"), role: .destructive) {
+                        confirmsSpotifyDisconnect = true
+                    }
+                    .accessibilityIdentifier("music.disconnect-spotify")
+                }
                 if selectedProvider == .soundCloud, let onPlaySoundCloud {
                     Button(pevLocalizedText("music.soundcloud.choose_music"), action: onPlaySoundCloud)
                         .accessibilityIdentifier("music.soundcloud.choose-music")
@@ -450,6 +486,27 @@ public struct MusicSettingsView: View {
             } footer: {
                 Text(historyPolicy.explanation + " " + pevLocalizedText("music.history.privacy"))
             }
+        }
+        .disabled(isDisconnectingSpotify)
+        .confirmationDialog(
+            pevLocalizedText("music.spotify.disconnect.title"),
+            isPresented: $confirmsSpotifyDisconnect,
+            titleVisibility: .visible
+        ) {
+            Button(pevLocalizedText("music.spotify.disconnect"), role: .destructive) {
+                Task { @MainActor in
+                    guard let onDisconnectSpotify else { return }
+                    isDisconnectingSpotify = true
+                    spotifyDisconnectFailed = !(await onDisconnectSpotify())
+                    isDisconnectingSpotify = false
+                }
+            }
+            Button(pevLocalizedText("music.cancel"), role: .cancel) {}
+        } message: {
+            Text(pevLocalizedText("music.spotify.disconnect.message"))
+        }
+        .alert(pevLocalizedText("music.spotify.disconnect.failed"), isPresented: $spotifyDisconnectFailed) {
+            Button(pevLocalizedText("music.done"), role: .cancel) {}
         }
         .formStyle(.grouped)
         .navigationTitle(pevLocalizedText("music.settings.title"))

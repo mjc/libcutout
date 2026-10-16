@@ -7,6 +7,39 @@ import XCTest
 
 @MainActor
 final class CaptureFeatureModelTests: XCTestCase {
+    private enum ExportFailure: Error { case unavailable }
+
+    func testCaptureExportRetryClearsFailureAndOwnsTheBusyState() async {
+        let gate = CaptureExportGate()
+        var requests = 0
+        let destination = URL(fileURLWithPath: "/tmp/retry-export.jsonl")
+        let model = CaptureExportModel(sourceExport: { _ in
+            requests += 1
+            if requests == 1 { throw ExportFailure.unavailable }
+            await gate.suspend()
+            return destination
+        })
+        let source = URL(fileURLWithPath: "/tmp/source.jsonl")
+
+        await model.export(source: source)
+        XCTAssertNotNil(model.error)
+        XCTAssertFalse(model.isExporting)
+
+        let retry = Task { await model.export(source: source) }
+        await fulfillment(of: [gate.started], timeout: 2)
+        XCTAssertTrue(model.isExporting)
+        XCTAssertNil(model.error)
+
+        await model.export(source: source)
+        XCTAssertEqual(requests, 2, "A second export must not start while the retry is active")
+
+        await gate.release()
+        await retry.value
+        XCTAssertFalse(model.isExporting)
+        XCTAssertEqual(model.fileURL, destination)
+        XCTAssertNil(model.error)
+    }
+
     func testLabelAdmissionLossKeepsRecordingUsableAndAllowsRetry() {
         var requests = 0
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in
@@ -728,6 +761,23 @@ final class CaptureFeatureModelTests: XCTestCase {
         capture.deliverCaptureEvent(.finished(fileURL: url))
         capture.deliverCaptureEvent(.finished(fileURL: url))
         XCTAssertEqual(capture.completed.count, 1)
+    }
+}
+
+private actor CaptureExportGate {
+    nonisolated let started = XCTestExpectation(description: "retry export is held")
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            started.fulfill()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

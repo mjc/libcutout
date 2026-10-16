@@ -1,5 +1,116 @@
 import CutoutMobileFFI
+import Foundation
+import Observation
 import SwiftUI
+
+@MainActor
+@Observable
+final class ChargingContentReportModel {
+    typealias Submit = @MainActor (MobileChargingContentReport) async throws -> MobileChargingReportReceiptDto
+
+    enum State: Equatable {
+        case editing
+        case submitting
+        case sent(String)
+        case failed(String)
+    }
+
+    var details = ""
+    private(set) var state: State = .editing
+    private(set) var preparedReport: MobileChargingContentReport?
+    private let remoteID: String
+    private let submit: Submit
+
+    init(remoteID: String, submit: @escaping Submit = submitToCommunity) {
+        self.remoteID = remoteID
+        self.submit = submit
+    }
+
+    static func submitToCommunity(_ report: MobileChargingContentReport) async throws -> MobileChargingReportReceiptDto
+    {
+        let credential = try await ChargingCommunitySync.shared.credentialForReport()
+        return try await report.submit(token: credential.token)
+    }
+
+    func send() async {
+        guard state != .submitting else { return }
+        if case .sent = state { return }
+        do {
+            let report: MobileChargingContentReport
+            if let preparedReport {
+                report = preparedReport
+            } else {
+                report = try MobileChargingContentReport(spotId: remoteID, message: details)
+                preparedReport = report
+            }
+            state = .submitting
+            let receipt = try await submit(report)
+            state = .sent(receipt.reportId)
+        } catch let error as MobileChargingError {
+            let key: String
+            switch error {
+            case .InvalidMetadata: key = "charging.report.invalid_details"
+            case .Unauthorized: key = "charging.report.identity_required"
+            case .Unavailable: key = "charging.report.unavailable"
+            case .Throttled: key = "charging.report.throttled"
+            default: key = "charging.report.failed"
+            }
+            state = .failed(key)
+        } catch {
+            state = .failed("charging.report.failed")
+        }
+    }
+}
+
+struct ChargingContentReportView: View {
+    @State private var model: ChargingContentReportModel
+    @Environment(\.dismiss) private var dismiss
+
+    init(remoteID: String) {
+        _model = State(initialValue: ChargingContentReportModel(remoteID: remoteID))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(localizedAppText("charging.report.explanation"))
+                    if case .sent(let reportID) = model.state {
+                        Label(localizedAppText("charging.report.sent"), systemImage: "checkmark.circle.fill")
+                            .accessibilityIdentifier("charging.report.sent")
+                        LabeledContent(localizedAppText("charging.report.receipt"), value: reportID)
+                    } else {
+                        TextField(localizedAppText("charging.report.details"), text: $model.details, axis: .vertical)
+                            .lineLimit(3...6)
+                            .disabled(model.preparedReport != nil)
+                            .accessibilityIdentifier("charging.report.details")
+                        if case .failed(let key) = model.state {
+                            Text(localizedAppText(key)).foregroundStyle(.red)
+                                .accessibilityIdentifier("charging.report.error")
+                        }
+                        Button(
+                            localizedAppText(model.preparedReport == nil ? "charging.report.send" : "charging.retry")
+                        ) {
+                            Task { await model.send() }
+                        }
+                        .disabled(model.state == .submitting)
+                        .accessibilityIdentifier("charging.report.send")
+                        if model.state == .submitting { ProgressView() }
+                    }
+                }
+            }
+            .navigationTitle(localizedAppText("charging.report.title"))
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(localizedAppText("ride.readings.done")) { dismiss() }
+                        .disabled(model.state == .submitting)
+                }
+            }
+        }
+        .interactiveDismissDisabled(model.state == .submitting)
+        .accessibilityIdentifier("charging.report.screen")
+    }
+}
 
 struct ChargingCommunityStatusView: View {
     @Bindable var model: ChargingMapModel

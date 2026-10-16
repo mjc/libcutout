@@ -24,6 +24,7 @@ pub mod provider_lifecycle;
 pub mod soundcloud;
 pub mod soundcloud_auth;
 pub mod soundcloud_player;
+pub mod spotify;
 
 pub use history::*;
 pub use model::*;

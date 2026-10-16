@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 47;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 48;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -19,7 +19,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     }
     let application_id: i64 =
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-    if application_id != 0 && application_id != APPLICATION_ID {
+    if application_id != APPLICATION_ID && (application_id != 0 || version >= 45) {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     match version {
@@ -70,6 +70,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         44 => migrate_v44_to_v45(connection)?,
         45 => migrate_v45_to_v46(connection)?,
         46 => migrate_v46_to_v47(connection)?,
+        47 => migrate_v47_to_v48(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -105,6 +106,9 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 46 {
             migrate_v46_to_v47(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 47 {
+            migrate_v47_to_v48(connection)?;
         }
     }
     Ok(())
@@ -212,6 +216,7 @@ fn migrate_v2_to_current(connection: &mut Connection) -> Result<(), StorageError
 )]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
+    connection.execute_batch(DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA)?;
     connection.execute_batch(
         "
         CREATE TABLE rides (
@@ -1323,6 +1328,20 @@ const RIDE_RECORDING_PREFERENCES_SCHEMA: &str = "
         autostart_enabled INTEGER NOT NULL CHECK (autostart_enabled IN (0, 1))
     );";
 
+const DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS diagnostic_recording_preferences (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        automatic_enabled INTEGER NOT NULL CHECK (automatic_enabled IN (0, 1))
+    );";
+
+fn migrate_v47_to_v48(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn migrate_v26_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
@@ -1870,6 +1889,7 @@ fn finish_migration(transaction: &rusqlite::Transaction<'_>) -> Result<(), Stora
     ensure_live_capture_recording_context(transaction)?;
     ensure_location_observation_clocks(transaction)?;
     transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
+    transaction.execute_batch(DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA)?;
     transaction.execute_batch(&schema_pragmas(39))?;
     Ok(())
 }
@@ -1900,6 +1920,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "devices",
         "phone_alarm_preferences",
         "ride_recording_preferences",
+        "diagnostic_recording_preferences",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
@@ -2104,6 +2125,147 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_consent_migration_rejects_unowned_database_without_mutation() {
+        for version in [45, 46, 47] {
+            for identity in [0, 0x1234] {
+                let mut connection = Connection::open_in_memory().unwrap();
+                connection.execute_batch("CREATE TABLE unrelated(value TEXT); INSERT INTO unrelated VALUES ('preserve');").unwrap();
+                connection
+                    .pragma_update(None, "user_version", version)
+                    .unwrap();
+                connection
+                    .pragma_update(None, "application_id", identity)
+                    .unwrap();
+                assert!(matches!(
+                    migrate(&mut connection),
+                    Err(StorageError::InvalidDatabaseIdentity)
+                ));
+                assert_eq!(
+                    connection
+                        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                        .unwrap(),
+                    version
+                );
+                assert_eq!(
+                    connection
+                        .pragma_query_value(None, "application_id", |row| row.get::<_, i64>(0))
+                        .unwrap(),
+                    identity
+                );
+                assert!(!table_exists(&connection, "diagnostic_recording_preferences").unwrap());
+                assert!(!table_exists(&connection, "charging_sync_state").unwrap());
+                assert_eq!(
+                    connection
+                        .query_row("SELECT value FROM unrelated", [], |row| row
+                            .get::<_, String>(0))
+                        .unwrap(),
+                    "preserve"
+                );
+            }
+        }
+    }
+
+    fn diagnostic_migration_fixture(version: i64) -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE diagnostic_recording_preferences;
+            INSERT INTO ride_recording_preferences(id,autostart_enabled) VALUES(1,0);
+            UPDATE charging_sync_state SET cursor=314,last_refreshed_at_ms=123;",
+            )
+            .unwrap();
+        if version == 45 {
+            connection
+                .execute_batch(
+                    "ALTER TABLE charging_sync_state DROP COLUMN account_state;
+                ALTER TABLE charging_sync_state DROP COLUMN account_deleted_at_ms;",
+                )
+                .unwrap();
+        } else {
+            connection.execute_batch("UPDATE charging_sync_state SET account_state='deleted',account_deleted_at_ms=77;").unwrap();
+        }
+        if version <= 46 {
+            // Published v45/v46 databases can lack these columns. The existing v47
+            // repair must still run before the new consent-only migration advances.
+            for column in [
+                "elapsed_time_ms",
+                "elapsed_time_anchor_ms",
+                "elapsed_time_running",
+                "elapsed_time_partial",
+                "last_recorded_point_elapsed_time_ms",
+                "last_recorded_point_elapsed_partial",
+            ] {
+                connection
+                    .execute_batch(&format!("ALTER TABLE rides DROP COLUMN {column};"))
+                    .unwrap();
+            }
+        }
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+        connection
+    }
+
+    #[test]
+    fn diagnostic_consent_migration_defaults_off_without_changing_existing_preferences() {
+        for version in [45, 46, 47] {
+            let mut connection = diagnostic_migration_fixture(version);
+            migrate(&mut connection).unwrap();
+            verify_current_schema(&connection).unwrap();
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM diagnostic_recording_preferences",
+                        [],
+                        |row| row.get::<_, u64>(0)
+                    )
+                    .unwrap(),
+                0
+            );
+            assert!(
+                !connection
+                    .query_row(
+                        "SELECT autostart_enabled FROM ride_recording_preferences WHERE id=1",
+                        [],
+                        |row| row.get::<_, bool>(0)
+                    )
+                    .unwrap()
+            );
+            let state=connection.query_row("SELECT cursor,last_refreshed_at_ms,account_state,account_deleted_at_ms FROM charging_sync_state WHERE singleton=1",[],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,Option<i64>>(1)?,row.get::<_,String>(2)?,row.get::<_,Option<i64>>(3)?))).unwrap();
+            assert_eq!(
+                state,
+                (
+                    314,
+                    Some(123),
+                    if version == 45 {
+                        "active".to_owned()
+                    } else {
+                        "deleted".to_owned()
+                    },
+                    if version == 45 { None } else { Some(77) }
+                )
+            );
+            for column in [
+                "elapsed_time_ms",
+                "elapsed_time_anchor_ms",
+                "elapsed_time_running",
+                "elapsed_time_partial",
+                "last_recorded_point_elapsed_time_ms",
+                "last_recorded_point_elapsed_partial",
+            ] {
+                assert!(table_has_column(&connection, "rides", column).unwrap());
+            }
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                CURRENT_SCHEMA_VERSION
+            );
+        }
+    }
 
     const CAPTURE_SCHEMA_V36: &str = "
         CREATE TABLE IF NOT EXISTS live_capture_sessions (

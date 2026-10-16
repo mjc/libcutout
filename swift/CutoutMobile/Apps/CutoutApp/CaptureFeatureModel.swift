@@ -391,27 +391,68 @@ final class CaptureLibraryModel {
 @MainActor
 @Observable
 final class CaptureExportModel {
+    typealias SourceExport = @MainActor (URL) async throws -> URL
+    typealias CaptureExport = @MainActor (String) async throws -> URL
+
     private(set) var fileURL: URL?
     private(set) var isExporting = false
     private(set) var error: String?
+    private let sourceExport: SourceExport
+    private let captureExport: CaptureExport
+
+    init(
+        sourceExport: SourceExport? = nil,
+        captureExport: CaptureExport? = nil
+    ) {
+        self.sourceExport = sourceExport ?? Self.exportSourceFile
+        self.captureExport = captureExport ?? Self.exportDatabaseCapture
+    }
+
+    func export(source: URL) async {
+        guard !isExporting, fileURL == nil else { return }
+        isExporting = true
+        error = nil
+        defer { isExporting = false }
+        do {
+            fileURL = try await sourceExport(source)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 
     func export(id: String) async {
         guard !isExporting, fileURL == nil else { return }
         isExporting = true
+        error = nil
         defer { isExporting = false }
         do {
-            let database = try await RustPersistenceStore.open()
-            let result = try await Task.detached(priority: .userInitiated) {
-                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-                    "CaptureExports", isDirectory: true)
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let path = directory.appendingPathComponent("capture-\(UUID().uuidString).jsonl").path
-                return try database.exportLiveCapture(liveCaptureId: id, path: path)
-            }.value
-            fileURL = URL(fileURLWithPath: result.path)
-            error = nil
+            fileURL = try await captureExport(id)
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private static func exportSourceFile(_ source: URL) async throws -> URL {
+        let result = try await Task.detached(priority: .userInitiated) {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "CaptureExports", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let ext = source.pathExtension == "pevcap" ? "pevcap" : "jsonl"
+            let destination = directory.appendingPathComponent("capture-\(UUID().uuidString).\(ext)")
+            return try exportCaptureFileWithoutMusic(sourcePath: source.path, path: destination.path)
+        }.value
+        return URL(fileURLWithPath: result.path)
+    }
+
+    private static func exportDatabaseCapture(_ id: String) async throws -> URL {
+        let database = try await RustPersistenceStore.open()
+        let result = try await Task.detached(priority: .userInitiated) {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "CaptureExports", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let path = directory.appendingPathComponent("capture-\(UUID().uuidString).jsonl").path
+            return try database.exportLiveCapture(liveCaptureId: id, path: path)
+        }.value
+        return URL(fileURLWithPath: result.path)
     }
 }

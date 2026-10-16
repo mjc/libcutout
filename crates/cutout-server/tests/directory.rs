@@ -126,6 +126,110 @@ fn provision_moderator(path: &std::path::Path) -> String {
 }
 
 #[tokio::test]
+async fn objectionable_public_text_is_rejected_before_create_and_edit() {
+    let directory = TempDir::new().expect("directory");
+    let server = Server::start(&directory.path().join("spots.sqlite")).await;
+    let token = server.identity().await;
+    let created = server.create(&token, minimum("free")).await;
+    let target = created["state"]["id"].as_str().expect("spot id");
+    for field in ["access_note", "name", "hours"] {
+        let mut input = minimum("free");
+        input[field] = json!("ＦＵＣＫ off");
+        let create = json!({"operation_id":Uuid::new_v4().to_string(),"spot":input});
+        let response = server
+            .write(reqwest::Method::POST, "/v1/charging-spots", &token, &create)
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "create {field}"
+        );
+        let edit =
+            json!({"operation_id":Uuid::new_v4().to_string(),"expected_revision":1,"spot":input});
+        let response = server
+            .write(
+                reqwest::Method::PUT,
+                &format!("/v1/charging-spots/{target}"),
+                &token,
+                &edit,
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "edit {field}"
+        );
+    }
+    let mut input = minimum("free");
+    input["supplies"] = json!([{ "voltage_volts":120,"connectors":[{"other":"f.u.c.k"}] }]);
+    let response = server
+        .write(
+            reqwest::Method::POST,
+            "/v1/charging-spots",
+            &token,
+            &json!({"operation_id":Uuid::new_v4().to_string(),"spot":input}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unchanged = server
+        .read(&format!("/v1/charging-spots/{target}"), None)
+        .await;
+    assert_eq!(unchanged["revision"], 1);
+    assert_eq!(unchanged["access_note"], "Outlet by the patio.");
+}
+
+#[tokio::test]
+async fn objectionable_price_currency_is_rejected_before_create_and_edit() {
+    let directory = TempDir::new().expect("directory");
+    let server = Server::start(&directory.path().join("spots.sqlite")).await;
+    let token = server.identity().await;
+    let mut input = minimum("paid");
+    input["paid_terms"] = json!("purchase_required");
+    input["price"] =
+        json!({"amount_minor":500,"currency":"USD","minor_unit_exponent":2,"basis":"purchase"});
+    let created = server.create(&token, input.clone()).await;
+    let target = created["state"]["id"].as_str().expect("spot id");
+    assert_eq!(created["state"]["spot"]["price"]["currency"], "USD");
+    input["price"]["currency"] = json!("FCK");
+    let response = server
+        .write(
+            reqwest::Method::POST,
+            "/v1/charging-spots",
+            &token,
+            &json!({"operation_id":Uuid::new_v4().to_string(),"spot":input}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let response = server
+        .write(
+            reqwest::Method::PUT,
+            &format!("/v1/charging-spots/{target}"),
+            &token,
+            &json!({"operation_id":Uuid::new_v4().to_string(),"expected_revision":1,"spot":input}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unchanged = server
+        .read(&format!("/v1/charging-spots/{target}"), None)
+        .await;
+    assert_eq!(unchanged["revision"], 1);
+    assert_eq!(unchanged["price"]["currency"], "USD");
+}
+
+#[tokio::test]
+async fn public_text_filter_preserves_place_names_and_electrical_instructions() {
+    let directory = TempDir::new().expect("directory");
+    let server = Server::start(&directory.path().join("spots.sqlite")).await;
+    let token = server.identity().await;
+    let mut input = minimum("free");
+    input["name"] = json!("Scunthorpe Assembly Hall");
+    input["access_note"] =
+        json!("Ask staff to shut off the breaker. The brass socket is by the passage.");
+    let created = server.create(&token, input).await;
+    assert_eq!(created["state"]["spot"]["name"], "Scunthorpe Assembly Hall");
+}
+
+#[tokio::test]
 async fn one_registration_source_cannot_exhaust_another_sources_budget() {
     let directory = TempDir::new().expect("directory");
     let path = directory.path().join("spots.sqlite");

@@ -13,12 +13,10 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
     var currentGeneration: CaptureGeneration? = .legacy
     var activeFileURL: URL?
     var hasWriter = true
-    var currentMusicObservation: MobilePevcapMusicEventDto?
     var recordLinkUpResult: MobileCaptureWriteOutcomeDto = .accepted
     #if DEBUG
         var finishWriterGate: (() -> Void)?
     #endif
-    private(set) var musicObservations: [MobilePevcapMusicEventDto?] = []
     private(set) var finishCount = 0
     private(set) var publishFailureCount = 0
     private(set) var publishProgressCount = 0
@@ -49,7 +47,6 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 
     func finishSynthetic() { activeFileURL = nil }
     func publishStarted() {}
-    func resetMusicContext() { currentMusicObservation = nil }
     func addAnnotation(_: String) -> MobileCaptureWriteOutcomeDto { .accepted }
     func changeLabel(_: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] { [] }
     func flushWriter() -> MobileCaptureFlushOutcomeDto { flushOutcome }
@@ -97,12 +94,6 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 
     func recordLinkUp(maxWriteLength _: UInt16?) -> MobileCaptureWriteOutcomeDto { recordLinkUpResult }
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto { .accepted }
-    func recordMusicObservation(_ observation: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto {
-        musicObservations.append(observation)
-        currentMusicObservation = observation
-        return .accepted
-    }
-    func updateMusicPolicy(_: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto { .accepted }
 
     func setResolvedIdentity(
         _ identity: MobileResolvedIdentityDto,
@@ -132,6 +123,72 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testScriptedSessionUsesExplicitDatabaseForDurableDiagnosticConsent() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preference = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preference.automaticDiagnosticRecordingEnabled()
+        defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
+        _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: false)
+        let script = CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil)
+        let core = CutoutSessionCore(
+            testScript: script, rideMapState: MobileRideMapState(database: database), database: database)
+
+        XCTAssertFalse(try core.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        try await core.setAutomaticDiagnosticRecordingEnabled(true)
+        XCTAssertTrue(try preference.automaticDiagnosticRecordingEnabled())
+
+        let restored = CutoutSessionCore(
+            testScript: script, rideMapState: MobileRideMapState(database: database), database: database)
+        XCTAssertTrue(try restored.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        try await restored.setAutomaticDiagnosticRecordingEnabled(false)
+        XCTAssertFalse(try preference.automaticDiagnosticRecordingEnabled())
+
+        let unavailable = CutoutSessionCore(testScript: script)
+        XCTAssertFalse(try unavailable.rideSessionStateHandle.automaticDiagnosticRecordingEnabled())
+        do {
+            try await unavailable.setAutomaticDiagnosticRecordingEnabled(true)
+            XCTFail("A fixture without storage must not acknowledge uncommitted consent")
+        } catch MobileRideDatabaseError.StorageFailure {}
+    }
+
+    func testDiagnosticWithdrawalFinishesOnlyAutomaticWriterAndPreservesRideAndConnection() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preference = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preference.automaticDiagnosticRecordingEnabled()
+        defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
+        for origin: MobileCaptureOriginDto in [.automatic, .manual] {
+            _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
+            let map = MobileRideMapState()
+            let ride = try map.startGpsOnly(atMs: 100)
+            let recorder = CaptureRecorderSpy()
+            let core = CutoutSessionCore(
+                clock: MonotonicClock(), rideMapState: map, database: database, captureRecorder: recorder)
+            let state = core.rideSessionStateHandle
+            let token = try XCTUnwrap(
+                state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
+            XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
+            let generation = try XCTUnwrap(state.beginConsentedCapture(origin: origin))
+            XCTAssertTrue(state.captureWriterStarted(generation: generation))
+            recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
+            let connection = core.connectionSnapshot
+            try await core.setAutomaticDiagnosticRecordingEnabled(false)
+            XCTAssertEqual(recorder.finishCount, origin == .automatic ? 1 : 0)
+            XCTAssertEqual(core.connectionSnapshot, connection)
+            XCTAssertEqual(map.currentSnapshot()?.rideID, ride.rideID)
+            XCTAssertEqual(map.currentSnapshot()?.state, .active)
+            XCTAssertFalse(try state.automaticDiagnosticRecordingEnabled())
+            if origin == .manual { core.finishCaptureForTesting() }
+        }
+    }
+
+    func testDiagnosticConsentAdmissionDefaultsOffAndKeepsExplicitManualCaptureAvailable() {
+        let state = CutoutSessionStateHandle()
+        XCTAssertNil(state.beginConsentedCapture(origin: .automatic))
+        XCTAssertNil(
+            state.captureLifecycleSnapshot().attempt, "Declining diagnostics must not publish a writer failure")
+        XCTAssertNotNil(state.beginConsentedCapture(origin: .manual))
+    }
+
     func testRideMapPublishedSnapshotRejectsOlderRevisionButAcceptsNewRide() {
         let summary = MobileRideMapSummaryDto(
             pointCount: 0,
@@ -597,6 +654,11 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testCaptureStartupReservesPolicyAndActiveLabelClosureAtExactCapacity() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preference = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preference.automaticDiagnosticRecordingEnabled()
+        _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
+        defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
         let cases: [(MobileCaptureOriginDto, [String])] = [
             (.manual, (0..<4).map { "note=\($0)" }),
             (.automatic, (0..<3).map { "note=\($0)" }),
@@ -659,44 +721,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
     }
 
-    func testStaleOptionalMusicContextDoesNotRejectCaptureStartup() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let result = Mutex<CaptureWriterCompletion?>(nil)
-        let completed = expectation(description: "capture with stale optional context finishes")
-        let recorder = CutoutSessionCaptureRecorder(
-            clock: MonotonicClock(now: { MonotonicMilliseconds(10_000) }),
-            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
-            database: try XCTUnwrap(MobileRideMapState.debugDatabase),
-            publish: { _ in },
-            onWriterCompletion: { value in
-                result.withLock { $0 = value }
-                completed.fulfill()
-            }
-        )
-        XCTAssertEqual(recorder.updateMusicPolicy(.humanReadable), .accepted)
-        XCTAssertEqual(
-            recorder.recordMusicObservation(
-                MobilePevcapMusicEventDto(
-                    provider: .appleMusic, trackId: "stale-startup-track", monotonicAtMs: 10,
-                    wallClockUnixMs: 1_700_000_000_010, clockUncertaintyMs: 5, rideSequence: nil
-                )), .accepted)
-        XCTAssertNotNil(recorder.currentMusicObservation)
-
-        XCTAssertTrue(startRecorder(recorder, directory: directory))
-        XCTAssertNil(recorder.currentMusicObservation)
-        recorder.finish(publishesResult: true, priorWriteOutcome: .accepted)
-        await fulfillment(of: [completed], timeout: 5)
-        let capture = try XCTUnwrap(result.withLock { $0 })
-        XCTAssertTrue(capture.succeeded)
-        let exportURL = try exportFinishedDatabaseCapture(
-            capture, database: XCTUnwrap(MobileRideMapState.debugDatabase), directory: directory
-        )
-        let text = try String(contentsOf: exportURL, encoding: .utf8)
-        XCTAssertFalse(text.contains("stale-startup-track"))
-    }
-
     func testCaptureStartupRejectsRequestedAnnotationsThatCannotBeRetained() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -726,6 +750,45 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(recorder.currentGeneration)
         XCTAssertNil(recorder.activeFileURL)
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    func testMusicCleanupWaitsForAlreadyFinalizingWriterPublication() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let finishing = expectation(description: "writer held before durable publication")
+        let cleanupStarted = expectation(description: "cleanup background barrier entered")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let published = Mutex(false)
+        let result = Mutex<Bool?>(nil)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+            database: try XCTUnwrap(MobileRideMapState.debugDatabase), publish: { _ in },
+            onWriterCompletion: { _ in published.withLock { $0 = true } })
+        XCTAssertTrue(startRecorder(recorder, directory: directory, origin: .manual))
+        recorder.finishWriterGate = {
+            finishing.fulfill()
+            release.wait()
+        }
+        recorder.finish(publishesResult: true, priorWriteOutcome: .accepted)
+        await fulfillment(of: [finishing], timeout: 2)
+        XCTAssertFalse(recorder.hasWriter)
+        let barrier = recorder.musicMetadataCleanupBarrier()
+        let cleanup = Task.detached {
+            cleanupStarted.fulfill()
+            let accepted = barrier()
+            result.withLock { $0 = accepted }
+            return accepted
+        }
+        await fulfillment(of: [cleanupStarted], timeout: 2)
+        for _ in 0..<1_000 { await Task.yield() }
+        XCTAssertNil(result.withLock { $0 }, "metadata cleanup cannot overtake the retained publication")
+        release.signal()
+        let accepted = await cleanup.value
+        XCTAssertTrue(accepted)
+        XCTAssertTrue(published.withLock { $0 })
     }
 
     func testFinishWithoutPublishingDoesNotReadPublicationClockOrNotifyCompletion() async throws {
@@ -2361,126 +2424,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(contents.contains("capture_label=low_beam_on_stop"))
         XCTAssertFalse(contents.contains("low_beam_off"))
         XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .stop(label: .lowBeamOn)))
-    }
-
-    func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {
-        let started = expectation(description: "real capture writer starts")
-        let core = CutoutSessionCore(
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: nil,
-                connectionDelayMilliseconds: 0
-            ))
-        core.onCaptureEvent = { event in
-            if case .started = event {
-                started.fulfill()
-            }
-        }
-        let observation = MobilePevcapMusicEventDto(
-            provider: .appleMusic,
-            trackId: "pre-capture-track",
-            monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010,
-            clockUncertaintyMs: 5,
-            rideSequence: nil
-        )
-
-        core.updateMusicCaptureObservation(observation)
-        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
-        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        await fulfillment(of: [started], timeout: 1)
-        XCTAssertNil(core.musicCaptureObservationForTesting)
-        core.disconnectAndScan()
-    }
-
-    @MainActor
-    func testMusicCaptureAdmissionLeavesMainResponsiveWhileBleOwnerIsBlocked() async {
-        let queue = DispatchQueue(label: "io.cutout.test-music-blocked-ble")
-        let entered = DispatchSemaphore(value: 0)
-        let release = DispatchSemaphore(value: 0)
-        let core = CutoutSessionCore(clock: MonotonicClock(), bleQueue: queue)
-        let observation = MobilePevcapMusicEventDto(
-            provider: .appleMusic, trackId: "blocked-capture-track", monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010, clockUncertaintyMs: 5, rideSequence: 7)
-        queue.async {
-            entered.signal()
-            release.wait()
-        }
-        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
-        defer { release.signal() }
-        // A bounded release prevents a failing old synchronous implementation from hanging the runner.
-        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(500)) { release.signal() }
-        let started = ContinuousClock.now
-        let submitted = expectation(description: "Main starts capture admission")
-        var admitted = false
-        let admission = Task { @MainActor in
-            submitted.fulfill()
-            let outcome = await core.updateMusicCaptureObservationAsync(observation, target: .noCapture)
-            admitted = true
-            return outcome
-        }
-        await fulfillment(of: [submitted], timeout: 2)
-        XCTAssertFalse(admitted, "the BLE owner is still held; admission must remain pending")
-        XCTAssertLessThan(
-            started.duration(to: .now), .milliseconds(150),
-            "required music capture admission must suspend rather than wait on Main")
-        release.signal()
-        let outcome = await admission.value
-        XCTAssertEqual(outcome, .accepted)
-        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
-    }
-
-    @MainActor
-    func testDelayedMusicCaptureCannotMutateReplacementWriterOrItsContext() async throws {
-        let capture = CaptureRecorderSpy()
-        let core = CutoutSessionCore(clock: MonotonicClock(), captureRecorder: capture)
-        let lifecycle = core.rideSessionStateHandle
-        let first = try XCTUnwrap(lifecycle.beginCapture(origin: .manual))
-        XCTAssertTrue(lifecycle.captureWriterStarted(generation: first))
-        let originalTarget = lifecycle.musicCaptureTarget()
-        XCTAssertTrue(lifecycle.retireCaptureWriter(generation: first))
-        let second = try XCTUnwrap(lifecycle.beginCapture(origin: .manual))
-        XCTAssertTrue(lifecycle.captureWriterStarted(generation: second))
-        capture.currentGeneration = CaptureGeneration(rawValue: second.value)
-        let oldObservation = MobilePevcapMusicEventDto(
-            provider: .appleMusic, trackId: "old-capture-track", monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010, clockUncertaintyMs: 5, rideSequence: 7)
-        let replacementObservation = MobilePevcapMusicEventDto(
-            provider: .appleMusic, trackId: "replacement-capture-track", monotonicAtMs: 20,
-            wallClockUnixMs: 1_700_000_000_020, clockUncertaintyMs: 3, rideSequence: 2)
-        capture.currentMusicObservation = replacementObservation
-        for target in [originalTarget, .noCapture, .unavailable] {
-            let outcome = await core.updateMusicCaptureObservationAsync(oldObservation, target: target)
-            XCTAssertEqual(outcome, .rejected)
-            XCTAssertEqual(capture.currentMusicObservation, replacementObservation)
-            XCTAssertTrue(capture.musicObservations.isEmpty)
-            XCTAssertEqual(capture.finishCount, 0)
-            XCTAssertEqual(lifecycle.captureLifecycleSnapshot().attempt?.stage, .recording)
-        }
-        let accepted = await core.updateMusicCaptureObservationAsync(
-            replacementObservation, target: lifecycle.musicCaptureTarget())
-        XCTAssertEqual(accepted, .accepted)
-        XCTAssertEqual(capture.musicObservations, [replacementObservation])
-    }
-
-    func testCaptureMusicContextTakesAndResetsTheLatestObservation() {
-        var context = CaptureMusicContext()
-        let observation = MobilePevcapMusicEventDto(
-            provider: .appleMusic,
-            trackId: "track-1",
-            monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010,
-            clockUncertaintyMs: 5,
-            rideSequence: nil
-        )
-
-        context.update(observation)
-        XCTAssertEqual(context.current, observation)
-        XCTAssertEqual(context.take(), observation)
-        XCTAssertNil(context.current)
-        context.update(observation)
-        context.reset()
-        XCTAssertNil(context.current)
     }
 
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {

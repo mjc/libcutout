@@ -10,6 +10,23 @@ import XCTest
 #endif
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSpotifyLiveAndHistoryLinksUseActualProviderItemIdentity() {
+        let identifier = "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
+        let item = MobileMusicItemDto(identifier: identifier, title: "Song", artist: "Artist")
+        let live = MusicNowPlaying(provider: .spotify, state: .playing, item: item)
+        let history = MobileMusicRideEventDto(
+            sequence: 0, provider: .spotify, itemIdentifier: identifier,
+            title: "Song", artist: "Artist", kind: .play, observedAtMs: 100,
+            monotonicAtMs: 100, wallClockAtMs: 1_700_000_000_100, clockUncertaintyMs: 5)
+        let expected = "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"
+        XCTAssertEqual(live.spotifyContentURL?.absoluteString, expected)
+        XCTAssertEqual(history.spotifyContentURL?.absoluteString, expected)
+        XCTAssertNil(MusicNowPlaying(provider: .appleMusic, state: .playing, item: item).spotifyContentURL)
+        var local = history
+        local.itemIdentifier = "spotify:local:artist:album:song"
+        XCTAssertNil(local.spotifyContentURL)
+    }
+
     func testSoundCloudSelectionRestoresWithoutFallingBackToAppleMusic() throws {
         let name = "soundcloud-selection-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))

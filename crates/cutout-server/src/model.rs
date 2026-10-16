@@ -65,6 +65,7 @@ impl SpotInput {
             .clone_into(&mut self.access_note);
         self.name = validated.details().name().map(str::to_owned);
         self.hours = validated.details().hours().map(str::to_owned);
+        crate::content_filter::validate(&self)?;
         Ok(ValidatedSpotInput(self))
     }
 }

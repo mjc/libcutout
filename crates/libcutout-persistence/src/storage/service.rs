@@ -22,6 +22,8 @@ struct OwnerEntry {
     sender: SyncSender<Command>,
     shutting_down: bool,
     worker_alive: Arc<AtomicBool>,
+    diagnostic_recording_enabled: Arc<AtomicBool>,
+    diagnostic_recording_available: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -35,18 +37,14 @@ pub(super) fn open(path: &Path) -> Result<RideDatabase, StorageError> {
     acquire(path, Uuid::new_v4(), None)
 }
 
-pub(super) fn reopen(
-    path: &Path,
-    service_id: Uuid,
-    marker_writes: Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>,
-) -> Result<RideDatabase, StorageError> {
-    acquire(path, service_id, Some(marker_writes))
+pub(super) fn reopen(database: &RideDatabase) -> Result<RideDatabase, StorageError> {
+    acquire(&database.path, database.service_id, Some(database))
 }
 
 fn acquire(
     path: &Path,
     service_id: Uuid,
-    marker_writes: Option<Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>>,
+    previous: Option<&RideDatabase>,
 ) -> Result<RideDatabase, StorageError> {
     let canonical_path = canonical_database_path(path)?;
     let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
@@ -61,20 +59,56 @@ fn acquire(
 
     let mut connection = Connection::open(&canonical_path)?;
     let bootstrap = configure_connection(&mut connection, &canonical_path)?;
+    let enabled = connection.query_row(
+        "SELECT COALESCE((SELECT automatic_enabled FROM diagnostic_recording_preferences WHERE id = 1), 0)",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let diagnostic_recording_enabled = previous.map_or_else(
+        || Arc::new(AtomicBool::new(enabled)),
+        |database| Arc::clone(&database.diagnostic_recording_enabled),
+    );
+    let diagnostic_recording_available = previous.map_or_else(
+        || Arc::new(AtomicBool::new(false)),
+        |database| Arc::clone(&database.diagnostic_recording_available),
+    );
+    diagnostic_recording_available.store(false, Ordering::Release);
+    diagnostic_recording_enabled.store(enabled, Ordering::Release);
     let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
-    let worker_alive = Arc::new(AtomicBool::new(true));
+    let worker_alive = previous.map_or_else(
+        || Arc::new(AtomicBool::new(true)),
+        |database| Arc::clone(&database.worker_alive),
+    );
+    worker_alive.store(true, Ordering::Release);
     let worker_alive_for_thread = Arc::clone(&worker_alive);
+    let diagnostic_recording_for_thread = Arc::clone(&diagnostic_recording_enabled);
     let join = thread::Builder::new()
         .name("cutout-ride-maps-db".to_owned())
-        .spawn(move || worker::run(connection, &receiver, &worker_alive_for_thread))
-        .map_err(|error| StorageError::WorkerStart(error.to_string()))?;
-    let marker_writes = marker_writes.unwrap_or_default();
+        .spawn(move || {
+            worker::run(
+                connection,
+                &receiver,
+                &worker_alive_for_thread,
+                &diagnostic_recording_for_thread,
+            );
+        })
+        .map_err(|error| {
+            worker_alive.store(false, Ordering::Release);
+            StorageError::WorkerStart(error.to_string())
+        })?;
+    diagnostic_recording_available.store(true, Ordering::Release);
+    let marker_writes = previous
+        .map(|database| Arc::clone(&database.marker_writes))
+        .unwrap_or_default();
     let handle = RideDatabase {
         sender: sender.clone(),
         service_id,
         bootstrap: bootstrap.clone(),
         marker_writes: Arc::clone(&marker_writes),
         path: Arc::new(canonical_path.clone()),
+        diagnostic_recording_enabled: Arc::clone(&diagnostic_recording_enabled),
+        diagnostic_recording_available: Arc::clone(&diagnostic_recording_available),
+        worker_alive: Arc::clone(&worker_alive),
     };
     *owner = Some(OwnerEntry {
         path: canonical_path,
@@ -83,6 +117,8 @@ fn acquire(
         marker_writes,
         sender,
         worker_alive,
+        diagnostic_recording_enabled,
+        diagnostic_recording_available,
         shutting_down: false,
         join: Some(join),
     });
@@ -98,6 +134,9 @@ pub(super) fn begin_shutdown(service_id: Uuid) -> Result<SyncSender<Command>, St
         return Err(StorageError::WorkerStopped);
     }
     entry.shutting_down = true;
+    entry
+        .diagnostic_recording_available
+        .store(false, Ordering::Release);
     Ok(entry.sender.clone())
 }
 
@@ -107,6 +146,9 @@ pub(super) fn cancel_shutdown(service_id: Uuid) {
         && entry.service_id == service_id
     {
         entry.shutting_down = false;
+        entry
+            .diagnostic_recording_available
+            .store(true, Ordering::Release);
     }
 }
 
@@ -189,5 +231,8 @@ fn handle_from(owner: &OwnerEntry) -> RideDatabase {
         bootstrap: owner.bootstrap.clone(),
         marker_writes: Arc::clone(&owner.marker_writes),
         path: Arc::new(owner.path.clone()),
+        diagnostic_recording_enabled: Arc::clone(&owner.diagnostic_recording_enabled),
+        diagnostic_recording_available: Arc::clone(&owner.diagnostic_recording_available),
+        worker_alive: Arc::clone(&owner.worker_alive),
     }
 }

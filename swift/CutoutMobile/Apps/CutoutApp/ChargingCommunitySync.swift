@@ -374,6 +374,7 @@ final class ChargingCommunitySync {
     private let enabled: @MainActor () -> Bool
     private var activeTask: Task<ChargingCommunitySyncStatus, Never>?
     private var accountDeletionInProgress = false
+    private var accountDeletionGeneration: UInt64 = 0
     private var runGeneration: UInt64 = 0
     private var syncRunState = MobileChargingSyncRunState(
         round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
@@ -419,6 +420,41 @@ final class ChargingCommunitySync {
         return result
     }
 
+    /// An explicit report can register a contributor without uploading queued edits.
+    func credentialForReport() async throws -> ChargingCommunityCredential {
+        guard enabled(), !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        let deletionGeneration = accountDeletionGeneration
+        let stored = try await credentialStore.load()
+        try Task.checkCancellation()
+        guard !accountDeletionInProgress, accountDeletionGeneration == deletionGeneration else {
+            throw MobileChargingError.Unavailable
+        }
+        let selectedCredential: ChargingCommunityCredential
+        switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: false) {
+        case .synchronize:
+            guard case .ready(let credential) = stored else { throw MobileChargingError.Unauthorized }
+            selectedCredential = credential
+        case .beginRegistration:
+            if try await credentialStore.beginRegistration() {
+                selectedCredential = try await registerAndPersist()
+            } else {
+                guard case .ready(let credential) = try await credentialStore.load() else {
+                    throw MobileChargingError.Unauthorized
+                }
+                selectedCredential = credential
+            }
+        case .publicRefresh:
+            throw MobileChargingError.Unavailable
+        case .registerIdentity, .requireExplicitRetry:
+            throw MobileChargingError.Unauthorized
+        }
+        try Task.checkCancellation()
+        guard !accountDeletionInProgress, accountDeletionGeneration == deletionGeneration else {
+            throw MobileChargingError.Unavailable
+        }
+        return selectedCredential
+    }
+
     func cancel() {
         activeTask?.cancel()
         activeTask = nil
@@ -432,6 +468,7 @@ final class ChargingCommunitySync {
     }
 
     func pauseForAccountDeletion() async {
+        accountDeletionGeneration &+= 1
         accountDeletionInProgress = true
         await cancelAndWait()
     }

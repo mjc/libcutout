@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "music.spotify.disconnect" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify"}}}},
+    "music.spotify.disconnect.title" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify?"}}}},
+    "music.spotify.disconnect.message" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify and remove its ride listening history. Music metadata is also removed from Bluetooth captures stored in this app. Rides, other ride listening history, and Bluetooth data stay."}}}},
+    "music.spotify.disconnect.failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Spotify cleanup could not be completed. Try again."}}}},
+    "music.spotify.content_link" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Open in Spotify"}}}},
+    "music.cancel" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Cancel"}}}},
     "battery.current.in" : {
       "comment" : "Battery current flowing into the battery. The placeholder is the formatted current magnitude.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A in" } } }
@@ -1021,7 +1027,7 @@
     },
     "music.history.disabled.explanation" : {
       "comment" : "Explanation for the disabled music history policy.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Do not add music history to rides or captures." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Do not save ride listening history." } } }
     },
     "music.history.forget" : {
       "comment" : "Removes music metadata from a saved ride without deleting the ride.",
@@ -1033,7 +1039,7 @@
     },
     "music.history.forget.message" : {
       "comment" : "Confirmation message for removing saved-ride music metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove music history from saved rides. Rides and routes remain saved. Exported captures may still contain music history." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove music history from saved rides. Rides and routes remain saved. Copies you already shared are unaffected." } } }
     },
     "music.history.forget.title" : {
       "comment" : "Confirmation title for removing saved-ride music metadata.",
@@ -1045,7 +1051,7 @@
     },
     "music.history.human_readable.explanation" : {
       "comment" : "Explanation for readable music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save track IDs, titles, artists, and times with rides and captures." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save track IDs, titles, artists, and times with rides." } } }
     },
     "music.history.opaque_item" : {
       "comment" : "History policy that saves provider item identifiers only.",
@@ -1053,7 +1059,7 @@
     },
     "music.history.opaque_item.explanation" : {
       "comment" : "Explanation for opaque music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, track IDs, and times with rides and captures. Omit titles and artists." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, track IDs, and times with rides. Omit titles and artists." } } }
     },
     "music.history.title" : {
       "comment" : "Music history privacy setting title.",

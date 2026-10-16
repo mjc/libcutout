@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[path = "capture_music_privacy_tests.rs"]
+mod capture_music_privacy_tests;
 #[path = "ride_session_marker_tests.rs"]
 mod ride_session_marker_tests;
 
@@ -311,6 +313,108 @@ fn live_capture_compression_retains_logical_budget_and_rolls_back_rejected_event
     assert_eq!((next, stored, events), (0, 2, 0));
     drop(observer);
     database.shutdown().unwrap();
+}
+
+#[test]
+fn diagnostic_recording_consent_defaults_off_and_survives_reopen_and_failed_write() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let (database, path) = music_test_database("diagnostic-consent");
+    assert!(!database.automatic_diagnostic_recording_enabled().unwrap());
+    database
+        .save_automatic_diagnostic_recording_enabled(true)
+        .unwrap();
+    database.clone().shutdown().unwrap();
+    assert!(database.automatic_diagnostic_recording_enabled().is_err());
+    assert!(
+        database
+            .save_automatic_diagnostic_recording_enabled(false)
+            .is_err()
+    );
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(database.automatic_diagnostic_recording_enabled().unwrap());
+    database
+        .save_automatic_diagnostic_recording_enabled(false)
+        .unwrap();
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(!database.automatic_diagnostic_recording_enabled().unwrap());
+    close_music_test_database(database, path);
+}
+
+#[test]
+fn diagnostic_consent_projection_recovers_with_the_same_database_service() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("diagnostic-consent-recovery");
+    database
+        .save_automatic_diagnostic_recording_enabled(true)
+        .unwrap();
+    database.stop_worker_for_test().unwrap();
+    assert!(database.automatic_diagnostic_recording_enabled().is_err());
+    // An existing storage operation performs the established transparent recovery.
+    database.capabilities().unwrap();
+    assert!(database.automatic_diagnostic_recording_enabled().unwrap());
+    let another_handle = RideDatabase::open(&path).unwrap();
+    another_handle
+        .save_automatic_diagnostic_recording_enabled(false)
+        .unwrap();
+    assert!(!database.automatic_diagnostic_recording_enabled().unwrap());
+    close_music_test_database(database, path);
+}
+
+#[test]
+fn diagnostic_consent_reads_do_not_wait_for_busy_worker_and_updates_follow_commit() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("diagnostic-consent-busy");
+    database
+        .save_automatic_diagnostic_recording_enabled(true)
+        .unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let (read_sender, read_receiver) = std::sync::mpsc::sync_channel(1);
+    let reader_database = database.clone();
+    let reader = std::thread::spawn(move || {
+        read_sender
+            .send(reader_database.automatic_diagnostic_recording_enabled())
+            .unwrap();
+    });
+    let read = read_receiver.recv_timeout(Duration::from_secs(1));
+    // The saved projection must remain enabled while a new choice cannot commit.
+    let save_database = database.clone();
+    let saver = std::thread::spawn(move || {
+        save_database.save_automatic_diagnostic_recording_enabled(false)
+    });
+    release_sender.send(()).unwrap();
+    pending.wait_result().unwrap().unwrap();
+    saver.join().unwrap().unwrap();
+    reader.join().unwrap();
+    assert!(
+        read.unwrap().unwrap(),
+        "an admission read must finish before releasing the worker"
+    );
+    assert!(!database.automatic_diagnostic_recording_enabled().unwrap());
+    close_music_test_database(database, path);
 }
 
 #[test]

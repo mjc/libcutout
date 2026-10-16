@@ -3439,6 +3439,30 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
     @MainActor
+    func testDiagnosticSetupReflectsDurableConsentAndReportsUnavailableStorage() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let state = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try state.automaticDiagnosticRecordingEnabled()
+        _ = try state.setAutomaticDiagnosticRecordingEnabled(enabled: false)
+        defer { _ = try? state.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
+        let core = CutoutSessionCore(clock: MonotonicClock(), database: database)
+        let model = CutoutAppModel(core: core)
+        await model.loadDiagnosticRecordingSetting()
+        XCTAssertEqual(model.automaticDiagnosticRecordingEnabled, false)
+        let saved = await model.setAutomaticDiagnosticRecordingEnabled(true)
+        XCTAssertTrue(saved)
+        let relaunched = CutoutAppModel(core: CutoutSessionCore(clock: MonotonicClock(), database: database))
+        await relaunched.loadDiagnosticRecordingSetting()
+        XCTAssertEqual(relaunched.automaticDiagnosticRecordingEnabled, true)
+        let unavailable = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        await unavailable.loadDiagnosticRecordingSetting()
+        let failed = await unavailable.setAutomaticDiagnosticRecordingEnabled(true)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(unavailable.automaticDiagnosticRecordingEnabled, false)
+        XCTAssertTrue(unavailable.diagnosticSettingsError)
+    }
+
+    @MainActor
     func testRideAutostartSetupShowsDurableValueAndRetainsItAfterFailedSave() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let state = MobileRideMapState(database: database)
@@ -3797,11 +3821,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         }
         return captureLabelState.active()
     }
-    func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
-    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
-    func updateMusicCaptureObservationAsync(
-        _: MobilePevcapMusicEventDto?, target _: MobileMusicCaptureTarget
-    ) async -> MobileCaptureWriteOutcomeDto { .accepted }
+    func prepareCaptureMetadataCleanup() async -> Bool { true }
     func checkpointRideMap() async throws {
         checkpointCount += 1
         try await checkpointOperation?()

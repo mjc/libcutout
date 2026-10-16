@@ -45,6 +45,9 @@ final class CutoutAppModel {
     private(set) var rideAutostartEnabled: Bool?
     private(set) var rideAutostartSettingsBusy = false
     private(set) var rideAutostartSettingsError = false
+    private(set) var automaticDiagnosticRecordingEnabled: Bool?
+    private(set) var diagnosticSettingsBusy = false
+    private(set) var diagnosticSettingsError = false
     let capture: CaptureFeatureModel
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
     var hasSavedDevice: Bool { device.hasSavedDevice }
@@ -544,13 +547,15 @@ final class CutoutAppModel {
             monitoringPreferenceStore: musicMonitoringPreferenceStore,
             rideMapState: core.rideMapStateHandle,
             monotonicNow: { core.now().rawValue },
-            updateCapturePolicy: { core.updateMusicCapturePolicy($0) },
-            updateCaptureObservation: { core.updateMusicCaptureObservation($0) },
-            updateCaptureObservationAsync: { await core.updateMusicCaptureObservationAsync($0, target: $1) },
-            captureTarget: { core.rideSessionStateHandle.musicCaptureTarget() },
             invalidateHistoryForDeletion: { rideHistory.invalidateForMusicDeletion() },
             selectedHistoryRideID: { rideHistory.selectedRideID },
             clearSelectedHistoryMusic: { rideHistory.clearMusicMetadata() },
+            removeSelectedSpotifyHistory: { rideHistory.removeSpotifyMusicMetadata() },
+            prepareCaptureMetadataCleanup: { await core.prepareCaptureMetadataCleanup() },
+            captureDirectories: [
+                FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path,
+                FileManager.default.temporaryDirectory.appendingPathComponent("CaptureExports", isDirectory: true).path,
+            ].compactMap { $0 },
             setRideHistoryError: { rideHistory.setError($0) },
             appleMonitor: musicMonitor,
             providerCommandHandler: musicCommandHandler
@@ -752,6 +757,37 @@ final class CutoutAppModel {
         }
     }
 
+    func loadDiagnosticRecordingSetting() async {
+        guard !diagnosticSettingsBusy else { return }
+        diagnosticSettingsBusy = true
+        defer { diagnosticSettingsBusy = false }
+        let state = core.rideSessionStateHandle
+        do {
+            automaticDiagnosticRecordingEnabled = try await Task.detached(priority: .userInitiated) {
+                try state.automaticDiagnosticRecordingEnabled()
+            }.value
+            diagnosticSettingsError = false
+        } catch {
+            diagnosticSettingsError = true
+        }
+    }
+
+    @discardableResult
+    func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async -> Bool {
+        guard !diagnosticSettingsBusy, automaticDiagnosticRecordingEnabled != nil else { return false }
+        diagnosticSettingsBusy = true
+        defer { diagnosticSettingsBusy = false }
+        do {
+            try await core.setAutomaticDiagnosticRecordingEnabled(enabled)
+            automaticDiagnosticRecordingEnabled = enabled
+            diagnosticSettingsError = false
+            return true
+        } catch {
+            diagnosticSettingsError = true
+            return false
+        }
+    }
+
     @discardableResult
     func setRideAutostartEnabled(_ enabled: Bool) async -> Bool {
         guard !rideAutostartSettingsBusy else { return false }
@@ -815,7 +851,6 @@ final class CutoutAppModel {
         let stopped = await applyRideMapCommand(.stop(expected: expected, atMs: currentMonotonicTime.rawValue))
         if stopped {
             liveRide.invalidateProjection(clearPoints: false)
-            music.clearMusicCaptureContext()
         }
         return stopped
     }

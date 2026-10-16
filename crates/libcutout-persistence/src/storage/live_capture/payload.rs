@@ -8,13 +8,13 @@ use miniz_oxide::inflate::{
 use std::borrow::Cow;
 
 #[derive(Debug)]
-pub(super) struct Encoded<'a> {
-    pub(super) bytes: Cow<'a, [u8]>,
-    pub(super) encoding: i64,
-    pub(super) original_bytes: Option<i64>,
+pub(in crate::storage) struct Encoded<'a> {
+    pub(in crate::storage) bytes: Cow<'a, [u8]>,
+    pub(in crate::storage) encoding: i64,
+    pub(in crate::storage) original_bytes: Option<i64>,
 }
 
-pub(super) fn encode(bytes: &[u8]) -> Result<Encoded<'_>, StorageError> {
+pub(in crate::storage) fn encode(bytes: &[u8]) -> Result<Encoded<'_>, StorageError> {
     if !(1..=LIVE_CAPTURE_EVENT_LIMIT_BYTES).contains(&bytes.len()) {
         return Err(StorageError::LiveCaptureInputInvalid("event payload size"));
     }
@@ -36,7 +36,7 @@ pub(super) fn encode(bytes: &[u8]) -> Result<Encoded<'_>, StorageError> {
     })
 }
 
-pub(super) fn decode(
+pub(in crate::storage) fn decode(
     bytes: Vec<u8>,
     encoding: i64,
     original_bytes: Option<i64>,

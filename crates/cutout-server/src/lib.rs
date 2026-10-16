@@ -12,6 +12,7 @@
 //! Upgrading from full-address IPv6 keys starts fresh prefix budgets because
 //! old hashes cannot be regrouped; existing global budget counts are retained.
 
+mod content_filter;
 mod http;
 mod model;
 mod moderation;

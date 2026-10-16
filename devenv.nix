@@ -234,7 +234,7 @@ in
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {
-    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
+    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];
   };
   tasks."test:ios-music-monitor" = {
@@ -256,11 +256,14 @@ in
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForRequiredMusicCaptureReceipt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForAcceptedHistoryWithoutABluetoothCaptureReceipt \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testProviderResetMakesUnsettledAcceptedObservationFailStopExplicitly \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOptionalOldMusicReadbackCannotDelayStopOrOverwriteNewerPresentation \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testRejectedCaptureDiagnosticIsVisibleBeforeOptionalErrorReadbackReturns \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testHistoryDeletionPreventsLateReadbackFromRestoringMetadataAndKeepsLivePlayer \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStaleRideContextFailsStopBeforeOptionalErrorReadbackReturns \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectRemovesOnlySpotifyHistoryAndPersistsMonitoringOptOut \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectReportsFailedDeletionAndCanRetryWithoutReconnect \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectRejectsAnObservationWhoseHistoryReadbackFinishesLate \
         -parallel-testing-enabled NO \
         -collect-test-diagnostics never \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
@@ -320,6 +323,7 @@ in
       -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
       -scheme CutoutApp \
       -destination 'generic/platform=iOS Simulator' \
+      -jobs 2 \
       ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
   '';
   tasks."run:ios-app-on-mac" = {

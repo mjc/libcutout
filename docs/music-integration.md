@@ -37,10 +37,15 @@ separate user action. This contract does not claim ride-replay UI is implemented
 ## Local metadata and artifacts
 
 Saving listening history is not an upload or sharing action. Keep it opt-in and
-off by default. Existing explicit ride/PEVCAP export paths must honor their
-metadata policy and redaction rules; local files can contain opted-in metadata.
-Do not describe database deletion as deleting separate exported copies unless
-the implementation actually does so. No audio belongs in the music event format.
+off by default in the ride database. BTLE diagnostic captures have no music
+purpose: do not attach provider observations, listening identifiers or music
+context to their records, writer startup, or exports. Preserve the raw Bluetooth
+evidence independently of music settings. Legacy PEVCAP readers may still accept
+older files that contain music metadata.
+
+Separate user-exported copies are outside the app's managed capture store. Do not
+claim that local cleanup removes those copies. No audio belongs in the music event
+format or the BTLE capture path.
 
 The Music setting is a persisted preference for future rides. An explicit change
 also updates the active ride when Rust accepts the write. Rust commits the saved
@@ -51,6 +56,22 @@ Deleted history stays deleted even when the preference enables history for the
 next ride. With no active ride, saving the preference must not enable history
 writes. Delayed history readbacks must not overwrite a newer policy change or
 deletion.
+
+## Spotify disconnection
+
+Music settings provides an explicit Spotify disconnect action. It persists the
+monitoring opt-out, retires provider work and clears authorization before removing
+Spotify listening events through the Rust database owner. Cleanup preserves rides,
+other providers and their history policies; pending presentation readbacks must
+not restore disconnected Spotify data. A failed credential or database cleanup
+must remain retryable without reconnecting or reporting success.
+
+Disconnect also removes music metadata from older Bluetooth captures controlled
+by the app, including stored event payloads and managed original/export files.
+Retain their raw Bluetooth data and recording/ride associations. Content-addressed
+artifacts need a new, accurately indexed sanitized identity; never change bytes
+under an existing digest. Failure must remain visible and retryable. This does not
+remove separately shared copies outside the app's control.
 
 ## Review and wording
 
@@ -87,19 +108,18 @@ Each lease retains its original provider owner; classification and retirement
 validate that owner, while Stop covers the Core's complete queue. A lifecycle
 that already used another queue cannot be rebound and lose its obligations. An
 explicit asynchronous Stop captures its admitted prefix before returning the
-command. The existing Rust lifecycle worker waits for required history and
-capture effects; observations admitted after the cutoff stay pending until the
-durable Stop receipt. Native code carries the request and the actual capture
+command. The existing Rust lifecycle worker waits for required history effects;
+observations admitted after the cutoff stay pending until the durable Stop receipt. Native code carries the request and the actual history
 outcome without maintaining a second queue.
 
 Only the music command's actual SQLite result can settle required history.
-Recorded observations with a capture target also require the existing capture
-writer's accepted receipt. That receipt proves writer admission, not a PEVCAP
-flush or filesystem synchronization. Optional history readback and presentation
-do not define successful settlement.
+The app supplies no BTLE capture target for music observations. Optional history
+readback and presentation do not define successful settlement. Generic legacy
+queue APIs that accept an explicit capture target still require that target's
+writer receipt; the app does not use them to record music in diagnostics.
 
-Release, cancellation, provider retirement, storage failure, and rejected capture
-cannot acknowledge successful recording. Stop reports `MusicObservationIncomplete`
+Release, cancellation, provider retirement, and storage failure cannot
+acknowledge successful history recording. Stop reports `MusicObservationIncomplete`
 and leaves the ride open when its accepted prefix is incomplete. The failure is
 reported once; an explicit Stop retry can close the ride. Pending history retains
 its original association and is never rebound to a replacement ride. Synchronous

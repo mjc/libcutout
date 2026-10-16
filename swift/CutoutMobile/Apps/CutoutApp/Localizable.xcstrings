@@ -23,6 +23,23 @@
     "charging.account.deletion_pending" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Account deletion needs retry from Settings."}}}},
     "charging.stop.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a charging spot?" } } } },
     "charging.stop.dismiss" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not now" } } } },
+    "charging.report.title" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Report offensive content"}}}},
+    "charging.report.explanation" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Send this pin’s ID and your optional details privately to the CutOut moderator. Reporting does not change its votes."}}}},
+    "charging.report.details" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Details (optional)"}}}},
+    "charging.report.send" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Send report"}}}},
+    "charging.report.sent" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Report received"}}}},
+    "charging.report.receipt" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Report ID"}}}},
+    "charging.report.invalid_details" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Shorten the details or remove unsupported characters."}}}},
+    "charging.report.identity_required" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "A community identity is needed. Use Retry in the map’s community status, then try again."}}}},
+    "charging.report.unavailable" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reporting is unavailable for this account."}}}},
+    "charging.report.throttled" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Too many reports. Please try again later."}}}},
+    "charging.report.failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The report could not be confirmed. Retry sends the same report."}}}},
+    "setup.diagnostics.automatic" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Automatic Bluetooth diagnostics"}}}},
+    "setup.diagnostics.explanation" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Save Bluetooth diagnostics on this device when connecting. Captures include device IDs and timing, and may include location. Diagnostics are not sent automatically. Turning this off stops automatic diagnostics; your connection and ride continue. Manual captures remain available."}}}},
+    "setup.diagnostics.failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The diagnostics preference could not be loaded or saved. Please try again."}}}},
+    "setup.diagnostics.retry" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Retry diagnostics preference"}}}},
+    "setup.privacy_policy" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Privacy Policy"}}}},
+    "setup.support" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Contact and Support"}}}},
     "charging.selected.close" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Close pin"}}}},
     "charging.sync.clear_vote" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear vote"}}}},
     "charging.sync.name" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Name"}}}},
@@ -102,7 +119,7 @@
     "charging.editor.location.section" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Location"}}}},
     "charging.editor.location" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Coordinates"}}}},
     "charging.editor.details.section" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Details"}}}},
-    "charging.editor.access_note" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Note"}}}},
+    "charging.editor.access_note" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Access note"}}}},
     "charging.editor.kind.charging" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Charging"}}}},
     "charging.editor.kind.food" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Charging + food"}}}},
     "charging.editor.kind.ev" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "EV charging"}}}},
@@ -126,7 +143,6 @@
     "charging.vote.refused" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This spot changed or is no longer available. Reload before voting." } } } },
     "charging.vote.storage_failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t read the saved vote." } } } },
     "charging.vote.unavailable" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voting unavailable" } } } },
-    "charging.details.not_verified" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not verified" } } } },
     "charging.value.unknown" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } } },
     "charging.vote.selected" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected" } } } },
     "charging.vote.accessibility_count.one" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ vote, %2$@" } } } },
@@ -210,19 +226,10 @@
     "charging.vote.up" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vote up" } } } },
     "charging.vote.down" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vote down" } } } },
     "charging.details.open" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show charging spot details" } } } },
-    "charging.details.section" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging spot" } } } },
-    "charging.details.name" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } } } },
-    "charging.details.access" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Access" } } } },
-    "charging.details.cost" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cost" } } } },
-    "charging.details.venue" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Venue" } } } },
     "charging.details.hours" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hours" } } } },
     "charging.details.terms" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Terms" } } } },
     "charging.details.price" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Price" } } } },
     "charging.details.supplies" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Electrical supplies" } } } },
-    "charging.details.community" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Community information" } } } },
-    "charging.details.status" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Publication" } } } },
-    "charging.details.votes" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Votes" } } } },
-    "charging.details.verified" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last verified" } } } },
     "charging.status.local" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved on this device" } } } },
     "charging.status.published" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Published" } } } },
     "charging.status.failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t load charging spots. Your saved spots remain available." } } } },
@@ -331,8 +338,11 @@
     "captures.file_unavailable" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture file is unavailable." } } }
     },
+    "captures.preparing" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing file…" } } }
+    },
     "captures.privacy" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Captures may include device identifiers, location and listening history. Share only with someone you trust." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Shared captures may include device identifiers, location and timing. Share only with someone you trust." } } }
     },
     "captures.technical" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Technical Details" } } }
