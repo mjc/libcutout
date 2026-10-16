@@ -27,6 +27,6 @@ pub use power_draft::*;
 pub use reconciliation::MobileChargingReconciliation;
 pub use reports::{MobileChargingContentReport, MobileChargingReportReceiptDto};
 pub use stop_prompt::*;
-pub use sync::mobile_register_charging_identity;
+pub use sync::{mobile_register_charging_identity, mobile_register_charging_identity_at_loopback};
 pub use sync_policy::*;
 pub use validation::*;
