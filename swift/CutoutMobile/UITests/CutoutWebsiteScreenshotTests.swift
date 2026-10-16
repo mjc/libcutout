@@ -45,12 +45,18 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         XCTAssertTrue(element("dashboard.screen.lighting").waitForExistence(timeout: 10), app.debugDescription)
         let connection = element("lighting.connection-state")
         XCTAssertTrue(connection.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(connection.label.localizedCaseInsensitiveContains("MELK-OC21"), app.debugDescription)
+        XCTAssertEqual(connection.label, "Connected", app.debugDescription)
+        let accessoryName = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "MELK-OC21")
+        ).firstMatch
+        XCTAssertTrue(accessoryName.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(accessoryName.label.contains("6A"), app.debugDescription)
         XCTAssertTrue(element("lighting.color-wheel").waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(element("lighting.brightness").waitForExistence(timeout: 5), app.debugDescription)
 
-        let power = app.switches["lighting.power"]
+        let power = app.switches.matching(identifier: "lighting.power").firstMatch
         XCTAssertTrue(power.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(power.isEnabled, app.debugDescription)
         if (power.value as? String) != "1" { power.tap() }
         let poweredOn = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: power)
         XCTAssertEqual(XCTWaiter.wait(for: [poweredOn], timeout: 5), .completed, app.debugDescription)
@@ -59,9 +65,17 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         let saturation = app.sliders.matching(NSPredicate(format: "label == %@", "Saturation")).firstMatch
         XCTAssertTrue(hue.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(saturation.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(hue.isEnabled, app.debugDescription)
+        XCTAssertTrue(saturation.isEnabled, app.debugDescription)
         hue.adjust(toNormalizedSliderPosition: 0.54)
         saturation.adjust(toNormalizedSliderPosition: 0.72)
-        app.sliders["lighting.brightness"].adjust(toNormalizedSliderPosition: 0.72)
+        XCTAssertFalse((hue.value as? String ?? "").isEmpty, app.debugDescription)
+        XCTAssertFalse((saturation.value as? String ?? "").isEmpty, app.debugDescription)
+        let brightness = app.sliders.matching(identifier: "lighting.brightness").firstMatch
+        XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(brightness.isEnabled, app.debugDescription)
+        brightness.adjust(toNormalizedSliderPosition: 0.72)
+        XCTAssertFalse((brightness.value as? String ?? "").isEmpty, app.debugDescription)
         attachScreenshot(named: "rgb")
     }
 
