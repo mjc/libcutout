@@ -336,7 +336,7 @@ fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<
     sort_xcframework_plist(&cargo_package)?;
     trim_generated_sources(&cargo_package)?;
     seal_swift_ffi(root, &cargo_package, expected)?;
-    publish_swift_ffi(root, &cargo_package, expected)?;
+    publish_swift_ffi(root, &cargo_package, expected, lock)?;
     Ok(())
 }
 
@@ -358,8 +358,9 @@ fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
-/// Consumers pin a canonical generation path; publication never mutates it.
-fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf> {
+/// Supported native readers retain this same lock until their process exits.
+/// Replace the selector atomically, then remove superseded generated packages.
+fn publish_swift_ffi(root: &Path, staged: &Path, source: &str, lock: &fs::File) -> Result<PathBuf> {
     let identity = verify_ffi_receipt(staged, source)?;
     let generation = root
         .join(FFI_GENERATIONS)
@@ -382,7 +383,7 @@ fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf
         }
         verify_ffi_receipt(staging.path(), source)?;
         if generation.exists() {
-            // Preserve the damaged generation for diagnosis; never edit a pinned tree.
+            // Move the damaged package aside until its verified replacement is selected.
             quarantine(&generation)?;
         }
         fs::rename(staging.path(), &generation)?;
@@ -395,7 +396,63 @@ fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf
         fs::rename(next, current)?;
     }
     fs::remove_dir_all(staged)?;
+    prune_ffi_generations(root, &generation, lock)?;
     Ok(generation)
+}
+
+fn prune_ffi_generations(root: &Path, selected: &Path, _lock: &fs::File) -> Result<()> {
+    ensure!(
+        selected_ffi_generation(root)? == selected,
+        "refusing to prune without the selected Swift FFI generation"
+    );
+    let selected_parent = selected.parent().context("selected generation parent")?;
+    for entry in fs::read_dir(root.join(FFI_GENERATIONS))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path == selected_parent || !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| is_ffi_generation_name(name)) else {
+            continue;
+        };
+        let package = path.join("CutoutMobileFFI");
+        let Ok(receipt) = fs::read(package.join(FFI_RECEIPT)) else {
+            continue;
+        };
+        if hex::encode(Sha256::digest(&receipt)) == name
+            && serde_json::from_slice::<Value>(&receipt)
+                .is_ok_and(|receipt| receipt["version"] == 2 && receipt["outputs"].is_object())
+        {
+            fs::remove_dir_all(path)?;
+        }
+    }
+    // Old repairs can predate selected-only retention. Keep no quarantined payloads
+    // after successful publication; unrelated directories and symlinks are untouched.
+    for entry in fs::read_dir(selected_parent)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir()
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".quarantine-")
+            && entry
+                .path()
+                .join("CutoutMobileFFI")
+                .join(FFI_RECEIPT)
+                .is_file()
+        {
+            fs::remove_dir_all(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn is_ffi_generation_name(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn ffi_selector_manifest(generation: &str) -> String {
@@ -1377,12 +1434,13 @@ mod tests {
         let root = env::temp_dir().join(format!("cutout-ffi-repair-{}", std::process::id()));
         fixture_sources(&root);
         let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
         let staged = root.join("staged");
         fixture_artifact(&staged, &source, "build-a");
-        let generation = publish_swift_ffi(&root, &staged, &source).unwrap();
+        let generation = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
         let selector = fs::read(root.join(GENERATED_PACKAGE).join("Package.swift")).unwrap();
         fixture_artifact(&staged, &source, "build-a");
-        publish_swift_ffi(&root, &staged, &source).unwrap();
+        publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
         assert!(
             !generation
                 .parent()
@@ -1404,7 +1462,7 @@ mod tests {
         .unwrap();
         fixture_artifact(&staged, &source, "build-a");
         assert_eq!(
-            publish_swift_ffi(&root, &staged, &source).unwrap(),
+            publish_swift_ffi(&root, &staged, &source, &lock).unwrap(),
             generation
         );
         verify_ffi_receipt(&generation, &source).unwrap();
@@ -1413,7 +1471,7 @@ mod tests {
             selector
         );
         assert!(
-            generation
+            !generation
                 .parent()
                 .unwrap()
                 .read_dir()
@@ -1431,18 +1489,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn ffi_publication_preserves_a_pinned_concurrent_reader() {
+    fn ffi_publication_waits_for_locked_reader_before_replacing_generation() {
         let root = env::temp_dir().join(format!("cutout-ffi-publish-{}", std::process::id()));
         fixture_sources(&root);
         let source = source_fingerprint(&root).unwrap();
         let staged = root.join("staged");
         fixture_artifact(&staged, &source, "build-a");
-        let first = publish_swift_ffi(&root, &staged, &source).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let first = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        drop(lock);
         let pinned = selected_ffi_generation(&root).unwrap();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let reader_root = root.clone();
         let reader = std::thread::spawn(move || {
+            let _lock = lock_swift_ffi(&reader_root).unwrap();
             let before = fs::read(pinned.join(FFI_RECEIPT)).unwrap();
             check_swift_ffi_build(&reader_root, &pinned, &reader_root.join("plugin-output"))
                 .unwrap();
@@ -1459,27 +1520,218 @@ mod tests {
         )
         .unwrap();
         write_ffi_receipt(&staged, &source).unwrap();
-        let second = publish_swift_ffi(&root, &staged, &source).unwrap();
-        assert_ne!(first, second);
-        assert_eq!(selected_ffi_generation(&root).unwrap(), second);
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        let publisher_root = root.clone();
+        let publisher_source = source.clone();
+        let publisher_staged = staged.clone();
+        let publisher = std::thread::spawn(move || {
+            let lock = lock_swift_ffi(&publisher_root).unwrap();
+            publish_swift_ffi(&publisher_root, &publisher_staged, &publisher_source, &lock).unwrap()
+        });
+        assert!(first.exists());
+        assert_eq!(selected_ffi_generation(&root).unwrap(), first);
         release_tx.send(()).unwrap();
         reader.join().unwrap();
+        let second = publisher.join().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(selected_ffi_generation(&root).unwrap(), second);
+        assert!(!first.exists());
+        verify_ffi_receipt(&second, &source).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_publication_failure_preserves_selected_and_replacement_rejects_old_graph() {
+        let root =
+            env::temp_dir().join(format!("cutout-ffi-failed-publish-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let first = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        let selector = fs::read(root.join(GENERATED_PACKAGE).join("Package.swift")).unwrap();
         // A failed/incomplete generation must leave the selection untouched.
         fs::create_dir_all(&staged).unwrap();
-        assert!(publish_swift_ffi(&root, &staged, &source).is_err());
-        assert_eq!(selected_ffi_generation(&root).unwrap(), second);
-        // Validation must inspect the pinned dependency, even when current is valid.
+        assert!(publish_swift_ffi(&root, &staged, &source, &lock).is_err());
+        assert_eq!(selected_ffi_generation(&root).unwrap(), first);
+        assert_eq!(
+            fs::read(root.join(GENERATED_PACKAGE).join("Package.swift")).unwrap(),
+            selector
+        );
+        verify_ffi_receipt(&first, &source).unwrap();
+        // A corrupt selected package cannot pass validation.
         fs::write(
             first.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
             "bad",
         )
         .unwrap();
         assert!(check_swift_ffi_build(&root, &first, &root.join("plugin-output")).is_err());
-        assert!(check_swift_ffi_build(&root, &second, &root.join("plugin-output")).is_ok());
         // An old graph must not pass after preparation selects a different SDK or flags.
         fixture_artifact(&staged, &source, "build-b");
-        publish_swift_ffi(&root, &staged, &source).unwrap();
-        assert!(check_swift_ffi_build(&root, &second, &root.join("plugin-output")).is_err());
+        let second = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        assert!(!first.exists());
+        assert!(check_swift_ffi_build(&root, &first, &root.join("plugin-output")).is_err());
+        assert!(check_swift_ffi_build(&root, &second, &root.join("plugin-output")).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_publication_retains_one_generation_across_replacements_and_repairs() {
+        let root = env::temp_dir().join(format!("cutout-ffi-retention-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let staged = root.join("staged");
+        for build in ["build-a", "build-b", "build-c", "build-d"] {
+            fixture_artifact(&staged, &source, build);
+            let selected = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+            assert_eq!(fs::read_dir(root.join(FFI_GENERATIONS)).unwrap().count(), 1);
+            for _ in 0..3 {
+                fs::write(
+                    selected.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"),
+                    "corrupt",
+                )
+                .unwrap();
+                fixture_artifact(&staged, &source, build);
+                assert_eq!(
+                    publish_swift_ffi(&root, &staged, &source, &lock).unwrap(),
+                    selected
+                );
+                assert_eq!(
+                    fs::read_dir(selected.parent().unwrap()).unwrap().count(),
+                    1,
+                    "successful repair must not retain old package payloads"
+                );
+                verify_ffi_receipt(&selected, &source).unwrap();
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_unchanged_publication_prunes_obsolete_without_mutating_selected() {
+        let root =
+            env::temp_dir().join(format!("cutout-ffi-unchanged-prune-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let selected = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        let old_stage = root.join("old-stage");
+        fixture_artifact(&old_stage, &source, "old-build");
+        let old_identity = verify_ffi_receipt(&old_stage, &source).unwrap();
+        let old_parent = root.join(FFI_GENERATIONS).join(old_identity);
+        fs::create_dir_all(&old_parent).unwrap();
+        fs::rename(&old_stage, old_parent.join("CutoutMobileFFI")).unwrap();
+        let before = fs::metadata(selected.join(FFI_RECEIPT))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let selector_before = fs::metadata(root.join(GENERATED_PACKAGE).join("Package.swift"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fixture_artifact(&staged, &source, "build-a");
+        assert_eq!(
+            publish_swift_ffi(&root, &staged, &source, &lock).unwrap(),
+            selected
+        );
+        assert!(!old_parent.exists());
+        assert_eq!(
+            fs::metadata(selected.join(FFI_RECEIPT))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            before
+        );
+        assert_eq!(
+            fs::metadata(root.join(GENERATED_PACKAGE).join("Package.swift"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            selector_before
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_selector_write_failure_preserves_current_until_successful_retry() {
+        let root =
+            env::temp_dir().join(format!("cutout-ffi-selector-retry-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let first = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        let selector = root.join(GENERATED_PACKAGE).join("Package.swift");
+        let before = fs::read(&selector).unwrap();
+        let blocked_next =
+            selector.with_file_name(format!(".Package.swift-{}", std::process::id()));
+        fs::create_dir(&blocked_next).unwrap();
+        fixture_artifact(&staged, &source, "build-b");
+        assert!(publish_swift_ffi(&root, &staged, &source, &lock).is_err());
+        assert_eq!(fs::read(&selector).unwrap(), before);
+        assert_eq!(selected_ffi_generation(&root).unwrap(), first);
+        verify_ffi_receipt(&first, &source).unwrap();
+        assert!(staged.exists());
+        fs::remove_dir(&blocked_next).unwrap();
+        let replacement = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        assert!(!first.exists());
+        assert_eq!(selected_ffi_generation(&root).unwrap(), replacement);
+        assert_eq!(fs::read_dir(root.join(FFI_GENERATIONS)).unwrap().count(), 1);
+        verify_ffi_receipt(&replacement, &source).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ffi_generation_pruning_preserves_unowned_paths_staging_and_symlink_targets() {
+        let root =
+            env::temp_dir().join(format!("cutout-ffi-prune-ownership-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let lock = lock_swift_ffi(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let first = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        let foreign = root.join(FFI_GENERATIONS).join("0".repeat(64));
+        fs::create_dir_all(&foreign).unwrap();
+        fs::write(foreign.join("keep.txt"), "unowned").unwrap();
+        let staging = root.join(FFI_GENERATIONS).join(".artifact-active");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join("keep.txt"), "staging").unwrap();
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join(FFI_GENERATIONS).join("1".repeat(64)))
+            .unwrap();
+        fixture_artifact(&staged, &source, "build-b");
+        let selected = publish_swift_ffi(&root, &staged, &source, &lock).unwrap();
+        assert!(!first.exists());
+        assert!(selected.exists());
+        assert_eq!(
+            fs::read_to_string(foreign.join("keep.txt")).unwrap(),
+            "unowned"
+        );
+        assert_eq!(
+            fs::read_to_string(staging.join("keep.txt")).unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.join("keep.txt")).unwrap(),
+            "outside"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
