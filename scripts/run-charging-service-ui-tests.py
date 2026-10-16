@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -76,11 +77,42 @@ class ProxyState:
         self.offline = False
         self.forwarded = 0
         self.failed_while_offline = 0
+        self.last_published_spot = None
 
     def snapshot(self) -> dict:
         with self.lock:
             return {"offline": self.offline, "forwarded_requests": self.forwarded,
-                    "requests_failed_while_offline": self.failed_while_offline}
+                    "requests_failed_while_offline": self.failed_while_offline,
+                    "last_published_spot": self.last_published_spot}
+
+    def remember_published_feed(self, request_path: str, status: int, body: bytes) -> None:
+        parsed_path = urllib.parse.urlsplit(request_path)
+        if status != 200 or parsed_path.path != "/v1/charging-spots/changes" or not parsed_path.query:
+            return
+        spot = published_spot_from_feed(body)
+        if spot is None:
+            return
+        with self.lock:
+            previous = self.last_published_spot
+            if previous is None or spot["change_sequence"] >= previous["change_sequence"]:
+                self.last_published_spot = spot
+
+
+def published_spot_from_feed(body: bytes) -> dict | None:
+    try:
+        page = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+        return None
+    published = []
+    for item in page["items"]:
+        if isinstance(item, dict) and item.get("status") == "published":
+            spot = item.get("spot")
+            sequence = spot.get("change_sequence") if isinstance(spot, dict) else None
+            if isinstance(sequence, int) and not isinstance(sequence, bool):
+                published.append(spot)
+    return max(published, key=lambda spot: spot["change_sequence"]) if published else None
 
 
 def make_proxy_handler(state: ProxyState):
@@ -155,6 +187,8 @@ def make_proxy_handler(state: ProxyState):
                 connection.request(self.command, self.path, body=body, headers=dict(headers))
                 response = connection.getresponse()
                 response_body = response.read()
+                if self.command == "GET":
+                    state.remember_published_feed(self.path, response.status, response_body)
                 self.send_response(response.status)
                 for key, value in response.getheaders():
                     if key.lower() not in HOP_HEADERS:
@@ -236,6 +270,9 @@ def verify_readback(result: dict, *, native_only: bool) -> None:
     spot_rows = result["spots"]
     if len(spot_rows) != 1 or spot_rows[0]["status"] != "withdrawn":
         raise RuntimeError("Expected exactly one service spot, withdrawn by its owner.")
+    withdrawn = spot_rows[0]
+    if withdrawn["body"] is not None or withdrawn["public_readback_status"] != 404:
+        raise RuntimeError("Expected withdrawal to clear the service body and make detail readback return 404.")
     active_identity_count = sum(item["count"] for item in result["active_identity_counts_by_role"])
     if active_identity_count != 2 or result["anonymous_tombstone_count"] != 1:
         raise RuntimeError("Expected two registered contributors and the Anonymous system principal.")
@@ -248,19 +285,23 @@ def verify_readback(result: dict, *, native_only: bool) -> None:
     if result["changes_status"] != 200:
         raise RuntimeError(f"Public change-feed readback failed with HTTP {result['changes_status']}.")
     changes = result["changes"].get("items", [])
-    if not any(item.get("status") == "withdrawn" and item.get("id") == spot_rows[0]["id"] for item in changes):
+    if not any(item.get("status") == "withdrawn" and item.get("id") == withdrawn["id"] for item in changes):
         raise RuntimeError("Expected the public change feed to expose the withdrawal tombstone.")
+    published = result["proxy"].get("last_published_spot")
+    if not isinstance(published, dict) or published.get("id") != withdrawn["id"]:
+        raise RuntimeError("Expected the proxy to retain the matching published body observed before withdrawal.")
     if not native_only:
-        body = spot_rows[0]["body"]
-        if not isinstance(body, dict) or body.get("access_note") != UI_FINAL_NOTE:
-            raise RuntimeError("Expected the public body to contain the UI test's offline edit.")
-        if body.get("cost") != "free" or body.get("supplies") != []:
+        if published.get("access_note") != UI_FINAL_NOTE:
+            raise RuntimeError("Expected the published feed snapshot to contain the UI test's offline edit.")
+        if published.get("cost") != "free" or published.get("supplies") != []:
             raise RuntimeError("Expected the public body to retain only the required free-charging fields.")
         optional_fields = ("name", "venue", "hours", "paid_terms", "price")
-        expected_fields = {"coordinate", "access_note", "cost", *optional_fields, "supplies"}
-        if set(body) != expected_fields or not isinstance(body.get("coordinate"), dict):
-            raise RuntimeError("Expected the UI service spot to contain only its charging body fields.")
-        if any(body.get(field) is not None for field in optional_fields):
+        metadata_fields = {"id", "revision", "created_at_ms", "updated_at_ms",
+                           "change_sequence", "last_verified_at_ms", "votes"}
+        expected_fields = metadata_fields | {"coordinate", "access_note", "cost", *optional_fields, "supplies"}
+        if set(published) != expected_fields or not isinstance(published.get("coordinate"), dict):
+            raise RuntimeError("Expected the published feed snapshot to contain exactly public metadata and body fields.")
+        if any(published.get(field) is not None for field in optional_fields):
             raise RuntimeError("Expected the UI service spot to keep optional body fields empty.")
 
 
