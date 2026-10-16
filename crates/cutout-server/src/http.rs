@@ -59,7 +59,7 @@ impl IntoResponse for Error {
     }
 }
 
-/// Builds the versioned HTTP directory, using the supplied durable store.
+/// Builds the HTTP directory and website, using the supplied durable store.
 /// Serve with `into_make_service_with_connect_info::<SocketAddr>()` so registration
 /// budgets use the transport peer rather than caller-supplied headers.
 /// Behind a proxy, add `Extension(TrustedProxy(proxy_ip))` and configure the proxy
@@ -90,6 +90,7 @@ pub fn router(store: Store) -> Router {
             get(moderator_spot).put(moderate),
         )
         .route("/v1/moderation/audit", get(audit))
+        .merge(crate::site::router())
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(axum::middleware::from_fn(deadline))
         .with_state(store)
