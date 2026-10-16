@@ -25,6 +25,10 @@ if ! grep -qx -- --arch "$CUTOUT_RUNNER_TEST_CALLS" \
   exit 1
 fi
 grep -qx MusicIntegrationTests "$CUTOUT_RUNNER_TEST_CALLS"
+[[ "$(grep -A1 '^--jobs$' "$CUTOUT_RUNNER_TEST_CALLS" | tail -n1)" == 2 ]]
+bash "$root/scripts/run-swift-package-tests.sh" --jobs 1 >"$tmp/output" 2>&1
+[[ "$(grep -c '^--jobs$' "$CUTOUT_RUNNER_TEST_CALLS")" -eq 1 ]]
+[[ "$(grep -A1 '^--jobs$' "$CUTOUT_RUNNER_TEST_CALLS" | tail -n1)" == 1 ]]
 bash "$root/scripts/run-swift-package-tests.sh" --arch arm64 --arch=arm64 >"$tmp/output" 2>&1
 [[ "$(grep -c -- '^--arch$' "$CUTOUT_RUNNER_TEST_CALLS")" -eq 1 ]]
 [[ "$(grep -c '^arm64$' "$CUTOUT_RUNNER_TEST_CALLS")" -eq 1 ]]
