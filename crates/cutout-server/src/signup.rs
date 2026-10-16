@@ -1046,7 +1046,7 @@ mod tests {
         );
 
         let signup_id: String = store
-            .call(|connection| {
+            .call(move |connection| {
                 connection
                     .query_row(
                         "SELECT id FROM alpha_signup_requests WHERE email_hash=?1",
