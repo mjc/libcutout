@@ -366,6 +366,10 @@ The terminal native-tool handoff replaces the build coordinator on Unix instead
 of leaving a waiting parent. Offline subprocess tests cover retained PID/FFI
 lock, INT/TERM exit, and lock cleanup after failed exec. This fixes that handoff,
 not cancellation of every outer launcher/descendant or native queued write.
+The signed-device deployment build waits for its native child so verification
+and installation can follow. That child inherits the same FFI lock, keeping its
+generation protected if the coordinator exits. Offline subprocess tests exercise
+the waited helper's lock inheritance, normal return, and failed-start cleanup.
 
 Existing configuration is recorded here for code review, not as a run recipe:
 

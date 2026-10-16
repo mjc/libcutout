@@ -144,6 +144,21 @@ fn handoff_apple_client(_build: &mut Command, _lock: &fs::File) -> Result<()> {
 }
 
 #[cfg(unix)]
+fn run_waited_apple_client(build: &mut Command, lock: &fs::File, description: &str) -> Result<()> {
+    let _inherited_lock = attach_lock_handle(build, lock)?;
+    run(build, description)
+}
+
+#[cfg(not(unix))]
+fn run_waited_apple_client(
+    _build: &mut Command,
+    _lock: &fs::File,
+    _description: &str,
+) -> Result<()> {
+    bail!("native Apple builds require Unix file-descriptor inheritance")
+}
+
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File> {
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
@@ -531,7 +546,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     build.args(ios_signing_arguments(Some(&team), bundle_id.as_deref())?);
     build.arg(format!("SPOTIFY_CLIENT_ID={spotify_client_id}"));
     build.arg("build");
-    run(&mut build, "build signed iPhone app")?;
+    run_waited_apple_client(&mut build, &lock, "build signed iPhone app")?;
     drop(lock);
     ensure!(
         product.is_dir(),
@@ -2363,7 +2378,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn native_child_keeps_lock_after_coordinator_is_killed() {
-        use std::io::{BufRead, Write};
+        use std::io::BufRead;
 
         let root = env::var_os("CUTOUT_NATIVE_LOCK_TEST_ROOT").map_or_else(
             || env::temp_dir().join(format!("cutout-native-orphan-{}", std::process::id())),
@@ -2371,13 +2386,9 @@ mod tests {
         );
         if env::var_os("CUTOUT_NATIVE_LOCK_TEST_CHILD").is_some() {
             let lock = lock_swift_ffi(&root).unwrap();
-            let mut child = Command::new("sleep");
-            child.arg("30");
-            let _inherited_lock = attach_lock_handle(&mut child, &lock).unwrap();
-            let mut child = child.spawn().unwrap();
-            println!("{}", child.id());
-            std::io::stdout().flush().unwrap();
-            child.wait().unwrap();
+            let mut child = Command::new("sh");
+            child.args(["-c", "echo $$; exec sleep 30"]);
+            run_waited_apple_client(&mut child, &lock, "wait for disposable native child").unwrap();
             return;
         }
 
@@ -2429,6 +2440,40 @@ mod tests {
                 .unwrap()
                 .success()
         );
+        wait_for_lock_release(&contender);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn waited_native_client_returns_and_failed_spawn_releases_inherited_handle() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = lock_swift_ffi(root.path()).unwrap();
+        run_waited_apple_client(
+            Command::new("sh").args(["-c", "exit 0"]),
+            &lock,
+            "wait for disposable successful child",
+        )
+        .unwrap();
+        let error = run_waited_apple_client(
+            &mut Command::new(root.path().join("missing-native-tool")),
+            &lock,
+            "start missing native tool",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("failed to start command"));
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        drop(lock);
+        contender
+            .try_lock()
+            .expect("failed spawn must not leave an inherited lock handle");
     }
 }
