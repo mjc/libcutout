@@ -21,6 +21,7 @@ use axum::{
 use serde::Serialize;
 use std::net::IpAddr;
 
+mod capture_submissions;
 mod registration;
 
 /// A proxy peer allowed to supply one client address through `X-Real-IP`.
@@ -35,6 +36,15 @@ impl IntoResponse for Error {
             error: &'static str,
         }
         let (status, code) = match self {
+            Self::CaptureInvalid => (StatusCode::UNPROCESSABLE_ENTITY, "capture_invalid"),
+            Self::CaptureUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "capture_unsupported_format",
+            ),
+            Self::CaptureCorrupt => (StatusCode::UNPROCESSABLE_ENTITY, "capture_integrity_failed"),
+            Self::CaptureMusic => (StatusCode::UNPROCESSABLE_ENTITY, "capture_music_prohibited"),
+            Self::CaptureTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "capture_resource_limit"),
+            Self::CaptureStorageFull => (StatusCode::INSUFFICIENT_STORAGE, "capture_storage_quota"),
             Self::Invalid => (StatusCode::UNPROCESSABLE_ENTITY, "invalid"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
@@ -93,6 +103,7 @@ pub fn router(store: Store) -> Router {
         .merge(crate::site::router())
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(axum::middleware::from_fn(deadline))
+        .merge(capture_submissions::router())
         .with_state(store)
 }
 

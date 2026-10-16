@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 
 mod backup;
 mod budgets;
+pub(crate) mod capture_submissions;
 mod identity;
 mod spots;
 #[cfg(test)]
@@ -34,6 +35,8 @@ pub(crate) use votes::clear_spot_votes;
 pub struct Store {
     connection: Arc<Mutex<Connection>>,
     work: Arc<Semaphore>,
+    pub(crate) capture_uploads: Arc<Semaphore>,
+    pub(crate) capture_staging: Arc<std::path::PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,9 +83,16 @@ impl Store {
         let mut connection = open_connection(path, mode)?;
         prepare_schema(&mut connection, mode)?;
         configure_durability(&connection)?;
+        let mut staging = path
+            .canonicalize()
+            .map_err(|_| Error::Unavailable)?
+            .into_os_string();
+        staging.push(".capture-staging");
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             work: Arc::new(Semaphore::new(32)),
+            capture_uploads: Arc::new(Semaphore::new(2)),
+            capture_staging: Arc::new(staging.into()),
         })
     }
 
@@ -111,7 +121,7 @@ impl Store {
             let version: u32 = connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(db_error)?;
-            if version != 2 {
+            if version != 3 {
                 return Err(Error::Unavailable);
             }
             connection
@@ -332,14 +342,20 @@ fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Err
             transaction.commit().map_err(db_error)?;
             migrate_account_deletion(connection)?;
         }
-        1 if application == 0x4353_5054 && mode == OpenMode::Initialize => {}
-        1 if application == 0x4353_5054 => return Err(Error::Unavailable),
-        2 if application == 0x4353_5054 => return Ok(()),
+        1 | 2 if application == 0x4353_5054 && mode == OpenMode::Initialize => {}
+        3 if application == 0x4353_5054 => return Ok(()),
         _ => return Err(Error::Unavailable),
     }
     if version == 1 {
         migrate_account_deletion(connection)?;
     }
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!(
+            "../migrations/003_private_capture_submissions.sql"
+        ))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)?;
     Ok(())
 }
 

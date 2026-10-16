@@ -27,6 +27,8 @@ pub use capture_lifecycle::*;
 mod capture_completion;
 pub use capture_completion::*;
 mod capture_history;
+mod capture_submission;
+pub use capture_submission::*;
 mod capture_identity;
 pub use capture_history::*;
 pub use capture_identity::*;

@@ -2615,6 +2615,100 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
+    func testFinishCapturePrivateSendCanBeDeclinedAndCancelledWithoutLosingLocalShareAfterRelaunch() throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Private capture Send regression is restricted to Simulator")
+        #endif
+        executionTimeAllowance = 180
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+
+        func waitForReady(_ element: XCUIElement) {
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in element.exists && element.isEnabled && element.isHittable },
+                object: element
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
+        }
+
+        let detail = try finishCaptureAndOpenArtifact()
+        let review = app.buttons["captures.send.review"]
+        scrollElementFrameIntoViewport(review, in: detail, maxScrolls: 12)
+        waitForReady(review)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        review.tap()
+
+        // Only review the locally prepared snapshot; this test never confirms Send.
+        let confirm = app.buttons["captures.send.confirm"]
+        waitForReady(confirm)
+        let disclosure = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Music is excluded.", "CutOut maintainer")
+        ).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(disclosure.label.contains("raw Bluetooth evidence"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("event order and timing"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("device and platform identifiers"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("Your original recording stays on this device."), disclosure.label)
+        let decline = app.buttons["Not now"]
+        waitForReady(decline)
+        decline.tap()
+        XCTAssertTrue(detail.waitForExistence(timeout: 5), app.debugDescription)
+
+        let cancel = app.buttons["captures.send.cancel"]
+        scrollElementFrameIntoViewport(cancel, in: detail, maxScrolls: 8)
+        waitForReady(cancel)
+        cancel.tap()
+        let cancelled = app.staticTexts["Send cancelled"]
+        XCTAssertTrue(cancelled.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
+        let share = app.descendants(matching: .any)["captures.share"]
+        scrollElementFrameIntoViewport(share, in: detail, maxScrolls: 12)
+        waitForReady(share)
+        retainCaptureScreenshot("Private Send declined and cancelled; local capture retained")
+
+        app.navigationBars.buttons.firstMatch.tap()
+        let home = app.descendants(matching: .any)["captures.home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let storedCapture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        XCTAssertTrue(storedCapture.waitForExistence(timeout: 10), app.debugDescription)
+        let storedCaptureID = storedCapture.identifier
+        app.terminate()
+        app.launch()
+
+        let setupButton = app.buttons["device-picker.open-setup"]
+        waitForReady(setupButton)
+        setupButton.tap()
+        let setup = app.descendants(matching: .any)["setup.screen"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5), app.debugDescription)
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: setup, maxScrolls: 8)
+        waitForReady(captures)
+        captures.tap()
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let restoredCapture = app.buttons[storedCaptureID]
+        waitForReady(restoredCapture)
+        restoredCapture.tap()
+        assertStoredCaptureDetail()
+        let restoredDetail = app.collectionViews.firstMatch
+        let restoredCancelled = app.staticTexts["Send cancelled"]
+        scrollElementFrameIntoViewport(restoredCancelled, in: restoredDetail, maxScrolls: 12)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        XCTAssertFalse(app.buttons["captures.send"].exists)
+        XCTAssertFalse(app.buttons["captures.send.review"].exists)
+
+        let export = app.buttons["Export recording"]
+        scrollElementFrameIntoViewport(export, in: restoredDetail, maxScrolls: 12)
+        waitForReady(export)
+        export.tap()
+        let restoredShare = app.buttons["Share recording"]
+        waitForReady(restoredShare)
+        restoredShare.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     func testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType() throws {
         _ = try finishCaptureAndOpenArtifact()
         try performVisibleLayoutAccessibilityAudit()

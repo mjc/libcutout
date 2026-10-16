@@ -11,12 +11,14 @@ description = "Community charging-spot directory for rides.cutout.lol"
 axum.workspace = true
 clap.workspace = true
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
-rusqlite.workspace = true
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+futures-util.workspace = true
+rusqlite = { workspace = true, features = ["blob"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "fs", "io-util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
@@ -24,6 +26,7 @@ uuid.workspace = true
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

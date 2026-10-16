@@ -760,6 +760,119 @@ private final class SyncRecorder {
 
 @MainActor
 final class ChargingContentReportTests: XCTestCase {
+    func testCaptureCancellationAndDeletionOnlyLoadAnExistingCredential() async throws {
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let records: [ChargingCredentialRecord?] = [nil, .registrationStarted, .deletionPending(credential), .deleted]
+        for record in records {
+            let store = MemoryChargingCredentialStore(initial: record)
+            var registrations = 0
+            let sync = ChargingCommunitySync(
+                credentialStore: store,
+                registerIdentity: {
+                    registrations += 1
+                    return credential
+                },
+                synchronize: { _ in throw MobileChargingError.Network },
+                sleep: { _ in }, enabled: { false }
+            )
+            let received = try await sync.existingCredentialForCaptureSubmission()
+            XCTAssertNil(received)
+            XCTAssertEqual(registrations, 0)
+        }
+    }
+
+    func testExplicitCaptureCredentialDoesNotEnableChargingSyncOrUploadQueuedEdits() async throws {
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let store = MemoryChargingCredentialStore()
+        var registrations = 0
+        var queuedUploads = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                registrations += 1
+                return credential
+            },
+            synchronize: { _ in
+                queuedUploads += 1
+                throw MobileChargingError.Network
+            },
+            sleep: { _ in }, enabled: { false }
+        )
+
+        let received = try await sync.credentialForCaptureSubmission()
+        XCTAssertEqual(received, credential)
+        XCTAssertEqual(registrations, 1)
+        XCTAssertEqual(queuedUploads, 0)
+        XCTAssertEqual(sync.status, .notStarted)
+        do {
+            _ = try await sync.credentialForReport()
+            XCTFail("Charging report enablement must retain its existing guard")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+        }
+    }
+
+    func testExplicitCaptureSendRetriesAFailedRegistrationWithoutSyncingChargingEdits() async throws {
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let store = MemoryChargingCredentialStore()
+        var registrations = 0
+        var uploads = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                registrations += 1
+                if registrations == 1 { throw MobileChargingError.Network }
+                return credential
+            },
+            synchronize: { _ in
+                uploads += 1
+                throw MobileChargingError.Network
+            },
+            sleep: { _ in }, enabled: { false }
+        )
+        do {
+            _ = try await sync.credentialForCaptureSubmission()
+            XCTFail("The first registration request must fail")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Network)
+        }
+        XCTAssertEqual(registrations, 1)
+        let received = try await sync.credentialForCaptureSubmission()
+        XCTAssertEqual(received, credential)
+        XCTAssertEqual(registrations, 2)
+        XCTAssertEqual(uploads, 0)
+        XCTAssertEqual(sync.status, .notStarted)
+    }
+
+    func testExplicitCaptureCredentialRejectsAReadThatCrossesAccountDeletionABA() async throws {
+        let entered = expectation(description: "Capture credential load suspended")
+        let gate = ReportCredentialLoadGate(entered: entered)
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let store = MemoryChargingCredentialStore(
+            initial: .ready(credential), beforeLoad: { await gate.suspend() }
+        )
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: { throw MobileChargingError.Network },
+            synchronize: { _ in throw MobileChargingError.Network },
+            sleep: { _ in }, enabled: { false }
+        )
+        let request = Task { try await sync.credentialForCaptureSubmission() }
+        await fulfillment(of: [entered], timeout: 2)
+        await sync.pauseForAccountDeletion()
+        try await store.markDeletionPending(credential)
+        try await store.finishDeletion(token: credential.token)
+        sync.allowPublicRefreshAfterDeletion()
+        await gate.resume()
+
+        do {
+            _ = try await request.value
+            XCTFail("A stale capture credential must not survive account deletion")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+        }
+    }
+
     func testDisabledFixtureCannotRegisterOrSubmitToTheLiveService() async {
         var registrations = 0
         let sync = ChargingCommunitySync(

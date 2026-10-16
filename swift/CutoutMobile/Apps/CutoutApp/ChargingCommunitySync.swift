@@ -422,7 +422,30 @@ final class ChargingCommunitySync {
 
     /// An explicit report can register a contributor without uploading queued edits.
     func credentialForReport() async throws -> ChargingCommunityCredential {
-        guard enabled(), !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        guard enabled() else { throw MobileChargingError.Unavailable }
+        return try await credentialForExplicitAction()
+    }
+
+    /// Called only after the user confirms a private capture action.
+    func credentialForCaptureSubmission() async throws -> ChargingCommunityCredential {
+        try await credentialForExplicitAction(explicitRetry: true)
+    }
+
+    /// Cancellation and deletion may reuse an account, but cannot create one.
+    func existingCredentialForCaptureSubmission() async throws -> ChargingCommunityCredential? {
+        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
+        let deletionGeneration = accountDeletionGeneration
+        let stored = try await credentialStore.load()
+        try Task.checkCancellation()
+        guard !accountDeletionInProgress, accountDeletionGeneration == deletionGeneration else {
+            throw MobileChargingError.Unavailable
+        }
+        guard case .ready(let credential) = stored else { return nil }
+        return credential
+    }
+
+    private func credentialForExplicitAction(explicitRetry: Bool = false) async throws -> ChargingCommunityCredential {
+        guard !accountDeletionInProgress else { throw MobileChargingError.Unavailable }
         let deletionGeneration = accountDeletionGeneration
         let stored = try await credentialStore.load()
         try Task.checkCancellation()
@@ -430,7 +453,7 @@ final class ChargingCommunitySync {
             throw MobileChargingError.Unavailable
         }
         let selectedCredential: ChargingCommunityCredential
-        switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: false) {
+        switch mobileChargingRegistrationAdmission(state: credentialState(stored), explicitRetry: explicitRetry) {
         case .synchronize:
             guard case .ready(let credential) = stored else { throw MobileChargingError.Unauthorized }
             selectedCredential = credential
@@ -445,7 +468,9 @@ final class ChargingCommunitySync {
             }
         case .publicRefresh:
             throw MobileChargingError.Unavailable
-        case .registerIdentity, .requireExplicitRetry:
+        case .registerIdentity:
+            selectedCredential = try await registerAndPersist()
+        case .requireExplicitRetry:
             throw MobileChargingError.Unauthorized
         }
         try Task.checkCancellation()

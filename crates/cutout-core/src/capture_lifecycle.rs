@@ -26,6 +26,8 @@ impl CaptureGeneration {
 
 /// Why a capture owns its transport.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum CaptureOrigin {
     /// Evidence collected while connecting or riding normally.
     Automatic,

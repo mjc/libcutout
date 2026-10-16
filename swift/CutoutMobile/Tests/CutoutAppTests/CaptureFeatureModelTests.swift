@@ -9,6 +9,68 @@ import XCTest
 final class CaptureFeatureModelTests: XCTestCase {
     private enum ExportFailure: Error { case unavailable }
 
+    func testConsumedFileCompletionRetainsArtifactIdentitySeparatelyFromThePath() throws {
+        let capture = CaptureFeatureModel()
+        let artifactID = UUID().uuidString
+        let url = URL(fileURLWithPath: "/tmp/not-the-artifact-id.jsonl")
+        capture.deliverCaptureEvent(.started(fileURL: url), origin: .manual)
+        let generation = try XCTUnwrap(capture.activeGeneration)
+        capture.deliverCaptureEvent(.finished(generation: generation, fileURL: url, artifactId: artifactID))
+
+        let completed = try XCTUnwrap(capture.completed.first)
+        XCTAssertEqual(completed.submissionSource, .recordedArtifact(id: artifactID))
+        XCTAssertEqual(completed.fileURL, url)
+    }
+
+    func testLegacyURLOnlyCompletionCannotInventSubmissionIdentity() throws {
+        let capture = CaptureFeatureModel()
+        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).jsonl")
+        capture.deliverCaptureEvent(.started(fileURL: url), origin: .manual)
+        capture.deliverCaptureEvent(.finished(fileURL: url))
+
+        let completed = try XCTUnwrap(capture.completed.first)
+        XCTAssertEqual(completed.outcome, .saved)
+        XCTAssertNil(completed.submissionSource)
+    }
+
+    func testDurableDatabaseCompletionRetainsSubmissionIdentityWithoutAnExport() throws {
+        let capture = CaptureFeatureModel()
+        let captureID = UUID().uuidString
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/requested.jsonl")), origin: .manual)
+        let generation = try XCTUnwrap(capture.activeGeneration)
+
+        capture.deliverCaptureEvent(
+            .databaseFinished(
+                generation: generation,
+                outcome: .databaseFinished(
+                    liveCaptureId: captureID,
+                    integrity: .incomplete(droppedMessages: 2),
+                    jsonlExport: .notAttempted,
+                    status: MobileCaptureWriterStatusDto(
+                        queuedMessages: 0, peakQueuedMessages: 0, droppedMessages: 2,
+                        bytesWritten: 100, physicalBytesWritten: 0, failed: false, lastError: nil
+                    )
+                )
+            )
+        )
+
+        let completed = try XCTUnwrap(capture.completed.first)
+        XCTAssertNil(completed.fileURL)
+        XCTAssertEqual(completed.submissionSource, .liveCapture(id: captureID))
+    }
+
+    func testFailedCaptureCannotInventSubmissionIdentityFromItsRequestedFile() throws {
+        let capture = CaptureFeatureModel()
+        capture.deliverCaptureEvent(
+            .started(fileURL: URL(fileURLWithPath: "/tmp/existing-request.jsonl")), origin: .manual)
+        let generation = try XCTUnwrap(capture.activeGeneration)
+        capture.deliverCaptureEvent(.failed(generation: generation))
+
+        let completed = try XCTUnwrap(capture.completed.first)
+        XCTAssertNotNil(completed.fileURL, "Retain the failed output presentation")
+        XCTAssertNil(completed.submissionSource, "A path and manual UI origin cannot authorize Send")
+    }
+
     func testCaptureExportRetryClearsFailureAndOwnsTheBusyState() async {
         let gate = CaptureExportGate()
         var requests = 0

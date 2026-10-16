@@ -604,7 +604,8 @@ fn ensure_music_supported<E>(
 
 /// Supported PEVCAP byte encodings for file and tooling surfaces.
 #[cfg(feature = "serde")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PevcapEncoding {
     /// Line-delimited JSON representation for review.
     Jsonl,

@@ -57,6 +57,8 @@ mod music_privacy;
 pub(crate) use capture_music_privacy::sanitize_capture_music;
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
+mod capture_submission;
+pub use capture_submission::*;
 mod charging;
 pub use charging::*;
 mod migrations;
@@ -4068,7 +4070,9 @@ impl RideDatabase {
             return self.confirm_existing_pevcap(preview, receipt, publication);
         }
         let outcome = match publication {
-            CapturePublication::Recording(_) => NewPevcapImportOutcome::CaptureOnly,
+            CapturePublication::Recording(_) | CapturePublication::SubmissionSnapshot => {
+                NewPevcapImportOutcome::CaptureOnly
+            }
             CapturePublication::Import => NewPevcapImportOutcome::try_from(preview.outcome)?,
         };
 
@@ -5271,19 +5275,20 @@ struct ManagedArtifact {
 enum CapturePublication {
     Import,
     Recording(RecordedCapture),
+    SubmissionSnapshot,
 }
 
 impl CapturePublication {
     fn recording(&self) -> Option<&RecordedCapture> {
         match self {
-            Self::Import => None,
+            Self::Import | Self::SubmissionSnapshot => None,
             Self::Recording(recording) => Some(recording),
         }
     }
 
     fn validate_duplicate(&self, receipt: &PevcapImportReceipt) -> Result<(), StorageError> {
         match self {
-            Self::Import => Ok(()),
+            Self::Import | Self::SubmissionSnapshot => Ok(()),
             Self::Recording(recording) if receipt.recording.as_ref() == Some(recording) => Ok(()),
             Self::Recording(_) => Err(StorageError::CaptureIdentityConflict),
         }
@@ -5304,6 +5309,7 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    CaptureSubmission(capture_submission::Command),
     Charging(charging::Command),
     BeginLiveCapture {
         id: LiveCaptureId,

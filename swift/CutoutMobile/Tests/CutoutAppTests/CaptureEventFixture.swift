@@ -50,7 +50,7 @@ func deliverCaptureFixture(
         translated = .progress(generation: generation, progress)
     case let .notificationRecorded(generation):
         translated = .notificationRecorded(generation: resolve(generation))
-    case let .finished(generation, url):
+    case let .finished(generation, url, artifactId):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(
@@ -58,7 +58,7 @@ func deliverCaptureFixture(
             completion: MobileCaptureCompletionDto(
                 finish: .artifactAvailable(
                     artifact: MobileSavedCaptureArtifactDto(
-                        id: MobileCaptureArtifactIdDto(value: url.lastPathComponent),
+                        id: MobileCaptureArtifactIdDto(value: artifactId ?? url.lastPathComponent),
                         path: url.path,
                         status: MobileCaptureWriterStatusDto(
                             queuedMessages: 0, peakQueuedMessages: 0, droppedMessages: 0,
@@ -67,7 +67,7 @@ func deliverCaptureFixture(
                     )), databasePublicationSucceeded: nil),
             priorWriteOutcome: .accepted
         )
-        translated = .finished(generation: generation, fileURL: url)
+        translated = .finished(generation: generation, fileURL: url, artifactId: artifactId)
     case let .databaseFinished(generation, outcome):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)

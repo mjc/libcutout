@@ -21,6 +21,7 @@ struct CaptureArtifact: Identifiable, Equatable {
     let isUserInitiated: Bool
     let progress: CaptureProgress?
     let outcome: Outcome
+    var submissionSource: MobileCaptureSubmissionSourceDto? = nil
 }
 
 struct CaptureDeviceIdentity: Equatable {
@@ -267,10 +268,13 @@ final class CaptureFeatureModel {
             recordings[generation]?.device = device
             notificationCount = Int(clamping: progress.notificationCount)
             updateRecordingStatus()
-        case let .finished(generation, fileURL):
-            complete(generation, outcome: .saved, fileURL: fileURL)
+        case let .finished(generation, fileURL, artifactId):
+            complete(
+                generation, outcome: .saved, fileURL: fileURL,
+                submissionSource: artifactId.map { .recordedArtifact(id: $0) }
+            )
         case let .databaseFinished(generation, outcome):
-            guard case let .databaseFinished(_, integrity, jsonlExport, _) = outcome else { return }
+            guard case let .databaseFinished(liveCaptureId, integrity, jsonlExport, _) = outcome else { return }
             let artifact: MobileSavedCaptureArtifactDto?
             switch jsonlExport {
             case let .available(saved): artifact = saved
@@ -288,7 +292,8 @@ final class CaptureFeatureModel {
             complete(
                 generation,
                 outcome: captureOutcome,
-                fileURL: artifact.map { URL(fileURLWithPath: $0.path) }
+                fileURL: artifact.map { URL(fileURLWithPath: $0.path) },
+                submissionSource: .liveCapture(id: liveCaptureId)
             )
         case let .failed(generation):
             complete(generation, outcome: .failed, fileURL: nil, preserveRequestedFile: true)
@@ -303,6 +308,7 @@ final class CaptureFeatureModel {
         _ generation: CaptureGeneration,
         outcome: CaptureArtifact.Outcome,
         fileURL: URL?,
+        submissionSource: MobileCaptureSubmissionSourceDto? = nil,
         preserveRequestedFile: Bool = false
     ) {
         if let recording = recordings.removeValue(forKey: generation) {
@@ -312,7 +318,7 @@ final class CaptureFeatureModel {
                     fileURL: fileURL ?? (preserveRequestedFile ? recording.requestedFileURL : nil),
                     startedAt: recording.startedAt,
                     device: recording.device, isUserInitiated: recording.isUserInitiated,
-                    progress: recording.progress, outcome: outcome
+                    progress: recording.progress, outcome: outcome, submissionSource: submissionSource
                 ), at: 0)
         }
         guard generation == latestGeneration else { return }

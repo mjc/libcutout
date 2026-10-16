@@ -2469,7 +2469,7 @@ final class CutoutAppModelTests: XCTestCase {
         core.onCaptureEvent = { event in
             model.applyCaptureEvent(event)
             if case .started = event { started.fulfill() }
-            if case .finished(_, let fileURL) = event {
+            if case .finished(_, let fileURL, _) = event {
                 url = fileURL
                 completed.fulfill()
             }
@@ -2525,7 +2525,7 @@ final class CutoutAppModelTests: XCTestCase {
                     secondFileName = fileURL.lastPathComponent
                     secondStarted.fulfill()
                 }
-            case .finished(let generation, _), .databaseFinished(let generation, _), .failed(let generation):
+            case .finished(let generation, _, _), .databaseFinished(let generation, _), .failed(let generation):
                 if generation == firstGeneration {
                     firstTerminalCount += 1
                     firstTerminal.fulfill()

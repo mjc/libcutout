@@ -278,6 +278,29 @@ pub(super) fn list(
     })
 }
 
+pub(super) fn lookup(
+    connection: &Connection,
+    id: Option<LiveCaptureId>,
+    artifact_id: Option<CaptureArtifactId>,
+) -> Result<Option<LiveCaptureHistoryEntry>, StorageError> {
+    connection
+        .query_row(
+            "SELECT capture_id, state, integrity, dropped_messages, header_json, started_at_ms,
+            finished_at_ms, next_sequence, stored_bytes, recording_context_json
+         FROM live_capture_sessions
+         WHERE (?1 IS NOT NULL AND capture_id = ?1)
+            OR (?2 IS NOT NULL AND json_extract(recording_context_json, '$.artifact_id') = ?2)",
+            params![
+                id.map(|id| id.to_string()),
+                artifact_id.map(|id| id.to_string())
+            ],
+            HistoryRow::from_row,
+        )
+        .optional()?
+        .map(HistoryRow::into_entry)
+        .transpose()
+}
+
 fn invalid(field: &'static str, value: &str) -> StorageError {
     StorageError::InvalidStoredValue {
         field,
