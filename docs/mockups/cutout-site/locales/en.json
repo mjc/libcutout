@@ -7,27 +7,26 @@
   "nav": {
     "app": "The app",
     "guide": "How it works",
-    "support": "Support"
+    "support": "Support",
+    "about": "About CutOut"
   },
   "hero": {
     "eyebrow": "For personal electric vehicle riders",
     "title": "Know",
     "accent": "your ride.",
     "fullTitle": "Know your ride",
-    "body": "Live ride data, recorded routes, and community charging. CutOut brings the useful details together, so you can get on with the ride.",
+    "body": "See your ride data, control your lights and camera, and look back at the route and music that made the day.",
     "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
     "stampTitle": "Made by a rider.",
     "stampBody": "Built with the PEV community."
   },
   "preview": {
-    "label": "Screenshot placeholder",
-    "description": "Current app interface, with realistic sample data. To be captured later.",
-    "caption": "Screenshot space only. No older app layouts are used in this concept.",
-    "note": "Website design preview · Screenshots are placeholders · Download is not connected",
-    "dialogTag": "Design preview",
-    "dialogTitle": "This is the download entry point.",
-    "dialogBody": "The production site will link to the actual installation destination here. This mockup does not claim App Store or public beta availability.",
-    "close": "Back to the preview"
+    "label": "Screenshot coming soon",
+    "dialogTag": "Alpha",
+    "dialogTitle": "CutOut is in alpha.",
+    "dialogBody": "Public downloads are not available yet. Follow the project on GitHub for release updates.",
+    "updates": "Follow the project",
+    "close": "Close"
   },
   "vehicles": {
     "tag": "PEV coverage",
@@ -77,7 +76,7 @@
   },
   "featuresTag": "Along for the whole ride",
   "featuresTitle": "The details you need. When you need them.",
-  "featuresBody": "Check in at a glance while riding. Look a little closer when you stop.",
+  "featuresBody": "Speed and battery while you ride. Routes and ride details when you’re done.",
   "features": [
     {
       "title": "Live ride data",
@@ -95,7 +94,7 @@
   "steps": [
     {
       "title": "Connect your PEV.",
-      "body": "Choose your supported device over Bluetooth. The available readings and controls follow the actual model."
+      "body": "Connect your supported PEV over Bluetooth to see its readings and controls."
     },
     {
       "title": "Go for a ride.",
@@ -115,17 +114,18 @@
   },
   "guide": {
     "title": "A ride, from\nstart to finish.",
-    "body": "Connect your PEV, record the ride, and return to the details later. Here is where the main pieces fit.",
+    "body": "Connect your PEV, record the ride, and come back to the details later.",
     "contents": "On this page",
     "sections": [
       {
         "short": "Before the ride",
         "title": "Start with your device.",
-        "body": "Pick your supported PEV from the nearby Bluetooth devices. CutOut presents the information and settings available for that model, rather than promising the same controls for every vehicle.",
+        "body": "Choose your PEV from the nearby Bluetooth devices. See its readings, check the battery and adjust the settings available for your model.",
         "points": [
           "VESC Onewheels use Refloat firmware.",
           "EUC capabilities depend on the model and firmware.",
-          "Other PEV types need community captures; see the coverage list."
+          "Other PEV types need community captures; see the coverage list.",
+          "Set up your external RGB lights and a supported Wi-Fi camera before you head out."
         ],
         "preview": "Device selection"
       },
@@ -136,7 +136,8 @@
         "points": [
           "Speed, battery and other available telemetry.",
           "Route recording and saved ride history.",
-          "Control your music and keep track of what you listen to along the way."
+          "Control your music and keep track of what you listen to along the way.",
+          "Model-specific settings, battery detail and Lock Screen ride information are there when your setup supports them."
         ],
         "preview": "Ride screen"
       },
@@ -153,12 +154,12 @@
       }
     ],
     "compatibilityTitle": "Does it work with your PEV?",
-    "compatibilityBody": "CutOut is intended for VESC Onewheel + Refloat, EUC, eskate, scooter, ebike and emoto. The developer owns the first two categories; the others need community data captures. Manufacturer-encrypted communications are not supported.",
+    "compatibilityBody": "Check the PEV coverage list for your vehicle type, then see the FAQ for device and firmware details.",
     "compatibilityLink": "Read the compatibility FAQ"
   },
   "support": {
     "title": "A little help\nfor the road.",
-    "body": "Device compatibility, recording, charging, and privacy. Start here, or get in touch with the project.",
+    "body": "PEV compatibility, lights, cameras, music and the project behind the app. Find an answer here, or get in touch.",
     "search": "Search the questions",
     "faq": "Common questions",
     "empty": "No matching questions. Try another word, or contact the project.",
@@ -182,7 +183,113 @@
       },
       {
         "title": "Does a stock Onewheel work?",
-        "body": "The Onewheel scope here is a VESC-powered build running Refloat. This does not claim support for stock Onewheel electronics or manufacturer-encrypted protocols."
+        "body": "Stock Onewheel electronics are not supported. CutOut’s Onewheel support is for VESC-powered builds running Refloat."
+      },
+      {
+        "title": "Which Bluetooth RGB lights work?",
+        "body": "MELK devices are supported now, with more planned. Our goal is to support all non-encrypted Bluetooth RGB devices. Choose colors, white, brightness and supported effects, and save named presets. Available effects depend on the controller and firmware."
+      },
+      {
+        "title": "Which Wi-Fi cameras work with CutOut?",
+        "body": "CutOut currently works with the FreedConn R3 Pro running R3V1 firmware. Preview the camera and browse its footage; recording and photo controls depend on the firmware. Other models and revisions are not confirmed. A Novatek chip alone does not establish compatibility."
+      },
+      {
+        "title": "What about other Wi-Fi cameras?",
+        "body": "These models are possible candidates, not confirmed CutOut support. Some have documented Novatek control protocols; others are listed because their Novatek hardware and Wi-Fi are documented. Compatibility can vary by revision and firmware. Vehicle-mounted systems may need external power.",
+        "items": [
+          {
+            "title": "SJCAM SJ4000 WiFi and SJ5000X Elite",
+            "body": "Related HTTP control and RTSP preview documented by original API research.",
+            "url": "https://github.com/Zsub/SJCam-API/blob/master/README.md",
+            "link": "API research"
+          },
+          {
+            "title": "SJCAM SJ5000 WiFi",
+            "body": "Novatek hardware in the manufacturer’s manual; control protocol unverified.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ5000X-Elite-user-manual-2022.11.28.pdf",
+            "link": "Manufacturer manual"
+          },
+          {
+            "title": "SJCAM SJ6 Legend",
+            "body": "Novatek Wi-Fi action camera; control protocol unverified.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ6-LEGEND-user-manual-2022.11.28.pdf",
+            "link": "Manufacturer manual"
+          },
+          {
+            "title": "SJCAM SJ8 Air and SJ8 Plus",
+            "body": "Novatek hardware; control protocol unverified. This entry does not include SJ8 Pro.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/SJ8-Air-SJ8-Pro-user-manual-2022.11.28.pdf",
+            "link": "Manufacturer manual"
+          },
+          {
+            "title": "SJCAM C100 and C100+",
+            "body": "Small Novatek Wi-Fi cameras; control protocol unverified.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/C100-C100-user-manual-2022.11.28.pdf",
+            "link": "Manufacturer manual"
+          },
+          {
+            "title": "SJCAM C200",
+            "body": "Compact Novatek Wi-Fi action camera; control protocol unverified.",
+            "url": "https://www.sjcam.com/cameras/action-cameras/c200",
+            "link": "Manufacturer specifications"
+          },
+          {
+            "title": "SJCAM A10",
+            "body": "Novatek Wi-Fi body camera; control protocol unverified.",
+            "url": "https://static.sjcam.com/shop/uploads/2022/11/A10-user-manual-2022.11.28.pdf",
+            "link": "Manufacturer manual"
+          },
+          {
+            "title": "GitUp Git2",
+            "body": "Novatek Wi-Fi action camera; exact firmware and CutOut behavior unverified.",
+            "url": "https://pdt.static.globalsources.com/IMAGES/PDT/SPEC/384/K1146180384.pdf",
+            "link": "Product specifications"
+          },
+          {
+            "title": "GitUp Git1, Git2P and G3 Duo",
+            "body": "Further Wi-Fi action-camera candidates. Exact hardware, firmware and control compatibility still need verification; they are not confirmed CutOut support.",
+            "url": "https://www.isix.cz/user/documents/upload/Git3/G3%20Manual%20Final%20version2017.9.30edited.pdf",
+            "link": "G3 Duo manual"
+          },
+          {
+            "title": "INNOVV K2",
+            "body": "Original firmware research documents related Novatek-style HTTP commands. Exact firmware and CutOut camera functions remain unverified.",
+            "url": "https://forum.innovv.com/forums/discussion/station-mode/",
+            "link": "Original firmware research"
+          },
+          {
+            "title": "INNOVV K6",
+            "body": "Novatek Wi-Fi camera with bicycle and motorcycle variants; control protocol unverified.",
+            "url": "https://forum.innovv.com/forums/discussion/k6-products/",
+            "link": "Manufacturer’s development account"
+          },
+          {
+            "title": "INNOVV K7",
+            "body": "Related Novatek CarDV control described in firmware research. Exact commands and CutOut behavior need validation.",
+            "url": "https://github.com/Prinsessen/innovv-k7-autodump-/blob/main/docs/FIRMWARE_ANALYSIS.md",
+            "link": "Firmware research"
+          }
+        ]
+      },
+      {
+        "title": "Why is CutOut open source?",
+        "body": "We want to make it easier to build better PEV apps. Sharing the protocol work and libraries lets other developers focus on their own ideas. We are also building an app we enjoy using and the community finds useful. Real rides help improve the shared libraries, too."
+      },
+      {
+        "title": "Can I build my own app with the libraries?",
+        "body": "Yes. All CutOut code is open source, including reusable Rust libraries and mobile bindings. The project is in alpha: APIs are still changing, and device coverage varies by model and firmware. The source includes documentation and examples to help you get started.",
+        "items": [
+          {
+            "title": "CutOut on GitHub",
+            "body": "Source, library documentation and examples.",
+            "url": "https://github.com/mjc/libcutout",
+            "link": "Explore the project"
+          }
+        ]
+      },
+      {
+        "title": "Are Bluetooth diagnostics sent automatically?",
+        "body": "No. Bluetooth capture is a separate, manually started diagnostic workflow. You choose whether to share a capture. Captures can contain device identifiers and location, so keep private files out of public reports."
       },
       {
         "title": "Where are my rides stored?",
@@ -191,6 +298,10 @@
       {
         "title": "Can I see what I was listening to on a ride?",
         "body": "Yes. Turn on listening history to save the songs you listen to during a ride. CutOut saves song details with your ride, not audio."
+      },
+      {
+        "title": "Can I record a ride without connecting a PEV?",
+        "body": "Yes. Start a GPS-only ride to record your route without a connected device. Device readings are available when a supported PEV is connected."
       },
       {
         "title": "Are charging spots guaranteed to be available?",
@@ -205,7 +316,49 @@
   "soundtrack": {
     "tag": "The music along the way",
     "title": "What was your soundtrack?",
-    "body": "Track what you were listening to and where you heard it. Look back at the songs that went with each ride.",
-    "preview": "Songs along your route"
+    "body": "Keep track of what you were listening to on each ride. Rediscover the songs that went with a favorite route.",
+    "preview": "The songs from your ride"
+  },
+  "accessories": [
+    {
+      "tag": "External Bluetooth RGB lighting",
+      "title": "Make it your kind of bright.",
+      "body": "Choose your colors, set the brightness and find an effect that fits your setup. Save your favorite looks as presets, ready for the next ride.",
+      "preview": "External RGB lighting and presets",
+      "link": "See supported lights"
+    },
+    {
+      "tag": "Wi-Fi cameras",
+      "title": "Your ride camera. Right here.",
+      "body": "Preview a supported Wi-Fi camera, start and stop recording, or take a photo from CutOut. Browse the camera’s footage and download the clips you want to keep.",
+      "preview": "Camera preview, controls and footage",
+      "link": "See camera compatibility"
+    }
+  ],
+  "openSource": {
+    "tag": "Built in the open",
+    "title": "Build something of your own.",
+    "body": "The code behind CutOut is open source. Build on its PEV protocols and libraries, and spend more time on your own ideas.",
+    "link": "Meet the project"
+  },
+  "about": {
+    "title": "A better ride.\nMore room for ideas.",
+    "body": "CutOut is a ride app built by a rider, with the PEV community. All the code is open source, and the project is in alpha.",
+    "sections": [
+      {
+        "title": "Better PEV apps.",
+        "body": "We want every PEV app to be better. Sharing the protocol work and useful libraries gives other developers more time to try new ideas."
+      },
+      {
+        "title": "An app worth riding with.",
+        "body": "We are building an app we enjoy using and the community finds useful. Real rides and devices help improve the shared libraries, too."
+      },
+      {
+        "title": "Build on what is here.",
+        "body": "Use the Rust libraries for device and accessory protocols, ride data, maps, music metadata and persistence, with mobile bindings for app integration. The APIs are alpha and still changing."
+      }
+    ],
+    "source": "Explore the source and libraries",
+    "faq": "Read the project FAQ"
   }
 }
