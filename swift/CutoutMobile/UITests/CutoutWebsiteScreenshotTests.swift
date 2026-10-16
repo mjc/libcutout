@@ -108,7 +108,9 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         XCTAssertTrue(element("ride-map.recording-pill").waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertTrue(element("ride-map.map").waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(element("ride-map.latest-point-marker").waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(element("ride-map.summary").waitForExistence(timeout: 10), app.debugDescription)
+        let summary = element("ride-map.summary")
+        XCTAssertTrue(summary.waitForExistence(timeout: 10), app.debugDescription)
+        assertRideSummaryHasCompleteReadback(summary)
         attachScreenshot(named: "ride-tracking")
     }
 
@@ -195,6 +197,45 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
 
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func assertRideSummaryHasCompleteReadback(_ summary: XCUIElement) {
+        let predicate = NSPredicate { object, _ in
+            guard let element = object as? XCUIElement else { return false }
+            let value = element.value as? String ?? ""
+            let text = "\(element.label) \(value)"
+            return Self.hasCompleteRideReadback(text)
+        }
+        let completeReadback = XCTNSPredicateExpectation(predicate: predicate, object: summary)
+        XCTAssertEqual(XCTWaiter.wait(for: [completeReadback], timeout: 10), .completed, summary.debugDescription)
+        let value = summary.value as? String ?? ""
+        XCTAssertTrue(Self.hasCompleteRideReadback("\(summary.label) \(value)"), summary.debugDescription)
+    }
+
+    private static func hasCompleteRideReadback(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        guard normalized.contains("elapsed time"), normalized.contains("moving time"),
+            !normalized.contains("≥"), !normalized.contains("at least"),
+            !normalized.contains("coverage is partial"),
+            !normalized.contains("some intervals unavailable")
+        else {
+            return false
+        }
+
+        let minuteDurations = matches(
+            pattern: #"(?i)\b[1-9]\d*\s*min\b"#,
+            in: text
+        )
+        let positiveSpeeds = matches(
+            pattern: #"(?i)\b[1-9]\d*(?:\.\d+)?\s*(?:mph|km/h|kmh|mi/h)\b"#,
+            in: text
+        )
+        return minuteDurations.count >= 2 && !positiveSpeeds.isEmpty
+    }
+
+    private static func matches(pattern: String, in text: String) -> [NSTextCheckingResult] {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return expression.matches(in: text, range: NSRange(text.startIndex..., in: text))
     }
 
     private func attachScreenshot(named scene: String) {
