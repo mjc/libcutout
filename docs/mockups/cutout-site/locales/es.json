@@ -254,6 +254,12 @@
             "link": "Manual de G3 Duo"
           },
           {
+            "title": "INNOVV K2",
+            "body": "Una investigación original del firmware documenta comandos HTTP de estilo Novatek relacionados. El firmware exacto y las funciones en CutOut siguen sin verificar.",
+            "url": "https://forum.innovv.com/forums/discussion/station-mode/",
+            "link": "Investigación original del firmware"
+          },
+          {
             "title": "INNOVV K6",
             "body": "Cámara Wi-Fi con Novatek y variantes para bicicleta y motocicleta; protocolo sin verificar.",
             "url": "https://forum.innovv.com/forums/discussion/k6-products/",
