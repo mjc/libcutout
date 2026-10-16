@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CutOut app screenshots</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #10110e;
+        color: #f4f0e5;
+      }
+
+      body {
+        margin: 0;
+        padding: clamp(1.25rem, 4vw, 3rem);
+      }
+
+      main {
+        max-width: 76rem;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 1.5rem;
+        color: #f4c84a;
+        font-size: clamp(1.5rem, 3vw, 2.25rem);
+      }
+
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+        gap: 1.25rem;
+        align-items: start;
+      }
+
+      figure {
+        margin: 0;
+        padding: 0.75rem;
+        border: 1px solid #34352e;
+        border-radius: 1rem;
+        background: #191a16;
+      }
+
+      figure a {
+        display: block;
+        border-radius: 0.65rem;
+        background: #0b0c0a;
+      }
+
+      figure img {
+        display: block;
+        width: 100%;
+        height: min(72vh, 46rem);
+        object-fit: contain;
+        border-radius: 0.65rem;
+      }
+
+      figcaption {
+        padding: 0.8rem 0.15rem 0.15rem;
+        color: #e6c455;
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      .source-tag {
+        display: block;
+        margin-top: 0.35rem;
+        color: #b7b8ad;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>CutOut app screenshots</h1>
+      <section class="gallery" aria-label="App screenshots">
+        <figure>
+          <a href="euc-main.png"><img src="euc-main.png" alt="CutOut EUC ride dashboard with music player" /></a>
+          <figcaption>EUC main with music <span class="source-tag">Native capture · synthetic data</span></figcaption>
+        </figure>
+        <figure>
+          <a href="rgb.png"><img src="rgb.png" alt="CutOut connected RGB lighting controls" /></a>
+          <figcaption>RGB lighting <span class="source-tag">Rendered mockup · synthetic data</span></figcaption>
+        </figure>
+        <figure>
+          <a href="tune.png"><img src="tune.png" alt="CutOut vehicle tuning settings" /></a>
+          <figcaption>EUC Tune <span class="source-tag">Rendered mockup · synthetic data</span></figcaption>
+        </figure>
+        <figure>
+          <a href="ride-tracking.png"><img src="ride-tracking.png" alt="CutOut ride tracking map and summary" /></a>
+          <figcaption>Ride tracking <span class="source-tag">Rendered mockup · synthetic data</span></figcaption>
+        </figure>
+        <figure>
+          <a href="charging-map.png"><img src="charging-map.png" alt="CutOut map showing nearby charging locations" /></a>
+          <figcaption>Charging map <span class="source-tag">Native capture · synthetic data</span></figcaption>
+        </figure>
+      </section>
+    </main>
+  </body>
+</html>

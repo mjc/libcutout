@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "gallery": "CutOut app screenshots",
+  "assets": [
+    {
+      "scene": "euc-main",
+      "file": "euc-main.png",
+      "caption": "EUC main with music",
+      "method": "native-ios-simulator-xctest",
+      "label": "Native capture · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "sha256": "3d40c69d912a6f7312779ee87db671d41e25647e08ecf89cfa7c4748bcb2584b",
+      "syntheticData": "Synthetic EUC telemetry and fictional music metadata.",
+      "provenance": {
+        "testSourceRevision": "89dfa2e5f61ff4e4a9e159f5ee8c43b09b86f3f2",
+        "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testIdentifier": "CutoutWebsiteScreenshotTests/testEucMain()",
+        "testCaseOutcome": "passed",
+        "batchOutcome": "failed",
+        "batchSummary": "Three cases passed and one failed; this screenshot case passed.",
+        "device": "iPhone 15 Pro Max",
+        "runtime": "iOS 27.0"
+      }
+    },
+    {
+      "scene": "rgb",
+      "file": "rgb.png",
+      "caption": "RGB lighting",
+      "method": "rendered-html-mockup",
+      "label": "Rendered mockup · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "assetStatus": "reviewed",
+      "syntheticData": "Static mockup of fictional accessory controls. Display values, including the color wheel, are synthetic and are not actual wheel readbacks.",
+      "provenance": {
+        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
+        "testOutcome": "not run; rendered mockup",
+        "renderer": {
+          "method": "Playwright-rendered HTML mockup",
+          "sourceFile": "mockup-source/index.html",
+          "rendererScript": "mockup-source/render.cjs",
+          "command": "node mockup-source/render.cjs",
+          "environment": [
+            "CUTOUT_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_MODULE"
+          ],
+          "viewportCssPixels": {
+            "width": 430,
+            "height": 932
+          },
+          "deviceScaleFactor": 3,
+          "headless": true
+        }
+      },
+      "sha256": "4defdd4ddc46fe38112246cabfcde0a1d14ab75ca5716064c0b13b258cf740fc"
+    },
+    {
+      "scene": "tune",
+      "file": "tune.png",
+      "caption": "EUC Tune",
+      "method": "rendered-html-mockup",
+      "label": "Rendered mockup · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "assetStatus": "reviewed",
+      "syntheticData": "Static mockup of synthetic EUC tuning values. Display values are not actual wheel readbacks or live settings readbacks.",
+      "provenance": {
+        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
+        "testOutcome": "not run; rendered mockup",
+        "vehicle": "EUC",
+        "renderer": {
+          "method": "Playwright-rendered HTML mockup",
+          "sourceFile": "mockup-source/index.html",
+          "rendererScript": "mockup-source/render.cjs",
+          "command": "node mockup-source/render.cjs",
+          "environment": [
+            "CUTOUT_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_MODULE"
+          ],
+          "viewportCssPixels": {
+            "width": 430,
+            "height": 932
+          },
+          "deviceScaleFactor": 3,
+          "headless": true
+        }
+      },
+      "sha256": "d7b8b29a137ae20cc4ade691a1c4591027f5987ef6e307b1de2e11f1e43a84d1"
+    },
+    {
+      "scene": "ride-tracking",
+      "file": "ride-tracking.png",
+      "caption": "Ride tracking",
+      "method": "rendered-hybrid-mockup",
+      "label": "Rendered mockup · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "assetStatus": "reviewed",
+      "syntheticData": "Synthetic 18-anchor ride on public Platte River Trail geometry; 2.1 mi, 5 min 20 sec elapsed and moving time, 24.7 mph. Summary values are synthetic, not native ride telemetry.",
+      "provenance": {
+        "renderer": {
+          "method": "Playwright-rendered HTML mockup",
+          "sourceFile": "mockup-source/index.html",
+          "rendererScript": "mockup-source/render.cjs",
+          "command": "node mockup-source/render.cjs",
+          "environment": [
+            "CUTOUT_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_MODULE"
+          ],
+          "viewportCssPixels": {
+            "width": 430,
+            "height": 932
+          },
+          "deviceScaleFactor": 3,
+          "headless": true
+        },
+        "nativeReference": {
+          "file": "mockup-source/ride-map-reference.png",
+          "sha256": "4065bda48b18b236af974f8c8b8ac5e9ef41e2317f88381a3d8842df2ffbaba2",
+          "testSourceRevision": "89dfa2e5f61ff4e4a9e159f5ee8c43b09b86f3f2",
+          "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+          "testIdentifier": "CutoutWebsiteScreenshotTests/testRideTracking()",
+          "referenceOnly": true,
+          "assertionsAppliedToRenderedMockup": false
+        },
+        "routeSource": "https://github.com/JasonSanford/denver-bike-routes/blob/master/routes.geojson",
+        "routeFeature": "Littleton to REI Flagship - Downtown Denver",
+        "routeAnchorCount": 18,
+        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
+        "testOutcome": "not run; rendered mockup",
+        "mockupAssertions": "No XCTest assertions were applied to this rendered image."
+      },
+      "sha256": "c6560aa4f53af968029cb197d57410e128e82ce6f08f8f6c3298d67f5e7f0c8f"
+    },
+    {
+      "scene": "charging-map",
+      "file": "charging-map.png",
+      "caption": "Charging map",
+      "method": "native-ios-simulator-xctest",
+      "label": "Native capture · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "sha256": "bf12c49126065f23886a3f3889cabf5f6f38bac6a198bb03aba4ecea19ff2712",
+      "syntheticData": "Three fictional local charging spots; Apple Maps basemap.",
+      "provenance": {
+        "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testSourceRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testIdentifier": "CutoutWebsiteScreenshotTests/testChargingMap()",
+        "testCaseOutcome": "passed",
+        "batchOutcome": "incomplete",
+        "resultBundleIncomplete": true,
+        "testDurationSeconds": 60.055,
+        "device": "iPhone 15 Pro Max",
+        "runtime": "iOS 27.0"
+      }
+    }
+  ]
+}
