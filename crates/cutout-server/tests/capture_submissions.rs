@@ -763,3 +763,80 @@ async fn private_capture_review_capability_is_rechecked_after_revocation() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn private_capture_and_signup_moderation_keep_independent_permissions() {
+    let directory = TempDir::new().expect("directory");
+    let database = directory.path().join("combined.sqlite");
+    let server = Server::start(&database).await;
+    let owner = server.identity().await;
+    let moderator = provision(&database, "--moderator");
+    let reviewer = provision(&database, "--private-capture-reviewer");
+    assert_eq!(
+        server
+            .client
+            .get(format!("{}/readyz", server.address))
+            .send()
+            .await
+            .expect("readiness")
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        server
+            .client
+            .get(format!("{}/v1/alpha-signup/config", server.address))
+            .send()
+            .await
+            .expect("signup config")
+            .status(),
+        StatusCode::OK
+    );
+    let operation = Uuid::new_v4().to_string();
+    let bytes = capture();
+    expect_status(
+        server.put(&operation, &owner, &bytes, "manual").await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/moderation/alpha-signups", &moderator)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/moderation/alpha-signups", &reviewer)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/capture-submissions", &moderator)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/capture-submissions", &reviewer)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let response = server
+        .request(
+            Method::GET,
+            &format!("/v1/capture-submissions/{operation}/content"),
+            &reviewer,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.bytes().await.expect("private content").as_ref(),
+        bytes
+    );
+}

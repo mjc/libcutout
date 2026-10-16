@@ -16,6 +16,7 @@ futures-util.workspace = true
 rusqlite = { workspace = true, features = ["blob"] }
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "fs", "io-util"] }

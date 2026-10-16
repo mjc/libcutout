@@ -121,7 +121,7 @@ impl Store {
             let version: u32 = connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(db_error)?;
-            if version != 3 {
+            if version != 6 {
                 return Err(Error::Unavailable);
             }
             connection
@@ -341,22 +341,64 @@ fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Err
                 .map_err(db_error)?;
             transaction.commit().map_err(db_error)?;
             migrate_account_deletion(connection)?;
+            migrate_alpha_signup(connection)?;
+            migrate_alpha_signup_sync(connection)?;
+            migrate_alpha_signup_removal(connection)?;
         }
-        1 | 2 if application == 0x4353_5054 && mode == OpenMode::Initialize => {}
-        3 if application == 0x4353_5054 => return Ok(()),
+        1 | 5 if application == 0x4353_5054 && mode == OpenMode::Initialize => {}
+        2 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
+            migrate_alpha_signup(connection)?;
+            migrate_alpha_signup_sync(connection)?;
+            migrate_alpha_signup_removal(connection)?;
+        }
+        3 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
+            migrate_alpha_signup_sync(connection)?;
+            migrate_alpha_signup_removal(connection)?;
+        }
+        4 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
+            migrate_alpha_signup_removal(connection)?;
+        }
+        6 if application == 0x4353_5054 => return Ok(()),
         _ => return Err(Error::Unavailable),
     }
     if version == 1 {
         migrate_account_deletion(connection)?;
+        migrate_alpha_signup(connection)?;
+        migrate_alpha_signup_sync(connection)?;
+        migrate_alpha_signup_removal(connection)?;
     }
     let transaction = connection.transaction().map_err(db_error)?;
     transaction
         .execute_batch(include_str!(
-            "../migrations/003_private_capture_submissions.sql"
+            "../migrations/006_private_capture_submissions.sql"
         ))
         .map_err(db_error)?;
     transaction.commit().map_err(db_error)?;
     Ok(())
+}
+
+fn migrate_alpha_signup(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../migrations/003_alpha_signup.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
+}
+
+fn migrate_alpha_signup_sync(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../migrations/004_alpha_signup_sync.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
+}
+
+fn migrate_alpha_signup_removal(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../migrations/005_alpha_signup_removal.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
 }
 
 fn migrate_account_deletion(connection: &mut Connection) -> Result<(), Error> {

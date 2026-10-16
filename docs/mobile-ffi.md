@@ -153,9 +153,12 @@ The generator keeps private source snapshots in the repository's sibling
 `.cutout-ffi-sources/<repository-path-hash>/<source-hash>` directory. This preserves
 Cargo's ancestor/global configuration lookup without loading the project's
 configuration twice. Both `.cargo/config` and `.cargo/config.toml`, when present,
-are copied so Cargo applies its normal precedence. It copies those sources once,
-preserving compilation paths and mtimes across repeated prepares so Cargo can
-reuse its cache. Relative files and directories named by those Cargo
+are copied so Cargo applies its normal precedence. Repeated prepares of the
+current snapshot preserve its compilation paths and mtimes so Cargo can reuse
+its cache. Switching source identity removes the previous snapshot after the new
+copy is ready. Returning to an earlier identity therefore copies fresh inputs
+rather than resurrecting old mtimes against artifacts built from later sources.
+Relative files and directories named by those Cargo
 configuration files are copied into the snapshot at their original paths. A
 damaged private snapshot (including a Cargo-rewritten lockfile)
 is moved aside and rebuilt from current inputs. A corrupt published generation is
@@ -166,9 +169,9 @@ A lock serializes publication and holds the selector stable throughout supported
 builds. Their native processes retain that lock, so a replacement cannot remove
 the generation while they use it. Pruning recognizes generated receipts and
 leaves unrelated paths and symlink targets untouched.
-The separate source-snapshot cache retains the current snapshot and three recent
-snapshots, with four source quarantine directories for diagnosis; older entries
-are removed while that lock is held.
+The separate source-snapshot cache retains only the current snapshot. A healthy
+capture or repair removes obsolete source copies and quarantined snapshots while
+that lock is held. A failed capture leaves the last valid snapshot available.
 The noninteractive Cargo generator inherits a clone of that lock on stdin, so
 an orphaned generator retains ownership if its coordinating process is killed.
 The native output receipt identifies the immutable

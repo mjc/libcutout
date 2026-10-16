@@ -15,4 +15,4 @@ CREATE TABLE capture_submissions (
             AND receipt IS NOT NULL AND summary IS NOT NULL AND length(payload) = bytes))
 );
 CREATE INDEX capture_submissions_owner ON capture_submissions(owner_id, operation_id);
-PRAGMA user_version = 3;
+PRAGMA user_version = 6;

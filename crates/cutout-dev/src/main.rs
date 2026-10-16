@@ -7,7 +7,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
-    time::SystemTime,
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -25,8 +24,6 @@ const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.generation.lock";
 const FFI_RECEIPT: &str = ".cutout-artifact.json";
 const FFI_CHECKER: &str = ".cutout-ffi-check";
 const FFI_GENERATIONS: &str = "target/swift-ffi/generations";
-const MAX_SOURCE_SNAPSHOTS: usize = 4;
-const MAX_QUARANTINE_DIRECTORIES: usize = 4;
 
 fn lock_swift_ffi(root: &Path) -> Result<fs::File> {
     let path = root.join(SWIFT_FFI_LOCK);
@@ -1000,40 +997,18 @@ impl FfiSourceSnapshot {
 }
 
 fn prune_source_snapshots(parent: &Path, current: &Path) -> Result<()> {
-    let mut snapshots = Vec::new();
-    let mut quarantines = Vec::new();
     for entry in fs::read_dir(parent)? {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_dir() {
+        if path == current || !entry.file_type()?.is_dir() {
             continue;
         }
         let name = entry.file_name();
-        let modified = entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        if name.to_str().is_some_and(|name| {
-            name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) {
-            snapshots.push((path, modified));
-        } else if name.to_string_lossy().starts_with(".quarantine-") {
-            quarantines.push((path, modified));
-        }
-    }
-    snapshots.sort_by_key(|(_, modified)| *modified);
-    let mut retained = 0;
-    for (path, _) in snapshots {
-        if path == current || retained < MAX_SOURCE_SNAPSHOTS.saturating_sub(1) {
-            retained += usize::from(path != current);
-        } else {
+        if name.to_str().is_some_and(is_ffi_generation_name)
+            || name.to_string_lossy().starts_with(".quarantine-")
+        {
             fs::remove_dir_all(path)?;
         }
-    }
-    quarantines.sort_by_key(|(_, modified)| *modified);
-    while quarantines.len() > MAX_QUARANTINE_DIRECTORIES {
-        let (path, _) = quarantines.remove(0);
-        fs::remove_dir_all(path)?;
     }
     Ok(())
 }
@@ -1417,7 +1392,7 @@ mod tests {
         assert_eq!(repaired.path, first.path);
         assert_eq!(source_fingerprint(&repaired.path).unwrap(), expected);
         assert!(
-            fs::read_dir(repaired.path.parent().unwrap())
+            !fs::read_dir(repaired.path.parent().unwrap())
                 .unwrap()
                 .any(|entry| entry
                     .unwrap()
@@ -1426,6 +1401,74 @@ mod tests {
                     .starts_with(".quarantine-"))
         );
         fs::remove_dir_all(repaired.path.parent().unwrap()).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_source_snapshot_a_b_a_recreates_inputs_instead_of_reusing_old_mtimes() {
+        let root = env::temp_dir().join(format!(
+            "cutout-ffi-snapshot-replace-{}",
+            std::process::id()
+        ));
+        fixture_sources(&root);
+        let input = Path::new("crates/fixture/src/lib.rs");
+        let source_a = source_fingerprint(&root).unwrap();
+        let first_a = FfiSourceSnapshot::capture(&root, &source_a).unwrap();
+        let old_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        fs::File::options()
+            .write(true)
+            .open(first_a.path.join(input))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(old_time))
+            .unwrap();
+        let first_mtime = fs::metadata(first_a.path.join(input))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fs::write(first_a.path.join("old-snapshot-marker"), "obsolete").unwrap();
+        fs::write(root.join(input), "source-b").unwrap();
+        // Rejected capture cannot retire the last valid snapshot.
+        assert!(FfiSourceSnapshot::capture(&root, &source_a).is_err());
+        assert!(first_a.path.join("old-snapshot-marker").exists());
+        let source_b = source_fingerprint(&root).unwrap();
+        let second_b = FfiSourceSnapshot::capture(&root, &source_b).unwrap();
+        assert_ne!(first_a.path, second_b.path);
+        assert!(!first_a.path.exists());
+        assert_eq!(
+            fs::read_dir(second_b.path.parent().unwrap())
+                .unwrap()
+                .count(),
+            1
+        );
+        fs::write(root.join(input), "original").unwrap();
+        assert_eq!(source_fingerprint(&root).unwrap(), source_a);
+        let replacement_a = FfiSourceSnapshot::capture(&root, &source_a).unwrap();
+        assert_eq!(replacement_a.path, first_a.path);
+        assert!(!second_b.path.exists());
+        assert!(!replacement_a.path.join("old-snapshot-marker").exists());
+        let fresh_mtime = fs::metadata(replacement_a.path.join(input))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert!(
+            fresh_mtime > first_mtime,
+            "returning to A must copy fresh inputs after B"
+        );
+        let unchanged_a = FfiSourceSnapshot::capture(&root, &source_a).unwrap();
+        assert_eq!(
+            fs::metadata(unchanged_a.path.join(input))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            fresh_mtime
+        );
+        assert_eq!(
+            fs::read_dir(replacement_a.path.parent().unwrap())
+                .unwrap()
+                .count(),
+            1
+        );
+        fs::remove_dir_all(replacement_a.path.parent().unwrap()).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
