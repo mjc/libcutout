@@ -122,7 +122,8 @@
   .footer-top { display:flex; justify-content:space-between; gap:48px; padding-bottom:48px; }
   .footer-top p { max-width:280px; color:#a6af9d; font-size:13px; margin-top:15px; }
   .footer-links { display:flex; gap:38px; align-items:start; flex-wrap:wrap; }
-  .footer-links a { text-decoration:none; font-size:13px; padding-block:10px; color:#bec7b4; }
+  .footer-links a { display:inline-flex; align-items:center; gap:8px; min-height:44px; text-decoration:none; font-size:13px; padding-block:10px; color:#bec7b4; }
+  .footer-links .icon { width:16px; height:16px; }
   .footer-bottom { padding-top:22px; border-top:1px solid #343a32; display:flex; justify-content:space-between; gap:20px; color:#9aa58e; font-size:11px; }
   .page-intro { padding-block:85px 70px; border-bottom:1px solid var(--line); }
   .page-intro h1 { font-size:clamp(48px,7vw,88px); max-width:900px; margin-bottom:28px; white-space:pre-line; }
