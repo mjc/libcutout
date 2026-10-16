@@ -1,0 +1,211 @@
+{
+  "skip": "Skip to content",
+  "navigation": "Main navigation",
+  "language": "Website language",
+  "menu": "Open navigation",
+  "get": "Get CutOut",
+  "nav": {
+    "app": "The app",
+    "guide": "How it works",
+    "support": "Support"
+  },
+  "hero": {
+    "eyebrow": "For personal electric vehicle riders",
+    "title": "Know",
+    "accent": "your ride.",
+    "fullTitle": "Know your ride",
+    "body": "Live ride data, recorded routes, and community charging. CutOut brings the useful details together, so you can get on with the ride.",
+    "note": "VESC Onewheel + Refloat · EUC · Eskate · Scooter · Ebike · Emoto",
+    "stampTitle": "Made by a rider.",
+    "stampBody": "Built with the PEV community."
+  },
+  "preview": {
+    "label": "Screenshot placeholder",
+    "description": "Current app interface, with realistic sample data. To be captured later.",
+    "caption": "Screenshot space only. No older app layouts are used in this concept.",
+    "note": "Website design preview · Screenshots are placeholders · Download is not connected",
+    "dialogTag": "Design preview",
+    "dialogTitle": "This is the download entry point.",
+    "dialogBody": "The production site will link to the actual installation destination here. This mockup does not claim App Store or public beta availability.",
+    "close": "Back to the preview"
+  },
+  "vehicles": {
+    "tag": "PEV coverage",
+    "title": "Built for all PEV types.",
+    "body": "The developer owns VESC Onewheels running Refloat and EUCs. For the other types, community data captures will help bring support to life. Capabilities depend on the model and firmware.",
+    "owned": "Developer-owned hardware",
+    "needed": "Community captures needed",
+    "items": [
+      {
+        "name": "VESC Onewheel",
+        "detail": "Running Refloat",
+        "kind": "onewheel",
+        "owned": true
+      },
+      {
+        "name": "EUC",
+        "detail": "Electric unicycle",
+        "kind": "euc",
+        "owned": true
+      },
+      {
+        "name": "Eskate",
+        "detail": "Electric skateboard",
+        "kind": "eskate",
+        "owned": false
+      },
+      {
+        "name": "Scooter",
+        "detail": "Electric scooter",
+        "kind": "scooter",
+        "owned": false
+      },
+      {
+        "name": "Ebike",
+        "detail": "Electric bicycle",
+        "kind": "ebike",
+        "owned": false
+      },
+      {
+        "name": "Emoto",
+        "detail": "Electric motorcycle",
+        "kind": "emoto",
+        "owned": false
+      }
+    ],
+    "link": "Help add support for your PEV"
+  },
+  "featuresTag": "Along for the whole ride",
+  "featuresTitle": "The details you need. When you need them.",
+  "featuresBody": "Check in at a glance while riding. Look a little closer when you stop.",
+  "features": [
+    {
+      "title": "Live ride data",
+      "body": "Speed, battery, power, temperature, and PWM headroom at a glance, with readings from your PEV."
+    },
+    {
+      "title": "Your ride history",
+      "body": "Revisit a favorite loop, follow the route you took, and look back at your speed, distance, and ride details."
+    },
+    {
+      "title": "Community charging",
+      "body": "Find charging spots shared by other riders. Check plugs, access notes, and costs before you head over, then add the places that helped you out."
+    }
+  ],
+  "steps": [
+    {
+      "title": "Connect your PEV.",
+      "body": "Choose your supported device over Bluetooth. The available readings and controls follow the actual model."
+    },
+    {
+      "title": "Go for a ride.",
+      "body": "Record your route and device data. Use the ride screen for a quick check, and keep your attention on the road."
+    },
+    {
+      "title": "Look back later.",
+      "body": "Open your saved rides, review the route, and find the details that made this one different."
+    }
+  ],
+  "stepsLink": "See how a ride works",
+  "cta": "Take CutOut on your next ride.",
+  "footer": {
+    "description": "A ride companion for personal electric vehicles. Built in the open.",
+    "privacy": "Privacy",
+    "built": "For riders. With the community."
+  },
+  "guide": {
+    "title": "A ride, from\nstart to finish.",
+    "body": "Connect your PEV, record the ride, and return to the details later. Here is where the main pieces fit.",
+    "contents": "On this page",
+    "sections": [
+      {
+        "short": "Before the ride",
+        "title": "Start with your device.",
+        "body": "Pick your supported PEV from the nearby Bluetooth devices. CutOut presents the information and settings available for that model, rather than promising the same controls for every vehicle.",
+        "points": [
+          "VESC Onewheels use Refloat firmware.",
+          "EUC capabilities depend on the model and firmware.",
+          "Other PEV types need community captures; see the coverage list."
+        ],
+        "preview": "Device selection"
+      },
+      {
+        "short": "During the ride",
+        "title": "A quick look is enough.",
+        "body": "The ride screen puts live readings in one place. Record the route and wheel data, and use community charging details when you are planning a stop.",
+        "points": [
+          "Speed, battery and other available telemetry.",
+          "Route recording and saved ride history.",
+          "Control your music and keep track of what you listen to along the way."
+        ],
+        "preview": "Ride screen"
+      },
+      {
+        "short": "After the ride",
+        "title": "The ride is still there.",
+        "body": "Open a saved ride to see where you went, how the ride went, and what you were listening to.",
+        "points": [
+          "Browse the map and your saved rides.",
+          "Review recorded data after you stop.",
+          "Find the songs that went with your ride."
+        ],
+        "preview": "Saved ride detail"
+      }
+    ],
+    "compatibilityTitle": "Does it work with your PEV?",
+    "compatibilityBody": "CutOut is intended for VESC Onewheel + Refloat, EUC, eskate, scooter, ebike and emoto. The developer owns the first two categories; the others need community data captures. Manufacturer-encrypted communications are not supported.",
+    "compatibilityLink": "Read the compatibility FAQ"
+  },
+  "support": {
+    "title": "A little help\nfor the road.",
+    "body": "Device compatibility, recording, charging, and privacy. Start here, or get in touch with the project.",
+    "search": "Search the questions",
+    "faq": "Common questions",
+    "empty": "No matching questions. Try another word, or contact the project.",
+    "contactTitle": "Still need a hand?",
+    "contactBody": "Ask a question or report an app problem on the public GitHub project.",
+    "contactLink": "Get help on GitHub",
+    "publicNote": "GitHub reports are public and require a GitHub account. Keep private locations, credentials, and diagnostic files out of public reports.",
+    "reportNote": "For a problem with a charging spot, use the private Report action in the app.",
+    "questions": [
+      {
+        "title": "Which PEV types is CutOut for?",
+        "body": "CutOut is intended for VESC-powered Onewheels running Refloat, EUCs, eskates, scooters, ebikes and emotos. The developer owns VESC Onewheel + Refloat and EUC hardware. Eskate, scooter, ebike and emoto support needs community captures. Individual model and firmware capabilities still need implementation and validation."
+      },
+      {
+        "title": "Will you support devices with encrypted communications?",
+        "body": "No. CutOut will not support devices whose manufacturers encrypt their communications. Unencrypted devices from the same manufacturer can be considered independently."
+      },
+      {
+        "title": "How can I help add support for my PEV?",
+        "body": "Community data captures are needed for eskates, scooters, ebikes and emotos. Contact the project with the device model and firmware to ask for capture instructions. Do not post private captures in a public GitHub issue; recordings can contain device identifiers and location."
+      },
+      {
+        "title": "Does a stock Onewheel work?",
+        "body": "The Onewheel scope here is a VESC-powered build running Refloat. This does not claim support for stock Onewheel electronics or manufacturer-encrypted protocols."
+      },
+      {
+        "title": "Where are my rides stored?",
+        "body": "Your saved rides are stored on your phone. Open your ride history to browse routes and recorded details."
+      },
+      {
+        "title": "Can I see what I was listening to on a ride?",
+        "body": "Yes. Turn on listening history to save the songs you listen to during a ride. CutOut saves song details with your ride, not audio."
+      },
+      {
+        "title": "Are charging spots guaranteed to be available?",
+        "body": "Charging spots and access notes come from the community. Read the details, check that the plug works with your charger, and confirm access with the location when needed."
+      },
+      {
+        "title": "What happens when I delete my community account?",
+        "body": "Your account-linked private records are deleted. Public charging spots remain under Anonymous with their content unchanged; you can remove your spots manually first if you wish. Local rides and Bluetooth captures remain on your device. The privacy policy explains deletion receipts and backup retention."
+      }
+    ]
+  },
+  "soundtrack": {
+    "tag": "The music along the way",
+    "title": "What was your soundtrack?",
+    "body": "Track what you were listening to and where you heard it. Look back at the songs that went with each ride.",
+    "preview": "Songs along your route"
+  }
+}
