@@ -27,6 +27,54 @@ enum ChargingCommunitySyncDebugEnablement {
 }
 
 #if DEBUG
+    private struct ChargingCommunityServiceSyncUITestFixture {
+        let baseURL: URL
+        let keychainID: String
+
+        static var isRequested: Bool {
+            CommandLine.arguments.contains("--ui-test-charging-service-sync")
+        }
+
+        static var supportsFixture: Bool {
+            #if targetEnvironment(simulator)
+                true
+            #else
+                false
+            #endif
+        }
+
+        static var current: Self? {
+            guard isRequested, supportsFixture else { return nil }
+            let environment = ProcessInfo.processInfo.environment
+            guard
+                CommandLine.arguments.contains("--charging-acceptance"),
+                let databaseID = environment["CUTOUT_CHARGING_ACCEPTANCE_DATABASE_ID"],
+                UUID(uuidString: databaseID) != nil,
+                let baseURLString = environment["CUTOUT_UI_TEST_CHARGING_SERVICE_BASE_URL"],
+                let baseURL = URL(string: baseURLString),
+                baseURL.scheme == "http",
+                baseURL.user == nil,
+                baseURL.password == nil,
+                ["127.0.0.1", "::1"].contains(baseURL.host?.lowercased() ?? ""),
+                baseURL.port.map({ $0 > 0 && $0 <= 65_535 }) == true,
+                baseURL.path == "/",
+                baseURL.query == nil,
+                baseURL.fragment == nil,
+                let clientID = environment["CUTOUT_UI_TEST_CHARGING_SERVICE_CLIENT_ID"],
+                !clientID.isEmpty,
+                clientID.utf8.count <= 64,
+                clientID.utf8.allSatisfy({
+                    (48...57).contains($0) || (65...90).contains($0)
+                        || (97...122).contains($0) || $0 == 45 || $0 == 95
+                })
+            else { return nil }
+            return Self(
+                baseURL: baseURL,
+                keychainID: "charging-community-sync-ui-test-\(clientID)"
+            )
+        }
+    }
+
     private struct ChargingCommunityAccountDeletionUITestFixture {
         let baseURL: URL
         let credential: ChargingCommunityCredential
@@ -313,7 +361,52 @@ final class ChargingCommunitySync {
     static let shared = makeShared()
 
     private static func makeShared() -> ChargingCommunitySync {
-        ChargingCommunitySync(
+        #if DEBUG
+            if ChargingCommunityServiceSyncUITestFixture.isRequested {
+                guard let fixture = ChargingCommunityServiceSyncUITestFixture.current else {
+                    return ChargingCommunitySync(
+                        credentialStore: KeychainChargingCredentialStore(
+                            account: "charging-community-sync-ui-test-unconfigured"
+                        ),
+                        registerIdentity: { throw MobileChargingError.Unavailable },
+                        synchronize: { _ in throw MobileChargingError.Unavailable },
+                        refreshDirectory: { throw MobileChargingError.Unavailable },
+                        sleep: waitForRetry,
+                        enabled: { false }
+                    )
+                }
+                return ChargingCommunitySync(
+                    credentialStore: KeychainChargingCredentialStore(account: fixture.keychainID),
+                    registerIdentity: {
+                        let identity = try await mobileRegisterChargingIdentityAtLoopback(
+                            baseUrl: fixture.baseURL.absoluteString
+                        )
+                        return ChargingCommunityCredential(
+                            identityID: identity.identityId, token: identity.token
+                        )
+                    },
+                    synchronize: { token in
+                        let database = try await RustPersistenceStore.open()
+                        return try await database.synchronizeChargingSpotsAtLoopback(
+                            token: token, baseUrl: fixture.baseURL.absoluteString
+                        )
+                    },
+                    refreshDirectory: {
+                        let database = try await RustPersistenceStore.open()
+                        return try await database.refreshChargingDirectoryAtLoopback(
+                            baseUrl: fixture.baseURL.absoluteString
+                        )
+                    },
+                    readLastUpdated: {
+                        let database = try await RustPersistenceStore.open()
+                        return try await database.chargingDirectoryLastUpdatedMs()
+                    },
+                    sleep: waitForRetry,
+                    enabled: { true }
+                )
+            }
+        #endif
+        return ChargingCommunitySync(
             credentialStore: defaultCredentialStore(),
             registerIdentity: {
                 let identity = try await mobileRegisterChargingIdentity()
@@ -351,6 +444,12 @@ final class ChargingCommunitySync {
 
     private static func defaultCredentialStore() -> KeychainChargingCredentialStore {
         #if DEBUG
+            if ChargingCommunityServiceSyncUITestFixture.isRequested {
+                return KeychainChargingCredentialStore(
+                    account: ChargingCommunityServiceSyncUITestFixture.current?.keychainID
+                        ?? "charging-community-sync-ui-test-unconfigured"
+                )
+            }
             if ChargingCommunityAccountDeletionUITestFixture.isRequested {
                 return KeychainChargingCredentialStore(
                     account: ChargingCommunityAccountDeletionUITestFixture.current?.keychainID

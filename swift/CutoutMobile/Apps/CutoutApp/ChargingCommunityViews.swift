@@ -118,7 +118,9 @@ struct ChargingCommunityStatusView: View {
 
     private var canRetry: Bool {
         #if DEBUG
-            if CutoutUITestChargingFixture.isEnabled { return false }
+            if CutoutUITestChargingFixture.isEnabled && !CutoutUITestChargingFixture.isServiceSyncRequested {
+                return false
+            }
         #endif
         return model.communitySyncStatus.canRetry
     }
