@@ -12,10 +12,11 @@
         static var isEnabled: Bool {
             if ChargingAcceptanceEnvironment.databaseID != nil { return true }
             #if os(iOS) && targetEnvironment(simulator)
-                return CommandLine.arguments.contains("--seed-ui-test-charging-spots")
-                    && CutoutUITestSessionFixture(arguments: CommandLine.arguments) != nil
-                    && ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"]
-                        .flatMap(UUID.init(uuidString:)) != nil
+                return CutoutWebsiteScreenshotFixture.isChargingMapScreenshot
+                    || (CommandLine.arguments.contains("--seed-ui-test-charging-spots")
+                        && CutoutUITestSessionFixture(arguments: CommandLine.arguments) != nil
+                        && ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"]
+                            .flatMap(UUID.init(uuidString:)) != nil)
             #else
                 return false
             #endif
@@ -30,6 +31,12 @@
 
         static func runIfRequested(database: RideDatabaseHandle) async throws {
             guard isEnabled, !isServiceSyncRequested else { return }
+            #if os(iOS) && targetEnvironment(simulator)
+                if CutoutWebsiteScreenshotFixture.isChargingMapScreenshot {
+                    try await CutoutWebsiteScreenshotFixture.seedFictionalChargingSpots(database: database)
+                    return
+                }
+            #endif
             let bounds = MobileGeoBoundsDto(
                 minimumLatitudeDegrees: 39.72, maximumLatitudeDegrees: 39.76,
                 minimumLongitudeDegrees: -105.01, maximumLongitudeDegrees: -104.97

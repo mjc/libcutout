@@ -371,6 +371,9 @@ final class CutoutAppModel {
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
             try await CutoutUITestChargingFixture.runIfRequested(database: database)
             try await CutoutUITestLiveRouteFixture.runIfRequested(database: database)
+            #if os(iOS) && targetEnvironment(simulator)
+                try await CutoutWebsiteScreenshotFixture.runIfRequested(database: database)
+            #endif
         #endif
         #if DEBUG
             let state: MobileRideMapState
@@ -1411,8 +1414,14 @@ final class CutoutAppModel {
     ) -> any CutoutSessionDriving {
         #if DEBUG
             if let fixture = uiTestFixture {
+                #if os(iOS) && targetEnvironment(simulator)
+                    let suppressNativeLocation = CutoutWebsiteScreenshotFixture.screen != nil
+                #else
+                    let suppressNativeLocation = false
+                #endif
                 return CutoutSessionCore(
                     testScript: fixture.testScript,
+                    suppressNativeLocation: suppressNativeLocation,
                     rideMapState: rideMapState,
                     database: fixture == .rideMapStorageUnavailable ? nil : database
                 )

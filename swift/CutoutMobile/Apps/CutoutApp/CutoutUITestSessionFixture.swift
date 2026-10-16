@@ -146,7 +146,7 @@ import Foundation
                 .eucUnknownTopology:
                 DevicePickerDiscoveryCandidate(
                     platformIdentifier: "ui-test-euc",
-                    displayName: "Test EUC",
+                    displayName: eucCandidateDisplayName,
                     productCategory: "Electric unicycle",
                     evidence: "UI test fixture",
                     detail: "Deterministic accessibility test device",
@@ -170,6 +170,14 @@ import Foundation
                     symbolName: "circle.hexagongrid.circle"
                 )
             }
+        }
+
+        private var eucCandidateDisplayName: String {
+            #if os(iOS) && targetEnvironment(simulator)
+                CutoutWebsiteScreenshotFixture.screen == nil ? "Test EUC" : "NOSFET Aero"
+            #else
+                "Test EUC"
+            #endif
         }
 
         var startsLive: Bool {
@@ -256,11 +264,18 @@ import Foundation
 
         private var testBmsSnapshot: BmsSnapshot? {
             switch self {
-            case .euc: eucBmsSnapshot
+            case .euc: eucTestBmsSnapshot
             case .eucOverview: eucBmsOverviewSnapshot
             case .eucUnknownTopology: eucUnknownTopologyBmsSnapshot
             default: nil
             }
+        }
+
+        private var eucTestBmsSnapshot: BmsSnapshot? {
+            #if os(iOS) && targetEnvironment(simulator)
+                if CutoutWebsiteScreenshotFixture.screen == .eucMain { return nil }
+            #endif
+            return eucBmsSnapshot
         }
 
         /// Validated identity packets shared with the Rust device-session tests.
@@ -320,6 +335,37 @@ import Foundation
 
         private var telemetry: TelemetrySnapshot {
             if isEuc {
+                #if os(iOS) && targetEnvironment(simulator)
+                    if CutoutWebsiteScreenshotFixture.screen == .tune {
+                        return TelemetrySnapshot(
+                            speed: Speed(value: 0),
+                            speedSource: .reported,
+                            speedQuality: .known,
+                            operatingState: .parked,
+                            voltage: Voltage(value: 120_000),
+                            batteryCurrent: BatteryCurrent.currentOut(milliamps: 0),
+                            power: Power(value: 0),
+                            controllerTemperature: Temperature(value: 36_000),
+                            pwm: DutyCycle(permille: 0),
+                            batteryLevelReported: BatteryLevel(value: 78)
+                        )
+                    }
+                    if CutoutWebsiteScreenshotFixture.screen == .eucMain {
+                        return TelemetrySnapshot(
+                            speed: Speed(value: 10_700),
+                            speedSource: .reported,
+                            speedQuality: .known,
+                            operatingState: .riding,
+                            voltage: Voltage(value: 120_000),
+                            batteryCurrent: BatteryCurrent.currentOut(milliamps: 7_000),
+                            power: Power(value: 840_000),
+                            powerFlow: .discharging,
+                            controllerTemperature: Temperature(value: 38_000),
+                            pwm: DutyCycle(permille: 420),
+                            batteryLevelReported: BatteryLevel(value: 78)
+                        )
+                    }
+                #endif
                 return TelemetrySnapshot(
                     speed: Speed(value: 12_000),
                     speedSource: .reported,
@@ -503,6 +549,12 @@ import Foundation
         }
 
         static func resolve() -> CutoutUITestMusicMonitor? {
+            #if os(iOS) && targetEnvironment(simulator)
+                if let screen = CutoutWebsiteScreenshotFixture.screen {
+                    guard screen == .eucMain else { return nil }
+                    return CutoutUITestMusicMonitor(state: .playing)
+                }
+            #endif
             let value = UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_MUSIC")
             return switch value {
             case "playing": CutoutUITestMusicMonitor(state: .playing)
@@ -554,8 +606,8 @@ import Foundation
                 state: state,
                 item: .init(
                     identifier: "ui-test-track-\(trackNumber)",
-                    title: "Everything In Its Right Place \(trackNumber)",
-                    artist: "Radiohead"
+                    title: screenshotTrack ? "Dusk on Colfax" : "Everything In Its Right Place \(trackNumber)",
+                    artist: screenshotTrack ? "Mira Sol" : "Radiohead"
                 ),
                 positionMilliseconds: 45_000,
                 durationMilliseconds: 240_000,
@@ -564,6 +616,14 @@ import Foundation
                     ? .init(previous: previousOnly, play: false, pause: false, next: false, openProvider: true)
                     : .init(previous: true, play: true, pause: true, next: true, openProvider: false)
             )
+        }
+
+        private var screenshotTrack: Bool {
+            #if os(iOS) && targetEnvironment(simulator)
+                return CutoutWebsiteScreenshotFixture.screen == .eucMain
+            #else
+                return false
+            #endif
         }
     }
     /// One real Rust-backed route in an isolated Simulator database.
