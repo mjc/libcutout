@@ -80,30 +80,33 @@ struct ChargingMapContentView: View {
     }
 
     var body: some View {
-        locationAwareContent
-            .sheet(item: presentedSheet) { route in
-                switch route {
-                case .details(let item):
-                    let spot = currentSpot(for: item)
-                    ChargingSpotDetailView(
-                        spot: spot,
-                        isDeleting: model.pendingWithdrawalIDs.contains(item.id),
-                        errorKey: model.error.map(ChargingSpotPresentation.loadErrorKey),
-                        onEdit: beginEditing,
-                        onDelete: { spot in
-                            Task {
-                                if await model.withdraw(spot) { sheetRoute = nil }
+        GeometryReader { presentation in
+            locationAwareContent
+                .sheet(item: presentedSheet) { route in
+                    switch route {
+                    case .details(let item):
+                        let spot = currentSpot(for: item)
+                        ChargingSpotDetailView(
+                            spot: spot,
+                            maximumHeight: presentation.size.height,
+                            isDeleting: model.pendingWithdrawalIDs.contains(item.id),
+                            errorKey: model.error.map(ChargingSpotPresentation.loadErrorKey),
+                            onEdit: beginEditing,
+                            onDelete: { spot in
+                                Task {
+                                    if await model.withdraw(spot) { sheetRoute = nil }
+                                }
                             }
+                        )
+                    case .issues:
+                        ChargingSyncIssuesView(model: model, onEdit: beginEditingConflict)
+                    case .editor(let editor):
+                        ChargingSpotEditorView(model: editor, onCancel: cancelEditor) { receipt in
+                            finishAddingSpot(receipt, coordinate: editor.coordinate)
                         }
-                    )
-                case .issues:
-                    ChargingSyncIssuesView(model: model, onEdit: beginEditingConflict)
-                case .editor(let editor):
-                    ChargingSpotEditorView(model: editor, onCancel: cancelEditor) { receipt in
-                        finishAddingSpot(receipt, coordinate: editor.coordinate)
                     }
                 }
-            }
+        }
     }
 
     private var mapLayout: some View {

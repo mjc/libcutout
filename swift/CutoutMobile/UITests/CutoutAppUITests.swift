@@ -7287,13 +7287,19 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(app.frame.contains(close.frame), app.debugDescription)
         attachScreenshot(app, name: "Long charging access note fits the presentation")
         let edit = app.buttons["charging.details.edit"]
-        revealChargingControl(edit, in: app)
+        let details = app.descendants(matching: .any)["charging.spot.details-screen"].firstMatch
+        let scroll = details.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists, app.debugDescription)
+        for _ in 0..<8 where !edit.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(edit.isHittable, app.debugDescription)
         XCTAssertTrue(app.frame.contains(edit.frame), app.debugDescription)
         XCTAssertTrue(app.buttons["charging.details.delete"].isHittable, app.debugDescription)
         attachScreenshot(app, name: "Long charging access note scrolls to its actions")
         edit.tap()
         XCTAssertTrue(app.buttons["charging.editor.save"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(app.textViews["charging.editor.access-note"].value as? String, note, app.debugDescription)
+        XCTAssertEqual(
+            app.descendants(matching: .any)["charging.editor.access-note"].firstMatch.value as? String,
+            note, app.debugDescription)
     }
 
     func testSelectedPinCanCloseWithoutChangingMapOrFilters() throws {
