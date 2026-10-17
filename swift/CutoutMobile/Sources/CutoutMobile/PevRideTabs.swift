@@ -24,19 +24,20 @@ public enum PevRideTabs {
                 id: .tune,
                 title: pevLocalizedText("tab.tune"),
                 isSelected: !lightingSelected && selected == nil && isTuneSelected,
-                destinationTarget: .eucTune
+                destinationTarget: .tune
             ),
         ]
     }
 
     public static func vescRideTabs(
         selected: PevScreenID? = nil,
-        lightingSelected: Bool = false
+        lightingSelected: Bool = false,
+        isTuneSelected: Bool = false
     ) -> [PevScreenTab] {
         [
             PevScreenTab(
                 id: .ride, title: pevLocalizedText("tab.ride"),
-                isSelected: !lightingSelected && (selected == nil || selected == .vescRide),
+                isSelected: !lightingSelected && (selected == .vescRide || (selected == nil && !isTuneSelected)),
                 destinationTarget: .vescRide),
             PevScreenTab(
                 id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,
@@ -45,6 +46,12 @@ public enum PevRideTabs {
                 id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug,
                 destinationScreenID: .vescDebug),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
+            PevScreenTab(
+                id: .tune,
+                title: pevLocalizedText("tab.tune"),
+                isSelected: !lightingSelected && selected == nil && isTuneSelected,
+                destinationTarget: .tune
+            ),
             unavailableTab(
                 id: .logs, title: pevLocalizedText("tab.logs"), reason: pevLocalizedText("tab.reason.logs_unavailable")),
         ]

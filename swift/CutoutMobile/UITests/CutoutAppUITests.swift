@@ -1073,7 +1073,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
         XCTAssertTrue(navigationTab("tune", title: "Tune").isHittable, app.debugDescription)
         tapNavigationTab("tune", title: "Tune")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.tune"].waitForExistence(timeout: 5))
         navigationTab("ride", title: "Ride").tap()
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
         disconnectIfConnected()
@@ -3351,7 +3351,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertNotNil(connectedScreen(timeout: 20))
         defer { disconnectIfConnected() }
         tapNavigationTab("tune", title: "Tune")
-        let tune = app.descendants(matching: .any)["settings.screen.eucTune"]
+        let tune = app.descendants(matching: .any)["settings.screen.tune"]
         XCTAssertTrue(tune.waitForExistence(timeout: 5))
         let alarms = app.buttons["settings.open-alarms"]
         for _ in 0..<8 where !alarms.isHittable { tune.swipeUp() }
@@ -3407,7 +3407,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
         tapNavigationTab("tune", title: "Tune")
-        let screen = app.descendants(matching: .any)["settings.screen.eucTune"]
+        let screen = app.descendants(matching: .any)["settings.screen.tune"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
 
         let turnOn = app.buttons["settings.on.highBeam"]
@@ -3657,7 +3657,7 @@ final class CutoutAppUITests: XCTestCase {
             self.tapNavigationTab("map", title: "Map")
             XCTAssertTrue(self.app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
             self.tapNavigationTab("tune", title: "Tune")
-            XCTAssertTrue(self.app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+            XCTAssertTrue(self.app.descendants(matching: .any)["settings.screen.tune"].waitForExistence(timeout: 5))
             self.tapNavigationTab("more", title: "More")
             XCTAssertTrue(self.app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
             self.tapNavigationTab("camera", title: "Camera")

@@ -11,6 +11,34 @@ final class DeviceSessionTransportTests: XCTestCase {
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
     ])
 
+    private func vescFrame(_ payload: [UInt8]) -> Data {
+        var crc: UInt16 = 0
+        for byte in payload {
+            crc ^= UInt16(byte) << 8
+            for _ in 0..<8 { crc = crc & 0x8000 == 0 ? crc << 1 : (crc << 1) ^ 0x1021 }
+        }
+        return Data([2, UInt8(payload.count)] + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
+    }
+
+    private func refloatInfoFrame() -> Data {
+        var payload: [UInt8] = [36, 101, 0, 2, 0]
+        payload += Array("Refloat".utf8) + Array(repeating: 0, count: 13)
+        payload += [1, 3, 0] + Array(repeating: 0, count: 20)
+        payload += Array(repeating: 0, count: 13)
+        return vescFrame(payload)
+    }
+
+    private func controllerValuesFrame(_ controllerID: UInt8 = 7) -> Data {
+        vescFrame([
+            50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43, 0,
+            controllerID,
+        ])
+    }
+
+    private func vescFirmwareFrame(major: UInt8 = 7, minor: UInt8 = 0) -> Data {
+        vescFrame([157, major, minor, 0] + Array("abc123".utf8) + [0] + Array("userhash".utf8) + [0])
+    }
+
     private func makeTransport(
         _ state: CutoutSessionStateHandle, token: ConnectionAttemptToken, sink: TransportSink, writeLimit: UInt16 = 20,
         clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) })
@@ -59,6 +87,24 @@ final class DeviceSessionTransportTests: XCTestCase {
         return (state, transport, sink)
     }
 
+    private func makeReadyVescTransport() throws -> (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink) {
+        let state = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        _ = state.observeConnectionNotification(token: token, bytes: vescFirmwareFrame())
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        let sink = TransportSink()
+        let transport = makeTransport(state, token: token, sink: sink, writeLimit: 64)
+        _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+        transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+        _ = try transport.handleNotification(
+            bytes: vescFirmwareFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(2))
+        sink.receipts.removeAll()
+        sink.writes.removeAll()
+        sink.submittedWrites.removeAll()
+        return (state, transport, sink)
+    }
+
     func testQueuedSettingReportsSubmittedWhenNativeQueueFlushes() throws {
         try queue.sync {
             let (state, transport, sink) = try makeReadyTransport()
@@ -92,6 +138,91 @@ final class DeviceSessionTransportTests: XCTestCase {
                     if case .writeReceipt(_, _, .submitted) = record { return true }
                     return false
                 })
+        }
+    }
+
+    func testRejectedCorrelatedInitialConfigReadSettlesRustReadSlot() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyVescTransport()
+            defer { transport.invalidate() }
+            sink.dispositions = [.rejected]
+            _ = try transport.handleNotification(
+                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
+            let step = try transport.handleNotification(
+                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
+            let readOperationID = try XCTUnwrap(
+                step.operations.compactMap { operation -> UInt64? in
+                    guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,
+                        bytes.count >= 3, bytes[2] == 93
+                    else { return nil }
+                    return operationID
+                }.first)
+            XCTAssertTrue(
+                transport.records.contains { record in
+                    if case .writeReceipt(_, _, .rejected) = record { return true }
+                    return false
+                })
+            XCTAssertFalse(
+                state.settingReadTransportIsCurrent(
+                    token: transport.token, operationId: readOperationID, monotonicMs: 100))
+            sink.dispositions = [.rejected]
+            let retry = try transport.handleNotification(
+                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(5))
+            let retryID = try XCTUnwrap(
+                retry.operations.compactMap { operation -> UInt64? in
+                    guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,
+                        bytes.count >= 3, bytes[2] == 93
+                    else { return nil }
+                    return operationID
+                }.first)
+            XCTAssertNotEqual(retryID, readOperationID)
+            let noFurtherRetry = try transport.handleNotification(
+                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(6))
+            XCTAssertFalse(
+                noFurtherRetry.operations.contains { operation in
+                    if case .writeWithoutResponseWithOperationID(_, let bytes, _) = operation {
+                        return bytes.count >= 3 && bytes[2] == 93
+                    }
+                    return false
+                }, "a permanently rejected initial read gets at most one automatic retry")
+        }
+    }
+
+    func testCancelledCorrelatedInitialConfigReadSettlesRustReadSlot() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyVescTransport()
+            sink.dispositions = [.queued]
+            _ = try transport.handleNotification(
+                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
+            let step = try transport.handleNotification(
+                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
+            let readOperationID = try XCTUnwrap(
+                step.operations.compactMap { operation -> UInt64? in
+                    guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,
+                        bytes.count >= 3, bytes[2] == 93
+                    else { return nil }
+                    return operationID
+                }.first)
+            sink.cancelQueuedWrites()
+            XCTAssertTrue(
+                transport.records.contains { record in
+                    if case .writeReceipt(_, _, .cancelled) = record { return true }
+                    return false
+                })
+            XCTAssertFalse(
+                state.settingReadTransportIsCurrent(
+                    token: transport.token, operationId: readOperationID, monotonicMs: 100))
+            let retry = try transport.handleNotification(
+                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(5))
+            let retryID = try XCTUnwrap(
+                retry.operations.compactMap { operation -> UInt64? in
+                    guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,
+                        bytes.count >= 3, bytes[2] == 93
+                    else { return nil }
+                    return operationID
+                }.first)
+            XCTAssertNotEqual(retryID, readOperationID)
+            transport.invalidate()
         }
     }
 
@@ -572,6 +703,12 @@ private final class TransportSink: CoreBluetoothOperationSink {
                 receipt(.cancelled)
             }
         }
+    }
+    func cancelQueuedWrites() {
+        let queued = pending
+        pending.removeAll()
+        receipts.removeAll()
+        for (_, _, receipt) in queued { receipt(.cancelled) }
     }
     func clearPendingWithoutResponseWrites() {
         clears += 1

@@ -335,7 +335,7 @@ struct EucPackRouteView: View {
     }
 }
 
-struct EucTuneRouteView: View {
+struct DeviceTuneRouteView: View {
     let model: CutoutAppModel
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
@@ -363,7 +363,7 @@ struct EucTuneRouteView: View {
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
         .tint(PevColors.yellow)
-        .accessibilityIdentifier("settings.screen.eucTune")
+        .accessibilityIdentifier("settings.screen.tune")
     }
 
     private var alarmsSection: some View {

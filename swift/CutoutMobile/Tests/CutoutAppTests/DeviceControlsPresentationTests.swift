@@ -88,6 +88,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(Set(visible.map(\.id)).count, 14)
         XCTAssertFalse(visible.contains { $0.id == .chargeLimitDiagnostic })
         XCTAssertTrue(DeviceControlPresentation.settings([makeDescriptor(access: .unverified)], in: .interface).isEmpty)
+        XCTAssertTrue(DeviceControlPresentation.settings([makeDescriptor(access: .readOnly)], in: .interface).isEmpty)
         XCTAssertEqual(
             makeDescriptor().writeVerification, .unverified, "Availability must not rewrite verification evidence")
     }
@@ -213,6 +214,9 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(
             DeviceControlPresentation.error(DeviceSettingSubmissionError.InvalidValue),
             "Choose one of the available values.")
+        XCTAssertEqual(
+            DeviceControlPresentation.error(DeviceSettingSubmissionError.Busy),
+            localizedAppText("controls.refusal.busy"))
     }
 
     func testSessionRefusalsUseExistingLocalizedReasonsAndUnknownErrorsKeepFallback() {

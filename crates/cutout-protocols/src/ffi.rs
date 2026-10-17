@@ -381,6 +381,9 @@ pub struct VescReadOnlySession {
 }
 
 impl VescReadOnlySession {
+    pub(crate) fn settings_evidence(&self) -> crate::vesc_settings_session::VescSettingsEvidence {
+        self.host.protocol_session().settings_evidence()
+    }
     pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
         self.host.protocol_session().next_tick_at()
     }

@@ -206,6 +206,15 @@ pub enum VescCanReadOnlyRequest {
 /// Owned VESC read-only reply.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VescReadOnlyReply {
+    /// A bounded package configuration response, retaining its package index.
+    CustomConfig {
+        /// Custom-configuration slot selected by the firmware.
+        index: u8,
+        /// Complete serialized configuration; its schema is validated separately.
+        bytes: Vec<u8>,
+    },
+    /// The firmware dispatched a custom-config write; this is not package acceptance.
+    CustomConfigDispatched,
     /// Firmware build information.
     FirmwareInfo {
         /// Major firmware version.
@@ -1157,6 +1166,27 @@ fn encode_raw_command(command_id: u8, frame: &mut [u8; VESC_MAX_FRAME_LEN]) -> u
     6
 }
 
+/// Frames only the bounded private settings payload selected by the protocol owner.
+pub(crate) fn encode_settings_payload(payload: &[u8]) -> Option<cutout_core::WritePayload> {
+    if payload.is_empty() || payload.len() > crate::refloat_settings::REFLOAT_CONFIG_LEN + 2 {
+        return None;
+    }
+    let mut frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+    if let Ok(length) = u8::try_from(payload.len()) {
+        frame.try_extend_from_slice(&[2, length]).ok()?;
+    } else {
+        let length = u16::try_from(payload.len()).ok()?;
+        frame.try_push(3).ok()?;
+        frame.try_extend_from_slice(&length.to_be_bytes()).ok()?;
+    }
+    frame.try_extend_from_slice(payload).ok()?;
+    frame
+        .try_extend_from_slice(&vesc_crc16(payload).to_be_bytes())
+        .ok()?;
+    frame.try_push(3).ok()?;
+    cutout_core::WritePayload::try_from_slice(&frame).ok()
+}
+
 fn decode_frame(frame: &[u8]) -> Result<VescReadOnlyReply, VescCodecError> {
     if let Some(reply) = decode_typed_reply(frame)? {
         return Ok(reply);
@@ -1176,6 +1206,17 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
         return Err(VescCodecError::DecodeFailed);
     };
     match command_id {
+        93 => {
+            let (&index, bytes) = body.split_first().ok_or(VescCodecError::DecodeFailed)?;
+            if bytes.len() > VESC_MAX_FRAME_LEN - 4 {
+                return Err(VescCodecError::DecodeFailed);
+            }
+            Ok(Some(VescReadOnlyReply::CustomConfig {
+                index,
+                bytes: bytes.to_vec(),
+            }))
+        }
+        95 if body.is_empty() => Ok(Some(VescReadOnlyReply::CustomConfigDispatched)),
         VESC_COMM_GET_VALUES => decode_values(body, full_values_mask(body.len())?)
             .map(|values| Some(VescReadOnlyReply::Values(values))),
         VESC_COMM_GET_STATS => {

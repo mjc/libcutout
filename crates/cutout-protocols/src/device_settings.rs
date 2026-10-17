@@ -173,6 +173,7 @@ pub(super) enum SettingEncoderBinding {
     None,
     Nosfet,
     Falcon,
+    Refloat,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,9 +190,9 @@ impl SettingBinding {
     ) -> Self {
         let write_access = match encoder {
             SettingEncoderBinding::None => SettingWriteAccess::ReadOnly,
-            SettingEncoderBinding::Nosfet | SettingEncoderBinding::Falcon => {
-                SettingWriteAccess::Writable
-            }
+            SettingEncoderBinding::Nosfet
+            | SettingEncoderBinding::Falcon
+            | SettingEncoderBinding::Refloat => SettingWriteAccess::Writable,
         };
         Self {
             control,
@@ -205,6 +206,9 @@ impl SettingBinding {
         let command = DeviceCommand::SetSetting { id, value };
         match self.encoder {
             SettingEncoderBinding::None => None,
+            SettingEncoderBinding::Refloat => {
+                crate::refloat_settings::accepts(id, value).then_some(command)
+            }
             SettingEncoderBinding::Nosfet => {
                 (crate::request_encoder::NosfetDialect::encode(command).is_some()
                     || crate::request_encoder::NosfetDialect::encode_settings_sequence(command)
@@ -284,6 +288,7 @@ enum SettingsAdapter {
     None,
     Aero,
     Falcon,
+    Refloat,
 }
 
 impl SettingsAdapter {
@@ -292,6 +297,11 @@ impl SettingsAdapter {
             Self::None => None,
             Self::Aero => aero::binding(id),
             Self::Falcon => falcon::binding(id),
+            Self::Refloat => Some(SettingBinding::new(
+                crate::refloat_settings::control(id)?,
+                SettingObservationBinding::MatchingField(crate::refloat_settings::field_id(id)?),
+                SettingEncoderBinding::Refloat,
+            )),
         }
     }
 
@@ -304,6 +314,27 @@ impl SettingsAdapter {
             Self::None => {}
             Self::Aero => aero::normalize_readback(entry, observations),
             Self::Falcon => falcon::normalize_readback(entry, observations),
+            Self::Refloat => {
+                let Some(id) = crate::refloat_settings::supported_setting_ids()
+                    .into_iter()
+                    .find(|id| crate::refloat_settings::field_id(*id) == Some(entry.field.id))
+                else {
+                    return;
+                };
+                let value = match (id, entry.field.value) {
+                    (SettingId::PwmTiltback, 100) | (SettingId::TiltbackSpeed, 0) => {
+                        Some(DeviceSettingValue::Disabled)
+                    }
+                    (SettingId::PwmTiltback, raw @ 0..=99) => {
+                        i32::try_from(raw).ok().map(DeviceSettingValue::Number)
+                    }
+                    (SettingId::TiltbackSpeed, raw @ 10..=1000) if raw % 10 == 0 => {
+                        i32::try_from(raw).ok().map(DeviceSettingValue::Number)
+                    }
+                    _ => None,
+                };
+                readback::push(observations, entry, id, value);
+            }
         }
     }
 
@@ -312,6 +343,7 @@ impl SettingsAdapter {
             Self::None => None,
             Self::Aero => Some(ProtocolFamily::VeteranLeaperkimNosfet),
             Self::Falcon => Some(ProtocolFamily::BegodeGotway),
+            Self::Refloat => Some(ProtocolFamily::Vesc),
         }
     }
 }
@@ -400,7 +432,7 @@ impl DeviceControlProfile {
                         || validation_mode
                         || self.verified_settings.contains(&id));
                 if let SettingControl::Number { can_disable, .. } = &mut control {
-                    *can_disable = id == SettingId::PwmTiltback && writable;
+                    *can_disable = (*can_disable || id == SettingId::PwmTiltback) && writable;
                 }
                 let access = if binding.write_access == SettingWriteAccess::ReadOnly {
                     SettingAccess::ReadOnly
@@ -418,7 +450,9 @@ impl DeviceControlProfile {
                     order,
                     control,
                     access,
-                    write_verification: if self.verified_settings.contains(&id) {
+                    write_verification: if adapter == SettingsAdapter::Refloat {
+                        VerificationStatus::SourceVerified
+                    } else if self.verified_settings.contains(&id) {
                         VerificationStatus::HardwareVerified
                     } else {
                         VerificationStatus::Unverified
@@ -508,6 +542,16 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
         ),
         VerificationStatus::Unverified,
     ))
+}
+
+/// Source-backed bindings selected only after the Refloat session validates its schema.
+pub(crate) fn refloat_control_profile() -> DeviceControlProfile {
+    const SETTINGS: &[SettingId] = &crate::refloat_settings::supported_setting_ids();
+    let available = Capabilities::from_supported_commands([CommandKind::SetSetting]);
+    DeviceControlProfile::new(available, Capabilities::default())
+        .with_production_commands(available)
+        .with_settings_adapter(SettingsAdapter::Refloat)
+        .with_setting_capabilities(SETTINGS, &[])
 }
 
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
@@ -820,6 +864,50 @@ fn control_value(control: SettingControl, raw: i64) -> Option<DeviceSettingValue
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refloat_catalog_uses_checked_bindings_without_granting_other_protocol_controls() {
+        let profile = refloat_control_profile();
+        let descriptors = profile.descriptors(false);
+        assert_eq!(descriptors.len(), 2);
+        let mut fields = std::collections::BTreeSet::new();
+        for descriptor in descriptors {
+            assert_eq!(descriptor.access, SettingAccess::Writable);
+            assert_eq!(
+                descriptor.completion,
+                SettingCompletionStrategy::MatchingReadback
+            );
+            assert_eq!(
+                descriptor.write_verification,
+                cutout_core::VerificationStatus::SourceVerified
+            );
+            assert!(fields.insert(crate::refloat_settings::field_id(descriptor.id).unwrap()));
+        }
+        assert_eq!(
+            profile.command(
+                SettingId::Headlight,
+                DeviceSettingValue::Boolean(true),
+                false
+            ),
+            Err(SettingsRequestError::Unavailable)
+        );
+        assert_eq!(
+            profile.command(
+                SettingId::TiltbackSpeed,
+                DeviceSettingValue::Number(155),
+                false
+            ),
+            Err(SettingsRequestError::InvalidValue)
+        );
+        assert_eq!(
+            profile.command(
+                SettingId::LateralTiltLimit,
+                DeviceSettingValue::Number(60),
+                false
+            ),
+            Err(SettingsRequestError::Unavailable),
+            "tune-eligible cutoff must not appear in configuration"
+        );
+    }
     use cutout_core::{
         Capabilities, CapacitySource, CommandKind, DeviceCommand, DeviceSettingValue, SettingId,
         VerificationStatus,
@@ -937,6 +1025,7 @@ mod tests {
         for (adapter, profile) in [
             (SettingsAdapter::Aero, aero_control_profile()),
             (SettingsAdapter::Falcon, falcon_control_profile()),
+            (SettingsAdapter::Refloat, refloat_control_profile()),
         ] {
             for descriptor in profile.descriptors(true) {
                 let binding = adapter.binding(descriptor.id).unwrap();

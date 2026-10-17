@@ -357,6 +357,30 @@ impl DeviceSettingsState {
         true
     }
 
+    /// Fails a protocol procedure without rewriting its native transport evidence.
+    ///
+    /// A submitted write can still fail its subsequent verification. Stale or
+    /// already terminal operations cannot change the current request.
+    pub fn fail_operation(&mut self, request_id: u64, at: MonotonicTimestamp) -> bool {
+        let Some(record) = self
+            .records
+            .values_mut()
+            .find(|record| record.request_id == Some(request_id))
+        else {
+            return false;
+        };
+        if record.transport_at.is_some_and(|latest| at < latest)
+            || !match record.state {
+                SettingState::Pending { .. } => true,
+                _ => false,
+            }
+        {
+            return false;
+        }
+        record.state.fail();
+        true
+    }
+
     /// Earliest readable setting confirmation deadline; none while transport is pending.
     #[must_use]
     pub fn next_confirmation_at(&self) -> Option<MonotonicTimestamp> {
@@ -445,6 +469,29 @@ impl DeviceSettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn procedure_failure_preserves_submission_and_cannot_confirm_from_later_readback() {
+        let mut settings = DeviceSettingsState::default();
+        settings.require_managed_transport();
+        let id = SettingId::PwmTiltback;
+        let desired = DeviceSettingValue::Number(81);
+        let request = settings.submission(
+            id,
+            desired,
+            SettingSubmissionOutcome::Accepted,
+            SettingCompletionStrategy::MatchingReadback,
+            time(10),
+        );
+        assert!(settings.transport(id, request, SettingTransportStatus::Submitted, time(11)));
+        assert!(!settings.fail_operation(request, time(9)));
+        assert!(settings.fail_operation(request, time(12)));
+        settings.observe(id, desired, SettingValueSource::LiveReadback, time(13));
+        let record = settings.snapshot(time(14))[0];
+        assert_eq!(record.status, SettingCommandStatus::Failed);
+        assert_eq!(record.transport, Some(SettingTransportStatus::Submitted));
+        assert_eq!(record.current.map(|reading| reading.value), Some(desired));
+        assert!(!settings.fail_operation(request, time(15)));
+    }
     use crate::{
         ControlRefusalReason, MonotonicTimestamp, SettingCommandStatus, SettingValueSource,
     };

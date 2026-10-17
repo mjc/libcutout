@@ -84,7 +84,7 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         connect(fixture: "euc")
         selectTab("tune", title: "Tune")
 
-        XCTAssertTrue(element("settings.screen.eucTune").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(element("settings.screen.tune").waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.buttons["settings.on.highBeam"].waitForExistence(timeout: 10), app.debugDescription)
         let pwmTiltback = app.sliders.matching(identifier: "settings.slider.pwmTiltback").firstMatch
         XCTAssertTrue(pwmTiltback.waitForExistence(timeout: 10), app.debugDescription)
