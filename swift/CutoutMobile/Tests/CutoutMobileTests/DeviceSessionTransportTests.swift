@@ -17,7 +17,16 @@ final class DeviceSessionTransportTests: XCTestCase {
             crc ^= UInt16(byte) << 8
             for _ in 0..<8 { crc = crc & 0x8000 == 0 ? crc << 1 : (crc << 1) ^ 0x1021 }
         }
-        return Data([2, UInt8(payload.count)] + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
+        let header: [UInt8]
+        if let shortLength = UInt8(exactly: payload.count) {
+            header = [2, shortLength]
+        } else {
+            guard let longLength = UInt16(exactly: payload.count) else {
+                fatalError("VESC test fixture exceeds the 16-bit long-frame size limit")
+            }
+            header = [3, UInt8(longLength >> 8), UInt8(truncatingIfNeeded: longLength)]
+        }
+        return Data(header + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
     }
 
     private func refloatInfoFrame() -> Data {
@@ -37,6 +46,16 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     private func vescFirmwareFrame(major: UInt8 = 7, minor: UInt8 = 0) -> Data {
         vescFrame([157, major, minor, 0] + Array("abc123".utf8) + [0] + Array("userhash".utf8) + [0])
+    }
+
+    private func vescMotorConfigFrame() throws -> Data {
+        let repositoryRoot = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { url, _ in
+            url.deletingLastPathComponent()
+        }
+        let imageURL = repositoryRoot.appendingPathComponent(
+            "crates/cutout-protocols/tests/fixtures/vesc-settings/vesc-7.00-motor-default.bin")
+        let image = try Data(contentsOf: imageURL)
+        return vescFrame([14] + Array(image))
     }
 
     private func makeTransport(
@@ -95,10 +114,19 @@ final class DeviceSessionTransportTests: XCTestCase {
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
         let sink = TransportSink()
         let transport = makeTransport(state, token: token, sink: sink, writeLimit: 64)
-        _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+        let startup = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+        XCTAssertTrue(
+            startup.operations.contains { operation in
+                guard case .writeWithoutResponseWithOperationID(_, let bytes, _) = operation else { return false }
+                return bytes.count >= 3 && bytes[2] == 14
+            },
+            "VESC LinkUp issues the owned Motor Config read that this fixture answers"
+        )
         transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
         _ = try transport.handleNotification(
             bytes: vescFirmwareFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(2))
+        _ = try transport.handleNotification(
+            bytes: vescMotorConfigFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
         sink.receipts.removeAll()
         sink.writes.removeAll()
         sink.submittedWrites.removeAll()
