@@ -277,9 +277,9 @@ impl DeviceSession {
     #[must_use]
     pub fn ingest_typed(&mut self, input: &SessionInputDto) -> DeviceSessionStep {
         if self.identity.model.is_none()
-            && self.control_profile().descriptors(false).is_empty()
             && let SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. } =
                 input
+            && self.control_profile().descriptors(false).is_empty()
         {
             let command = DeviceCommand::from(*command);
             if command.safety_class() != SafetyClass::ReadOnly {
