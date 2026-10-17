@@ -68,6 +68,9 @@ struct CutoutApp: App {
                 }
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     latestScenePhase = phase
+                    #if DEBUG && targetEnvironment(simulator)
+                        guard !CutoutAppModel.isUITestLiveActivityCleanupLaunch else { return }
+                    #endif
                     switch phase {
                     case .active:
                         model?.appDidBecomeActive()
@@ -178,6 +181,15 @@ struct CutoutApp: App {
                 let lighting = LightingRouteModel.uiTestConnectedLightingModel() ?? LightingRouteModel()
             #else
                 let lighting = LightingRouteModel()
+            #endif
+            #if DEBUG && targetEnvironment(simulator)
+                if CutoutAppModel.isUITestLiveActivityCleanupLaunch {
+                    // Publish the cleanup readback only after native cleanup returns.
+                    _ = try await LiveActivityRideActivityKitManager().end(reason: .unavailable)
+                    opened.endLiveActivity(reason: .unavailable)
+                    model = opened
+                    return
+                }
             #endif
             self.lighting = lighting
             model = opened

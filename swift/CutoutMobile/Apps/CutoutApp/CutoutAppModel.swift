@@ -1460,6 +1460,11 @@ final class CutoutAppModel {
     }
 
     #if DEBUG
+        static var isUITestLiveActivityCleanupLaunch: Bool {
+            uiTestFixture == .bluetoothUnavailable
+                && CommandLine.arguments.contains("--ui-test-cleanup-live-activities")
+        }
+
         private static var uiTestFixture: CutoutUITestSessionFixture? {
             CutoutUITestSessionFixture.resolve(
                 environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],

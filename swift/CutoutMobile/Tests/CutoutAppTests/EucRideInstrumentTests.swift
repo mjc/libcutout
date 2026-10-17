@@ -12,7 +12,9 @@ import XCTest
 @MainActor
 final class EucRideInstrumentTests: XCTestCase {
     func testOrdinaryRideFixturesDoNotCreateSystemLiveActivities() {
-        for fixture in [CutoutUITestSessionFixture.euc, .dynamicEuc, .staleEuc, .vesc, .unknownDevice] {
+        for fixture in [
+            CutoutUITestSessionFixture.euc, .dynamicEuc, .staleEuc, .vesc, .unknownDevice, .bluetoothUnavailable,
+        ] {
             XCTAssertTrue(fixture.makeLiveActivityManager() is CutoutUITestLiveActivityManager)
         }
         for fixture in [

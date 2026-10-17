@@ -392,12 +392,20 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        continueAfterFailure = true
         let cleanup = livePrivateSendCleanup
         livePrivateSendCleanup = nil
         cleanup?()
+        let activityFixtureExited = fixture.usesSystemLiveActivity && app?.state == .notRunning
         if fixture.usesSystemLiveActivity, let app {
-            if app.state == .notRunning {
-                XCTFail("The real Live Activity fixture exited before cleanup could be acknowledged")
+            if activityFixtureExited {
+                app.launchEnvironment = Fixture.bluetoothUnavailable.launchEnvironment
+                app.launchArguments =
+                    Fixture.bluetoothUnavailable.launchArguments + [
+                        "--ui-test-cleanup-live-activities", "--ui-test-live-activity-readback",
+                        "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+                    ]
+                app.launch()
             } else {
                 app.activate()
                 if !app.descendants(matching: .any)["device-picker.screen"].exists,
@@ -412,11 +420,16 @@ final class CutoutAppUITests: XCTestCase {
             disconnect?.tap()
             _ = app?.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
         }
-        if fixture.usesSystemLiveActivity, let app, app.state != .notRunning {
-            assertSystemLiveActivitiesEnded()
+        if fixture.usesSystemLiveActivity {
+            if let app, app.state != .notRunning {
+                assertSystemLiveActivitiesEnded()
+            } else {
+                XCTFail("The Live Activity cleanup app did not stay running")
+            }
         }
         app?.terminate()
         app = nil
+        XCTAssertFalse(activityFixtureExited, "The real Live Activity fixture exited before teardown")
         XCUIDevice.shared.orientation = .portrait
         try await super.tearDown()
     }
