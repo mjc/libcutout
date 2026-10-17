@@ -210,7 +210,9 @@ final class CutoutAppModel {
     }
 
     func applyPhoneAlarmActions(_ actions: MobilePhoneAlarmActionsDto) {
-        phoneAlarmDelivery.cancel(requestIDs: actions.cancelRequestIds)
+        if !actions.cancelRequestIds.isEmpty {
+            phoneAlarmDelivery.cancel(requestIDs: actions.cancelRequestIds)
+        }
         actions.schedule.forEach(schedulePhoneAlarmDelivery)
         if core.rideSessionStateHandle.phoneAlarmPreferences() == nil {
             phoneAlarmSettings = nil

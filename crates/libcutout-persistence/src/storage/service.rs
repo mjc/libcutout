@@ -59,6 +59,7 @@ fn acquire(
 
     let mut connection = Connection::open(&canonical_path)?;
     let bootstrap = configure_connection(&mut connection, &canonical_path)?;
+    super::capture_submission::recover(&connection)?;
     let enabled = connection.query_row(
         "SELECT COALESCE((SELECT automatic_enabled FROM diagnostic_recording_preferences WHERE id = 1), 0)",
         [],

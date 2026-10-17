@@ -158,6 +158,15 @@ struct ChargingSpotEditorView: View {
                     .accessibilityLabel(localizedAppText("charging.editor.access_note"))
                     .accessibilityIdentifier("charging.editor.access-note")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    if !isSaving && focusedField != .accessNote {
+                        focusedField = .accessNote
+                    }
+                }
+            )
             if !model.accessNote.isEmpty {
                 fieldFeedback(.accessNote, identifier: "charging.editor.access-note-error")
             }

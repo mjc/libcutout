@@ -35,7 +35,13 @@ protocol CutoutSessionPhoneLocationAdapting: AnyObject {
         nonisolated init() {}
 
         var latestSample: MobilePhoneLocationSampleDto? { nil }
-        var authorizationStatus: CLAuthorizationStatus { .authorizedWhenInUse }
+        var authorizationStatus: CLAuthorizationStatus {
+            #if os(macOS)
+                .authorizedAlways
+            #else
+                .authorizedWhenInUse
+            #endif
+        }
         var servicesEnabled: Bool? { true }
         func start() {}
         func clear() {}

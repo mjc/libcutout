@@ -11,14 +11,16 @@ description = "Cutout music, charging and website server"
 axum.workspace = true
 clap.workspace = true
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+futures-util.workspace = true
 cutout-soundcloud-auth-broker = { path = "../cutout-soundcloud-auth-broker", version = "0.1.0" }
-rusqlite.workspace = true
+rusqlite = { workspace = true, features = ["blob"] }
 serde.workspace = true
 serde_json.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["net", "fs", "io-util"] }
 tower = { version = "0.5", features = ["util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -27,6 +29,7 @@ uuid.workspace = true
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

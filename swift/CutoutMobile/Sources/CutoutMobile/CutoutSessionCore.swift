@@ -141,7 +141,7 @@ public enum CaptureEvent: Equatable, Sendable {
     case started(generation: CaptureGeneration, fileURL: URL)
     case notificationRecorded(generation: CaptureGeneration)
     case progress(generation: CaptureGeneration, CaptureProgress)
-    case finished(generation: CaptureGeneration, fileURL: URL)
+    case finished(generation: CaptureGeneration, fileURL: URL, artifactId: String? = nil)
     case databaseFinished(generation: CaptureGeneration, outcome: MobileCaptureFinishOutcomeDto)
     case failed(generation: CaptureGeneration)
 
@@ -2897,7 +2897,8 @@ public final class CutoutSessionCore: NSObject {
             }
             publishCaptureEvent(
                 .finished(
-                    generation: completion.generation, fileURL: URL(fileURLWithPath: artifact.path)
+                    generation: completion.generation, fileURL: URL(fileURLWithPath: artifact.path),
+                    artifactId: artifact.id.value
                 ))
         case .publishDatabase(let outcome, let databasePublicationFailed):
             if databasePublicationFailed {

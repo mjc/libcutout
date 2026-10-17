@@ -131,6 +131,19 @@ final class PhoneRideAlarmTests: XCTestCase {
     }
 
     @MainActor
+    func testStartupAndEmptyActionsDoNotContactNotificationCancellation() {
+        let core = CutoutSessionCore(testScript: CutoutUITestSessionFixture.unknownDevice.testScript)
+        let delivery = SuspendedPhoneRideAlarmDeliverySpy()
+        let model = CutoutAppModel(core: core, phoneAlarmDelivery: delivery)
+
+        model.applyPhoneAlarmActions(MobilePhoneAlarmActionsDto(schedule: [], cancelRequestIds: []))
+        XCTAssertEqual(delivery.cancellationBatches, [])
+
+        model.applyPhoneAlarmActions(MobilePhoneAlarmActionsDto(schedule: [], cancelRequestIds: [42]))
+        XCTAssertEqual(delivery.cancellationBatches, [[42]])
+    }
+
+    @MainActor
     func testInvalidatedSuccessfulNativeDeliveryIsCancelled() async throws {
         let fixture = CutoutUITestSessionFixture.autoCriticalVescLiveActivity
         let core = CutoutSessionCore(testScript: fixture.testScript)
@@ -188,6 +201,7 @@ private final class SuspendedPhoneRideAlarmDeliverySpy: PhoneRideAlarmDelivering
     private var continuations = [UInt64: CheckedContinuation<Void, any Error>]()
     private(set) var pendingRequests = [MobilePhoneAlarmDeliveryRequestDto]()
     private(set) var cancelledRequestIDs = [UInt64]()
+    private(set) var cancellationBatches = [[UInt64]]()
 
     func authorizationStatus() async -> PhoneRideAlarmAuthorization {
         .permitted(alerts: true, sounds: true, quietly: false)
@@ -203,6 +217,7 @@ private final class SuspendedPhoneRideAlarmDeliverySpy: PhoneRideAlarmDelivering
     }
 
     func cancel(requestIDs: [UInt64]) {
+        cancellationBatches.append(requestIDs)
         cancelledRequestIDs.append(contentsOf: requestIDs)
     }
 

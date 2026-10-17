@@ -107,7 +107,9 @@ The XCFramework contains static iOS device, iOS simulator, and macOS slices.
 The selector manifest contains literal paths to the Sources and XCFramework
 inside one immutable `generations/<receipt>/CutoutMobileFFI` directory. SwiftPM,
 Xcode, SourceKit, tests, and app builds therefore resolve a specific generation.
-Publishing a new selector leaves previously selected generations intact.
+Successful publication atomically selects the replacement and removes obsolete
+managed generations. The selected package stays immutable; historical package
+payloads are not retained.
 
 `crates/cutout-mobile-ffi/src/**/*.rs` is handwritten Rust source. It defines
 the UniFFI records, enums, objects, exports, and adapter behavior consumed by
@@ -151,19 +153,25 @@ The generator keeps private source snapshots in the repository's sibling
 `.cutout-ffi-sources/<repository-path-hash>/<source-hash>` directory. This preserves
 Cargo's ancestor/global configuration lookup without loading the project's
 configuration twice. Both `.cargo/config` and `.cargo/config.toml`, when present,
-are copied so Cargo applies its normal precedence. It copies those sources once,
-preserving compilation paths and mtimes across repeated prepares so Cargo can
-reuse its cache. Relative files and directories named by those Cargo
+are copied so Cargo applies its normal precedence. Repeated prepares of the
+current snapshot preserve its compilation paths and mtimes so Cargo can reuse
+its cache. Switching source identity removes the previous snapshot after the new
+copy is ready. Returning to an earlier identity therefore copies fresh inputs
+rather than resurrecting old mtimes against artifacts built from later sources.
+Relative files and directories named by those Cargo
 configuration files are copied into the snapshot at their original paths. A
 damaged private snapshot (including a Cargo-rewritten lockfile)
 is moved aside and rebuilt from current inputs. A corrupt published generation is
-likewise quarantined and replaced from a verified staged package; healthy pinned
-generations are never modified. Recovery has a brief rename gap for readers of
-the already-corrupt path. A lock
-serializes generation and holds the selector stable throughout supported builds.
-The snapshot cache retains the current snapshot and three recent snapshots, and
-keeps four quarantine directories for diagnosis; older unused entries are
-removed while that lock is held.
+moved aside until its verified replacement is selected. Successful publication
+removes the damaged package payload as well as obsolete managed generations;
+unchanged publication also removes older packages left by previous prepares.
+A lock serializes publication and holds the selector stable throughout supported
+builds. Their native processes retain that lock, so a replacement cannot remove
+the generation while they use it. Pruning recognizes generated receipts and
+leaves unrelated paths and symlink targets untouched.
+The separate source-snapshot cache retains only the current snapshot. A healthy
+capture or repair removes obsolete source copies and quarantined snapshots while
+that lock is held. A failed capture leaves the last valid snapshot available.
 The noninteractive Cargo generator inherits a clone of that lock on stdin, so
 an orphaned generator retains ownership if its coordinating process is killed.
 The native output receipt identifies the immutable
@@ -184,6 +192,12 @@ currently selected prepared output; it does not inspect the actual Rust
 toolchain or resolve Cargo configuration. The selected generation is expected
 to have been prepared with the current build configuration. Use the explicit
 Cargo pipeline to establish that freshness.
+
+Direct Xcode builds and SourceKit indexing do not hold the publication lock for
+their full lifetime. Finish those reads before preparing a replacement, then
+resolve the current package selection before building or indexing again. The
+supported Cargo build commands coordinate preparation and native readers under
+one lock; the sandboxed checker alone cannot provide that coordination.
 
 A generated Swift source records the Rust source identity. The plugin emits a
 second Swift source with the verified artifact identity, preserving it when
@@ -352,6 +366,10 @@ The terminal native-tool handoff replaces the build coordinator on Unix instead
 of leaving a waiting parent. Offline subprocess tests cover retained PID/FFI
 lock, INT/TERM exit, and lock cleanup after failed exec. This fixes that handoff,
 not cancellation of every outer launcher/descendant or native queued write.
+The signed-device deployment build waits for its native child so verification
+and installation can follow. That child inherits the same FFI lock, keeping its
+generation protected if the coordinator exits. Offline subprocess tests exercise
+the waited helper's lock inheritance, normal return, and failed-start cleanup.
 
 Existing configuration is recorded here for code review, not as a run recipe:
 

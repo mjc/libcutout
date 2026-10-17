@@ -104,12 +104,33 @@ impl fmt::Debug for Identity {
 
 impl Store {
     pub(crate) async fn identity(&self, registration: Registration) -> Result<Identity, Error> {
+        self.identity_with_capture_review(registration, false).await
+    }
+
+    pub(crate) async fn operator_capture_reviewer(&self, role: Role) -> Result<Identity, Error> {
+        self.identity_with_capture_review(Registration::Operator { role }, true)
+            .await
+    }
+
+    async fn identity_with_capture_review(
+        &self,
+        registration: Registration,
+        private_capture_review: bool,
+    ) -> Result<Identity, Error> {
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
             let now = now_ms()?;
             let role = registration_role(&transaction, registration, now)?;
             let identity = new_identity();
             insert_identity(&transaction, &identity, role, now)?;
+            if private_capture_review {
+                transaction
+                    .execute(
+                        "UPDATE contributors SET private_capture_review=1 WHERE id=?1",
+                        [&identity.id],
+                    )
+                    .map_err(db_error)?;
+            }
             transaction.commit().map_err(db_error)?;
             Ok(identity)
         })
@@ -272,6 +293,23 @@ fn retain_public_spots(connection: &Connection, target: &str) -> Result<(), Erro
 }
 
 fn delete_private_account_data(connection: &Connection, target: &str) -> Result<(), Error> {
+    connection
+        .execute(
+            "DELETE FROM capture_submissions WHERE owner_id=?1",
+            [target],
+        )
+        .map_err(db_error)?;
+    connection
+        .execute(
+            "DELETE FROM quotas WHERE principal=?1 OR principal=?2 OR principal=?3 OR principal=?4",
+            params![
+                format!("capture-upload:{target}"),
+                format!("capture-read:{target}"),
+                format!("capture-request:{target}"),
+                format!("capture-cancel:{target}")
+            ],
+        )
+        .map_err(db_error)?;
     connection
         .execute(
             "DELETE FROM moderation_audit

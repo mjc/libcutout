@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 48;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 49;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -71,6 +71,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         45 => migrate_v45_to_v46(connection)?,
         46 => migrate_v46_to_v47(connection)?,
         47 => migrate_v47_to_v48(connection)?,
+        48 => migrate_v48_to_v49(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -78,6 +79,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         _ => return Err(StorageError::InvalidDatabaseIdentity),
     }
+    migrate_remaining_versions(connection)
+}
+
+fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), StorageError> {
     if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?
         < CURRENT_SCHEMA_VERSION
     {
@@ -109,6 +114,9 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 47 {
             migrate_v47_to_v48(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 48 {
+            migrate_v48_to_v49(connection)?;
         }
     }
     Ok(())
@@ -428,6 +436,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::capture_history::HISTORY_INDEX)?;
     connection.execute_batch(super::recorded_capture::SCHEMA)?;
     connection.execute_batch(super::charging::SCHEMA)?;
+    connection.execute_batch(super::capture_submission::SCHEMA)?;
     ensure_charging_sync_schema(connection)?;
     ensure_community_account_columns(connection)?;
     Ok(())
@@ -1337,6 +1346,14 @@ const DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA: &str = "
 fn migrate_v47_to_v48(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA)?;
+    transaction.execute_batch(&schema_pragmas(48))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v48_to_v49(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1921,6 +1938,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "phone_alarm_preferences",
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
+        "capture_submissions",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
@@ -1970,6 +1988,16 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
     {
         return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    for column in [
+        "source_artifact_id",
+        "operation_id",
+        "snapshot_digest",
+        "status_json",
+    ] {
+        if !table_has_column(connection, "capture_submissions", column)? {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
     }
     if !table_has_column(connection, "charging_outbox", "blocked_kind")?
         || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?

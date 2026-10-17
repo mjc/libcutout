@@ -98,6 +98,18 @@ pub enum CaptureFlushOutcome {
 }
 
 impl CaptureArtifactId {
+    /// Parses a retained writer identity without granting completion authority.
+    /// # Errors
+    /// Returns an invalid identity error for non-UUID input.
+    pub fn parse(value: &str) -> Result<Self, crate::StorageError> {
+        Uuid::parse_str(value)
+            .map(Self)
+            .map_err(|_| crate::StorageError::InvalidStoredValue {
+                field: "capture artifact identity",
+                value: value.to_owned(),
+            })
+    }
+
     pub(crate) const fn from_uuid(value: Uuid) -> Self {
         Self(value)
     }

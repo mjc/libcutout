@@ -25,6 +25,10 @@ mod pevcap;
 pub use pevcap::*;
 mod capture_annotations;
 pub use capture_annotations::*;
+#[cfg(feature = "serde")]
+mod capture_submission;
+#[cfg(feature = "serde")]
+pub use capture_submission::*;
 mod battery_current;
 pub use battery_current::*;
 mod battery_page;

@@ -44,6 +44,9 @@ enum Command {
     Identity {
         #[arg(long)]
         moderator: bool,
+        /// Allow private capture review; charging moderation alone does not grant this.
+        #[arg(long)]
+        private_capture_reviewer: bool,
     },
     /// Revoke a credential and clear its votes.
     Revoke {
@@ -120,13 +123,20 @@ async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
             };
             serve(listen, mode, store).await
         }
-        Command::Identity { moderator } => {
+        Command::Identity {
+            moderator,
+            private_capture_reviewer,
+        } => {
             let role = if moderator {
                 Role::Moderator
             } else {
                 Role::Contributor
             };
-            let identity = store.identity(Registration::Operator { role }).await?;
+            let identity = if private_capture_reviewer {
+                store.operator_capture_reviewer(role).await?
+            } else {
+                store.identity(Registration::Operator { role }).await?
+            };
             serde_json::to_writer(std::io::stdout().lock(), &identity)
                 .map_err(|_| Error::Unavailable)
         }
@@ -190,6 +200,7 @@ async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<()
         .await
         .map_err(|_| Error::Unavailable)?;
     let address = listener.local_addr().map_err(|_| Error::Unavailable)?;
+    store.cleanup_capture_staging().await?;
     tracing::info!(%address, "cutout server listening");
     let worker =
         lific_worker.map(|lific| tokio::spawn(crate::signup_sync::run_worker(store, lific)));

@@ -218,6 +218,10 @@ struct CaptureArtifactDetailView: View {
                     }
                 }
             }
+            if let source = artifact.submissionSource {
+                CaptureSubmissionSection(source: source)
+                    .id(artifact.id)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(PevColors.pageBackground)
@@ -293,6 +297,8 @@ private struct DatabaseCaptureDetailView: View {
             } footer: {
                 Text("The recording is saved on this device. Export creates a shareable file from its retained data.")
             }
+            CaptureSubmissionSection(source: .liveCapture(id: capture.liveCaptureId))
+                .id(capture.liveCaptureId)
         }
         .navigationTitle("Recording")
         .scrollContentBackground(.hidden)

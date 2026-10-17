@@ -30,6 +30,24 @@ pub use store::Store;
 /// Classified outcomes exposed by the directory API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Error {
+    /// A diagnostic capture is malformed.
+    #[error("invalid capture")]
+    CaptureInvalid,
+    /// The capture representation is unsupported.
+    #[error("unsupported capture format")]
+    CaptureUnsupported,
+    /// Submitted bytes disagree with their approved digest or length.
+    #[error("capture integrity check failed")]
+    CaptureCorrupt,
+    /// Music metadata is prohibited in diagnostic submissions.
+    #[error("capture contains prohibited music metadata")]
+    CaptureMusic,
+    /// A capture exceeds a hard resource limit.
+    #[error("capture resource limit exceeded")]
+    CaptureTooLarge,
+    /// Private retained-byte capacity is exhausted.
+    #[error("private capture storage quota exhausted")]
+    CaptureStorageFull,
     /// The request violates the input contract.
     #[error("invalid request")]
     Invalid,

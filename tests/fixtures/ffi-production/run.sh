@@ -40,5 +40,7 @@ echo 'Preparing and testing production FFI generation B'
 run_production_test
 generation_b="$(generation)"
 [[ "$generation_b" =~ ^[0-9a-f]{64}$ && "$generation_a" != "$generation_b" ]]
+[[ ! -e "$root/target/swift-ffi/generations/$generation_a" ]]
+[[ -d "$root/target/swift-ffi/generations/$generation_b/CutoutMobileFFI" ]]
 
 echo "PASS: production SwiftPM A -> B through cutout-dev and VerifyRustArtifact ($generation_a -> $generation_b)"

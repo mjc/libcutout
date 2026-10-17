@@ -21,6 +21,7 @@ use axum::{
 use serde::Serialize;
 use std::net::IpAddr;
 
+mod capture_submissions;
 pub(crate) mod registration;
 
 /// A proxy peer allowed to supply one client address through `X-Real-IP`.
@@ -35,6 +36,15 @@ impl IntoResponse for Error {
             error: &'static str,
         }
         let (status, code) = match self {
+            Self::CaptureInvalid => (StatusCode::UNPROCESSABLE_ENTITY, "capture_invalid"),
+            Self::CaptureUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "capture_unsupported_format",
+            ),
+            Self::CaptureCorrupt => (StatusCode::UNPROCESSABLE_ENTITY, "capture_integrity_failed"),
+            Self::CaptureMusic => (StatusCode::UNPROCESSABLE_ENTITY, "capture_music_prohibited"),
+            Self::CaptureTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "capture_resource_limit"),
+            Self::CaptureStorageFull => (StatusCode::INSUFFICIENT_STORAGE, "capture_storage_quota"),
             Self::Invalid => (StatusCode::UNPROCESSABLE_ENTITY, "invalid"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
@@ -76,9 +86,10 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
             .route("/readyz", get(ready))
             .merge(charging_routes())
             .merge(site_routes()),
-        store,
+        store.clone(),
         signup,
     )
+    .merge(capture_submissions::router().with_state(store))
 }
 
 /// Charging API router for host-isolated combined deployments.
@@ -88,9 +99,10 @@ pub(crate) fn charging_router(store: Store) -> Router {
             .route("/healthz", get(|| async { StatusCode::OK }))
             .route("/readyz", get(ready))
             .merge(charging_routes()),
-        store,
+        store.clone(),
         crate::signup::SignupState::from_env(),
     )
+    .merge(capture_submissions::router().with_state(store))
 }
 
 /// Website and signup router for the separately hosted public site.

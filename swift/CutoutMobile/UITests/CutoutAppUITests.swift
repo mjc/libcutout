@@ -2615,6 +2615,124 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
+    func testFinishCapturePrivateSendCanBeDeclinedAndCancelledWithoutLosingLocalShareAfterRelaunch() throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Private capture Send regression is restricted to Simulator")
+        #endif
+        executionTimeAllowance = 180
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+
+        func waitForReady(_ element: XCUIElement) {
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in element.exists && element.isEnabled && element.isHittable },
+                object: element
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
+        }
+
+        // Database captures finish durably before an explicit file export.
+        enterCapture()
+        let finish = app.buttons["capture.stop"]
+        waitForReady(finish)
+        finish.tap()
+        let detail = app.descendants(matching: .any)["captures.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
+        let review = app.buttons["captures.send.review"]
+        scrollElementFrameIntoViewport(review, in: detail, maxScrolls: 12)
+        waitForReady(review)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        review.tap()
+
+        // Only review the locally prepared snapshot; this test never confirms Send.
+        let confirmation = app.sheets["Send this capture privately?"]
+        let confirm = confirmation.buttons.matching(identifier: "captures.send.confirm").firstMatch
+        waitForReady(confirm)
+        let disclosure = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Music is excluded.", "CutOut maintainer")
+        ).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(disclosure.label.contains("raw Bluetooth evidence"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("event order and timing"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("device and platform identifiers"), disclosure.label)
+        XCTAssertTrue(disclosure.label.contains("Your original recording stays on this device."), disclosure.label)
+        let decline = app.buttons["Not now"]
+        if decline.waitForExistence(timeout: 2) {
+            waitForReady(decline)
+            decline.tap()
+        } else {
+            // Native popover presentation omits its cancel-role button.
+            let dismiss = app.otherElements["PopoverDismissRegion"]
+            guard dismiss.waitForExistence(timeout: 5), confirmation.exists else {
+                XCTFail("Expected the native confirmation popover and its dismissal region")
+                return
+            }
+            let outside = dismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
+            guard dismiss.frame.contains(outside.screenPoint), !confirmation.frame.contains(outside.screenPoint) else {
+                XCTFail("The dismissal coordinate must be outside the confirmation")
+                return
+            }
+            outside.tap()
+        }
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !confirmation.exists }, object: confirmation
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, app.debugDescription)
+        XCTAssertTrue(detail.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+
+        let cancel = app.buttons["captures.send.cancel"]
+        scrollElementFrameIntoViewport(cancel, in: detail, maxScrolls: 8)
+        waitForReady(cancel)
+        cancel.tap()
+        let cancelled = app.staticTexts["Send cancelled"]
+        XCTAssertTrue(cancelled.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
+        retainCaptureScreenshot("Private Send declined and cancelled; local capture retained")
+
+        app.navigationBars.buttons.firstMatch.tap()
+        let home = app.descendants(matching: .any)["captures.home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let storedCapture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        XCTAssertTrue(storedCapture.waitForExistence(timeout: 10), app.debugDescription)
+        let storedCaptureID = storedCapture.identifier
+        app.terminate()
+        app.launch()
+
+        let setupButton = app.buttons["device-picker.open-setup"]
+        waitForReady(setupButton)
+        setupButton.tap()
+        let setup = app.descendants(matching: .any)["setup.screen"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5), app.debugDescription)
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: setup, maxScrolls: 8)
+        waitForReady(captures)
+        captures.tap()
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let restoredCapture = app.buttons[storedCaptureID]
+        waitForReady(restoredCapture)
+        restoredCapture.tap()
+        assertStoredCaptureDetail()
+        let restoredDetail = app.collectionViews.firstMatch
+        let restoredCancelled = app.staticTexts["Send cancelled"]
+        scrollElementFrameIntoViewport(restoredCancelled, in: restoredDetail, maxScrolls: 12)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+        XCTAssertFalse(app.buttons["captures.send"].exists)
+        XCTAssertFalse(app.buttons["captures.send.review"].exists)
+
+        let export = app.buttons["Export recording"]
+        scrollElementFrameIntoViewport(export, in: restoredDetail, maxScrolls: 12)
+        waitForReady(export)
+        export.tap()
+        let restoredShare = app.buttons["Share recording"]
+        waitForReady(restoredShare)
+        restoredShare.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     func testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType() throws {
         _ = try finishCaptureAndOpenArtifact()
         try performVisibleLayoutAccessibilityAudit()
@@ -7607,6 +7725,97 @@ final class ChargingMapDeviceUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["charging.editor.move-pin"].exists)
 
+    }
+
+    func testAccessNoteLabelAndRowWhitespaceFocusTheEditor() throws {
+        continueAfterFailure = false
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        beginChargingPlacement(in: app)
+        app.buttons["charging.placement.confirm"].tap()
+
+        let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+        revealChargingControl(note, in: app, direction: .down)
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        // Tap beside the Note label, above the text control's own bounds.
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: -16)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText("Outlet beside the gate.")
+        XCTAssertEqual(note.value as? String, "Outlet beside the gate.", app.debugDescription)
+        dismissChargingKeyboard(in: app)
+
+        revealChargingControl(note, in: app, direction: .down)
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: -16)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText(" Ask at reception.")
+        XCTAssertTrue((note.value as? String ?? "").contains("Outlet beside the gate."), app.debugDescription)
+        XCTAssertTrue((note.value as? String ?? "").contains("Ask at reception."), app.debugDescription)
+        dismissChargingKeyboard(in: app)
+        app.buttons["charging.editor.cancel"].tap()
+    }
+
+    func testAccessNoteAcceptsTypingFromTheBlankAreaAndAfterRefocusing() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        beginChargingPlacement(in: app)
+        app.buttons["charging.placement.confirm"].tap()
+
+        let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+        revealChargingControl(note, in: app, direction: .down)
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.85)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText("Outside outlet beside the entrance.")
+        XCTAssertEqual(note.value as? String, "Outside outlet beside the entrance.", app.debugDescription)
+        dismissChargingKeyboard(in: app)
+
+        let charging = app.buttons["charging.editor.kind.charging"]
+        revealChargingControl(charging, in: app)
+        charging.tap()
+        revealChargingControl(note, in: app, direction: .down)
+        note.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText(" Ask staff first.")
+        XCTAssertTrue(
+            (note.value as? String ?? "").contains("Ask staff first."), app.debugDescription)
+        XCTAssertTrue(
+            (note.value as? String ?? "").contains("Outside outlet beside the entrance."), app.debugDescription)
+        dismissChargingKeyboard(in: app)
+        XCTAssertTrue(app.buttons["charging.editor.save"].isEnabled, app.debugDescription)
+        app.buttons["charging.editor.cancel"].tap()
+    }
+
+    func testAccessNoteAcceptsTypingAfterChoosingEachChargingKind() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+
+        for kind in ["charging", "food", "ev"] {
+            beginChargingPlacement(in: app)
+            app.buttons["charging.placement.confirm"].tap()
+            let choice = app.buttons["charging.editor.kind.\(kind)"]
+            XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
+            choice.tap()
+
+            let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+            revealChargingControl(note, in: app, direction: .down)
+            note.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+            let text = "Access instructions for \(kind)."
+            note.typeText(text)
+            XCTAssertEqual(note.value as? String, text, app.debugDescription)
+            dismissChargingKeyboard(in: app)
+            app.buttons["charging.editor.cancel"].tap()
+            XCTAssertTrue(note.waitForNonExistence(timeout: 5), app.debugDescription)
+        }
     }
 
     func testSpotCreationPersistsAcrossRelaunchAndCanBeEditedAndDeleted() throws {

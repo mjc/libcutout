@@ -65,6 +65,16 @@ pub(super) fn apply(
         (CommunityAccountState::Deleting, AccountEvent::CompleteDeletion { at_ms }) => {
             i64::try_from(at_ms).map_err(|_| StorageError::ChargingInvalidInput)?;
             transaction.execute("DELETE FROM charging_outbox", [])?;
+            // The installation has one community identity. Retire only operations already
+            // bound by Send, in the same transaction as its confirmed account deletion.
+            // Prepared local snapshots and the original recordings remain untouched.
+            transaction.execute(
+                "UPDATE capture_submissions SET status_json = json_set(status_json,
+                 '$.phase', 'deleted', '$.receipt', NULL, '$.failure', NULL,
+                 '$.revision', json_extract(status_json, '$.revision') + 1)
+                 WHERE json_extract(status_json, '$.account_id') IS NOT NULL",
+                [],
+            )?;
             transaction.execute(
                 "UPDATE charging_spots SET owned=0,
                  vote=NULL,vote_revision=0,last_ack=NULL",

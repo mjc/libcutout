@@ -3986,7 +3986,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let completed = (0..<3).map { expectation(description: "capture segment \($0) durably closed") }
         var files: [URL] = []
         core.onCaptureEvent = { event in
-            if case .finished(_, let url) = event {
+            if case .finished(_, let url, _) = event {
                 let index = files.count
                 files.append(url)
                 if index < completed.count { completed[index].fulfill() }
