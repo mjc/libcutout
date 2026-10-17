@@ -231,6 +231,8 @@ pub struct CaptureResearchReadback {
     session: crate::RegisteredEucSession,
     decoder_active: bool,
     through_ms: u64,
+    latest_input_at_ms: Option<u64>,
+    boundary_at_ms: Option<u64>,
     values: Vec<CaptureResearchDecodedValue>,
 }
 
@@ -249,27 +251,38 @@ impl CaptureResearchReadback {
             session,
             decoder_active: false,
             through_ms,
+            latest_input_at_ms: None,
+            boundary_at_ms: None,
             values: Vec::new(),
         })
     }
 
     /// Consumes one retained transport observation without emitting any transport effects.
     pub fn observe(&mut self, record: &PevcapRecord) {
-        if record.monotonic_ms.get() > self.through_ms {
+        let at_ms = record.monotonic_ms.get();
+        if at_ms > self.through_ms {
             return;
         }
         let mut output = Vec::new();
         match record.direction {
             PevcapDirection::LinkUp => {
-                self.values.clear();
+                if !self.record_boundary(at_ms) {
+                    return;
+                }
                 self.activate_decoder(record, &mut output);
             }
             PevcapDirection::LinkDown => {
-                self.values.clear();
+                if !self.record_boundary(at_ms) {
+                    return;
+                }
                 self.session.handle(SessionInput::LinkDown, &mut output);
                 self.decoder_active = false;
             }
             PevcapDirection::Inbound => {
+                if self.boundary_at_ms.is_some_and(|boundary| at_ms < boundary) {
+                    return;
+                }
+                self.latest_input_at_ms = Some(self.latest_input_at_ms.unwrap_or(at_ms).max(at_ms));
                 // A capture can begin during an existing connection. Prime only the
                 // passive decoder; transport effects are discarded below and this
                 // does not add a link event to the retained evidence.
@@ -318,6 +331,20 @@ impl CaptureResearchReadback {
     #[must_use]
     pub fn values(&self) -> &[CaptureResearchDecodedValue] {
         &self.values
+    }
+
+    fn record_boundary(&mut self, at_ms: u64) -> bool {
+        if self.boundary_at_ms.is_some_and(|boundary| at_ms < boundary) {
+            return false;
+        }
+        self.boundary_at_ms = Some(at_ms);
+        self.values.retain(|value| value.observed_at_ms > at_ms);
+        // A delayed boundary expires older fields without resetting newer parser input.
+        if self.latest_input_at_ms.is_some_and(|latest| at_ms < latest) {
+            return false;
+        }
+        self.latest_input_at_ms = Some(at_ms);
+        true
     }
 
     fn activate_decoder(&mut self, record: &PevcapRecord, output: &mut Vec<SessionOutput>) {

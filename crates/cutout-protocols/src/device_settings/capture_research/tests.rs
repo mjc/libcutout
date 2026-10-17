@@ -11,6 +11,14 @@ const AERO_SETTINGS: [u8; 75] = hex_literal::hex!(
      808080808080080000803200364f371e00000100\
      808028062e7964800080801540e23a"
 );
+// Existing hardware-backed selector-two fixture from veteran_telemetry's tests.
+const AERO_LATERAL_SETTINGS: [u8; 87] = hex_literal::hex!(
+    "dc5a5c532a7c000000000000ab41001700000cff\
+     000000000226021ca8f607801afa000080c80000\
+     808080808080022880803080800e310e310e2f0e\
+     2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+     310e2e9e05e3ad"
+);
 // Existing source-backed Falcon Live A/B fixtures from begode_telemetry's tests.
 const FALCON_LIVE_A: [u8; 24] =
     hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
@@ -292,6 +300,181 @@ fn aero_readback_uses_later_record_when_packet_times_are_equal() {
             observed_at_ms: 30,
         }
     );
+}
+
+#[test]
+fn stale_link_boundaries_preserve_newer_aero_readback() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(10)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(10), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(
+            30,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(40),
+        ));
+        readback.observe(&boundary);
+        assert_eq!(
+            decoded(&readback, "display_brightness"),
+            &CaptureResearchDecodedValue {
+                setting_id: "display_brightness",
+                value: Some(DeviceSettingValue::Number(40)),
+                observed_at_ms: 30,
+            }
+        );
+    }
+}
+
+#[test]
+fn stale_link_boundaries_do_not_reset_newer_partial_aero_packet() {
+    let bytes = aero_brightness(40);
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(10)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(10), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(30, crate::VETERAN_DATA_CHANNEL, &bytes[..30]));
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&boundary);
+        readback.observe(&inbound(40, crate::VETERAN_DATA_CHANNEL, &bytes[30..]));
+        assert_eq!(
+            decoded(&readback, "display_brightness").value,
+            Some(DeviceSettingValue::Number(40))
+        );
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 40);
+    }
+}
+
+#[test]
+fn delayed_pre_boundary_packets_cannot_repopulate_a_new_capture_epoch() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(40)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(40), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(20, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+        readback.observe(&boundary);
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(
+            30,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(40),
+        ));
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(
+            50,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(50),
+        ));
+        assert_eq!(
+            decoded(&readback, "display_brightness").value,
+            Some(DeviceSettingValue::Number(50))
+        );
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 50);
+    }
+}
+
+#[test]
+fn equal_timestamp_link_boundaries_follow_storage_order() {
+    let mut readback = CaptureResearchReadback::new("nosfet_aero", 30).unwrap();
+    readback.observe(&inbound(30, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+    readback.observe(&PevcapRecord::link_down(MonotonicTimestamp::new(30)));
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+    readback.observe(&inbound(
+        30,
+        crate::VETERAN_DATA_CHANNEL,
+        &aero_brightness(40),
+    ));
+    assert_eq!(
+        decoded(&readback, "display_brightness").value,
+        Some(DeviceSettingValue::Number(40))
+    );
+    readback.observe(&PevcapRecord::link_up(MonotonicTimestamp::new(30), None));
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+    readback.observe(&inbound(29, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+    readback.observe(&inbound(
+        30,
+        crate::VETERAN_DATA_CHANNEL,
+        &aero_brightness(50),
+    ));
+    assert_eq!(
+        decoded(&readback, "display_brightness").value,
+        Some(DeviceSettingValue::Number(50))
+    );
+    assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 30);
+}
+
+#[test]
+fn delayed_boundary_expires_old_only_fields_while_preserving_new_epoch_fields() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+        readback.observe(&inbound(
+            30,
+            crate::VETERAN_DATA_CHANNEL,
+            &AERO_LATERAL_SETTINGS,
+        ));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 10);
+        readback.observe(&boundary);
+        assert_eq!(
+            readback
+                .values()
+                .iter()
+                .find(|entry| entry.setting_id == "display_brightness"),
+            None
+        );
+        assert_eq!(
+            decoded(&readback, "lateral_tilt_limit"),
+            &CaptureResearchDecodedValue {
+                setting_id: "lateral_tilt_limit",
+                value: Some(DeviceSettingValue::Number(40)),
+                observed_at_ms: 30,
+            }
+        );
+    }
+}
+
+#[test]
+fn delayed_boundary_still_blocks_packets_older_than_its_epoch_floor() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+        readback.observe(&inbound(
+            30,
+            crate::VETERAN_DATA_CHANNEL,
+            &AERO_LATERAL_SETTINGS,
+        ));
+        readback.observe(&boundary);
+        readback.observe(&PevcapRecord::link_down(MonotonicTimestamp::new(5)));
+        readback.observe(&inbound(
+            15,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(50),
+        ));
+        assert_eq!(
+            readback
+                .values()
+                .iter()
+                .find(|entry| entry.setting_id == "display_brightness"),
+            None
+        );
+        assert_eq!(
+            decoded(&readback, "lateral_tilt_limit"),
+            &CaptureResearchDecodedValue {
+                setting_id: "lateral_tilt_limit",
+                value: Some(DeviceSettingValue::Number(40)),
+                observed_at_ms: 30,
+            }
+        );
+    }
 }
 
 #[test]
