@@ -110,7 +110,9 @@ fn notification(
             .into_iter()
             .zip(transport_write_operation_ids(&step))
         {
-            if matches!(frame_payload(&frame).first(), Some(14 | 17 | 93))
+            if frame_payload(&frame)
+                .first()
+                .is_some_and(|command| *command == 14 || *command == 17 || *command == 93)
                 && let Some(operation_id) = operation_id.filter(|id| *id & (1 << 63) != 0)
             {
                 assert!(owner.mark_setting_read_transport(
@@ -625,7 +627,7 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
     let (motor_read, motor_read_id) = &startup_motor_reads[0];
     let motor_read_id = motor_read_id.expect("LinkUp bootstrap reads are wrapper-owned");
     assert_eq!(frame_payload(motor_read), &[14]);
-    assert!(owner.settings_descriptors().is_empty());
+    assert_eq!(owner.settings_descriptors(), Vec::new());
     assert!(owner.mark_setting_read_transport(
         &token,
         motor_read_id,
@@ -804,7 +806,7 @@ fn unsupported_firmware_motor_probe_remains_read_only_telemetry_evidence() {
     );
     notification(&mut owner, &token, vesc_controller_7_values_reply(), 6);
 
-    assert!(owner.settings_descriptors().is_empty());
+    assert_eq!(owner.settings_descriptors(), Vec::new());
     assert!(
         owner
             .telemetry_snapshot()
