@@ -121,6 +121,42 @@ impl DeviceSession {
             session.record_setting_transport(operation_id, status, at);
         }
     }
+    pub(crate) fn setting_read_transport_is_current(
+        &self,
+        operation_id: u64,
+        at: cutout_core::MonotonicTimestamp,
+    ) -> bool {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => {
+                session.setting_read_transport_is_current(operation_id, at)
+            }
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+        }
+    }
+    pub(crate) fn record_setting_read_transport(
+        &mut self,
+        operation_id: u64,
+        status: cutout_core::SettingTransportStatus,
+        at: cutout_core::MonotonicTimestamp,
+    ) -> bool {
+        match &mut self.engine {
+            DeviceSessionEngine::Vesc(session) => {
+                session.record_setting_read_transport(operation_id, status, at)
+            }
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+        }
+    }
+    pub(crate) fn setting_mutation_submitted_at(
+        &self,
+        operation_id: u64,
+    ) -> Option<cutout_core::MonotonicTimestamp> {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => {
+                session.setting_mutation_submitted_at(operation_id)
+            }
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+        }
+    }
     pub(crate) fn next_tick_at(&self) -> Option<cutout_core::MonotonicTimestamp> {
         match &self.engine {
             DeviceSessionEngine::Veteran(session) => session.next_tick_at(),

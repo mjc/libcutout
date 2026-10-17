@@ -563,6 +563,21 @@ impl CutoutSessionStateHandle {
         )
     }
 
+    /// Checks that a correlated config read is still queued for this connection.
+    #[must_use]
+    pub fn setting_read_transport_is_current(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        operation_id: u64,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().setting_read_transport_is_current(
+            &token.into(),
+            operation_id,
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
     /// Records host transport evidence for one accepted setting request.
     pub fn mark_setting_transport(
         &self,
@@ -578,6 +593,22 @@ impl CutoutSessionStateHandle {
             &token,
             id.into(),
             request_id,
+            status.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
+    /// Records a native queue/submission/failure receipt for a config read.
+    pub fn mark_setting_read_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        operation_id: u64,
+        status: MobileSettingTransportStatusDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().mark_setting_read_transport(
+            &token.into(),
+            operation_id,
             status.into(),
             cutout_core::MonotonicTimestamp::new(monotonic_ms),
         )

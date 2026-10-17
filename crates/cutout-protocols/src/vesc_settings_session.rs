@@ -25,6 +25,7 @@ const SETTING_OPERATION_TIMEOUT_MS: u64 = 2_000;
 pub(crate) struct VescSettingsEvidence {
     pub(crate) package: Option<RefloatInfo>,
     pub(crate) config: Option<(RefloatSettings, MonotonicTimestamp)>,
+    pub(crate) config_generation: u64,
     pub(crate) firmware: Option<(u8, u8)>,
     pub(crate) controller_id: Option<u8>,
 }
@@ -32,10 +33,33 @@ pub(crate) struct VescSettingsEvidence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingStage {
     PreflightQueued,
-    AwaitingPreflight { submitted_at: MonotonicTimestamp },
+    AwaitingPreflight {
+        submitted_at: MonotonicTimestamp,
+    },
     MutationQueued,
-    VerificationReadQueued,
-    AwaitingVerification { submitted_at: MonotonicTimestamp },
+    VerificationReadQueued {
+        mutation_submitted_at: MonotonicTimestamp,
+    },
+    AwaitingVerification {
+        mutation_submitted_at: MonotonicTimestamp,
+        submitted_at: MonotonicTimestamp,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StandaloneConfigRead {
+    Idle,
+    AwaitingProcedureReply,
+    Queued {
+        operation_id: TransportOperationId,
+        accepted_at: MonotonicTimestamp,
+        receipt_at: MonotonicTimestamp,
+    },
+    Submitted {
+        operation_id: TransportOperationId,
+        accepted_at: MonotonicTimestamp,
+        receipt_at: MonotonicTimestamp,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -63,9 +87,11 @@ pub(crate) struct VescSettingsSession {
     last_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
     last_operating_state: Option<(RideOperatingState, MonotonicTimestamp)>,
     last_operating_mode: Option<(cutout_core::RideOperatingMode, MonotonicTimestamp)>,
-    last_config_at: Option<MonotonicTimestamp>,
+    last_config_generation: u64,
     initial_config_requested: bool,
-    config_read_pending: bool,
+    initial_config_retry_count: u8,
+    next_config_read_id: Option<u64>,
+    standalone_config_read: StandaloneConfigRead,
     identity_invalidated: bool,
 }
 
@@ -84,9 +110,11 @@ impl VescSettingsSession {
             last_speed: None,
             last_operating_state: None,
             last_operating_mode: None,
-            last_config_at: None,
+            last_config_generation: 0,
             initial_config_requested: false,
-            config_read_pending: false,
+            initial_config_retry_count: 0,
+            next_config_read_id: Some(1_u64 << 63),
+            standalone_config_read: StandaloneConfigRead::Idle,
             identity_invalidated: false,
         }
     }
@@ -118,7 +146,7 @@ impl VescSettingsSession {
     }
 
     pub(crate) fn settings_busy(&self) -> bool {
-        self.pending.is_some() || self.config_read_pending
+        self.pending.is_some() || self.standalone_config_read != StandaloneConfigRead::Idle
     }
 
     pub(crate) fn ingest_typed(&mut self, input: &SessionInputDto) -> DeviceSessionStep {
@@ -215,10 +243,15 @@ impl VescSettingsSession {
                         PendingStage::PreflightQueued => {
                             PendingStage::AwaitingPreflight { submitted_at: at }
                         }
-                        PendingStage::MutationQueued => PendingStage::VerificationReadQueued,
-                        PendingStage::VerificationReadQueued => {
-                            PendingStage::AwaitingVerification { submitted_at: at }
-                        }
+                        PendingStage::MutationQueued => PendingStage::VerificationReadQueued {
+                            mutation_submitted_at: at,
+                        },
+                        PendingStage::VerificationReadQueued {
+                            mutation_submitted_at,
+                        } => PendingStage::AwaitingVerification {
+                            mutation_submitted_at,
+                            submitted_at: at,
+                        },
                         stage @ (PendingStage::AwaitingPreflight { .. }
                         | PendingStage::AwaitingVerification { .. }) => stage,
                     };
@@ -239,6 +272,11 @@ impl VescSettingsSession {
         let Some(pending) = self.pending.as_ref() else {
             return false;
         };
+        if let PendingStage::VerificationReadQueued { .. } = pending.stage {
+            return pending.expires_at > at
+                && self.profile_is_supported()
+                && self.read_only.settings_evidence().controller_id == Some(pending.controller_id);
+        }
         let Some(current_arm) = self.arm else {
             return false;
         };
@@ -262,6 +300,20 @@ impl VescSettingsSession {
             || !self.arm.is_some_and(|arm| arm == authorization.arm)
         {
             return None;
+        }
+        if self.pending.as_ref().is_some_and(|pending| {
+            pending.authorization.is_some_and(|current| {
+                current.arm == authorization.arm
+                    && current.cancellation_generation == authorization.cancellation_generation
+            }) && match pending.stage {
+                PendingStage::VerificationReadQueued { .. } => true,
+                PendingStage::PreflightQueued
+                | PendingStage::AwaitingPreflight { .. }
+                | PendingStage::MutationQueued
+                | PendingStage::AwaitingVerification { .. } => false,
+            }
+        }) {
+            return self.pending.as_ref().map(|pending| pending.expires_at);
         }
         let freshness_deadline = [
             self.last_speed.map(|(_, observed)| observed),
@@ -338,6 +390,31 @@ impl VescSettingsSession {
         }
     }
 
+    pub(crate) fn setting_mutation_submitted_at(
+        &self,
+        operation_id: u64,
+    ) -> Option<MonotonicTimestamp> {
+        let pending = self.pending.as_ref()?;
+        if pending
+            .operation_id
+            .is_none_or(|current| current.get() != operation_id)
+        {
+            return None;
+        }
+        match pending.stage {
+            PendingStage::VerificationReadQueued {
+                mutation_submitted_at,
+            }
+            | PendingStage::AwaitingVerification {
+                mutation_submitted_at,
+                ..
+            } => Some(mutation_submitted_at),
+            PendingStage::PreflightQueued
+            | PendingStage::AwaitingPreflight { .. }
+            | PendingStage::MutationQueued => None,
+        }
+    }
+
     pub(crate) fn take_failed_setting_operation(&mut self) -> Option<u64> {
         self.failed_operation.take()
     }
@@ -408,7 +485,6 @@ impl VescSettingsSession {
             expected: None,
             stage: PendingStage::PreflightQueued,
         });
-        self.config_read_pending = true;
         step.outputs
             .push(SessionOutput::Transport(TransportAction::Write {
                 channel: VESC_WRITE_CHANNEL,
@@ -429,7 +505,9 @@ impl VescSettingsSession {
             );
             return;
         }
-        if self.profile_is_supported() {
+        if !self.identity_invalidated
+            && supported_package_facts(&self.read_only.settings_evidence())
+        {
             self.push_config_read(step);
             step.error = None;
         } else {
@@ -472,47 +550,50 @@ impl VescSettingsSession {
 
     fn observe_config(&mut self, step: &mut DeviceSessionStep) {
         let evidence = self.read_only.settings_evidence();
-        let Some((config, observed_at)) = evidence.config else {
-            if self.pending.is_some() {
+        if evidence.config_generation <= self.last_config_generation {
+            if evidence.config.is_none() && self.pending.is_some() {
                 self.clear_arm_and_cancel();
             }
             return;
-        };
-        if self.last_config_at.is_some_and(|last| observed_at <= last) {
-            return;
         }
-        self.last_config_at = Some(observed_at);
+        self.last_config_generation = evidence.config_generation;
+        self.standalone_config_read = StandaloneConfigRead::Idle;
+        let Some((config, observed_at)) = evidence.config else {
+            if self.pending.is_some() {
+                self.cancel_pending_after_read_response();
+            }
+            return;
+        };
 
         if self
             .pending
             .as_ref()
             .is_some_and(|pending| evidence.controller_id != Some(pending.controller_id))
         {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             push_settings_readback(step, &config);
             return;
         }
 
         let Some(pending) = self.pending.clone() else {
-            self.config_read_pending = false;
+            self.standalone_config_read = StandaloneConfigRead::Idle;
             push_settings_readback(step, &config);
             return;
         };
         match pending.stage {
             PendingStage::PreflightQueued
             | PendingStage::MutationQueued
-            | PendingStage::VerificationReadQueued => {}
+            | PendingStage::VerificationReadQueued { .. } => {}
             PendingStage::AwaitingPreflight { submitted_at } => {
-                if observed_at <= submitted_at {
+                if observed_at < submitted_at {
                     return;
                 }
                 self.apply_preflight(&pending, &config, observed_at, step);
             }
-            PendingStage::AwaitingVerification { submitted_at } => {
-                if observed_at <= submitted_at {
+            PendingStage::AwaitingVerification { submitted_at, .. } => {
+                if observed_at < submitted_at {
                     return;
                 }
-                self.config_read_pending = false;
                 let verified = pending
                     .expected
                     .as_ref()
@@ -521,7 +602,7 @@ impl VescSettingsSession {
                     push_settings_readback(step, &config);
                     self.finish_pending();
                 } else {
-                    self.cancel_pending();
+                    self.cancel_pending_after_read_response();
                     push_settings_readback(step, &config);
                 }
             }
@@ -535,35 +616,34 @@ impl VescSettingsSession {
         observed_at: MonotonicTimestamp,
         step: &mut DeviceSessionStep,
     ) {
-        self.config_read_pending = false;
         if !pending
             .authorization
             .is_some_and(|authorization| self.setting_write_is_current(authorization, observed_at))
         {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             push_settings_readback(step, config);
             return;
         }
         if !settings_images_match(&pending.baseline, config) {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             push_settings_readback(step, config);
             return;
         }
         let Ok(expected) = config.changed(pending.id, pending.value) else {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             push_settings_readback(step, config);
             return;
         };
         let Some(operation_id) = pending.operation_id else {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             return;
         };
         let Some(write) = encode_settings_payload(&expected.write_command_payload()) else {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             return;
         };
         let Some(read) = encode_settings_payload(&[93, 0]) else {
-            self.cancel_pending();
+            self.cancel_pending_after_read_response();
             return;
         };
         let mut write = write;
@@ -574,7 +654,6 @@ impl VescSettingsSession {
             pending.expected = Some(expected);
             pending.stage = PendingStage::MutationQueued;
         }
-        self.config_read_pending = true;
         step.outputs
             .push(SessionOutput::Transport(TransportAction::Write {
                 channel: VESC_WRITE_CHANNEL,
@@ -595,6 +674,7 @@ impl VescSettingsSession {
             || self.identity_invalidated
             || evidence.config.is_some()
             || self.pending.is_some()
+            || self.standalone_config_read != StandaloneConfigRead::Idle
             || self.initial_config_requested
         {
             return;
@@ -607,6 +687,17 @@ impl VescSettingsSession {
         let Some(bytes) = encode_settings_payload(&[93, 0]) else {
             return;
         };
+        let Some(operation_id) = self.next_config_read_id.map(TransportOperationId::new) else {
+            return;
+        };
+        self.next_config_read_id = operation_id.get().checked_add(1);
+        let mut bytes = bytes;
+        bytes.set_operation_id(operation_id);
+        self.standalone_config_read = StandaloneConfigRead::Queued {
+            operation_id,
+            accepted_at: self.now,
+            receipt_at: self.now,
+        };
         step.outputs
             .push(SessionOutput::Transport(TransportAction::Write {
                 channel: VESC_WRITE_CHANNEL,
@@ -615,7 +706,73 @@ impl VescSettingsSession {
             }));
         // Command93 has no request nonce. Never retry an unanswered read on
         // this connection or let it overlap a mutation's preflight.
-        self.config_read_pending = true;
+    }
+
+    pub(crate) fn setting_read_transport_is_current(
+        &self,
+        operation_id: u64,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        match self.standalone_config_read {
+            StandaloneConfigRead::Queued {
+                operation_id: current,
+                accepted_at,
+                receipt_at,
+            } => {
+                current.get() == operation_id
+                    && at >= accepted_at
+                    && at >= receipt_at
+                    && self.package_is_supported(&self.read_only.settings_evidence())
+            }
+            StandaloneConfigRead::Idle
+            | StandaloneConfigRead::AwaitingProcedureReply
+            | StandaloneConfigRead::Submitted { .. } => false,
+        }
+    }
+
+    pub(crate) fn record_setting_read_transport(
+        &mut self,
+        operation_id: u64,
+        status: SettingTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        let StandaloneConfigRead::Queued {
+            operation_id: current,
+            accepted_at,
+            receipt_at,
+        } = self.standalone_config_read
+        else {
+            return false;
+        };
+        if current.get() != operation_id || at < accepted_at || at < receipt_at {
+            return false;
+        }
+        match status {
+            SettingTransportStatus::Accepted | SettingTransportStatus::Queued => {
+                self.standalone_config_read = StandaloneConfigRead::Queued {
+                    operation_id: current,
+                    accepted_at,
+                    receipt_at: at,
+                };
+                true
+            }
+            SettingTransportStatus::Submitted => {
+                self.standalone_config_read = StandaloneConfigRead::Submitted {
+                    operation_id: current,
+                    accepted_at,
+                    receipt_at: at,
+                };
+                true
+            }
+            SettingTransportStatus::Rejected | SettingTransportStatus::Cancelled => {
+                self.standalone_config_read = StandaloneConfigRead::Idle;
+                if self.initial_config_retry_count == 0 {
+                    self.initial_config_retry_count = 1;
+                    self.initial_config_requested = false;
+                }
+                true
+            }
+        }
     }
 
     fn expire_pending(&mut self) {
@@ -629,15 +786,25 @@ impl VescSettingsSession {
     }
 
     fn cancel_pending(&mut self) {
+        self.cancel_pending_retaining_submitted_read(true);
+    }
+
+    fn cancel_pending_after_read_response(&mut self) {
+        self.cancel_pending_retaining_submitted_read(false);
+    }
+
+    fn cancel_pending_retaining_submitted_read(&mut self, retain_read: bool) {
         if let Some(pending) = self.pending.take() {
-            match pending.stage {
-                PendingStage::PreflightQueued
-                | PendingStage::MutationQueued
-                | PendingStage::VerificationReadQueued => {
-                    self.config_read_pending = false;
+            if retain_read {
+                match pending.stage {
+                    PendingStage::AwaitingPreflight { .. }
+                    | PendingStage::AwaitingVerification { .. } => {
+                        self.standalone_config_read = StandaloneConfigRead::AwaitingProcedureReply;
+                    }
+                    PendingStage::PreflightQueued
+                    | PendingStage::MutationQueued
+                    | PendingStage::VerificationReadQueued { .. } => {}
                 }
-                PendingStage::AwaitingPreflight { .. }
-                | PendingStage::AwaitingVerification { .. } => {}
             }
             if let Some(operation_id) = pending.operation_id {
                 self.failed_operation = Some(operation_id.get());
@@ -661,17 +828,20 @@ impl VescSettingsSession {
         self.last_speed = None;
         self.last_operating_state = None;
         self.last_operating_mode = None;
-        self.last_config_at = None;
+        self.last_config_generation = 0;
         self.initial_config_requested = false;
-        self.config_read_pending = false;
+        self.initial_config_retry_count = 0;
+        self.standalone_config_read = StandaloneConfigRead::Idle;
         self.identity_invalidated = false;
     }
 
     fn profile_is_supported(&self) -> bool {
         let evidence = self.read_only.settings_evidence();
-        !self.identity_invalidated
-            && supported_package_facts(&evidence)
-            && evidence.config.is_some()
+        self.package_is_supported(&evidence) && evidence.config.is_some()
+    }
+
+    fn package_is_supported(&self, evidence: &VescSettingsEvidence) -> bool {
+        !self.identity_invalidated && supported_package_facts(evidence)
     }
 
     fn fresh_speed(&self, at: MonotonicTimestamp) -> Option<cutout_core::Speed> {

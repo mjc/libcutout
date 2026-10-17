@@ -58,11 +58,15 @@ impl DeviceConnectionSession {
             .setting_operations
             .iter()
             .filter_map(|(&id, operation)| {
-                if !self
+                let awaits_host_receipt = self
                     .state
                     .settings
                     .awaits_transport(id, operation.request_id)
-                {
+                    || (operation.remaining_receipts > 0
+                        && device
+                            .setting_mutation_submitted_at(operation.request_id)
+                            .is_some());
+                if !awaits_host_receipt {
                     return None;
                 }
                 operation.authorization.and_then(|authorization| {
@@ -95,6 +99,20 @@ impl DeviceConnectionSession {
             .setting_operations
             .iter()
             .filter_map(|(&id, operation)| {
+                let mutation_submitted = self
+                    .device
+                    .as_ref()
+                    .and_then(|device| device.setting_mutation_submitted_at(operation.request_id))
+                    .is_some();
+                if operation.remaining_receipts == 0
+                    || (!mutation_submitted
+                        && !self
+                            .state
+                            .settings
+                            .awaits_transport(id, operation.request_id))
+                {
+                    return None;
+                }
                 (!self.setting_transport_is_current(
                     token,
                     operation.request_id,
@@ -104,6 +122,11 @@ impl DeviceConnectionSession {
             })
             .collect();
         for (id, request_id) in expired {
+            let mutation_submitted = self
+                .device
+                .as_ref()
+                .and_then(|device| device.setting_mutation_submitted_at(request_id))
+                .is_some();
             if let Some(device) = self.device.as_mut() {
                 device.record_setting_transport(
                     request_id,
@@ -111,12 +134,18 @@ impl DeviceConnectionSession {
                     self.last_input_at,
                 );
             }
-            self.state.settings.transport(
-                id,
-                request_id,
-                cutout_core::SettingTransportStatus::Cancelled,
-                self.last_input_at,
-            );
+            if mutation_submitted {
+                self.state
+                    .settings
+                    .fail_operation(request_id, self.last_input_at);
+            } else {
+                self.state.settings.transport(
+                    id,
+                    request_id,
+                    cutout_core::SettingTransportStatus::Cancelled,
+                    self.last_input_at,
+                );
+            }
         }
         true
     }
@@ -141,7 +170,7 @@ impl DeviceConnectionSession {
             .iter()
             .find(|(_, operation)| operation.request_id == operation_id)
         else {
-            return false;
+            return device.setting_read_transport_is_current(operation_id, at);
         };
         if at < operation.accepted_at || operation.remaining_receipts == 0 {
             return false;
@@ -161,6 +190,10 @@ impl DeviceConnectionSession {
                     cutout_core::SettingTransportStatus::Accepted
                     | cutout_core::SettingTransportStatus::Queued,
                 ) => true,
+                Some(cutout_core::SettingTransportStatus::Submitted) => {
+                    operation.remaining_receipts > 0
+                        && device.setting_mutation_submitted_at(operation_id).is_some()
+                }
                 _ => false,
             })
         {
@@ -184,6 +217,21 @@ impl DeviceConnectionSession {
         }
     }
 
+    /// Revalidates a correlated config read at the native write boundary.
+    #[must_use]
+    pub fn setting_read_transport_is_current(
+        &self,
+        token: &ConnectionAttemptToken,
+        operation_id: u64,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.state.connection.is_verified(token)
+            && self
+                .device
+                .as_ref()
+                .is_some_and(|device| device.setting_read_transport_is_current(operation_id, at))
+    }
+
     /// Records one fully submitted protocol stage, or a terminal native failure.
     /// Native adapters aggregate chunks of each stage before reporting it.
     pub fn mark_setting_transport(
@@ -198,6 +246,9 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return false;
         }
+        let Some(device) = self.device.as_mut() else {
+            return false;
+        };
         let Some(operation) = self.setting_operations.get_mut(&id) else {
             return false;
         };
@@ -213,6 +264,35 @@ impl DeviceConnectionSession {
         else {
             return false;
         };
+        let mutation_submitted = device.setting_mutation_submitted_at(request_id).is_some();
+        if setting.transport == Some(SettingTransportStatus::Submitted) {
+            if mutation_submitted && status == SettingTransportStatus::Queued {
+                operation.receipt_at = at;
+                return true;
+            }
+            if mutation_submitted
+                && status == SettingTransportStatus::Submitted
+                && operation.remaining_receipts == 1
+            {
+                device.record_setting_transport(request_id, status, at);
+                operation.remaining_receipts = 0;
+                operation.receipt_at = at;
+                return true;
+            }
+            if mutation_submitted
+                && (status == SettingTransportStatus::Rejected
+                    || status == SettingTransportStatus::Cancelled)
+            {
+                let accepted = self.state.settings.fail_operation(request_id, at);
+                if accepted {
+                    device.record_setting_transport(request_id, status, at);
+                    operation.remaining_receipts = 0;
+                    operation.receipt_at = at;
+                }
+                return accepted;
+            }
+            return false;
+        }
         if !(match setting.transport {
             Some(SettingTransportStatus::Accepted | SettingTransportStatus::Queued) => true,
             _ => false,
@@ -220,11 +300,18 @@ impl DeviceConnectionSession {
             return false;
         }
         if status == SettingTransportStatus::Submitted && operation.remaining_receipts > 1 {
-            if let Some(device) = self.device.as_mut() {
-                device.record_setting_transport(request_id, status, at);
-            }
+            device.record_setting_transport(request_id, status, at);
             operation.remaining_receipts -= 1;
             operation.receipt_at = at;
+            let mutation_submitted_at = device.setting_mutation_submitted_at(request_id);
+            if let Some(submitted_at) = mutation_submitted_at {
+                return self.state.settings.transport(
+                    id,
+                    request_id,
+                    SettingTransportStatus::Submitted,
+                    submitted_at,
+                );
+            }
             if setting.transport == Some(SettingTransportStatus::Accepted) {
                 return self.state.settings.transport(
                     id,
@@ -237,13 +324,32 @@ impl DeviceConnectionSession {
         }
         let accepted = self.state.settings.transport(id, request_id, status, at);
         if accepted {
-            if let Some(device) = self.device.as_mut() {
-                device.record_setting_transport(request_id, status, at);
-            }
+            device.record_setting_transport(request_id, status, at);
             operation.receipt_at = at;
             if status == SettingTransportStatus::Submitted {
                 operation.remaining_receipts = 0;
             }
+        }
+        accepted
+    }
+
+    /// Records a native receipt for a Rust-correlated settings config read.
+    pub fn mark_setting_read_transport(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        operation_id: u64,
+        status: cutout_core::SettingTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        let accepted = self
+            .device
+            .as_mut()
+            .is_some_and(|device| device.record_setting_read_transport(operation_id, status, at));
+        if accepted {
+            self.last_input_at = self.last_input_at.max(at);
         }
         accepted
     }

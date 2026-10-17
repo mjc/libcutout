@@ -663,6 +663,7 @@ pub struct VescNotificationDecoder {
     refloat_info_received: bool,
     refloat_package: Option<crate::RefloatInfo>,
     refloat_config: Option<(crate::refloat_settings::RefloatSettings, MonotonicTimestamp)>,
+    refloat_config_generation: u64,
     firmware_version: Option<(u8, u8)>,
     controller_id: Option<u8>,
     refloat_stream_pending: bool,
@@ -690,6 +691,7 @@ impl VescNotificationDecoder {
             refloat_info_received: false,
             refloat_package: None,
             refloat_config: None,
+            refloat_config_generation: 0,
             firmware_version: None,
             controller_id: None,
             refloat_stream_pending: false,
@@ -791,6 +793,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.refloat_info_received = false;
         self.refloat_package = None;
         self.refloat_config = None;
+        self.refloat_config_generation = 0;
         self.firmware_version = None;
         self.controller_id = None;
         self.refloat_stream_pending = false;
@@ -1258,6 +1261,7 @@ impl VescNotificationDecoder {
                 }
             }
             VescReadOnlyReply::CustomConfig { index: 0, bytes } => {
+                self.refloat_config_generation = self.refloat_config_generation.saturating_add(1);
                 self.refloat_config = crate::refloat_settings::RefloatSettings::decode(bytes)
                     .ok()
                     .map(|config| (config, monotonic_ms));
@@ -2295,6 +2299,7 @@ impl ReadOnlySession<VescGenericModel> {
         crate::vesc_settings_session::VescSettingsEvidence {
             package: self.decoder.refloat_package.clone(),
             config: self.decoder.refloat_config.clone(),
+            config_generation: self.decoder.refloat_config_generation,
             firmware: self.decoder.firmware_version,
             controller_id: self.decoder.controller_id,
         }

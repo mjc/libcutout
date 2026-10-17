@@ -5,16 +5,17 @@ import Foundation
 final class DeviceSessionTransport: @unchecked Sendable {
     private typealias PendingOperation = (CoreBluetoothPlannedOperation, (CoreBluetoothWriteDisposition) -> Void)
 
-    private final class SettingWriteReceipt {
-        let id: DeviceSettingID
-        let requestID: UInt64
-        let operationID: UInt64?
+    private enum SettingsWriteReceiptTarget {
+        case setting(id: DeviceSettingID, operationID: UInt64)
+        case configRead(operationID: UInt64)
+    }
+
+    private final class SettingsWriteReceipt {
+        let target: SettingsWriteReceiptTarget
         var chunks: [CoreBluetoothWriteDisposition]
 
-        init(id: DeviceSettingID, requestID: UInt64, operationID: UInt64?, chunkCount: Int) {
-            self.id = id
-            self.requestID = requestID
-            self.operationID = operationID
+        init(target: SettingsWriteReceiptTarget, chunkCount: Int) {
+            self.target = target
             chunks = Array(repeating: .queued, count: chunkCount)
         }
 
@@ -251,13 +252,19 @@ final class DeviceSessionTransport: @unchecked Sendable {
         var pending: [PendingOperation] = []
         for action in actions {
             let planned = planner.plan(action: action)
-            let receipt: SettingWriteReceipt?
+            let receipt: SettingsWriteReceipt?
             if action.kind == .write, let operationID = action.operationID,
                 let setting = settings?.settings.first(where: { $0.requestId == operationID })
             {
-                receipt = SettingWriteReceipt(
-                    id: setting.id, requestID: operationID,
-                    operationID: operationID, chunkCount: planned.count)
+                receipt = SettingsWriteReceipt(
+                    target: .setting(id: setting.id, operationID: operationID),
+                    chunkCount: planned.count)
+            } else if action.kind == .write, let operationID = action.operationID,
+                state.settingReadTransportIsCurrent(
+                    token: token, operationId: operationID, monotonicMs: clock.now().rawValue)
+            {
+                receipt = SettingsWriteReceipt(
+                    target: .configRead(operationID: operationID), chunkCount: planned.count)
             } else {
                 receipt = nil
             }
@@ -353,12 +360,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     private func recordSettingTransport(
-        _ receipt: SettingWriteReceipt
+        _ receipt: SettingsWriteReceipt
     ) {
-        // The native queue may only advance a setting whose Rust operation
-        // identity survived the FFI boundary. A missing or mismatched identity
-        // is not a submission receipt for this request.
-        guard receipt.operationID == receipt.requestID else { return }
         let status: MobileSettingTransportStatusDto
         switch receipt.disposition {
         case .submitted: status = .submitted
@@ -366,12 +369,18 @@ final class DeviceSessionTransport: @unchecked Sendable {
         case .rejected: status = .rejected
         case .cancelled: status = .cancelled
         }
-        guard
-            state.markSettingTransport(
-                token: token, id: receipt.id, requestId: receipt.requestID,
-                status: status, monotonicMs: clock.now().rawValue
-            )
-        else { return }
+        let accepted: Bool
+        switch receipt.target {
+        case .setting(let id, let operationID):
+            accepted = state.markSettingTransport(
+                token: token, id: id, requestId: operationID,
+                status: status, monotonicMs: clock.now().rawValue)
+        case .configRead(let operationID):
+            accepted = state.markSettingReadTransport(
+                token: token, operationId: operationID,
+                status: status, monotonicMs: clock.now().rawValue)
+        }
+        guard accepted else { return }
         publishSettings(at: clock.now(), immediately: true)
         rescheduleTimer()
     }

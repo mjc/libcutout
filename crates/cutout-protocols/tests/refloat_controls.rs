@@ -231,6 +231,25 @@ fn transport_writes(step: &cutout_protocols::DeviceConnectionStep) -> Vec<Vec<u8
         .collect()
 }
 
+fn transport_write_operation_ids(
+    step: &cutout_protocols::DeviceConnectionStep,
+) -> Vec<Option<u64>> {
+    step.result
+        .outputs
+        .iter()
+        .filter_map(|output| {
+            let SessionOutput::Transport(TransportAction::Write { bytes, .. }) = output else {
+                return None;
+            };
+            Some(
+                bytes
+                    .operation_id()
+                    .map(cutout_core::TransportOperationId::get),
+            )
+        })
+        .collect()
+}
+
 fn has_config_write(step: &cutout_protocols::DeviceConnectionStep) -> bool {
     transport_writes(step)
         .iter()
@@ -273,6 +292,202 @@ fn explicit_settings_read_requests_only_config_without_mutating_it() {
     let writes = transport_writes(&step);
     assert_eq!(writes.len(), 1);
     assert_eq!(frame_payload(&writes[0]), [93, 0]);
+    assert!(
+        transport_write_operation_ids(&step)[0].is_some(),
+        "a config read needs an identity so native rejection/cancellation can settle it"
+    );
+}
+
+#[test]
+fn initial_config_read_cancellation_releases_slot_but_submitted_read_waits_for_response() {
+    let (mut owner, token) = vesc_session();
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 10);
+    notification(&mut owner, &token, vesc_firmware_reply(7, 0), 11);
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 12 + index as u64);
+    }
+    let initial = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_controller_7_values_reply(),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 14 },
+            },
+        )
+        .unwrap();
+    let initial_id = transport_write_operation_ids(&initial)
+        .into_iter()
+        .flatten()
+        .next()
+        .expect("initial config reads carry Rust-owned operation identity");
+    assert!(owner.mark_setting_read_transport(
+        &token,
+        initial_id,
+        SettingTransportStatus::Cancelled,
+        MonotonicTimestamp::new(15),
+    ));
+
+    let retry = owner
+        .ingest(
+            &token,
+            &SessionInputDto::CommandAt {
+                command: DeviceCommandDto::RequestSettings,
+                monotonic_ms: MonotonicMillisDto { milliseconds: 16 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&retry).len(), 1);
+    let retry_id = transport_write_operation_ids(&retry)[0]
+        .expect("an explicit retry receives a new correlation identity");
+    assert_ne!(initial_id, retry_id);
+    assert!(
+        owner.setting_read_transport_is_current(&token, retry_id, MonotonicTimestamp::new(16),)
+    );
+    assert!(owner.mark_setting_read_transport(
+        &token,
+        retry_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(17),
+    ));
+    let blocked = owner
+        .ingest(
+            &token,
+            &SessionInputDto::CommandAt {
+                command: DeviceCommandDto::RequestSettings,
+                monotonic_ms: MonotonicMillisDto { milliseconds: 18 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&blocked), Vec::<Vec<u8>>::new());
+}
+
+#[test]
+fn submitted_procedure_read_timeout_keeps_config_slot_until_reply() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let queued = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert!(has_config_write(&queued));
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(26),
+    ));
+
+    let expired = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Tick {
+                monotonic_ms: MonotonicMillisDto {
+                    milliseconds: 2_023,
+                },
+            },
+        )
+        .unwrap();
+    assert!(transport_writes(&expired).iter().all(|bytes| {
+        frame_payload(bytes)
+            .first()
+            .is_none_or(|command| *command != 93)
+    }));
+    let blocked = owner
+        .ingest(
+            &token,
+            &SessionInputDto::CommandAt {
+                command: DeviceCommandDto::RequestSettings,
+                monotonic_ms: MonotonicMillisDto {
+                    milliseconds: 2_024,
+                },
+            },
+        )
+        .unwrap();
+    assert!(transport_writes(&blocked).iter().all(|bytes| {
+        frame_payload(bytes)
+            .first()
+            .is_none_or(|command| *command != 93)
+    }));
+
+    notification(&mut owner, &token, vesc_frame(&preflight), 2_025);
+    let allowed = owner
+        .ingest(
+            &token,
+            &SessionInputDto::CommandAt {
+                command: DeviceCommandDto::RequestSettings,
+                monotonic_ms: MonotonicMillisDto {
+                    milliseconds: 2_026,
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&allowed).len(), 1);
+}
+
+#[test]
+fn queued_initial_config_read_is_invalidated_by_controller_replacement() {
+    let (mut owner, token) = vesc_session();
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 10);
+    notification(&mut owner, &token, vesc_firmware_reply(7, 0), 11);
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 12 + index as u64);
+    }
+    let initial = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_controller_7_values_reply(),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 14 },
+            },
+        )
+        .unwrap();
+    let operation_id = transport_write_operation_ids(&initial)[0].unwrap();
+    let mut replacement = frame_payload(&vesc_controller_7_values_reply()).to_vec();
+    *replacement.last_mut().unwrap() = 8;
+    notification(&mut owner, &token, vesc_frame(&replacement), 15);
+    assert!(!owner.setting_read_transport_is_current(
+        &token,
+        operation_id,
+        MonotonicTimestamp::new(16),
+    ));
 }
 
 #[test]
@@ -560,6 +775,467 @@ fn matching_config_before_all_host_receipts_does_not_retire_queued_writes() {
             .unwrap();
         assert_eq!(setting.status, SettingCommandStatus::Confirmed);
     }
+}
+
+#[test]
+fn same_millisecond_preflight_readback_is_accepted_after_its_host_receipt() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(24),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let step = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert!(
+        has_config_write(&step),
+        "the authorized mutation must proceed"
+    );
+}
+
+#[test]
+fn same_timestamp_config_generation_accepts_new_identical_reply_once() {
+    let (mut owner, token) = vesc_session();
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 10);
+    notification(&mut owner, &token, vesc_firmware_reply(7, 0), 11);
+    notification(&mut owner, &token, vesc_controller_7_values_reply(), 12);
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    let baseline = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
+    let mut initial_config = vec![93, 0];
+    initial_config.extend_from_slice(baseline);
+    notification(&mut owner, &token, vesc_frame(&initial_config), 24);
+    submit_pwm_tiltback(&mut owner, &token, 24);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(24),
+    ));
+
+    notification(
+        &mut owner,
+        &token,
+        stationary_refloat_telemetry()[0].clone(),
+        24,
+    );
+    let mut fresh_config = vec![93, 0];
+    fresh_config.extend_from_slice(baseline);
+    let preflight = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&fresh_config),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert!(has_config_write(&preflight));
+}
+
+#[test]
+fn failed_final_read_receipt_preserves_submitted_mutation_and_fails_procedure() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let mutation_and_read = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&mutation_and_read).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Rejected,
+        MonotonicTimestamp::new(26),
+    ));
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.transport, Some(SettingTransportStatus::Submitted));
+    assert_eq!(setting.status, SettingCommandStatus::Failed);
+}
+
+#[test]
+fn tick_cancellation_after_mutation_preserves_submission() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let mutation_and_read = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&mutation_and_read).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    let _ = owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_023));
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.transport, Some(SettingTransportStatus::Submitted));
+    assert_eq!(setting.status, SettingCommandStatus::Failed);
+}
+
+#[test]
+fn protocol_tick_expiry_after_mutation_preserves_submission() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let next = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&next).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    let _ = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Tick {
+                monotonic_ms: MonotonicMillisDto {
+                    milliseconds: 2_023,
+                },
+            },
+        )
+        .unwrap();
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.transport, Some(SettingTransportStatus::Submitted));
+    assert_eq!(setting.status, SettingCommandStatus::Failed);
+}
+
+#[test]
+fn controller_replacement_after_mutation_preserves_submission() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let next = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&next).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    let mut replacement = frame_payload(&vesc_controller_7_values_reply()).to_vec();
+    *replacement.last_mut().unwrap() = 8;
+    notification(&mut owner, &token, vesc_frame(&replacement), 26);
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.transport, Some(SettingTransportStatus::Submitted));
+    assert_eq!(setting.status, SettingCommandStatus::Failed);
+}
+
+#[test]
+fn queued_verification_read_wakeup_uses_operation_deadline_after_arm_expires() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let next = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&next).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    assert_eq!(
+        owner.next_wakeup_at(&token, false),
+        Some(MonotonicTimestamp::new(2_022)),
+        "a queued read should wake at operation expiry, not at the expired stationary arm"
+    );
+    assert_eq!(
+        owner.next_wakeup_at(&token, false),
+        Some(MonotonicTimestamp::new(2_022)),
+        "repeated backpressure polls must not expose a past deadline"
+    );
+    assert!(owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_022)));
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.transport, Some(SettingTransportStatus::Submitted));
+    assert_eq!(setting.status, SettingCommandStatus::Failed);
+    assert_ne!(
+        owner.next_wakeup_at(&token, false),
+        Some(MonotonicTimestamp::new(2_022)),
+        "the exact expiry tick must retire the queued verification write"
+    );
+}
+
+#[test]
+fn complete_submission_survives_100ms_polling_until_readback() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .and_then(|setting| setting.request_id)
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    let mutation_and_read = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&mutation_and_read).len(), 2);
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(26),
+    ));
+    owner.tick_setting_transport(&token, MonotonicTimestamp::new(126));
+    let mut expected =
+        include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin").to_vec();
+    expected[68..70].copy_from_slice(&810_i16.to_be_bytes());
+    let default_marker = expected.len() - 1;
+    expected[default_marker] = 0;
+    let mut readback = vec![93, 0];
+    readback.extend_from_slice(&expected);
+    notification(&mut owner, &token, vesc_frame(&readback), 127);
+    let setting = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap();
+    assert_eq!(setting.status, SettingCommandStatus::Confirmed);
 }
 
 #[test]
