@@ -1084,18 +1084,18 @@ public final class CutoutSessionCore: NSObject {
         return try await Task.detached(priority: .userInitiated) { try write(draft) }.value
     }
 
-    public func captureSettingsReadback(
-        generation: CaptureGeneration, profileID: String, atMilliseconds: UInt64
-    ) async throws -> [MobileCaptureResearchDecodedValueDto] {
+    public func captureSettingsReadbackBatch(
+        generation: CaptureGeneration, requests: [MobileCaptureResearchReadbackRequestDto]
+    ) async throws -> [MobileCaptureResearchReadbackDto] {
         let read = try onBleQueue {
             Result {
                 guard captureGeneration == generation, captureRecorder.hasWriter else {
                     throw MobileCaptureResearchError.NotRecording
                 }
-                return try captureRecorder.settingsReadbackReader()
+                return try captureRecorder.settingsReadbackBatchReader()
             }
         }.get()
-        return try await Task.detached(priority: .userInitiated) { try read(profileID, atMilliseconds) }.value
+        return try await Task.detached(priority: .userInitiated) { try read(requests) }.value
     }
 
     public func captureSettingsObservations(generation: CaptureGeneration) throws

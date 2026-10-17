@@ -384,7 +384,10 @@ enum CaptureWriterMessage {
     Record,
     Location(PevcapLocationSample),
     Music(PevcapMusicEvent),
-    SettingsObservation(CaptureSettingsObservation),
+    SettingsObservation {
+        observation: CaptureSettingsObservation,
+        durable: Option<SyncSender<Result<CaptureWriterBarrierResult, String>>>,
+    },
     Metadata(CaptureMetadata),
     Barrier(
         CaptureBarrier,
@@ -401,6 +404,7 @@ struct CaptureWriterEventLine {
     location: Option<LiveCaptureLocationObservation>,
     record: Option<PevcapRecord>,
     prepared_material: Option<PreparedMaterialRecord>,
+    durability_reply: Option<SyncSender<Result<CaptureWriterBarrierResult, String>>>,
 }
 
 struct DatabaseCapture {
@@ -647,7 +651,7 @@ fn try_send_message(
         CaptureWriterMessage::Record
         | CaptureWriterMessage::Location(_)
         | CaptureWriterMessage::Music(_)
-        | CaptureWriterMessage::SettingsObservation(_)
+        | CaptureWriterMessage::SettingsObservation { .. }
         | CaptureWriterMessage::Metadata(_) => true,
     };
     let queued_messages = state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
@@ -712,6 +716,20 @@ impl CaptureRecordPool {
             .unwrap_or_else(PoisonError::into_inner)
             .pop_front()
     }
+}
+
+/// Admission of one settings snapshot together with its inseparable durability receipt.
+#[derive(Debug)]
+pub enum CaptureSettingsObservationAdmission {
+    /// The bounded queue retained both the observation and its acknowledgement request.
+    Accepted(CaptureWriterFlushReceipt),
+    /// Neither the observation nor its acknowledgement was retained.
+    AdmissionLost {
+        /// Number of observations rejected by this request.
+        dropped_messages: u64,
+    },
+    /// The writer is closed or failed; no acknowledgement may be claimed.
+    Failed,
 }
 
 /// An admitted durability barrier that can be awaited without retaining the writer lock.
@@ -1044,6 +1062,40 @@ impl CaptureWriter {
         &self,
         observation: CaptureSettingsObservation,
     ) -> Result<CaptureWriteOutcome, CaptureSettingsObservationError> {
+        self.admit_settings_observation(observation, None)
+    }
+
+    /// Admits the observation and its durability acknowledgement in one queue entry.
+    ///
+    /// # Errors
+    /// Returns an identity, structural, payload-size or snapshot-count error before admission.
+    pub fn begin_settings_observation(
+        &self,
+        observation: CaptureSettingsObservation,
+    ) -> Result<CaptureSettingsObservationAdmission, CaptureSettingsObservationError> {
+        let (sender, receiver) = sync_channel(1);
+        let admitted = self.admit_settings_observation(observation, Some(sender))?;
+        Ok(match admitted {
+            CaptureWriteOutcome::Accepted => {
+                CaptureSettingsObservationAdmission::Accepted(CaptureWriterFlushReceipt {
+                    pending: CaptureWriterPendingBarrier {
+                        receiver,
+                        state: Arc::clone(&self.state),
+                    },
+                })
+            }
+            CaptureWriteOutcome::AdmissionLost { dropped_messages } => {
+                CaptureSettingsObservationAdmission::AdmissionLost { dropped_messages }
+            }
+            CaptureWriteOutcome::Failed => CaptureSettingsObservationAdmission::Failed,
+        })
+    }
+
+    fn admit_settings_observation(
+        &self,
+        observation: CaptureSettingsObservation,
+        durable: Option<SyncSender<Result<CaptureWriterBarrierResult, String>>>,
+    ) -> Result<CaptureWriteOutcome, CaptureSettingsObservationError> {
         observation.validate()?;
         if observation.capture_id != self.capture_identity() {
             return Err(CaptureSettingsObservationError::InvalidCaptureId);
@@ -1060,7 +1112,10 @@ impl CaptureWriter {
                 (count < MAX_CAPTURE_SETTINGS_OBSERVATIONS as u64).then_some(count + 1)
             })
             .map_err(|_| CaptureSettingsObservationError::TooLarge)?;
-        let outcome = self.try_send(CaptureWriterMessage::SettingsObservation(observation));
+        let outcome = self.try_send(CaptureWriterMessage::SettingsObservation {
+            observation,
+            durable,
+        });
         if outcome != CaptureWriteOutcome::Accepted {
             self.state
                 .settings_observations
@@ -1375,7 +1430,26 @@ fn write_capture_stream(
         match capture_writer_action(message, records, &mut material)? {
             CaptureWriterAction::Suppressed => {}
             CaptureWriterAction::Event(event) => {
-                write_capture_event_line(&mut writer, &event.json_line, state, &mut flush)?;
+                let written =
+                    write_capture_event_line(&mut writer, &event.json_line, state, &mut flush);
+                if let Some(reply) = event.durability_reply {
+                    let result = written
+                        .and_then(|()| {
+                            flush_capture_barrier(
+                                path,
+                                &mut writer,
+                                header,
+                                &mut pending_metadata,
+                                &mut flush,
+                                state,
+                                CaptureBarrier::Flush,
+                            )
+                        })
+                        .map(|()| CaptureWriterBarrierResult::Flushed);
+                    reply_capture_writer_result(result, &reply)?;
+                } else {
+                    written?;
+                }
             }
             CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
             CaptureWriterAction::Barrier(kind, reply) => {
@@ -1456,7 +1530,7 @@ fn write_database_capture_stream(
                 let prepared = event.prepared_material;
                 let payload = event.json_line.into_bytes();
                 let serialized_size = payload.len() as u64 + 1;
-                if let Some(record) = event.record {
+                let persisted = if let Some(record) = event.record {
                     capture
                         .database
                         .append_live_capture_record(capture.id, record, payload)
@@ -1478,11 +1552,28 @@ fn write_database_capture_stream(
                         payload,
                     )
                 }
-                .map_err(|error| format!("could not persist live capture event: {error}"))?;
+                .map_err(|error| format!("could not persist live capture event: {error}"));
+                if let Err(error) = persisted {
+                    return match event.durability_reply {
+                        Some(reply) => reply_capture_writer_result(Err(error), &reply),
+                        None => Err(error),
+                    };
+                }
                 material.commit(prepared);
                 state
                     .bytes_written
                     .fetch_add(serialized_size, Ordering::AcqRel);
+                if let Some(reply) = event.durability_reply {
+                    finish_database_capture_barrier(
+                        path,
+                        header,
+                        &mut pending_metadata,
+                        state,
+                        capture,
+                        CaptureBarrier::Flush,
+                        &reply,
+                    )?;
+                }
             }
             CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
             CaptureWriterAction::Barrier(kind, reply) => {
@@ -1826,7 +1917,7 @@ fn capture_writer_action(
     match &message {
         CaptureWriterMessage::Location(_)
         | CaptureWriterMessage::Music(_)
-        | CaptureWriterMessage::SettingsObservation(_)
+        | CaptureWriterMessage::SettingsObservation { .. }
         | CaptureWriterMessage::Metadata(_) => material.reset(),
         CaptureWriterMessage::Record | CaptureWriterMessage::Barrier(_, _) => {}
     }
@@ -1857,6 +1948,7 @@ fn capture_writer_action(
                     location: None,
                     record: Some(record),
                     prepared_material,
+                    durability_reply: None,
                 },
             )))
         }
@@ -1889,6 +1981,7 @@ fn capture_writer_action(
                     }),
                     record: None,
                     prepared_material: None,
+                    durability_reply: None,
                 },
             )))
         }
@@ -1902,10 +1995,14 @@ fn capture_writer_action(
                 location: None,
                 record: None,
                 prepared_material: None,
+                durability_reply: None,
             },
         ))),
-        CaptureWriterMessage::SettingsObservation(observation) => Ok(CaptureWriterAction::Event(
-            Box::new(CaptureWriterEventLine {
+        CaptureWriterMessage::SettingsObservation {
+            observation,
+            durable,
+        } => Ok(CaptureWriterAction::Event(Box::new(
+            CaptureWriterEventLine {
                 json_line: observation
                     .to_jsonl_line()
                     .map_err(|error| error.to_string())?,
@@ -1916,8 +2013,9 @@ fn capture_writer_action(
                 location: None,
                 record: None,
                 prepared_material: None,
-            }),
-        )),
+                durability_reply: durable,
+            },
+        ))),
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
         CaptureWriterMessage::Barrier(kind, reply) => Ok(CaptureWriterAction::Barrier(kind, reply)),
     }

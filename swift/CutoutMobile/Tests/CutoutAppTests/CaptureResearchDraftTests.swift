@@ -23,6 +23,32 @@ final class CaptureResearchDraftTests: XCTestCase {
         XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "high_beam" })?.value, .boolean(value: false))
     }
 
+    func testExplicitUnobservedBooleanAndChoiceAreRetainedWhilePristineFieldsStayAbsent() throws {
+        let draft = CaptureResearchDraft()
+        draft.selectProfile("nosfet_aero")
+        XCTAssertTrue(try draft.observation().values.isEmpty)
+        XCTAssertEqual(draft.controlSelection(for: "high_beam"), "")
+        XCTAssertEqual(draft.controlSelection(for: "display_units"), "")
+
+        draft.selectControlValue("unobserved", for: "high_beam")
+        draft.selectControlValue("unobserved", for: "display_units")
+        var snapshot = try draft.observation()
+        XCTAssertEqual(snapshot.values.count, 2)
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "high_beam" })?.value, .unobserved)
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "display_units" })?.value, .unobserved)
+        XCTAssertFalse(snapshot.values.contains(where: { $0.settingId == "display_brightness" }))
+
+        draft.selectControlValue("false", for: "high_beam")
+        draft.selectControlValue("0", for: "display_units")
+        snapshot = try draft.observation()
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "high_beam" })?.value, .boolean(value: false))
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "display_units" })?.value, .entered(value: "0"))
+
+        draft.selectControlValue("", for: "high_beam")
+        draft.selectControlValue("", for: "display_units")
+        XCTAssertTrue(try draft.observation().values.isEmpty)
+    }
+
     func testUnusualValueAndOriginalUnitReachRustWithoutClamping() throws {
         let draft = CaptureResearchDraft()
         draft.selectProfile("nosfet_aero")

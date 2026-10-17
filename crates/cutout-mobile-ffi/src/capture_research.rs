@@ -364,6 +364,103 @@ pub struct MobileCaptureResearchDecodedValueDto {
     pub observed_at_ms: u64,
 }
 
+/// One independently requested observation cutoff on a capture timeline.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureResearchReadbackRequestDto {
+    /// Explicit research decoder profile.
+    pub profile_id: String,
+    /// Include only packets observed at or before this capture-relative time.
+    pub at_ms: u64,
+}
+
+/// Decoded values for one request, in the same order as the input requests.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureResearchReadbackDto {
+    /// Research profile supplied by the request.
+    pub profile_id: String,
+    /// Capture-relative cutoff supplied by the request.
+    pub at_ms: u64,
+    /// Actual packet values and times; unavailable fields remain absent.
+    pub values: Vec<MobileCaptureResearchDecodedValueDto>,
+}
+
+pub(crate) fn readback_batch(
+    requests: Vec<MobileCaptureResearchReadbackRequestDto>,
+    read: impl FnOnce(
+        &mut dyn FnMut(cutout_core::PevcapRecord),
+    ) -> Result<(), MobileCaptureResearchError>,
+) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
+    if requests.len() > cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS
+        || requests
+            .iter()
+            .any(|request| request.at_ms > cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS)
+    {
+        return Err(MobileCaptureResearchError::InvalidObservation {
+            message: "Settings readback exceeds the capture limits".into(),
+        });
+    }
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+    let maximum_cutoff = requests
+        .iter()
+        .map(|request| request.at_ms)
+        .max()
+        .unwrap_or_default();
+    let mut readbacks = Vec::new();
+    let mut positions = std::collections::BTreeMap::new();
+    let mut indices = Vec::with_capacity(requests.len());
+    for request in &requests {
+        let key = (request.profile_id.clone(), request.at_ms);
+        let index = if let Some(index) = positions.get(&key) {
+            *index
+        } else {
+            let readback =
+                cutout_protocols::CaptureResearchReadback::new(&request.profile_id, request.at_ms)
+                    .ok_or_else(|| MobileCaptureResearchError::InvalidObservation {
+                        message: "Choose a device profile".into(),
+                    })?;
+            let index = readbacks.len();
+            readbacks.push(readback);
+            positions.insert(key, index);
+            index
+        };
+        indices.push(index);
+    }
+    // Each decoder keeps its own cutoff and framing state. Packet timestamps may
+    // arrive out of order, so no request is completed merely because a later packet appeared.
+    read(&mut |record| {
+        if record.monotonic_ms.get() > maximum_cutoff {
+            return;
+        }
+        for readback in &mut readbacks {
+            readback.observe(&record);
+        }
+    })?;
+    requests
+        .into_iter()
+        .zip(indices)
+        .map(|(request, index)| {
+            let readback = readbacks
+                .get(index)
+                .ok_or(MobileCaptureResearchError::WriterFailed)?;
+            Ok(MobileCaptureResearchReadbackDto {
+                profile_id: request.profile_id,
+                at_ms: request.at_ms,
+                values: readback
+                    .values()
+                    .iter()
+                    .map(|value| MobileCaptureResearchDecodedValueDto {
+                        setting_id: value.setting_id.into(),
+                        value: value.value.map(Into::into),
+                        observed_at_ms: value.observed_at_ms,
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 #[uniffi::export]
 impl RideDatabaseHandle {
     /// Replays retained input bytes without issuing any wheel commands.
@@ -380,6 +477,27 @@ impl RideDatabaseHandle {
         profile_id: String,
         at_ms: u64,
     ) -> Result<Vec<MobileCaptureResearchDecodedValueDto>, MobileCaptureResearchError> {
+        self.capture_research_readback_batch(
+            source,
+            vec![MobileCaptureResearchReadbackRequestDto { profile_id, at_ms }],
+        )
+        .map(|results| {
+            results
+                .into_iter()
+                .next()
+                .map_or_else(Vec::new, |result| result.values)
+        })
+    }
+
+    /// Reads all displayed observation cutoffs in one retained transport scan.
+    ///
+    /// # Errors
+    /// Returns an unknown profile, invalid source, resource bound or storage failure.
+    pub fn capture_research_readback_batch(
+        &self,
+        source: MobileCaptureSubmissionSourceDto,
+        requests: Vec<MobileCaptureResearchReadbackRequestDto>,
+    ) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
         let source = source
             .try_into()
             .map_err(|error: crate::MobileCaptureSubmissionError| {
@@ -387,24 +505,13 @@ impl RideDatabaseHandle {
                     message: error.to_string(),
                 }
             })?;
-        let mut readback = cutout_protocols::CaptureResearchReadback::new(&profile_id, at_ms)
-            .ok_or(MobileCaptureResearchError::InvalidObservation {
-                message: "Choose a device profile".into(),
-            })?;
-        self.inner
-            .visit_capture_transport_records(source, |record| readback.observe(&record))
-            .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                message: error.to_string(),
-            })?;
-        Ok(readback
-            .values()
-            .iter()
-            .map(|value| MobileCaptureResearchDecodedValueDto {
-                setting_id: value.setting_id.into(),
-                value: value.value.map(Into::into),
-                observed_at_ms: value.observed_at_ms,
-            })
-            .collect())
+        readback_batch(requests, |observe| {
+            self.inner
+                .visit_capture_transport_records(source, observe)
+                .map_err(|error| MobileCaptureResearchError::InvalidObservation {
+                    message: error.to_string(),
+                })
+        })
     }
 }
 

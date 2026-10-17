@@ -17036,20 +17036,19 @@ impl MobilePevcapCaptureBuilder {
                 message: error.to_string(),
             }
         })?;
-        match writer
-            .try_send_settings_observation(observation.clone())
+        let receipt = match writer
+            .begin_settings_observation(observation.clone())
             .map_err(|error| MobileCaptureResearchError::InvalidObservation {
                 message: error.to_string(),
             })? {
-            CaptureWriteOutcome::Accepted => {}
-            CaptureWriteOutcome::AdmissionLost { .. } => {
+            persistence::CaptureSettingsObservationAdmission::Accepted(receipt) => receipt,
+            persistence::CaptureSettingsObservationAdmission::AdmissionLost { .. } => {
                 return Err(MobileCaptureResearchError::AdmissionLost);
             }
-            CaptureWriteOutcome::Failed => return Err(MobileCaptureResearchError::WriterFailed),
-        }
-        let receipt = writer
-            .begin_flush()
-            .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+            persistence::CaptureSettingsObservationAdmission::Failed => {
+                return Err(MobileCaptureResearchError::WriterFailed);
+            }
+        };
         drop(slot);
         #[cfg(test)]
         if let Some((entered, release)) = self
@@ -17095,30 +17094,39 @@ impl MobilePevcapCaptureBuilder {
         profile_id: String,
         at_ms: u64,
     ) -> Result<Vec<MobileCaptureResearchDecodedValueDto>, MobileCaptureResearchError> {
-        let mut readback = cutout_protocols::CaptureResearchReadback::new(&profile_id, at_ms)
-            .ok_or_else(|| MobileCaptureResearchError::InvalidObservation {
-                message: "Choose a device profile".into(),
-            })?;
-        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let writer = slot
-            .as_ref()
-            .ok_or(MobileCaptureResearchError::NotRecording)?;
-        let receipt = writer
-            .begin_transport_read()
-            .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-        drop(slot);
-        receipt
-            .visit_transport_records(|record| readback.observe(&record))
-            .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-        Ok(readback
-            .values()
-            .iter()
-            .map(|value| MobileCaptureResearchDecodedValueDto {
-                setting_id: value.setting_id.into(),
-                value: value.value.map(Into::into),
-                observed_at_ms: value.observed_at_ms,
-            })
-            .collect())
+        self.capture_research_readback_batch(vec![MobileCaptureResearchReadbackRequestDto {
+            profile_id,
+            at_ms,
+        }])
+        .map(|results| {
+            results
+                .into_iter()
+                .next()
+                .map_or_else(Vec::new, |result| result.values)
+        })
+    }
+
+    /// Reads all observation cutoffs with one pinned scan of the active capture.
+    ///
+    /// # Errors
+    /// Returns an unknown profile, resource bound, retired writer or source-read error.
+    pub fn capture_research_readback_batch(
+        &self,
+        requests: Vec<MobileCaptureResearchReadbackRequestDto>,
+    ) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
+        capture_research::readback_batch(requests, |observe| {
+            let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+            let writer = slot
+                .as_ref()
+                .ok_or(MobileCaptureResearchError::NotRecording)?;
+            let receipt = writer
+                .begin_transport_read()
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+            drop(slot);
+            receipt
+                .visit_transport_records(observe)
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)
+        })
     }
 
     /// Creates an empty PEVCAP capture builder.

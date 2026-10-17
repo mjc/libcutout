@@ -302,3 +302,154 @@ fn pending_settings_acknowledgement_keeps_cache_and_ble_admission_available() {
     drop(database);
     fs::remove_dir_all(directory).unwrap();
 }
+
+fn batch_requests() -> Vec<MobileCaptureResearchReadbackRequestDto> {
+    [35, 12, 35, 5, 25]
+        .into_iter()
+        .map(|at_ms| MobileCaptureResearchReadbackRequestDto {
+            profile_id: "nosfet_aero".into(),
+            at_ms,
+        })
+        .collect()
+}
+
+fn batch_packet(at_ms: u64) -> cutout_core::PevcapRecord {
+    let bytes = hex::decode("dc5a5c4729f2000000170000ab6c001700000be9045a00000226021ca8f607801b25000080c80000808080808080080000803200364f371e00000100808028062e7964800080801540e23a").unwrap();
+    cutout_core::PevcapRecord::inbound_notification(
+        cutout_core::MonotonicTimestamp::new(at_ms),
+        cutout_protocols::VETERAN_DATA_CHANNEL,
+        cutout_protocols::VETERAN_SERVICE_CHANNEL,
+        bytes,
+    )
+}
+
+#[test]
+fn batch_readback_visits_transport_once_for_multiple_cutoffs_without_time_order_assumptions() {
+    let mut scans = 0;
+    let mut records_read = 0;
+    let requests = batch_requests();
+    let result = readback_batch(requests.clone(), |observe| {
+        scans += 1;
+        for record in [
+            batch_packet(10),
+            batch_packet(500),
+            cutout_core::PevcapRecord::link_down(cutout_core::MonotonicTimestamp::new(20)),
+            batch_packet(30),
+        ] {
+            records_read += 1;
+            observe(record);
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(scans, 1);
+    assert_eq!(records_read, 4);
+    assert_eq!(result.len(), requests.len());
+    for (response, request) in result.iter().zip(requests) {
+        assert_eq!(response.profile_id, request.profile_id);
+        assert_eq!(response.at_ms, request.at_ms);
+    }
+    let packet_times = result
+        .iter()
+        .map(|response| {
+            response
+                .values
+                .iter()
+                .find(|value| value.setting_id == "display_brightness")
+                .map(|value| value.observed_at_ms)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(packet_times, [Some(30), Some(10), Some(30), None, None]);
+    assert_eq!(
+        result[0], result[2],
+        "duplicate cutoff requests retain their result positions"
+    );
+}
+
+#[test]
+fn batch_readback_rejects_unbounded_requests_before_reading_capture_bytes() {
+    let invalid = [
+        vec![MobileCaptureResearchReadbackRequestDto {
+            profile_id: "nosfet_aero".into(),
+            at_ms: cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS + 1,
+        }],
+        vec![MobileCaptureResearchReadbackRequestDto {
+            profile_id: "unknown".into(),
+            at_ms: 0,
+        }],
+        vec![
+            MobileCaptureResearchReadbackRequestDto {
+                profile_id: "nosfet_aero".into(),
+                at_ms: 0
+            };
+            cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS + 1
+        ],
+    ];
+    for requests in invalid {
+        assert!(
+            readback_batch(requests, |_| panic!(
+                "invalid requests must not scan the capture"
+            ))
+            .is_err()
+        );
+    }
+    assert!(
+        readback_batch(Vec::new(), |_| panic!(
+            "empty review must not scan the capture"
+        ))
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
+fn batch_readback_matches_active_builder_and_saved_database_observations() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (directory, database, builder) = recording();
+    let first = builder.record_settings_observation(draft(), 600).unwrap();
+    let source = MobileCaptureSubmissionSourceDto::LiveCapture {
+        id: first.capture_id,
+    };
+    for record in [
+        batch_packet(10),
+        batch_packet(500),
+        cutout_core::PevcapRecord::link_down(cutout_core::MonotonicTimestamp::new(20)),
+        batch_packet(30),
+    ] {
+        let timestamp = MobileMonotonicMillisDto {
+            milliseconds: record.monotonic_ms.get() + 100,
+        };
+        let outcome = if record.direction == cutout_core::PevcapDirection::LinkDown {
+            builder.record_link_down(timestamp)
+        } else {
+            builder.record_notification(
+                timestamp,
+                record.characteristic.as_bytes().to_vec(),
+                record
+                    .service
+                    .unwrap_or(cutout_protocols::VETERAN_SERVICE_CHANNEL)
+                    .as_bytes()
+                    .to_vec(),
+                record.bytes,
+            )
+        };
+        assert_eq!(outcome, crate::MobileCaptureWriteOutcomeDto::Accepted);
+    }
+    let active = builder
+        .capture_research_readback_batch(batch_requests())
+        .unwrap();
+    assert!(matches!(
+        builder.finish_writer_outcome(),
+        MobileCaptureFinishOutcomeDto::DatabaseFinished { .. }
+    ));
+    let saved = database
+        .capture_research_readback_batch(source, batch_requests())
+        .unwrap();
+    assert_eq!(saved, active);
+    drop(builder);
+    database.shutdown().unwrap();
+    drop(database);
+    fs::remove_dir_all(directory).unwrap();
+}

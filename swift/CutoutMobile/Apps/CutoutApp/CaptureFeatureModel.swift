@@ -49,7 +49,8 @@ final class CaptureFeatureModel {
     @ObservationIgnored private let saveSettingsObservation:
         (CaptureGeneration, MobileCaptureSettingsDraftDto) async throws -> MobileCaptureSettingsObservationDto
     @ObservationIgnored private let readSettingsReadback:
-        (CaptureGeneration, String, UInt64) async throws -> [MobileCaptureResearchDecodedValueDto]
+        (CaptureGeneration, [MobileCaptureResearchReadbackRequestDto]) async throws ->
+            [MobileCaptureResearchReadbackDto]
     @ObservationIgnored private let readSettingsObservations:
         (CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto]
     let researchDraft = CaptureResearchDraft()
@@ -71,8 +72,8 @@ final class CaptureFeatureModel {
         readSettingsObservations: @escaping (CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto] = { _ in
             []
         },
-        readSettingsReadback: @escaping (CaptureGeneration, String, UInt64) async throws ->
-            [MobileCaptureResearchDecodedValueDto] = { _, _, _ in [] }
+        readSettingsReadback: @escaping (CaptureGeneration, [MobileCaptureResearchReadbackRequestDto]) async throws ->
+            [MobileCaptureResearchReadbackDto] = { _, _ in [] }
     ) {
         self.sessionState = sessionState
         flushOperation = flush
@@ -194,11 +195,11 @@ final class CaptureFeatureModel {
         } catch { settingsError = "Could not load settings values." }
     }
 
-    func settingsReadback(profileID: String, atMilliseconds: UInt64) async throws
-        -> [MobileCaptureResearchDecodedValueDto]
+    func settingsReadback(requests: [MobileCaptureResearchReadbackRequestDto]) async throws
+        -> [MobileCaptureResearchReadbackDto]
     {
         guard let generation = activeGeneration else { throw MobileCaptureResearchError.NotRecording }
-        let result = try await readSettingsReadback(generation, profileID, atMilliseconds)
+        let result = try await readSettingsReadback(generation, requests)
         guard activeGeneration == generation else { throw MobileCaptureResearchError.NotRecording }
         return result
     }

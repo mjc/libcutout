@@ -545,7 +545,7 @@ final class CutoutAppModel {
             saveSettingsObservation: { try await core.recordCaptureSettingsObservation(generation: $0, draft: $1) },
             readSettingsObservations: { try core.captureSettingsObservations(generation: $0) },
             readSettingsReadback: {
-                try await core.captureSettingsReadback(generation: $0, profileID: $1, atMilliseconds: $2)
+                try await core.captureSettingsReadbackBatch(generation: $0, requests: $1)
             }
         )
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(

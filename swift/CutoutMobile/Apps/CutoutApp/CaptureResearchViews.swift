@@ -40,6 +40,24 @@ final class CaptureResearchDraft {
         error = nil
     }
 
+    func controlSelection(for fieldID: String) -> String {
+        switch states[fieldID] {
+        case "unobserved", "true", "false": return states[fieldID] ?? ""
+        default: return values[fieldID] ?? ""
+        }
+    }
+
+    func selectControlValue(_ selection: String, for fieldID: String) {
+        switch selection {
+        case "unobserved", "true", "false":
+            states[fieldID] = selection
+            values.removeValue(forKey: fieldID)
+        default:
+            states[fieldID] = "value"
+            values[fieldID] = selection
+        }
+    }
+
     func observation() throws -> MobileCaptureSettingsDraftDto {
         guard let catalog else { throw DraftError.profile }
         let observedAt: UInt64?
@@ -289,14 +307,16 @@ struct CaptureSettingsWorksheet: View {
             Text(localizedAppText(field.labelKey)).font(.body)
             switch field.control {
             case .boolean:
-                Picker(localizedAppText(field.labelKey), selection: state(field.id, default: "")) {
-                    Text("Not observed").tag("")
+                Picker(localizedAppText(field.labelKey), selection: controlSelection(field.id)) {
+                    Text("Unknown").tag("")
+                    Text("Not observed").tag("unobserved")
                     Text("On").tag("true")
                     Text("Off").tag("false")
                 }.labelsHidden()
             case .choices(let choices):
-                Picker(localizedAppText(field.labelKey), selection: value(field.id)) {
-                    Text("Not observed").tag("")
+                Picker(localizedAppText(field.labelKey), selection: controlSelection(field.id)) {
+                    Text("Unknown").tag("")
+                    Text("Not observed").tag("unobserved")
                     ForEach(choices, id: \.id) { choice in
                         Text(localizedAppText(choice.labelKey)).tag(String(choice.id))
                     }
@@ -333,6 +353,9 @@ struct CaptureSettingsWorksheet: View {
             }
         }
     }
+    private func controlSelection(_ id: String) -> Binding<String> {
+        Binding(get: { draft.controlSelection(for: id) }, set: { draft.selectControlValue($0, for: id) })
+    }
     private func value(_ id: String) -> Binding<String> {
         Binding(get: { draft.values[id] ?? "" }, set: { draft.values[id] = $0 })
     }
@@ -348,7 +371,14 @@ struct CaptureSettingsWorksheet: View {
 
 struct CaptureSettingsObservationReview: View {
     let observations: [MobileCaptureSettingsObservationDto]
-    let readback: (String, UInt64) async throws -> [MobileCaptureResearchDecodedValueDto]
+    let readback: ([MobileCaptureResearchReadbackRequestDto]) async throws -> [MobileCaptureResearchReadbackDto]
+    @State private var decoded: [MobileCaptureResearchReadbackDto] = []
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var loadID = UUID()
+    private var observationKeys: [String] {
+        observations.map { "\($0.captureId):\($0.profile.profileId):\($0.observedAtMs):\($0.recordedAtMs)" }
+    }
     var body: some View {
         List {
             if observations.isEmpty { Text("No settings values recorded.").foregroundStyle(.secondary) }
@@ -356,28 +386,50 @@ struct CaptureSettingsObservationReview: View {
                 Section(
                     "\(index == 0 ? "Baseline" : "Observation \(index + 1)") · \(CaptureResearchPresentation.time(observation.observedAtMs))"
                 ) {
-                    CaptureSettingsObservationRows(observation: observation, readback: readback)
+                    CaptureSettingsObservationRows(
+                        observation: observation,
+                        decoded: decoded.indices.contains(index) ? decoded[index].values : [],
+                        isLoading: isLoading, error: error
+                    )
                 }
             }
         }
         .navigationTitle("Settings observations")
         .accessibilityIdentifier("capture.settings.review")
+        .task(id: observationKeys) { await loadReadback() }
+    }
+    private func loadReadback() async {
+        let requestID = UUID()
+        loadID = requestID
+        isLoading = true
+        error = nil
+        decoded = []
+        defer { if loadID == requestID { isLoading = false } }
+        do {
+            let requests = observations.map {
+                MobileCaptureResearchReadbackRequestDto(profileId: $0.profile.profileId, atMs: $0.observedAtMs)
+            }
+            let result = try await readback(requests)
+            guard loadID == requestID, !Task.isCancelled else { return }
+            decoded = result
+        } catch {
+            guard loadID == requestID, !Task.isCancelled else { return }
+            self.error = "Could not read captured settings."
+        }
     }
 }
 
 private struct CaptureSettingsObservationRows: View {
     let observation: MobileCaptureSettingsObservationDto
-    let readback: (String, UInt64) async throws -> [MobileCaptureResearchDecodedValueDto]
-    @State private var decoded: [MobileCaptureResearchDecodedValueDto] = []
-    @State private var isLoading = true
-    @State private var error: String?
+    let decoded: [MobileCaptureResearchDecodedValueDto]
+    let isLoading: Bool
+    let error: String?
     private var catalog: MobileCaptureResearchCatalogDto? {
         captureResearchCatalog(profileId: observation.profile.profileId)
     }
     private var unusual: [String] { captureResearchUnusualFields(observation: observation) }
     var body: some View {
         LabeledContent("Device profile", value: observation.profile.model ?? observation.profile.profileId)
-            .task(id: observation.recordedAtMs) { await loadReadback() }
         LabeledContent("Read from", value: CaptureResearchPresentation.source(observation.source))
         LabeledContent("Entered at", value: CaptureResearchPresentation.time(observation.recordedAtMs))
         ForEach(observation.values, id: \.settingId) { value in
@@ -418,14 +470,7 @@ private struct CaptureSettingsObservationRows: View {
         }
         if let note = observation.note, !note.isEmpty { Text(note) }
     }
-    private func loadReadback() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            decoded = try await readback(observation.profile.profileId, observation.observedAtMs)
-            error = nil
-        } catch { self.error = "Could not read captured settings." }
-    }
+
 }
 
 struct CaptureSavedSettingsSection: View {
@@ -437,11 +482,11 @@ struct CaptureSavedSettingsSection: View {
             if let error { Text(error).foregroundStyle(PevColors.warningText) }
             if !observations.isEmpty {
                 NavigationLink {
-                    CaptureSettingsObservationReview(observations: observations) { profile, at in
+                    CaptureSettingsObservationReview(observations: observations) { requests in
                         let database = try await RustPersistenceStore.open()
                         let selectedSource = source
                         return try await Task.detached {
-                            try database.captureResearchReadback(source: selectedSource, profileId: profile, atMs: at)
+                            try database.captureResearchReadbackBatch(source: selectedSource, requests: requests)
                         }.value
                     }
                 } label: {

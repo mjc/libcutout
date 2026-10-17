@@ -60,7 +60,8 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
         MobileCaptureSettingsObservationDto
     func settingsObservations() throws -> [MobileCaptureSettingsObservationDto]
-    func settingsReadbackReader() throws -> @Sendable (String, UInt64) throws -> [MobileCaptureResearchDecodedValueDto]
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
     func musicMetadataCleanupBarrier() -> @Sendable () -> Bool
     @discardableResult func publishProgress() -> CaptureProgress
@@ -101,7 +102,8 @@ extension CutoutSessionCaptureRecording {
         throw MobileCaptureResearchError.NotRecording
     }
     func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] { [] }
-    func settingsReadbackReader() throws -> @Sendable (String, UInt64) throws -> [MobileCaptureResearchDecodedValueDto]
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
     {
         throw MobileCaptureResearchError.NotRecording
     }
@@ -237,10 +239,11 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         return try builder.settingsObservations()
     }
 
-    func settingsReadbackReader() throws -> @Sendable (String, UInt64) throws -> [MobileCaptureResearchDecodedValueDto]
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
     {
         guard let builder else { throw MobileCaptureResearchError.NotRecording }
-        return { profile, at in try builder.captureResearchReadback(profileId: profile, atMs: at) }
+        return { requests in try builder.captureResearchReadbackBatch(requests: requests) }
     }
 
     func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }

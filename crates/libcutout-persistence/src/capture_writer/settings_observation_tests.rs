@@ -450,3 +450,142 @@ fn pinned_read_scan_allows_live_admission_flush_and_finish_without_extending_its
         database.shutdown().unwrap();
     }
 }
+
+#[test]
+fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hidden_value() {
+    for database_backed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(directory.path().join("ride.sqlite")).unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let writer = if database_backed {
+            CaptureWriter::start_with_database(
+                path.clone(),
+                WallClockUnixTimestamp::new(1_700_000_000_000),
+                "unsupported",
+                None,
+                &metadata(),
+                database.clone(),
+            )
+        } else {
+            CaptureWriter::start(
+                path.clone(),
+                WallClockUnixTimestamp::new(1_700_000_000_000),
+                "unsupported",
+                None,
+                &metadata(),
+            )
+        }
+        .unwrap();
+        writer.flush().unwrap();
+        // An existing rendezvous barrier holds the real worker after durability.
+        // Once dequeued it cannot consume another queue entry until released below.
+        let (hold, release) = sync_channel(0);
+        assert_eq!(
+            writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, hold)),
+            CaptureWriteOutcome::Accepted
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while writer.monitor().status().queued_messages != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "writer did not reach held barrier"
+            );
+            thread::yield_now();
+        }
+        for _ in 0..CAPTURE_WRITER_QUEUE_CAPACITY - 1 {
+            assert_eq!(
+                writer.update_metadata(metadata()),
+                CaptureWriteOutcome::Accepted
+            );
+        }
+        let expected = observation(writer.capture_identity(), 100);
+        let CaptureSettingsObservationAdmission::Accepted(receipt) =
+            writer.begin_settings_observation(expected.clone()).unwrap()
+        else {
+            panic!("last queue slot must admit observation and receipt together");
+        };
+        assert_eq!(
+            writer.monitor().status().queued_messages,
+            CAPTURE_WRITER_QUEUE_CAPACITY as u64
+        );
+        assert!(
+            writer.begin_flush().is_err(),
+            "there is deliberately no second slot for a separate barrier"
+        );
+        let rejected = observation(writer.capture_identity(), 200);
+        assert!(matches!(
+            writer.begin_settings_observation(rejected).unwrap(),
+            CaptureSettingsObservationAdmission::AdmissionLost {
+                dropped_messages: 1
+            }
+        ));
+        assert_eq!(
+            writer.state.settings_observations.load(Ordering::Acquire),
+            1,
+            "rejected admission must release its observation quota"
+        );
+        assert!(matches!(
+            release.recv().unwrap(),
+            Ok(CaptureWriterBarrierResult::Flushed)
+        ));
+        receipt.wait().unwrap();
+        assert!(
+            !writer.monitor().status().failed,
+            "queue rejection must not report a failed writer"
+        );
+        if database_backed {
+            assert_eq!(
+                database
+                    .live_capture_settings_observations(writer.live_capture_id.unwrap())
+                    .unwrap(),
+                [expected]
+            );
+            assert!(matches!(
+                writer.finish_without_export().unwrap(),
+                CaptureWriterFinish::DatabaseFinished {
+                    integrity: crate::LiveCaptureIntegrity::Incomplete {
+                        dropped_messages: 1
+                    },
+                    ..
+                }
+            ));
+        } else {
+            let capture =
+                PevcapCapture::decode(&fs::read(path).unwrap(), PevcapEncoding::Jsonl).unwrap();
+            assert_eq!(capture.settings_observations, [expected]);
+            assert!(capture.music_events.is_empty());
+            assert!(
+                writer.finish_without_export().is_err(),
+                "file completion still reports the deliberately rejected second observation"
+            );
+        }
+        database.shutdown().unwrap();
+    }
+}
+
+#[test]
+fn admitted_settings_snapshot_never_acknowledges_database_write_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(directory.path().join("ride.sqlite")).unwrap();
+    let writer = CaptureWriter::start_with_database(
+        directory.path().join("capture.jsonl"),
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "unsupported",
+        None,
+        &metadata(),
+        database.clone(),
+    )
+    .unwrap();
+    writer.flush().unwrap();
+    database.shutdown().unwrap();
+    let CaptureSettingsObservationAdmission::Accepted(receipt) = writer
+        .begin_settings_observation(observation(writer.capture_identity(), 100))
+        .unwrap()
+    else {
+        panic!("live queue admission should succeed before the failed database write");
+    };
+    let error = receipt.wait().unwrap_err();
+    assert!(error.contains("could not persist live capture event"));
+    assert!(writer.monitor().status().failed);
+    assert!(writer.finish_without_export().is_err());
+}

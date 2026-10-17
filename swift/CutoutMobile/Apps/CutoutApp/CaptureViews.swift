@@ -59,7 +59,8 @@ struct CaptureRecordingScreen: View {
     let settingsObservations: [MobileCaptureSettingsObservationDto]
     let refreshSettingsObservations: () -> Void
     let recordSettingsObservation: (MobileCaptureSettingsDraftDto) async throws -> Void
-    let readSettingsReadback: (String, UInt64) async throws -> [MobileCaptureResearchDecodedValueDto]
+    let readSettingsReadback:
+        ([MobileCaptureResearchReadbackRequestDto]) async throws -> [MobileCaptureResearchReadbackDto]
     @State private var showingWorksheet = false
 
     var body: some View {
