@@ -22,6 +22,9 @@ struct CutoutApp: App {
     @State private var pendingMusicURL: URL?
     @State private var latestScenePhase: ScenePhase = .inactive
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
+    #if DEBUG && targetEnvironment(simulator)
+        @State private var uiTestCleanupEndedActivityCount: Int?
+    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -55,6 +58,7 @@ struct CutoutApp: App {
                                     .accessibilityValue(
                                         model.uiTestLifecycleReadback
                                             + ";nativeActivityCount=\(Activity<LiveActivityRideAttributes>.activities.count);"
+                                            + "cleanupEndedActivityCount=\(uiTestCleanupEndedActivityCount.map(String.init) ?? "none");"
                                     )
                             }
                         }
@@ -185,7 +189,8 @@ struct CutoutApp: App {
             #if DEBUG && targetEnvironment(simulator)
                 if CutoutAppModel.isUITestLiveActivityCleanupLaunch {
                     // Publish the cleanup readback only after native cleanup returns.
-                    _ = try await LiveActivityRideActivityKitManager().end(reason: .unavailable)
+                    let ended = try await LiveActivityRideActivityKitManager().end(reason: .unavailable)
+                    uiTestCleanupEndedActivityCount = ended.activityIDs.count
                     opened.endLiveActivity(reason: .unavailable)
                     model = opened
                     return

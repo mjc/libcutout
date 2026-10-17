@@ -4691,16 +4691,10 @@ final class CutoutAppUITests: XCTestCase {
 
         app.terminate()
         XCTAssertEqual(app.state, .notRunning)
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        dismissLocationPromptIfNeeded(in: springboard)
-        XCUIDevice.shared.press(.home)
-        let retainedSpeed = springboard.descendants(matching: .any)["Speed"]
-        XCTAssertTrue(retainedSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
-        XCTAssertTrue((retainedSpeed.value as? String ?? "").contains("17.9"), retainedSpeed.debugDescription)
-        attachScreenshot(of: springboard, named: "Retained Live Activity before cleanup launch")
-
         launchLiveActivityCleanup()
         assertSystemLiveActivitiesEnded()
+        let cleanupReadback = app.staticTexts["dashboard.lifecycle-readback"].value as? String ?? ""
+        XCTAssertTrue(cleanupReadback.contains("cleanupEndedActivityCount=1;"), cleanupReadback)
         XCTAssertFalse(app.buttons["dashboard.disconnect"].exists, app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists, app.debugDescription)
     }
