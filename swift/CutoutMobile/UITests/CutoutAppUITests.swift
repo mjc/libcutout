@@ -2541,7 +2541,10 @@ final class CutoutAppUITests: XCTestCase {
         earlierTime.typeText("0")
         app.buttons["capture.settings.keyboard.done"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
         let search = app.searchFields.firstMatch
+        for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
+        scrollElementFrameIntoViewport(search, in: app, maxScrolls: 4)
         search.tap()
         search.typeText("brightness")
         let brightness = app.textFields["capture.settings.value.display_brightness"]
@@ -2549,7 +2552,11 @@ final class CutoutAppUITests: XCTestCase {
         brightness.tap()
         brightness.typeText("145")
         app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let note = app.descendants(matching: .any)["capture.settings.note"].firstMatch
+        scrollElementFrameIntoViewport(
+            note, in: worksheet, maxScrolls: 8, occludedBy: app.buttons["capture.settings.save"]
+        )
         note.tap()
         note.typeText("Before brightness change")
         app.buttons["capture.settings.keyboard.done"].tap()
@@ -2568,8 +2575,11 @@ final class CutoutAppUITests: XCTestCase {
         let observations = app.buttons["capture.settings.observations"]
         scrollElementFrameIntoViewport(observations, in: recording, maxScrolls: 8)
         observations.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["capture.settings.review"].waitForExistence(timeout: 5))
+        let review = app.descendants(matching: .any)["capture.settings.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        scrollElementFrameIntoViewport(app.staticTexts["145 %"], in: review, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["145 %"].exists)
+        scrollElementFrameIntoViewport(app.staticTexts["30 %"], in: review, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["30 %"].exists)
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["capture.stop"].tap()
@@ -2593,7 +2603,11 @@ final class CutoutAppUITests: XCTestCase {
         let restoredSaved = app.buttons["capture.settings.saved"]
         scrollElementFrameIntoViewport(restoredSaved, in: app.collectionViews.firstMatch, maxScrolls: 12)
         restoredSaved.tap()
+        let restoredReview = app.descendants(matching: .any)["capture.settings.review"]
+        XCTAssertTrue(restoredReview.waitForExistence(timeout: 5))
+        scrollElementFrameIntoViewport(app.staticTexts["145 %"], in: restoredReview, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["145 %"].waitForExistence(timeout: 10))
+        scrollElementFrameIntoViewport(app.staticTexts["30 %"], in: restoredReview, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["30 %"].exists)
         retainCaptureScreenshot("Capture settings retained after relaunch")
     }
