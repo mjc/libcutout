@@ -49,7 +49,7 @@ enum CutoutAppRoute: Hashable {
     case eucRide
     case lighting(LightingRideContext)
     case eucPack(EucPackScreen)
-    case eucTune
+    case tune
     case vescRide
     case vescDebug
     case capture
@@ -104,8 +104,8 @@ enum CutoutAppRoute: Hashable {
             route(for: screenID)
         case .eucPack:
             .eucPack(.root)
-        case .eucTune:
-            .eucTune
+        case .tune:
+            .tune
         case .vescRide:
             .vescRide
         case .rideMap:
@@ -131,7 +131,7 @@ enum CutoutAppRoute: Hashable {
     /// The first primary section selects a tab; only its children belong to the stack.
     static func navigationRoot(for navigationPath: [Self]) -> Self {
         switch navigationPath.first {
-        case .eucRide?, .vescRide?, .eucTune?, .rideMap?, .more?:
+        case .eucRide?, .vescRide?, .tune?, .rideMap?, .more?:
             navigationPath[0]
         default:
             .devicePicker
@@ -161,7 +161,7 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
-    private var routeTabs: [PevScreenTab] {
+    private func routeTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
         switch self {
         case .devicePicker, .capture, .camera, .rideMap, .rideMapDetail, .more:
             []
@@ -176,8 +176,13 @@ enum CutoutAppRoute: Hashable {
             }
         case .eucPack(let screen):
             PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
-        case .eucTune:
-            PevRideTabs.eucRideTabs(isTuneSelected: true)
+        case .tune:
+            switch connectionRoute {
+            case .electricUnicycle?, nil:
+                PevRideTabs.eucRideTabs(isTuneSelected: true)
+            case .vescOnewheel?:
+                PevRideTabs.vescRideTabs(isTuneSelected: true)
+            }
         case .vescRide:
             PevRideTabs.vescRideTabs(selected: .vescRide)
         case .vescDebug:
@@ -239,7 +244,7 @@ enum CutoutAppRoute: Hashable {
                 )
             }
         default:
-            tabs = routeTabs
+            tabs = routeTabs(for: connectionRoute)
         }
         guard !tabs.isEmpty else { return tabs }
         var result = tabs

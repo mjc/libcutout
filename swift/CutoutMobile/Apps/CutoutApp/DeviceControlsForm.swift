@@ -694,7 +694,8 @@ enum DeviceControlPresentation {
             localizedAppText("controls.error.unverified")
         case DeviceSettingSubmissionError.ReadOnly: localizedAppText("controls.error.read_only")
         case DeviceSettingSubmissionError.InvalidValue: localizedAppText("controls.error.value")
-        case DeviceActionSubmissionError.Busy: localizedAppText("controls.refusal.busy")
+        case DeviceSettingSubmissionError.Busy, DeviceActionSubmissionError.Busy:
+            localizedAppText("controls.refusal.busy")
         case DeviceActionSubmissionError.RestartRequired: localizedAppText("controls.error.restart")
         case DeviceSettingSubmissionError.Unavailable, DeviceActionSubmissionError.Unavailable:
             localizedAppText("controls.error.unavailable")

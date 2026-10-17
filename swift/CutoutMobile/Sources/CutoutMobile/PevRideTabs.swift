@@ -24,14 +24,15 @@ public enum PevRideTabs {
                 id: .tune,
                 title: pevLocalizedText("tab.tune"),
                 isSelected: !lightingSelected && selected == nil && isTuneSelected,
-                destinationTarget: .eucTune
+                destinationTarget: .tune
             ),
         ]
     }
 
     public static func vescRideTabs(
         selected: PevScreenID? = nil,
-        lightingSelected: Bool = false
+        lightingSelected: Bool = false,
+        isTuneSelected: Bool = false
     ) -> [PevScreenTab] {
         [
             PevScreenTab(
@@ -41,6 +42,12 @@ public enum PevRideTabs {
             PevScreenTab(
                 id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,
                 destinationTarget: .lighting),
+            PevScreenTab(
+                id: .tune,
+                title: pevLocalizedText("tab.tune"),
+                isSelected: !lightingSelected && selected == nil && isTuneSelected,
+                destinationTarget: .tune
+            ),
             PevScreenTab(
                 id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug,
                 destinationScreenID: .vescDebug),
