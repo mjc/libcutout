@@ -1,0 +1,72 @@
+/* Revision 2 keeps CutOut's system palette and moves review controls outside the app. */
+.pagehead{max-width:1210px;align-items:center;padding:32px 28px 24px;border-bottom:1px solid var(--line);gap:35px}
+.pagehead h1{font-size:34px;letter-spacing:-1.2px;margin-top:5px}
+.pagehead p{max-width:570px;font-size:14px;line-height:1.6}
+.pagehead .eyebrow{color:var(--accentText);font-size:10px}
+.reviewbar{max-width:440px;justify-content:flex-end;gap:8px}
+.reviewbar select{max-width:200px;font-size:12px;background:var(--paper)}
+.reviewbar button{background:var(--paper);border:1px solid var(--line);font-size:12px}
+.stage{max-width:1100px;margin:0 auto;padding:32px 24px 60px;gap:64px;align-items:start}
+.designnote{width:300px;padding-top:22px}
+.designnote h3{font-size:23px;letter-spacing:-.7px;line-height:1.25;margin:12px 0}
+.designnote p{font-size:14px;line-height:1.65}
+.designnote .reviewgroup{border-top:1px solid var(--line);padding-top:18px;margin-top:24px}
+.designnote .reviewgroup h3{font-size:14px;margin:0 0 9px;letter-spacing:0}
+.designnote .reviewgroup p{font-size:12px;line-height:1.6}
+.designnote .reviewgroup button{font-size:12px;padding:9px 11px;margin:3px;min-height:44px;border:1px solid var(--line);background:var(--paper)}
+.servicelegend{display:flex;gap:6px;margin:19px 0 24px}
+.servicelegend span{padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:11px;font-weight:650}
+.phone{border-radius:39px;box-shadow:0 18px 50px #00000013;border:1px solid var(--line)}
+.content{padding:17px 19px 24px}
+.content h2{font-size:29px;letter-spacing:-1px}
+.protolabel{font-size:9px;letter-spacing:1.2px;padding:5px 0 7px}
+.topbar{height:34px}
+.tabs{margin:17px 0 16px;padding:4px;background:var(--card)}
+.tabs button{min-height:44px;font-size:12px}
+.tabs button[aria-pressed=true]{color:var(--accentText)}
+.intro{line-height:1.5;font-size:13px;max-width:290px}
+.card{padding:15px;border-radius:17px}
+.card.tint{position:relative;overflow:hidden}
+.metric{font-size:45px;letter-spacing:-1.8px;font-variant-numeric:tabular-nums}
+.statgrid strong{font-size:25px}
+.sectiontitle{margin-top:19px}
+.sectiontitle h3{font-size:16px}
+.rankrow{padding:10px 0;grid-template-columns:23px 32px 1fr auto}
+.rankrow .score{font-size:16px;letter-spacing:-.3px}
+.rankrow small{font-size:10px}
+.rankrow.me{position:relative;border-radius:10px}
+.rankrow.me:before{content:"";height:24px;width:3px;background:var(--accentText);position:absolute;left:0;border-radius:2px}
+.avatar{font-size:10px;border:1px solid var(--line)}
+.standings{margin-top:10px}
+.filters{margin:10px 0}
+.filters select{font-size:12px}
+.row small{line-height:1.45}
+.map{height:165px}
+.primary{border-radius:13px;font-weight:750;margin-top:15px;min-height:48px}
+.spark{height:42px;margin-top:16px}
+.spark i{max-width:30px}
+.sparklabels{margin-top:5px}
+.herofoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:16px;padding-top:11px;border-top:1px solid color-mix(in srgb,var(--accentText) 18%,transparent);font-size:11px;color:var(--accentText)}
+.herofoot b{font-size:12px}
+.providerstamp{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;margin-top:12px}
+.providerstamp i{width:5px;height:5px;background:var(--green);border-radius:50%}
+.quickrow{display:flex;align-items:center;gap:12px;padding:13px 0}
+.quickrow .left{flex:1}
+.quickrow button{font-size:13px;background:none;color:var(--accentText);padding:7px 0}
+.compactnote{font-size:12px;color:var(--muted);line-height:1.5;margin:12px 0}
+.navback{min-height:44px;margin-bottom:6px}
+.reviewdestinations{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.reviewdestinations .badge{border:1px solid var(--line);background:var(--paper)}
+.check{padding:10px 0}
+.visibility{display:flex;gap:9px;background:var(--card);border-radius:12px;padding:12px;font-size:12px;line-height:1.5;margin-top:13px}
+.visibility b{display:block;font-size:12px}
+.statusbox{background:var(--card);border:0;padding:18px}
+.statusbox p{line-height:1.5}
+.timeline li{padding-bottom:24px}
+.timeline .dot{width:26px;height:26px}
+.sourcecaption{font-size:11px;color:var(--muted);line-height:1.5;margin-top:13px}
+.gallery .phone{box-shadow:0 8px 28px #0000000a}
+.gallery{padding-top:30px}
+.gallery .comp>p{font-size:12px}
+@media(min-width:1591px){body:has(.gallery) .pagehead{max-width:1660px}}
+@media(max-width:800px){.stage{padding:22px 8px 35px}.pagehead{padding:20px 18px;gap:16px}.pagehead h1{font-size:29px}.reviewbar{justify-content:flex-start;max-width:100%}.reviewbar select{max-width:172px}.reviewbar button{padding:8px 12px}.phone{border-radius:31px}.gallery{padding-top:22px}}
