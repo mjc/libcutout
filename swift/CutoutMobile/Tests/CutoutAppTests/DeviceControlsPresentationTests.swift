@@ -7,7 +7,7 @@ import XCTest
 final class DeviceControlsPresentationTests: XCTestCase {
     func testPWMDutyKeepsWireValueAndOffDistinctFromUnknown() {
         let control = DeviceSettingControl.number(
-            minimum: 10, maximum: 90, step: 1, precision: 0, unit: .pwmDutyPercent, canDisable: true)
+            minimum: 10, maximum: 90, step: 1, editorStep: 1, precision: 0, unit: .pwmDutyPercent, canDisable: true)
         XCTAssertEqual(DeviceControlPresentation.value(.number(value: 80), control: control), "80%")
         XCTAssertEqual(DeviceControlPresentation.value(.number(value: 20), control: control), "20%")
         XCTAssertEqual(DeviceControlPresentation.value(.disabled, control: control), "Off")
@@ -32,7 +32,8 @@ final class DeviceControlsPresentationTests: XCTestCase {
 
     func testSpeedOptionsUseRideUnitsWithoutChangingCanonicalValues() {
         let control = DeviceSettingControl.number(
-            minimum: 10, maximum: 600, step: 10, precision: 1, unit: .kilometresPerHour, canDisable: false)
+            minimum: 10, maximum: 600, step: 10, editorStep: 10, precision: 1, unit: .kilometresPerHour,
+            canDisable: false)
         let value = DeviceSettingValue.number(value: 320)
         let ride = SpeedReadout(millimetersPerSecond: 8_889)
         XCTAssertEqual(
@@ -88,9 +89,34 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(Set(visible.map(\.id)).count, 14)
         XCTAssertFalse(visible.contains { $0.id == .chargeLimitDiagnostic })
         XCTAssertTrue(DeviceControlPresentation.settings([makeDescriptor(access: .unverified)], in: .interface).isEmpty)
-        XCTAssertTrue(DeviceControlPresentation.settings([makeDescriptor(access: .readOnly)], in: .interface).isEmpty)
+        XCTAssertEqual(DeviceControlPresentation.settings([makeDescriptor(access: .readOnly)], in: .interface).count, 1)
+        XCTAssertFalse(
+            DeviceControlPresentation.hasOrdinarySettings([
+                makeDescriptor(access: .readOnly, group: .diagnostics)
+            ]))
         XCTAssertEqual(
             makeDescriptor().writeVerification, .unverified, "Availability must not rewrite verification evidence")
+    }
+
+    func testOrdinaryReadOnlyCatalogRowsRemainVisibleAndDiagnosticsStaySeparate() {
+        let readOnly = makeDescriptor(
+            access: .readOnly, helpKey: "vesc.settings.read_only.disengaged_evidence")
+        XCTAssertEqual(DeviceControlPresentation.settings([readOnly], in: .interface), [readOnly])
+        XCTAssertTrue(DeviceControlPresentation.settings([readOnly], in: .diagnostics).isEmpty)
+        XCTAssertTrue(DeviceControlPresentation.options(readOnly.control).isEmpty)
+        XCTAssertEqual(
+            DeviceControlPresentation.value(.boolean(value: true), control: readOnly.control), "On")
+        XCTAssertEqual(
+            localizedAppText(readOnly.helpKey!),
+            "The controller must report a fresh parked, disengaged state before its configuration can be changed."
+        )
+    }
+
+    func testReadOnlyRowsDoNotPresentAnUnsentDraftAsObservedValue() {
+        let unsentDraft = DeviceSettingValue.number(value: 320)
+        XCTAssertNil(DeviceControlPresentation.visibleDraft(unsentDraft, access: .readOnly))
+        XCTAssertNil(DeviceControlPresentation.visibleDraft(unsentDraft, access: .unverified))
+        XCTAssertEqual(DeviceControlPresentation.visibleDraft(unsentDraft, access: .writable), unsentDraft)
     }
 
     func testRequestedBooleanDoesNotBecomeCurrentOrClaimTransportSuccess() {
@@ -116,7 +142,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
 
     func testNumericDraftWinsOverChangingReadbackAndRespectsFixedPointBounds() {
         let control = DeviceSettingControl.number(
-            minimum: -15, maximum: 15, step: 1, precision: 1, unit: .percent, canDisable: false)
+            minimum: -15, maximum: 15, step: 1, editorStep: 1, precision: 1, unit: .percent, canDisable: false)
         XCTAssertEqual(
             DeviceControlPresentation.steppedValue(
                 draft: .number(value: 3), current: .number(value: -10), control: control, increasing: true),
@@ -168,7 +194,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
 
     func testNumericStepsAlignFractionalReadbackAndDoNotOverflow() {
         let control = DeviceSettingControl.number(
-            minimum: 10, maximum: 95, step: 10, precision: 0, unit: .percent, canDisable: true)
+            minimum: 10, maximum: 95, step: 10, editorStep: 10, precision: 0, unit: .percent, canDisable: true)
         XCTAssertEqual(
             DeviceControlPresentation.steppedValue(
                 draft: nil, current: .number(value: 26), control: control, increasing: true), .number(value: 30))
@@ -182,11 +208,60 @@ final class DeviceControlsPresentationTests: XCTestCase {
             DeviceControlPresentation.steppedValue(
                 draft: .disabled, current: .number(value: 80), control: control, increasing: true), .number(value: 10))
         let wide = DeviceSettingControl.number(
-            minimum: .min, maximum: .max, step: 1, precision: 0, unit: .level, canDisable: false)
+            minimum: .min, maximum: .max, step: 1, editorStep: 1, precision: 0, unit: .level, canDisable: false)
         XCTAssertTrue(DeviceControlPresentation.options(wide).isEmpty)
         XCTAssertEqual(
             DeviceControlPresentation.steppedValue(
                 draft: .number(value: .max), current: nil, control: wide, increasing: true), .number(value: .max))
+    }
+
+    func testEditorIncrementIsSeparateFromWireRepresentabilityStep() {
+        let control = DeviceSettingControl.number(
+            minimum: 10, maximum: 1_000, step: 10, editorStep: 5, precision: 2, unit: .volts, canDisable: false)
+        XCTAssertEqual(
+            DeviceControlPresentation.steppedValue(
+                draft: .number(value: 20), current: nil, control: control, increasing: true),
+            .number(value: 30), "a five-unit editor increment rounds up to the next representable ten-unit value"
+        )
+        XCTAssertEqual(
+            DeviceControlPresentation.steppedValue(
+                draft: .number(value: 20), current: nil, control: control, increasing: false),
+            .number(value: 10), "decrementing rounds down to the representable wire lattice"
+        )
+        XCTAssertEqual(
+            DeviceControlPresentation.steppedValue(
+                draft: .number(value: 26), current: nil, control: control, increasing: true),
+            .number(value: 30), "an off-lattice readback aligns to the next representable value"
+        )
+    }
+
+    func testSettingApplyEffectLabelsAreGeneric() {
+        XCTAssertEqual(
+            DeviceControlPresentation.applyEffectLabel(.immediate),
+            localizedAppText("settings.effect.immediate")
+        )
+        XCTAssertEqual(
+            DeviceControlPresentation.applyEffectLabel(.restartRequired),
+            localizedAppText("settings.effect.restart_required")
+        )
+        XCTAssertNil(DeviceControlPresentation.applyEffectLabel(.unspecified))
+        XCTAssertEqual(DeviceControlPresentation.groups.count, 10)
+    }
+
+    func testGenericPhysicalUnitsRenderWithTheirDeclaredUnits() {
+        let cases: [(DeviceSettingUnit, String)] = [
+            (.volts, "12 V"), (.amperes, "12 A"), (.hertz, "12 Hz"),
+            (.degreesPerSecond, "12°/s"), (.celsius, "12°C"), (.scalar, "12"),
+            (.watts, "12 W"), (.milliseconds, "12 ms"), (.revolutionsPerMinute, "12 rpm"),
+            (.millimetres, "12 mm"), (.ampHours, "12 Ah"), (.raw, "12"),
+        ]
+        for (unit, expected) in cases {
+            let control = DeviceSettingControl.number(
+                minimum: 0, maximum: 100, step: 1, editorStep: 1, precision: 0, unit: unit, canDisable: false)
+            XCTAssertEqual(
+                DeviceControlPresentation.value(.number(value: 12), control: control), expected, "\(unit)"
+            )
+        }
     }
 
     func testApplyRequiresAnExplicitChangedDraft() {
@@ -217,6 +292,9 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(
             DeviceControlPresentation.error(DeviceSettingSubmissionError.Busy),
             localizedAppText("controls.refusal.busy"))
+        XCTAssertEqual(
+            DeviceControlPresentation.error(DeviceSettingSubmissionError.ConfigurationReadRequiresReconnect),
+            "A configuration read is still pending. Reconnect to the controller before trying again.")
     }
 
     func testSessionRefusalsUseExistingLocalizedReasonsAndUnknownErrorsKeepFallback() {
@@ -390,11 +468,15 @@ final class DeviceControlsPresentationTests: XCTestCase {
         )
     }
 
-    private func makeDescriptor(access: DeviceSettingAccess = .writable) -> DeviceSettingDescriptor {
+    private func makeDescriptor(
+        access: DeviceSettingAccess = .writable,
+        helpKey: String? = nil,
+        group: DeviceSettingGroup = .interface
+    ) -> DeviceSettingDescriptor {
         .init(
-            id: .highBeam, labelKey: "settings.high_beam.label", helpKey: nil, valueSemanticsKey: nil,
-            group: .interface, order: 1, control: .boolean, access: access, writeVerification: .unverified,
-            completion: .submissionOnly)
+            id: .highBeam, labelKey: "settings.high_beam.label", helpKey: helpKey, valueSemanticsKey: nil,
+            group: group, order: 1, control: .boolean, access: access, writeVerification: .unverified,
+            completion: .submissionOnly, applyEffect: .unspecified)
     }
 
     private func makeState() -> DeviceSettingSnapshot {

@@ -21,7 +21,7 @@ struct DeviceControlsForm<AdditionalContent: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
-                if !snapshot.settingDescriptors.contains(where: { $0.access == .writable })
+                if !DeviceControlPresentation.hasOrdinarySettings(snapshot.settingDescriptors)
                     && !snapshot.actionDescriptors.contains(where: { $0.access == .available })
                 {
                     Text(localizedAppText("controls.empty"))
@@ -105,7 +105,9 @@ private struct DeviceSettingRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var editing = DeviceSettingDraft()
 
-    private var draft: DeviceSettingValue? { editing.value }
+    private var draft: DeviceSettingValue? {
+        DeviceControlPresentation.visibleDraft(editing.value, access: descriptor.access)
+    }
 
     private var displayedValue: String {
         DeviceControlPresentation.value(draft ?? state?.current, control: descriptor.control)
@@ -113,83 +115,97 @@ private struct DeviceSettingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            switch descriptor.control {
-            case .boolean:
-                ViewThatFits(in: .horizontal) {
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        HStack(spacing: 12) {
-                            titleAndValue.fixedSize(horizontal: true, vertical: false)
-                            Spacer(minLength: 0)
+            if descriptor.access == .readOnly {
+                titleAndValue
+            } else {
+                switch descriptor.control {
+                case .boolean:
+                    ViewThatFits(in: .horizontal) {
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            HStack(spacing: 12) {
+                                titleAndValue.fixedSize(horizontal: true, vertical: false)
+                                Spacer(minLength: 0)
+                                booleanButtons
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            titleAndValue
                             booleanButtons
                         }
                     }
-                    VStack(alignment: .leading, spacing: 8) {
-                        titleAndValue
-                        booleanButtons
-                    }
-                }
-            case .choices:
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        title.fixedSize(horizontal: true, vertical: false)
-                        Spacer(minLength: 8)
-                        choicePicker
-                    }
-                    VStack(alignment: .leading) {
-                        title
-                        choicePicker
-                    }
-                }
-                applyButton
-            case let .number(minimum, maximum, step, _, _, canDisable):
-                titleAndValue
-                let layout =
-                    dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-                    : AnyLayout(HStackLayout(spacing: 12))
-                layout {
-                    if minimum < maximum, step > 0 {
-                        Slider(
-                            value: Binding(
-                                get: {
-                                    if case let .number(value) = draft ?? state?.current {
-                                        return Double(min(max(value, minimum), maximum))
-                                    }
-                                    return Double(minimum)
-                                },
-                                set: { value in
-                                    edit(.number(value: Int32(value.rounded())))
-                                }), in: Double(minimum)...Double(maximum), step: Double(step)
-                        )
-                        .accessibilityLabel(localizedAppText(descriptor.labelKey))
-                        .accessibilityValue(displayedValue)
-                        .accessibilityIdentifier("settings.slider.\(descriptor.id)")
-                        .disabled(!hasNumericBaseValue)
-                    }
-                    numericStepper
-                }
-                HStack(spacing: 12) {
-                    if canDisable {
-                        Button {
-                            edit(.disabled)
-                        } label: {
-                            Text(localizedAppText("settings.choice.off")).frame(minWidth: 44, minHeight: 44)
+                case .choices:
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            title.fixedSize(horizontal: true, vertical: false)
+                            Spacer(minLength: 8)
+                            choicePicker
                         }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel(
-                            localizedAppText("controls.disable.accessibility", localizedAppText(descriptor.labelKey))
-                        )
-                        .accessibilityIdentifier("settings.disable.\(descriptor.id)")
+                        VStack(alignment: .leading) {
+                            title
+                            choicePicker
+                        }
                     }
                     applyButton
+                case let .number(minimum, maximum, step, _, _, _, canDisable):
+                    titleAndValue
+                    let layout =
+                        dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                        : AnyLayout(HStackLayout(spacing: 12))
+                    layout {
+                        if minimum < maximum, step > 0 {
+                            Slider(
+                                value: Binding(
+                                    get: {
+                                        if case let .number(value) = draft ?? state?.current {
+                                            return Double(min(max(value, minimum), maximum))
+                                        }
+                                        return Double(minimum)
+                                    },
+                                    set: { value in
+                                        edit(.number(value: Int32(value.rounded())))
+                                    }), in: Double(minimum)...Double(maximum), step: Double(step)
+                            )
+                            .accessibilityLabel(localizedAppText(descriptor.labelKey))
+                            .accessibilityValue(displayedValue)
+                            .accessibilityIdentifier("settings.slider.\(descriptor.id)")
+                            .disabled(!hasNumericBaseValue)
+                        }
+                        numericStepper
+                    }
+                    HStack(spacing: 12) {
+                        if canDisable {
+                            Button {
+                                edit(.disabled)
+                            } label: {
+                                Text(localizedAppText("settings.choice.off")).frame(minWidth: 44, minHeight: 44)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(
+                                localizedAppText(
+                                    "controls.disable.accessibility", localizedAppText(descriptor.labelKey))
+                            )
+                            .accessibilityIdentifier("settings.disable.\(descriptor.id)")
+                        }
+                        applyButton
+                    }
+                case .readOnly:
+                    titleAndValue
                 }
-            case .readOnly:
-                titleAndValue
+            }
+            if let helpKey = descriptor.helpKey {
+                Text(localizedAppText(helpKey)).font(.footnote).foregroundStyle(PevColors.muted)
+            }
+            if let semanticsKey = descriptor.valueSemanticsKey {
+                Text(localizedAppText(semanticsKey)).font(.footnote).foregroundStyle(PevColors.muted)
+            }
+            if let effect = DeviceControlPresentation.applyEffectLabel(descriptor.applyEffect) {
+                Text(effect).font(.footnote).foregroundStyle(PevColors.muted)
             }
             if let feedback = DeviceControlPresentation.feedback(
                 state,
                 submissionError: editing.submissionError,
-                draft: editing.value
+                draft: draft
             ) {
                 Text(feedback.text).font(.footnote)
                     .foregroundStyle(feedback.isError ? PevColors.red : PevColors.muted)
@@ -461,7 +477,9 @@ private struct DeviceActionRow: View {
 }
 
 enum DeviceControlPresentation {
-    static let groups: [DeviceSettingGroup] = [.interface, .limits, .riding, .modes, .diagnostics]
+    static let groups: [DeviceSettingGroup] = [
+        .interface, .haptics, .limits, .riding, .modes, .hardware, .remote, .battery, .lighting,
+    ]
 
     static func groupTitle(_ group: DeviceSettingGroup) -> String {
         switch group {
@@ -470,13 +488,36 @@ enum DeviceControlPresentation {
         case .riding: localizedAppText("controls.group.riding")
         case .modes: localizedAppText("controls.group.modes")
         case .diagnostics: localizedAppText("controls.group.diagnostics")
+        case .haptics: localizedAppText("controls.group.haptics")
+        case .lighting: localizedAppText("controls.group.lighting")
+        case .hardware: localizedAppText("controls.group.hardware")
+        case .remote: localizedAppText("controls.group.remote")
+        case .battery: localizedAppText("controls.group.battery")
+        }
+    }
+
+    static func applyEffectLabel(_ effect: DeviceSettingApplyEffect) -> String? {
+        switch effect {
+        case .immediate: localizedAppText("settings.effect.immediate")
+        case .restartRequired: localizedAppText("settings.effect.restart_required")
+        case .unspecified: nil
         }
     }
 
     static func settings(_ descriptors: [DeviceSettingDescriptor], in group: DeviceSettingGroup)
         -> [DeviceSettingDescriptor]
     {
-        descriptors.filter { $0.group == group && $0.access == .writable }.sorted { $0.order < $1.order }
+        guard group != .diagnostics else { return [] }
+        return descriptors.filter { $0.group == group && $0.access != .unverified }
+            .sorted { $0.order < $1.order }
+    }
+
+    static func hasOrdinarySettings(_ descriptors: [DeviceSettingDescriptor]) -> Bool {
+        descriptors.contains { $0.group != .diagnostics && $0.access != .unverified }
+    }
+
+    static func visibleDraft(_ candidate: DeviceSettingValue?, access: DeviceSettingAccess) -> DeviceSettingValue? {
+        access == .writable ? candidate : nil
     }
 
     static func hasChanges(draft: DeviceSettingValue?, current: DeviceSettingValue?) -> Bool {
@@ -502,8 +543,8 @@ enum DeviceControlPresentation {
     static func steppedValue(
         draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool
     ) -> DeviceSettingValue? {
-        guard case let .number(minimum, maximum, step, _, _, _) = control,
-            minimum <= maximum, step > 0
+        guard case let .number(minimum, maximum, step, editorStep, _, _, _) = control,
+            minimum <= maximum, step > 0, editorStep > 0
         else { return nil }
         // Unknown wheel state is not a default. Do not manufacture the
         // minimum as a first draft from a +/− tap. Explicit Off is a known
@@ -519,16 +560,25 @@ enum DeviceControlPresentation {
             return nil
         }
         let lower = Int64(minimum)
-        let stride = Int64(step)
-        let lastIndex = (Int64(maximum) - lower) / stride
+        let wireStep = Int64(step)
+        let editorIncrement = Int64(editorStep)
+        let lastIndex = (Int64(maximum) - lower) / wireStep
         let offset = Int64(value) - lower
+        let isWireRepresentable = offset >= 0 && offset % wireStep == 0
         let index: Int64
-        if increasing {
-            index = offset < 0 ? 0 : offset / stride + 1
+        if isWireRepresentable {
+            let target = offset + (increasing ? editorIncrement : -editorIncrement)
+            if increasing {
+                index = target <= 0 ? 0 : (target + wireStep - 1) / wireStep
+            } else {
+                index = target < 0 ? 0 : target / wireStep
+            }
+        } else if increasing {
+            index = offset < 0 ? 0 : (offset + wireStep - 1) / wireStep
         } else {
-            index = offset <= 0 ? 0 : (offset - 1) / stride
+            index = offset <= 0 ? 0 : (offset - 1) / wireStep
         }
-        return .number(value: Int32(lower + min(max(index, 0), lastIndex) * stride))
+        return .number(value: Int32(lower + min(max(index, 0), lastIndex) * wireStep))
     }
 
     static func options(_ control: DeviceSettingControl) -> [DeviceSettingValue] {
@@ -559,7 +609,7 @@ enum DeviceControlPresentation {
             }
             return localizedAppText(choice.labelKey)
         case let .number(value):
-            guard case let .number(_, _, _, precision, unit, _) = control else { return String(value) }
+            guard case let .number(_, _, _, _, precision, unit, _) = control else { return String(value) }
             let amount = Double(value) / pow(10, Double(precision))
             let text = amount.formatted(.number.precision(.fractionLength(Int(precision))))
             switch unit {
@@ -571,6 +621,18 @@ enum DeviceControlPresentation {
             case .level: return text
             case .seconds: return "\(text) s"
             case .minutes: return "\(text) min"
+            case .volts: return "\(text) V"
+            case .amperes: return "\(text) A"
+            case .hertz: return "\(text) Hz"
+            case .degreesPerSecond: return "\(text)°/s"
+            case .celsius: return "\(text)°C"
+            case .scalar: return text
+            case .watts: return "\(text) W"
+            case .milliseconds: return "\(text) ms"
+            case .revolutionsPerMinute: return "\(text) rpm"
+            case .millimetres: return "\(text) mm"
+            case .ampHours: return "\(text) Ah"
+            case .raw: return text
             }
         }
     }
@@ -696,6 +758,8 @@ enum DeviceControlPresentation {
         case DeviceSettingSubmissionError.InvalidValue: localizedAppText("controls.error.value")
         case DeviceSettingSubmissionError.Busy, DeviceActionSubmissionError.Busy:
             localizedAppText("controls.refusal.busy")
+        case DeviceSettingSubmissionError.ConfigurationReadRequiresReconnect:
+            localizedAppText("settings.error.configuration_read_requires_reconnect")
         case DeviceActionSubmissionError.RestartRequired: localizedAppText("controls.error.restart")
         case DeviceSettingSubmissionError.Unavailable, DeviceActionSubmissionError.Unavailable:
             localizedAppText("controls.error.unavailable")
