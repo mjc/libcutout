@@ -298,10 +298,7 @@ impl VescSettingsSession {
         let actual_speed = self.fresh_speed(at);
         let speed_matches = actual_speed.is_some_and(|speed| {
             requested_speed_mm_per_second == Some(speed.as_millimetres_per_second())
-                && speed.as_millimetres_per_second().unsigned_abs()
-                    <= cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD
-                        .as_millimetres_per_second()
-                        .unsigned_abs()
+                && !speed.is_moving()
         });
         let state_matches =
             actual_state.is_some_and(|state| RideOperatingStateDto::from(state) == requested_state);
@@ -509,57 +506,7 @@ impl VescSettingsSession {
                 if observed_at <= submitted_at {
                     return;
                 }
-                self.config_read_pending = false;
-                if !pending.authorization.is_some_and(|authorization| {
-                    self.setting_write_is_current(authorization, observed_at)
-                }) {
-                    self.cancel_pending();
-                    push_settings_readback(step, &config);
-                    return;
-                }
-                if !settings_images_match(&pending.baseline, &config) {
-                    self.cancel_pending();
-                    push_settings_readback(step, &config);
-                    return;
-                }
-                let Ok(expected) = config.changed(pending.id, pending.value) else {
-                    self.cancel_pending();
-                    push_settings_readback(step, &config);
-                    return;
-                };
-                let Some(operation_id) = pending.operation_id else {
-                    self.cancel_pending();
-                    return;
-                };
-                let Some(write) = encode_settings_payload(&expected.write_command_payload()) else {
-                    self.cancel_pending();
-                    return;
-                };
-                let Some(read) = encode_settings_payload(&[93, 0]) else {
-                    self.cancel_pending();
-                    return;
-                };
-                let mut write = write;
-                let mut read = read;
-                write.set_operation_id(operation_id);
-                read.set_operation_id(operation_id);
-                if let Some(pending) = self.pending.as_mut() {
-                    pending.expected = Some(expected);
-                    pending.stage = PendingStage::MutationQueued;
-                }
-                self.config_read_pending = true;
-                step.outputs
-                    .push(SessionOutput::Transport(TransportAction::Write {
-                        channel: VESC_WRITE_CHANNEL,
-                        bytes: write,
-                        mode: WriteMode::WithoutResponse,
-                    }));
-                step.outputs
-                    .push(SessionOutput::Transport(TransportAction::Write {
-                        channel: VESC_WRITE_CHANNEL,
-                        bytes: read,
-                        mode: WriteMode::WithoutResponse,
-                    }));
+                self.apply_preflight(&pending, &config, observed_at, step);
             }
             PendingStage::AwaitingVerification { submitted_at } => {
                 if observed_at <= submitted_at {
@@ -579,6 +526,67 @@ impl VescSettingsSession {
                 }
             }
         }
+    }
+
+    fn apply_preflight(
+        &mut self,
+        pending: &PendingSetting,
+        config: &RefloatSettings,
+        observed_at: MonotonicTimestamp,
+        step: &mut DeviceSessionStep,
+    ) {
+        self.config_read_pending = false;
+        if !pending
+            .authorization
+            .is_some_and(|authorization| self.setting_write_is_current(authorization, observed_at))
+        {
+            self.cancel_pending();
+            push_settings_readback(step, config);
+            return;
+        }
+        if !settings_images_match(&pending.baseline, config) {
+            self.cancel_pending();
+            push_settings_readback(step, config);
+            return;
+        }
+        let Ok(expected) = config.changed(pending.id, pending.value) else {
+            self.cancel_pending();
+            push_settings_readback(step, config);
+            return;
+        };
+        let Some(operation_id) = pending.operation_id else {
+            self.cancel_pending();
+            return;
+        };
+        let Some(write) = encode_settings_payload(&expected.write_command_payload()) else {
+            self.cancel_pending();
+            return;
+        };
+        let Some(read) = encode_settings_payload(&[93, 0]) else {
+            self.cancel_pending();
+            return;
+        };
+        let mut write = write;
+        let mut read = read;
+        write.set_operation_id(operation_id);
+        read.set_operation_id(operation_id);
+        if let Some(pending) = self.pending.as_mut() {
+            pending.expected = Some(expected);
+            pending.stage = PendingStage::MutationQueued;
+        }
+        self.config_read_pending = true;
+        step.outputs
+            .push(SessionOutput::Transport(TransportAction::Write {
+                channel: VESC_WRITE_CHANNEL,
+                bytes: write,
+                mode: WriteMode::WithoutResponse,
+            }));
+        step.outputs
+            .push(SessionOutput::Transport(TransportAction::Write {
+                channel: VESC_WRITE_CHANNEL,
+                bytes: read,
+                mode: WriteMode::WithoutResponse,
+            }));
     }
 
     fn maybe_request_initial_config(&mut self, step: &mut DeviceSessionStep) {
@@ -677,15 +685,12 @@ impl VescSettingsSession {
     }
 
     fn fresh_stationary_evidence(&self, at: MonotonicTimestamp) -> bool {
-        self.fresh_speed(at).is_some_and(|speed| {
-            speed.as_millimetres_per_second().unsigned_abs()
-                <= cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD
-                    .as_millimetres_per_second()
-                    .unsigned_abs()
-        }) && match self.fresh_operating_state(at) {
-            Some(RideOperatingState::Parked | RideOperatingState::Standing) => true,
-            _ => false,
-        } && self.fresh_normal_mode(at)
+        self.fresh_speed(at).is_some_and(|speed| !speed.is_moving())
+            && match self.fresh_operating_state(at) {
+                Some(RideOperatingState::Parked | RideOperatingState::Standing) => true,
+                _ => false,
+            }
+            && self.fresh_normal_mode(at)
     }
 
     fn fresh_normal_mode(&self, at: MonotonicTimestamp) -> bool {
@@ -825,4 +830,30 @@ fn fresh(at: MonotonicTimestamp, observed: MonotonicTimestamp) -> bool {
 
 fn encode_settings_payload(payload: &[u8]) -> Option<WritePayload> {
     crate::vesc_codec::encode_settings_payload(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inclusive_connected_motion_threshold_never_counts_as_stationary() {
+        let threshold = cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        for (speed, stationary) in [
+            (threshold - 1, true),
+            (threshold, false),
+            (-threshold, false),
+        ] {
+            let mut session = VescSettingsSession::new(None);
+            let at = MonotonicTimestamp::new(10);
+            session.last_speed = Some((cutout_core::Speed::from_millimetres_per_second(speed), at));
+            session.last_operating_state = Some((RideOperatingState::Parked, at));
+            session.last_operating_mode = Some((cutout_core::RideOperatingMode::Normal, at));
+            assert_eq!(
+                session.fresh_stationary_evidence(at),
+                stationary,
+                "speed {speed}"
+            );
+        }
+    }
 }

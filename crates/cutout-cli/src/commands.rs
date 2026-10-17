@@ -3075,10 +3075,10 @@ fn vesc_reply_matches(command: DeviceCommand, reply: &VescReadOnlyReply) -> bool
 fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
     match reply {
         VescReadOnlyReply::CustomConfig { index, bytes } => {
-            info!(index, config_bytes = bytes.len(), "vesc custom config")
+            info!(index, config_bytes = bytes.len(), "vesc custom config");
         }
         VescReadOnlyReply::CustomConfigDispatched => {
-            info!("vesc custom config write dispatched; device acceptance is unverified")
+            info!("vesc custom config write dispatched; device acceptance is unverified");
         }
         VescReadOnlyReply::FirmwareInfo {
             major,

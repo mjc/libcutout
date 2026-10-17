@@ -89,12 +89,6 @@ pub(crate) fn accepts(id: SettingId, value: DeviceSettingValue) -> bool {
             },
             DeviceSettingValue::Disabled,
         ) => true,
-        (
-            SettingControl::Number {
-                can_disable: false, ..
-            },
-            DeviceSettingValue::Disabled,
-        ) => false,
         _ => false,
     }
 }

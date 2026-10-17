@@ -1217,6 +1217,57 @@ impl VescNotificationDecoder {
         push_parser_error(ParserError::MalformedFrame, output);
     }
 
+    fn observe_vesc_reply(&mut self, reply: &VescReadOnlyReply, monotonic_ms: MonotonicTimestamp) {
+        match reply {
+            VescReadOnlyReply::MotorConfig(config) => {
+                self.motor_config_received = true;
+                if self.configured_board_profile.is_none() {
+                    self.learned_board_profile = Some(VescBoardProfile::from_motor_config(*config));
+                }
+            }
+            VescReadOnlyReply::MotorSetupConfig(geometry) => {
+                self.motor_config_received = true;
+                if self.configured_board_profile.is_none() {
+                    self.learned_board_profile =
+                        Some(VescBoardProfile::from_speed_geometry(*geometry));
+                }
+            }
+            VescReadOnlyReply::FirmwareInfo { major, minor, .. } => {
+                if self
+                    .firmware_version
+                    .is_some_and(|version| version != (*major, *minor))
+                {
+                    self.refloat_package = None;
+                    self.refloat_config = None;
+                    self.refloat_info_received = false;
+                }
+                self.firmware_version = Some((*major, *minor));
+            }
+            VescReadOnlyReply::Values(values) => {
+                if values
+                    .present_fields
+                    .contains(VescValuesMask::CONTROLLER_ID)
+                {
+                    let id = values.controller_id.get();
+                    if self.controller_id.is_some_and(|previous| previous != id) {
+                        self.refloat_package = None;
+                        self.refloat_config = None;
+                        self.refloat_info_received = false;
+                    }
+                    self.controller_id = Some(id);
+                }
+            }
+            VescReadOnlyReply::CustomConfig { index: 0, bytes } => {
+                self.refloat_config = crate::refloat_settings::RefloatSettings::decode(bytes)
+                    .ok()
+                    .map(|config| (config, monotonic_ms));
+            }
+            VescReadOnlyReply::CustomConfig { .. }
+            | VescReadOnlyReply::CustomConfigDispatched
+            | VescReadOnlyReply::Stats(_) => {}
+        }
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "Parser metadata is passed together for one notification."
@@ -1246,56 +1297,7 @@ impl VescNotificationDecoder {
                         count.saturating_add(vesc_reply_event_count(reply))
                     });
                 for reply in &replies {
-                    match reply {
-                        VescReadOnlyReply::MotorConfig(config) => {
-                            self.motor_config_received = true;
-                            if self.configured_board_profile.is_none() {
-                                self.learned_board_profile =
-                                    Some(VescBoardProfile::from_motor_config(*config));
-                            }
-                        }
-                        VescReadOnlyReply::MotorSetupConfig(geometry) => {
-                            self.motor_config_received = true;
-                            if self.configured_board_profile.is_none() {
-                                self.learned_board_profile =
-                                    Some(VescBoardProfile::from_speed_geometry(*geometry));
-                            }
-                        }
-                        VescReadOnlyReply::FirmwareInfo { major, minor, .. } => {
-                            if self
-                                .firmware_version
-                                .is_some_and(|version| version != (*major, *minor))
-                            {
-                                self.refloat_package = None;
-                                self.refloat_config = None;
-                                self.refloat_info_received = false;
-                            }
-                            self.firmware_version = Some((*major, *minor));
-                        }
-                        VescReadOnlyReply::Values(values) => {
-                            if values
-                                .present_fields
-                                .contains(VescValuesMask::CONTROLLER_ID)
-                            {
-                                let id = values.controller_id.get();
-                                if self.controller_id.is_some_and(|previous| previous != id) {
-                                    self.refloat_package = None;
-                                    self.refloat_config = None;
-                                    self.refloat_info_received = false;
-                                }
-                                self.controller_id = Some(id);
-                            }
-                        }
-                        VescReadOnlyReply::CustomConfig { index: 0, bytes } => {
-                            self.refloat_config =
-                                crate::refloat_settings::RefloatSettings::decode(bytes)
-                                    .ok()
-                                    .map(|config| (config, monotonic_ms));
-                        }
-                        VescReadOnlyReply::CustomConfig { .. }
-                        | VescReadOnlyReply::CustomConfigDispatched
-                        | VescReadOnlyReply::Stats(_) => {}
-                    }
+                    self.observe_vesc_reply(reply, monotonic_ms);
                     push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
                 }
                 if emit_ingest {

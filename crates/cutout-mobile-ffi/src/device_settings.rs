@@ -615,8 +615,8 @@ mod tests {
 
     fn vesc_frame(payload: &[u8]) -> Vec<u8> {
         let mut frame = Vec::with_capacity(payload.len() + 6);
-        if payload.len() <= usize::from(u8::MAX) {
-            frame.extend_from_slice(&[2, u8::try_from(payload.len()).unwrap()]);
+        if let Ok(length) = u8::try_from(payload.len()) {
+            frame.extend_from_slice(&[2, length]);
         } else {
             frame.push(3);
             frame.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_be_bytes());
@@ -817,18 +817,18 @@ mod tests {
     #[test]
     fn unsupported_refloat_identity_or_config_schema_removes_settings_catalog() {
         let (no_package, _) = refloat_settings_handle(None, None);
-        assert!(no_package.settings().setting_descriptors.is_empty());
+        assert_eq!(no_package.settings().setting_descriptors.len(), 0);
         let (other, _) =
             refloat_settings_handle(Some(("Other", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
-        assert!(other.settings().setting_descriptors.is_empty());
+        assert_eq!(other.settings().setting_descriptors.len(), 0);
         let (old_version, _) =
             refloat_settings_handle(Some(("Refloat", [1, 2, 3])), Some(REFLOAT_DEFAULT_CONFIG));
-        assert!(old_version.settings().setting_descriptors.is_empty());
+        assert_eq!(old_version.settings().setting_descriptors.len(), 0);
         let mut bad_signature = REFLOAT_DEFAULT_CONFIG.to_vec();
         bad_signature[0] ^= 1;
         let (unknown_schema, _) =
             refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(&bad_signature));
-        assert!(unknown_schema.settings().setting_descriptors.is_empty());
+        assert_eq!(unknown_schema.settings().setting_descriptors.len(), 0);
     }
 
     #[test]
@@ -839,8 +839,8 @@ mod tests {
         let replacement = handle.begin_connection_attempt("replacement".into(), 7);
         let settings = handle.settings();
         assert_eq!(settings.connection, replacement);
-        assert!(settings.setting_descriptors.is_empty());
-        assert!(settings.settings.is_empty());
+        assert_eq!(settings.setting_descriptors.len(), 0);
+        assert_eq!(settings.settings.len(), 0);
     }
 
     #[test]

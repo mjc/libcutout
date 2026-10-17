@@ -32,8 +32,8 @@ fn crc16_xmodem(bytes: &[u8]) -> u16 {
 
 fn vesc_frame(payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(payload.len() + 6);
-    if payload.len() <= usize::from(u8::MAX) {
-        frame.extend_from_slice(&[2, u8::try_from(payload.len()).unwrap()]);
+    if let Ok(length) = u8::try_from(payload.len()) {
+        frame.extend_from_slice(&[2, length]);
     } else {
         frame.push(3);
         frame.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_be_bytes());
@@ -255,7 +255,7 @@ fn submit_pwm_tiltback(
 #[test]
 fn generic_vesc_without_refloat_package_exposes_no_refloat_controls() {
     let (owner, _) = refloat_session(None, (7, 0), None);
-    assert!(owner.settings_descriptors().is_empty());
+    assert_eq!(owner.settings_descriptors().len(), 0);
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn unsupported_package_or_firmware_version_exposes_no_controls() {
         (Some(("Refloat", 1, 3, 0)), (7, 1)),
     ] {
         let (owner, _) = refloat_session(package, firmware, Some(config));
-        assert!(owner.settings_descriptors().is_empty());
+        assert_eq!(owner.settings_descriptors().len(), 0);
     }
 }
 
@@ -317,7 +317,7 @@ fn wrong_refloat_schema_signature_or_length_exposes_no_controls() {
     let truncated = &config[..config.len() - 1];
     for invalid_config in [wrong_signature.as_slice(), truncated] {
         let (owner, _) = refloat_session(Some(("Refloat", 1, 3, 0)), (7, 0), Some(invalid_config));
-        assert!(owner.settings_descriptors().is_empty());
+        assert_eq!(owner.settings_descriptors().len(), 0);
     }
 }
 
@@ -327,14 +327,7 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
     for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
         notification(&mut owner, &token, bytes, 20 + index as u64);
     }
-    let accepted = owner
-        .submit_setting(
-            &token,
-            SettingId::PwmTiltback,
-            DeviceSettingValue::Number(81),
-            MonotonicTimestamp::new(22),
-        )
-        .expect("supported semantic request reaches the session");
+    let accepted = submit_pwm_tiltback(&mut owner, &token, 22);
     let first = transport_writes(&accepted);
     assert_eq!(first.len(), 1);
     assert_eq!(frame_payload(&first[0]), [93, 0]);
@@ -408,7 +401,7 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
         .find(|setting| setting.id == SettingId::PwmTiltback)
         .unwrap();
     assert_eq!(setting.status, SettingCommandStatus::WaitingForConfirmation);
-    assert!(transport_writes(&ack).is_empty());
+    assert_eq!(transport_writes(&ack).len(), 0);
 
     let default_marker = expected.len() - 1;
     expected[default_marker] = 0; // firmware clears the source-defined final marker on save
@@ -906,5 +899,5 @@ fn oversized_config_response_invalidates_previously_supported_catalog() {
     let mut response = vec![93, 0];
     response.extend_from_slice(&[0; 283]);
     notification(&mut owner, &token, vesc_frame(&response), 20);
-    assert!(owner.settings_descriptors().is_empty());
+    assert_eq!(owner.settings_descriptors().len(), 0);
 }
