@@ -4,8 +4,8 @@ use super::{
     MAX_CAPTURE_SUBMISSION_DURATION_MILLISECONDS, MAX_CAPTURE_SUBMISSION_EVENTS,
 };
 use crate::{
-    PevcapBinaryError, PevcapEncoding, PevcapEvent, PevcapJsonlError, PevcapReader,
-    PevcapStreamError,
+    CaptureSettingsObservationError, PevcapBinaryError, PevcapEncoding, PevcapEvent,
+    PevcapJsonlError, PevcapReader, PevcapStreamError,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -167,7 +167,7 @@ impl<R: Read> Read for CountedReader<R> {
 
 fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissionValidationError {
     use CaptureSubmissionValidationError::{
-        InvalidPevcap, ReadFailure, TooLarge, UnsupportedFormat,
+        InvalidPevcap, ReadFailure, TooLarge, TooManyEvents, UnsupportedFormat,
     };
     if counter.too_large {
         return TooLarge;
@@ -178,6 +178,12 @@ fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissi
     match error {
         PevcapStreamError::Jsonl(PevcapJsonlError::LineTooLong { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::PayloadTooLarge { .. }) => TooLarge,
+        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        ))
+        | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        )) => TooManyEvents,
         PevcapStreamError::Jsonl(PevcapJsonlError::UnsupportedVersion { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::UnsupportedVersion { .. }) => {
             UnsupportedFormat

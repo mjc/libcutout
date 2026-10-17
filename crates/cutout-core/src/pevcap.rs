@@ -2,7 +2,7 @@ use core::convert::Infallible;
 
 use crate::CaptureSettingsObservation;
 #[cfg(feature = "serde")]
-use crate::CaptureSettingsObservationError;
+use crate::{CaptureSettingsObservationError, MAX_CAPTURE_SETTINGS_OBSERVATIONS};
 
 #[cfg(feature = "serde")]
 use std::io::{self, BufRead, BufReader, Read};
@@ -718,6 +718,7 @@ enum PevcapReaderState<R: Read> {
         header: PevcapHeader,
         line: String,
         version: PevcapFormatVersion,
+        settings_observation_count: usize,
     },
     Binary {
         reader: R,
@@ -807,6 +808,7 @@ impl<R: Read> PevcapReader<R> {
                     header: header.try_into_header()?,
                     line: String::new(),
                     version,
+                    settings_observation_count: 0,
                 },
             });
         }
@@ -891,12 +893,19 @@ impl<R: Read> PevcapReader<R> {
             line_number,
             line,
             version,
+            settings_observation_count,
             ..
         } = &mut self.state
         else {
             return Ok(None);
         };
-        Self::next_jsonl_event(reader, line_number, line, *version)
+        Self::next_jsonl_event(
+            reader,
+            line_number,
+            line,
+            *version,
+            settings_observation_count,
+        )
     }
 
     fn next_binary_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
@@ -972,6 +981,7 @@ impl<R: Read> PevcapReader<R> {
         if !*settings_count_read {
             *remaining_settings =
                 read_stream_u32(reader, PevcapBinarySection::SettingsObservationCount)?;
+            ensure_binary_settings_observation_count(*remaining_settings)?;
             *settings_count_read = true;
         }
         if *remaining_settings > 0 {
@@ -1023,6 +1033,7 @@ impl<R: Read> PevcapReader<R> {
         line_number: &mut usize,
         line: &mut String,
         version: PevcapFormatVersion,
+        settings_observation_count: &mut usize,
     ) -> Result<Option<PevcapEvent>, PevcapStreamError> {
         loop {
             line.clear();
@@ -1077,9 +1088,12 @@ impl<R: Read> PevcapReader<R> {
                         }
                         .into());
                     }
+                    ensure_settings_observation_count(settings_observation_count.saturating_add(1))
+                        .map_err(PevcapJsonlError::SettingsObservation)?;
                     observation
                         .validate()
                         .map_err(PevcapJsonlError::SettingsObservation)?;
+                    *settings_observation_count += 1;
                     Ok(Some(PevcapEvent::SettingsObservation(observation)))
                 }
                 PevcapJsonlLine::Music { music } => {
@@ -2751,6 +2765,8 @@ impl PevcapCapture {
                 version: self.version,
             });
         }
+        ensure_settings_observation_count(self.settings_observations.len())
+            .map_err(PevcapJsonlError::SettingsObservation)?;
         let mut output = serde_json::to_string(&PevcapJsonlLine::Header {
             magic: PEVCAP_MAGIC,
             version: self.version,
@@ -2899,6 +2915,10 @@ impl PevcapCapture {
                     observation
                         .validate()
                         .map_err(PevcapJsonlError::SettingsObservation)?;
+                    ensure_settings_observation_count(
+                        settings_observations.len().saturating_add(1),
+                    )
+                    .map_err(PevcapJsonlError::SettingsObservation)?;
                     settings_observations.push(observation);
                 }
                 PevcapJsonlLine::Music { music } => {
@@ -2971,6 +2991,8 @@ impl PevcapCapture {
                 version: self.version,
             });
         }
+        ensure_settings_observation_count(self.settings_observations.len())
+            .map_err(PevcapBinaryError::SettingsObservation)?;
         let header = serde_json::to_vec(&PevcapHeaderJson::from(&self.header))
             .map_err(PevcapBinaryError::Serialize)?;
 
@@ -3028,27 +3050,7 @@ impl PevcapCapture {
         }
 
         if self.version.supports_settings_observations() {
-            write_u32_le(
-                &mut output,
-                u32::try_from(self.settings_observations.len()).map_err(|_| {
-                    PevcapBinaryError::LengthTooLarge {
-                        section: PevcapBinarySection::SettingsObservationCount,
-                        len: self.settings_observations.len(),
-                    }
-                })?,
-            );
-            for observation in &self.settings_observations {
-                observation
-                    .validate()
-                    .map_err(PevcapBinaryError::SettingsObservation)?;
-                let payload =
-                    serde_json::to_vec(observation).map_err(PevcapBinaryError::Serialize)?;
-                write_len_prefixed(
-                    &mut output,
-                    PevcapBinarySection::SettingsObservation,
-                    &payload,
-                )?;
-            }
+            write_binary_settings_observations(&mut output, &self.settings_observations)?;
         }
         Ok(output)
     }
@@ -3754,6 +3756,28 @@ fn read_len_prefixed<'input>(
 }
 
 #[cfg(feature = "serde")]
+fn write_binary_settings_observations(
+    output: &mut Vec<u8>,
+    observations: &[CaptureSettingsObservation],
+) -> Result<(), PevcapBinaryError> {
+    write_u32_le(
+        output,
+        u32::try_from(observations.len()).map_err(|_| PevcapBinaryError::LengthTooLarge {
+            section: PevcapBinarySection::SettingsObservationCount,
+            len: observations.len(),
+        })?,
+    );
+    for observation in observations {
+        observation
+            .validate()
+            .map_err(PevcapBinaryError::SettingsObservation)?;
+        let payload = serde_json::to_vec(observation).map_err(PevcapBinaryError::Serialize)?;
+        write_len_prefixed(output, PevcapBinarySection::SettingsObservation, &payload)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "serde")]
 fn read_binary_settings_observations(
     remaining: &mut &[u8],
     version: PevcapFormatVersion,
@@ -3763,6 +3787,7 @@ fn read_binary_settings_observations(
         return Ok(observations);
     }
     let count = read_u32_le(remaining, PevcapBinarySection::SettingsObservationCount)?;
+    ensure_binary_settings_observation_count(count)?;
     ensure_count_framing(
         count,
         remaining.len(),
@@ -3783,6 +3808,20 @@ fn read_binary_settings_observations(
         observations.push(observation);
     }
     Ok(observations)
+}
+
+#[cfg(feature = "serde")]
+fn ensure_binary_settings_observation_count(count: u32) -> Result<(), PevcapBinaryError> {
+    ensure_settings_observation_count(usize::try_from(count).unwrap_or(usize::MAX))
+        .map_err(PevcapBinaryError::SettingsObservation)
+}
+
+#[cfg(feature = "serde")]
+fn ensure_settings_observation_count(count: usize) -> Result<(), CaptureSettingsObservationError> {
+    if count > MAX_CAPTURE_SETTINGS_OBSERVATIONS {
+        return Err(CaptureSettingsObservationError::TooLarge);
+    }
+    Ok(())
 }
 
 #[cfg(feature = "serde")]
@@ -7040,6 +7079,179 @@ mod tests {
             assert_eq!(records, capture.records);
             let mut locations_only = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
             assert_eq!(locations_only.next_location().unwrap(), None);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    fn settings_count_fixture(count: usize, encoding: PevcapEncoding) -> Vec<u8> {
+        let mut base = sample_pevcap_capture();
+        base.version = PevcapFormatVersion { major: 1, minor: 4 };
+        base.records.clear();
+        let mut bytes = base.encode(encoding).unwrap();
+        let mut observation = settings_observation();
+        observation.values.truncate(1);
+        observation.note = None;
+        observation.validate().unwrap();
+        match encoding {
+            PevcapEncoding::Jsonl => {
+                let line = observation.to_jsonl_line().unwrap();
+                for _ in 0..count {
+                    bytes.extend_from_slice(line.as_bytes());
+                    bytes.push(b'\n');
+                }
+            }
+            PevcapEncoding::Binary => {
+                // Explicit v1.4 ends with the worksheet count; mutate this empty
+                // count directly so an encoder limit cannot mask a decoder test.
+                let count_offset = bytes.len() - 4;
+                assert_eq!(&bytes[count_offset..], &0_u32.to_le_bytes());
+                bytes[count_offset..].copy_from_slice(&u32::try_from(count).unwrap().to_le_bytes());
+                let payload = serde_json::to_vec(&observation).unwrap();
+                for _ in 0..count {
+                    bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+                    bytes.extend_from_slice(&payload);
+                }
+            }
+        }
+        bytes
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn settings_count_limit_accepts_1024_in_owned_and_streaming_decoders() {
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = settings_count_fixture(1024, encoding);
+            let capture = PevcapCapture::decode(&bytes, encoding).unwrap();
+            assert_eq!(capture.version, PevcapFormatVersion { major: 1, minor: 4 });
+            assert_eq!(capture.settings_observations.len(), 1024);
+            let mut reader = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            let mut count = 0;
+            while let Some(event) = reader.next_event().unwrap() {
+                if let PevcapEvent::SettingsObservation(_) = event {
+                    count += 1;
+                }
+            }
+            assert_eq!(count, 1024);
+            let mut records = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            assert_eq!(records.next_record().unwrap(), None);
+            let mut locations = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            assert_eq!(locations.next_location().unwrap(), None);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn settings_count_limit_rejects_1025_in_owned_decoders() {
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = settings_count_fixture(1025, encoding);
+            assert!(
+                matches!(
+                    PevcapCapture::decode(&bytes, encoding),
+                    Err(
+                        PevcapCodecError::Jsonl(PevcapJsonlError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        )) | PevcapCodecError::Binary(PevcapBinaryError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        ))
+                    )
+                ),
+                "{encoding:?} must reject excess worksheet count"
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn settings_count_limit_rejects_1025_in_event_streams() {
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = settings_count_fixture(1025, encoding);
+            let mut reader = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            loop {
+                match reader.next_event() {
+                    Ok(Some(_)) => {}
+                    Err(
+                        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge,
+                        ))
+                        | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge,
+                        )),
+                    ) => break,
+                    other => {
+                        panic!("unexpected {encoding:?} excess-count stream outcome: {other:?}")
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn settings_count_limit_cannot_be_bypassed_by_record_or_location_filters() {
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = settings_count_fixture(1025, encoding);
+            let mut records = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            assert!(
+                matches!(
+                    records.next_record(),
+                    Err(
+                        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        )) | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        ))
+                    )
+                ),
+                "record filter must still enforce {encoding:?} count limit"
+            );
+            let mut locations = PevcapReader::new(bytes.as_slice(), encoding).unwrap();
+            assert!(
+                matches!(
+                    locations.next_location(),
+                    Err(
+                        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        )) | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        ))
+                    )
+                ),
+                "location filter must still enforce {encoding:?} count limit"
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn settings_count_limit_matches_owned_encoder_admission() {
+        let mut capture = sample_pevcap_capture();
+        capture.version = PevcapFormatVersion { major: 1, minor: 4 };
+        let mut observation = settings_observation();
+        observation.values.truncate(1);
+        observation.note = None;
+        observation.validate().unwrap();
+        capture.settings_observations = vec![observation.clone(); 1024];
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            assert!(
+                capture.encode(encoding).is_ok(),
+                "{encoding:?} must encode the supported count"
+            );
+        }
+        capture.settings_observations.push(observation);
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            assert!(
+                matches!(
+                    capture.encode(encoding),
+                    Err(
+                        PevcapCodecError::Jsonl(PevcapJsonlError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        )) | PevcapCodecError::Binary(PevcapBinaryError::SettingsObservation(
+                            CaptureSettingsObservationError::TooLarge
+                        ))
+                    )
+                ),
+                "{encoding:?} must not emit a capture over the readable count limit"
+            );
         }
     }
 

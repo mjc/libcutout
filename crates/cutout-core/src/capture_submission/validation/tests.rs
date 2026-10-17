@@ -476,3 +476,52 @@ fn capture_submission_categories_read_legacy_persisted_status() {
     assert!(categories.device_identifiers);
     assert!(categories.annotations);
 }
+
+fn settings_count_submission(encoding: PevcapEncoding, count: usize) -> Vec<u8> {
+    let observation: crate::CaptureSettingsObservation = serde_json::from_value(serde_json::json!({
+        "capture_id":LIVE,
+        "profile":{"profile_id":"manual_unknown_device","pev_category":"euc","model":null,"firmware":null,"selection":"manual"},
+        "observed_at_ms":5,"recorded_at_ms":30,"source":"manufacturer_app",
+        "values":[{"setting_id":"display_brightness","value":{"kind":"entered","value":"125"},"unit":"%","note":"as shown"}],
+        "note":null
+    })).unwrap();
+    let mut capture = capture(&[]);
+    capture.version = crate::PevcapFormatVersion { major: 1, minor: 4 };
+    let mut bytes = capture.encode(encoding).unwrap();
+    match encoding {
+        PevcapEncoding::Jsonl => {
+            let line = observation.to_jsonl_line().unwrap();
+            for _ in 0..count {
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+        }
+        PevcapEncoding::Binary => {
+            bytes.truncate(bytes.len() - 4);
+            bytes.extend_from_slice(&u32::try_from(count).unwrap().to_le_bytes());
+            let payload = serde_json::to_vec(&observation).unwrap();
+            let length = u32::try_from(payload.len()).unwrap().to_le_bytes();
+            for _ in 0..count {
+                bytes.extend_from_slice(&length);
+                bytes.extend_from_slice(&payload);
+            }
+        }
+    }
+    bytes
+}
+
+#[test]
+fn capture_submission_settings_count_limit_preserves_too_many_events_classification() {
+    let limit = crate::MAX_CAPTURE_SETTINGS_OBSERVATIONS;
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let exact = settings_count_submission(encoding, limit);
+        let accepted = validate_capture_submission(exact.as_slice(), encoding).unwrap();
+        assert_eq!(accepted.events, u64::try_from(limit).unwrap() + 2);
+        assert!(accepted.categories.settings_observations);
+        let excessive = settings_count_submission(encoding, limit + 1);
+        assert_eq!(
+            validate_capture_submission(excessive.as_slice(), encoding),
+            Err(CaptureSubmissionValidationError::TooManyEvents)
+        );
+    }
+}
