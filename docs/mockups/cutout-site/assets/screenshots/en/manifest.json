@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "gallery": "CutOut app screenshots",
+  "assets": [
+    {
+      "scene": "euc-main",
+      "file": "euc-main.png",
+      "caption": "EUC main with music",
+      "method": "native-ios-simulator-xctest",
+      "label": "Native capture · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "sha256": "3d40c69d912a6f7312779ee87db671d41e25647e08ecf89cfa7c4748bcb2584b",
+      "syntheticData": "Synthetic EUC telemetry and fictional music metadata.",
+      "provenance": {
+        "testSourceRevision": "89dfa2e5f61ff4e4a9e159f5ee8c43b09b86f3f2",
+        "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testIdentifier": "CutoutWebsiteScreenshotTests/testEucMain()",
+        "testCaseOutcome": "passed",
+        "batchOutcome": "failed",
+        "batchSummary": "Three cases passed and one failed; this screenshot case passed.",
+        "device": "iPhone 15 Pro Max",
+        "runtime": "iOS 27.0"
+      }
+    },
+    {
+      "scene": "rgb",
+      "file": "rgb.jpg",
+      "caption": "RGB Effects",
+      "method": "user-provided-native-screenshot",
+      "label": "User-provided app screenshot",
+      "dimensionsPixels": {
+        "width": 590,
+        "height": 1280
+      },
+      "visibleState": "Effects tab selected; Flow effect selected.",
+      "provenance": {
+        "source": "User-provided JPEG, used unedited."
+      },
+      "sha256": "4ccd93de00e90a09a6eac9c8805310a5381ff4ddf67860fe9bbff8dc428f1eed",
+      "assetStatus": "reviewed"
+    },
+    {
+      "scene": "tune",
+      "file": "tune.png",
+      "caption": "EUC Tune",
+      "method": "rendered-html-mockup",
+      "label": "Rendered mockup · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "assetStatus": "reviewed",
+      "syntheticData": "Static mockup of synthetic EUC tuning values. Display values are not actual wheel readbacks or live settings readbacks.",
+      "provenance": {
+        "referenceUiRevision": "6049d5d03181454a5695ecff76e00d8da37a1a81",
+        "testOutcome": "not run; rendered mockup",
+        "vehicle": "EUC",
+        "renderer": {
+          "method": "Playwright-rendered HTML mockup",
+          "sourceFile": "mockup-source/index.html",
+          "rendererScript": "mockup-source/render.cjs",
+          "command": "node mockup-source/render.cjs",
+          "environment": [
+            "CUTOUT_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_MODULE"
+          ],
+          "viewportCssPixels": {
+            "width": 430,
+            "height": 932
+          },
+          "deviceScaleFactor": 3,
+          "headless": true
+        }
+      },
+      "sha256": "d7b8b29a137ae20cc4ade691a1c4591027f5987ef6e307b1de2e11f1e43a84d1"
+    },
+    {
+      "scene": "ride-tracking",
+      "file": "ride-tracking.png",
+      "caption": "Ride History",
+      "method": "rendered-html-mockup",
+      "label": "Rendered mockup · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "syntheticData": "Rendered approximation of Ride History with a synthetic route, fictional recent rides, and display-only summary values: 0.6 mi, 4 min 20 sec elapsed, and 3 min 50 sec moving time. These are synthetic and are not actual ride readbacks.",
+      "provenance": {
+        "referenceUiRevision": "070a862781280e85ed0a49a1bf4ba696244c26b8",
+        "testOutcome": "not run; rendered mockup",
+        "renderer": {
+          "method": "Playwright-rendered HTML mockup",
+          "sourceFile": "mockup-source/index.html",
+          "rendererScript": "mockup-source/render.cjs",
+          "command": "node mockup-source/render.cjs",
+          "environment": [
+            "CUTOUT_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_MODULE"
+          ],
+          "viewportCssPixels": {
+            "width": 430,
+            "height": 932
+          },
+          "deviceScaleFactor": 3,
+          "headless": true
+        },
+        "visibleElements": [
+          "CutOut app shell with Map navigation",
+          "ride mode controls",
+          "pinned search, date, and vehicle filters",
+          "cropped native map basemap with synthetic route and start/end markers",
+          "Recent rides list with first synthetic ride selected",
+          "synthetic ride summary values shown as display-only content"
+        ],
+        "basemapSource": {
+          "relativePathFromMockupSource": "../charging-map.png",
+          "sha256": "bf12c49126065f23886a3f3889cabf5f6f38bac6a198bb03aba4ecea19ff2712",
+          "use": "Native basemap only; clean CSS crop excludes charging markers."
+        },
+        "renderedApproximation": true
+      },
+      "assetStatus": "reviewed",
+      "sha256": "45695981098b4420ae1e43f6d341a3d806586ac339362c2de90378f0fb49081d"
+    },
+    {
+      "scene": "charging-map",
+      "file": "charging-map.png",
+      "caption": "Charging map",
+      "method": "native-ios-simulator-xctest",
+      "label": "Native capture · synthetic data",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "sha256": "bf12c49126065f23886a3f3889cabf5f6f38bac6a198bb03aba4ecea19ff2712",
+      "syntheticData": "Three fictional local charging spots; Apple Maps basemap.",
+      "provenance": {
+        "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testSourceRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
+        "testIdentifier": "CutoutWebsiteScreenshotTests/testChargingMap()",
+        "testCaseOutcome": "passed",
+        "batchOutcome": "incomplete",
+        "resultBundleIncomplete": true,
+        "testDurationSeconds": 60.055,
+        "device": "iPhone 15 Pro Max",
+        "runtime": "iOS 27.0"
+      }
+    }
+  ]
+}

@@ -146,7 +146,7 @@ import Foundation
                 .eucUnknownTopology:
                 DevicePickerDiscoveryCandidate(
                     platformIdentifier: "ui-test-euc",
-                    displayName: "Test EUC",
+                    displayName: eucCandidateDisplayName,
                     productCategory: "Electric unicycle",
                     evidence: "UI test fixture",
                     detail: "Deterministic accessibility test device",
@@ -170,6 +170,14 @@ import Foundation
                     symbolName: "circle.hexagongrid.circle"
                 )
             }
+        }
+
+        private var eucCandidateDisplayName: String {
+            #if os(iOS) && targetEnvironment(simulator)
+                CutoutWebsiteScreenshotFixture.screen == nil ? "Test EUC" : "NOSFET Aero"
+            #else
+                "Test EUC"
+            #endif
         }
 
         var startsLive: Bool {
@@ -256,11 +264,18 @@ import Foundation
 
         private var testBmsSnapshot: BmsSnapshot? {
             switch self {
-            case .euc: eucBmsSnapshot
+            case .euc: eucTestBmsSnapshot
             case .eucOverview: eucBmsOverviewSnapshot
             case .eucUnknownTopology: eucUnknownTopologyBmsSnapshot
             default: nil
             }
+        }
+
+        private var eucTestBmsSnapshot: BmsSnapshot? {
+            #if os(iOS) && targetEnvironment(simulator)
+                if CutoutWebsiteScreenshotFixture.screen == .eucMain { return nil }
+            #endif
+            return eucBmsSnapshot
         }
 
         /// Validated identity packets shared with the Rust device-session tests.
@@ -269,6 +284,11 @@ import Foundation
                 var frame = Data(repeating: 0, count: 42)
                 frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
                 frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+                #if os(iOS) && targetEnvironment(simulator)
+                    if CutoutWebsiteScreenshotFixture.screen == .tune {
+                        return [frame, Self.eucTuneSettingsReadback]
+                    }
+                #endif
                 return [frame]
             }
             return [
@@ -278,6 +298,20 @@ import Foundation
                 ])
             ]
         }
+
+        #if os(iOS) && targetEnvironment(simulator)
+            /// Captured NOSFET Aero page-8 readback used by the documented protocol decoder test.
+            /// It exercises the real settings parser and owner publication path for Tune screenshots.
+            private static let eucTuneSettingsReadback = Data([
+                0xdc, 0x5a, 0x5c, 0x47, 0x29, 0xf2, 0x00, 0x00, 0x00, 0x17, 0x00, 0x00,
+                0xab, 0x6c, 0x00, 0x17, 0x00, 0x00, 0x0b, 0xe9, 0x04, 0x5a, 0x00, 0x00,
+                0x02, 0x26, 0x02, 0x1c, 0xa8, 0xf6, 0x07, 0x80, 0x1b, 0x25, 0x00, 0x00,
+                0x80, 0xc8, 0x00, 0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x08, 0x00,
+                0x00, 0x80, 0x32, 0x00, 0x36, 0x4f, 0x37, 0x1e, 0x00, 0x00, 0x01, 0x00,
+                0x80, 0x80, 0x28, 0x06, 0x2e, 0x79, 0x64, 0x80, 0x00, 0x80, 0x80, 0x15,
+                0x40, 0xe2, 0x3a,
+            ])
+        #endif
 
         var testScript: CutoutSessionTestScript {
             let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
@@ -320,6 +354,37 @@ import Foundation
 
         private var telemetry: TelemetrySnapshot {
             if isEuc {
+                #if os(iOS) && targetEnvironment(simulator)
+                    if CutoutWebsiteScreenshotFixture.screen == .tune {
+                        return TelemetrySnapshot(
+                            speed: Speed(value: 0),
+                            speedSource: .reported,
+                            speedQuality: .known,
+                            operatingState: .parked,
+                            voltage: Voltage(value: 120_000),
+                            batteryCurrent: BatteryCurrent.currentOut(milliamps: 0),
+                            power: Power(value: 0),
+                            controllerTemperature: Temperature(value: 36_000),
+                            pwm: DutyCycle(permille: 0),
+                            batteryLevelReported: BatteryLevel(value: 78)
+                        )
+                    }
+                    if CutoutWebsiteScreenshotFixture.screen == .eucMain {
+                        return TelemetrySnapshot(
+                            speed: Speed(value: 10_700),
+                            speedSource: .reported,
+                            speedQuality: .known,
+                            operatingState: .riding,
+                            voltage: Voltage(value: 120_000),
+                            batteryCurrent: BatteryCurrent.currentOut(milliamps: 7_000),
+                            power: Power(value: 840_000),
+                            powerFlow: .discharge,
+                            controllerTemperature: Temperature(value: 38_000),
+                            pwm: DutyCycle(permille: 420),
+                            batteryLevelReported: BatteryLevel(value: 78)
+                        )
+                    }
+                #endif
                 return TelemetrySnapshot(
                     speed: Speed(value: 12_000),
                     speedSource: .reported,
@@ -503,6 +568,12 @@ import Foundation
         }
 
         static func resolve() -> CutoutUITestMusicMonitor? {
+            #if os(iOS) && targetEnvironment(simulator)
+                if let screen = CutoutWebsiteScreenshotFixture.screen {
+                    guard screen == .eucMain else { return nil }
+                    return CutoutUITestMusicMonitor(state: .playing)
+                }
+            #endif
             let value = UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_MUSIC")
             return switch value {
             case "playing": CutoutUITestMusicMonitor(state: .playing)
@@ -554,8 +625,8 @@ import Foundation
                 state: state,
                 item: .init(
                     identifier: "ui-test-track-\(trackNumber)",
-                    title: "Everything In Its Right Place \(trackNumber)",
-                    artist: "Radiohead"
+                    title: screenshotTrack ? "Dusk on Colfax" : "Everything In Its Right Place \(trackNumber)",
+                    artist: screenshotTrack ? "Mira Sol" : "Radiohead"
                 ),
                 positionMilliseconds: 45_000,
                 durationMilliseconds: 240_000,
@@ -564,6 +635,14 @@ import Foundation
                     ? .init(previous: previousOnly, play: false, pause: false, next: false, openProvider: true)
                     : .init(previous: true, play: true, pause: true, next: true, openProvider: false)
             )
+        }
+
+        private var screenshotTrack: Bool {
+            #if os(iOS) && targetEnvironment(simulator)
+                return CutoutWebsiteScreenshotFixture.screen == .eucMain
+            #else
+                return false
+            #endif
         }
     }
     /// One real Rust-backed route in an isolated Simulator database.

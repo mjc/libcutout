@@ -352,11 +352,13 @@ final class CutoutAppModel {
     private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
     private var phoneAlarmAuthorizationGeneration: UInt64 = 0
+    @ObservationIgnored private var websiteScreenshotRideFeed: Task<Void, Never>?
 
     isolated deinit {
         rideMapRestoreTask?.cancel()
         musicHistoryRestoreTask?.cancel()
         restorationMarkerLoadTask?.cancel()
+        websiteScreenshotRideFeed?.cancel()
         stopMusicMonitoring()
     }
 
@@ -373,6 +375,9 @@ final class CutoutAppModel {
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
             try await CutoutUITestChargingFixture.runIfRequested(database: database)
             try await CutoutUITestLiveRouteFixture.runIfRequested(database: database)
+            #if os(iOS) && targetEnvironment(simulator)
+                try await CutoutWebsiteScreenshotFixture.runIfRequested(database: database)
+            #endif
         #endif
         #if DEBUG
             let state: MobileRideMapState
@@ -393,6 +398,13 @@ final class CutoutAppModel {
         let selectedDeviceStore = DevicePickerSelectionStore()
         let restoredDeviceSelection = await selectedDeviceStore.load()
         try Task.checkCancellation()
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+            let websiteScreenshotRideFeed = try await CutoutWebsiteScreenshotFixture.prepareRideTrackingIfRequested(
+                state: state
+            )
+        #else
+            let websiteScreenshotRideFeed: Task<Void, Never>? = nil
+        #endif
         let historyQueryProvider: RideHistoryQueryProvider?
         #if DEBUG && os(iOS) && targetEnvironment(simulator)
             historyQueryProvider = CutoutUITestHistoryQueryFixture.provider(
@@ -417,7 +429,8 @@ final class CutoutAppModel {
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
             phoneAlarmDelivery: makePhoneRideAlarmDelivery(),
-            rideHistoryQueryProvider: historyQueryProvider
+            rideHistoryQueryProvider: historyQueryProvider,
+            websiteScreenshotRideFeed: websiteScreenshotRideFeed
         )
     }
 
@@ -483,7 +496,8 @@ final class CutoutAppModel {
         appleMusicMonitor: (any AppleMusicMonitorDriving)? = nil,
         phoneAlarmDelivery: any PhoneRideAlarmDelivering,
         rideHistoryQueryProvider: RideHistoryQueryProvider?,
-        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
+        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() },
+        websiteScreenshotRideFeed: Task<Void, Never>? = nil
     ) {
         let rideHistory = RideHistoryModel(
             stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle },
@@ -496,6 +510,7 @@ final class CutoutAppModel {
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        self.websiteScreenshotRideFeed = websiteScreenshotRideFeed
         chargingStops = ChargingStopPromptModel(
             state: core.rideMapStateHandle, session: core.rideSessionStateHandle,
             now: { core.now().rawValue }
@@ -976,6 +991,8 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
+        websiteScreenshotRideFeed?.cancel()
+        websiteScreenshotRideFeed = nil
         liveRide.setSceneActive(false)
         core.setPresentationActive(false)
         music.sceneDidEnterBackground()
@@ -1413,8 +1430,14 @@ final class CutoutAppModel {
     ) -> any CutoutSessionDriving {
         #if DEBUG
             if let fixture = uiTestFixture {
+                #if os(iOS) && targetEnvironment(simulator)
+                    let suppressNativeLocation = CutoutWebsiteScreenshotFixture.screen != nil
+                #else
+                    let suppressNativeLocation = false
+                #endif
                 return CutoutSessionCore(
                     testScript: fixture.testScript,
+                    suppressNativeLocation: suppressNativeLocation,
                     rideMapState: rideMapState,
                     database: fixture == .rideMapStorageUnavailable ? nil : database
                 )

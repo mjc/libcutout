@@ -800,6 +800,7 @@ public final class CutoutSessionCore: NSObject {
     #if DEBUG
         public convenience init(
             testScript: CutoutSessionTestScript,
+            suppressNativeLocation: Bool = false,
             rideMapState: MobileRideMapState? = nil,
             database: RideDatabaseHandle? = nil,
             selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
@@ -809,7 +810,8 @@ public final class CutoutSessionCore: NSObject {
                 testScript: testScript,
                 selectedDeviceStore: selectedDeviceStore,
                 rideMapState: rideMapState,
-                database: database
+                database: database,
+                phoneLocationAdapter: suppressNativeLocation ? CutoutSessionInertPhoneLocationAdapter() : nil
             )
         }
 

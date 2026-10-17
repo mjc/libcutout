@@ -211,6 +211,7 @@ struct EucRideRouteView: View {
 
     private func phoneLocationReadback(at now: MonotonicMilliseconds) -> PhoneLocationReadback {
         #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutWebsiteScreenshotFixture.phoneLocationReadback(at: now) { return fixture }
             if let fixture = CutoutUITestSecondaryRideFixture.phoneLocationReadback(at: now) { return fixture }
         #endif
         return model.device.phoneLocationReadback
@@ -1170,9 +1171,16 @@ extension MelkLightingPeripheralState {
 
     extension LightingRouteModel {
         static func uiTestConnectedLightingModel() -> LightingRouteModel? {
-            guard CommandLine.arguments.contains("--ui-test-connected-lighting") else { return nil }
-            guard let defaults = UserDefaults(suiteName: "io.cutout.ui-test.connected-lighting") else { return nil }
-            defaults.removePersistentDomain(forName: "io.cutout.ui-test.connected-lighting")
+            let screenshotDatabaseID = CutoutWebsiteScreenshotFixture.databaseIdentifier
+            guard screenshotDatabaseID != nil || CommandLine.arguments.contains("--ui-test-connected-lighting") else {
+                return nil
+            }
+            let suiteName =
+                screenshotDatabaseID.map {
+                    "io.cutout.ui-test.connected-lighting.\($0.uuidString)"
+                } ?? "io.cutout.ui-test.connected-lighting"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return nil }
+            defaults.removePersistentDomain(forName: suiteName)
             return LightingRouteModel(
                 session: CutoutUITestLightingSession(), persistence: LightingAccessoryPersistence(defaults: defaults))
         }

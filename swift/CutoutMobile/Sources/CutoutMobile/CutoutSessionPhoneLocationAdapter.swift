@@ -29,6 +29,18 @@ protocol CutoutSessionPhoneLocationAdapting: AnyObject {
         func deliverLocationsForTesting(_: [CLLocation]) {}
         func refreshAuthorizationForTesting() {}
     }
+
+    @MainActor
+    final class CutoutSessionInertPhoneLocationAdapter: CutoutSessionPhoneLocationAdapting {
+        nonisolated init() {}
+
+        var latestSample: MobilePhoneLocationSampleDto? { nil }
+        var authorizationStatus: CLAuthorizationStatus { .authorizedWhenInUse }
+        var servicesEnabled: Bool? { true }
+        func start() {}
+        func clear() {}
+        func updateDemand(_: MobileRideMapLocationDemandDto) {}
+    }
 #endif
 
 /// Presentation proxy. The manager and its blocking recording sink belong to one native run loop.
