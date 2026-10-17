@@ -6645,7 +6645,10 @@ mod tests {
         assert!(matches!(
             error,
             PevcapBinaryError::UnsupportedVersion {
-                version: PevcapFormatVersion { major: 2, minor: 3 }
+                version: PevcapFormatVersion {
+                    major: 2,
+                    minor: PEVCAP_VERSION_MINOR
+                }
             }
         ));
     }
@@ -6679,16 +6682,72 @@ mod tests {
         let mut binary = sample_pevcap_capture()
             .to_binary()
             .expect("capture serializes");
-        let _last = binary.pop();
+        // Cut inside the first transport payload, independently of later sections.
+        let header_length_start = PEVCAP_MAGIC.len() + 4;
+        let header_length_end = header_length_start + PEVCAP_BINARY_LENGTH_PREFIX_BYTES;
+        let header_length = usize::try_from(u32::from_le_bytes(
+            binary[header_length_start..header_length_end]
+                .try_into()
+                .unwrap(),
+        ))
+        .unwrap();
+        let record_length_start =
+            header_length_end + header_length + PEVCAP_BINARY_LENGTH_PREFIX_BYTES;
+        let record_length_end = record_length_start + PEVCAP_BINARY_LENGTH_PREFIX_BYTES;
+        let record_length = usize::try_from(u32::from_le_bytes(
+            binary[record_length_start..record_length_end]
+                .try_into()
+                .unwrap(),
+        ))
+        .unwrap();
+        binary.truncate(record_length_end + record_length - 1);
 
         let error = PevcapCapture::from_binary(&binary).expect_err("record should be truncated");
 
         assert!(matches!(
             error,
             PevcapBinaryError::Truncated {
-                section: PevcapBinarySection::MusicCount
+                section: PevcapBinarySection::Record
             }
         ));
+        let mut reader = PevcapReader::new(binary.as_slice(), PevcapEncoding::Binary).unwrap();
+        assert!(matches!(
+            reader.next_record(),
+            Err(PevcapStreamError::Binary(PevcapBinaryError::Truncated {
+                section: PevcapBinarySection::Record
+            }))
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn binary_truncation_reports_the_last_section_supported_by_each_version() {
+        for (minor, expected_section) in [
+            (0, PevcapBinarySection::Record),
+            (1, PevcapBinarySection::LocationCount),
+            (3, PevcapBinarySection::MusicCount),
+            (4, PevcapBinarySection::SettingsObservationCount),
+        ] {
+            let mut capture = sample_pevcap_capture();
+            capture.version.minor = minor;
+            let mut binary = capture.to_binary().unwrap();
+            let _last = binary.pop();
+            match PevcapCapture::from_binary(&binary).unwrap_err() {
+                PevcapBinaryError::Truncated { section } => assert_eq!(section, expected_section),
+                error => panic!("unexpected v1.{minor} truncation: {error:?}"),
+            }
+            let mut reader = PevcapReader::new(binary.as_slice(), PevcapEncoding::Binary).unwrap();
+            loop {
+                match reader.next_event() {
+                    Ok(Some(_)) => {}
+                    Err(PevcapStreamError::Binary(PevcapBinaryError::Truncated { section })) => {
+                        assert_eq!(section, expected_section);
+                        break;
+                    }
+                    other => panic!("unexpected v1.{minor} stream truncation: {other:?}"),
+                }
+            }
+        }
     }
 
     #[cfg(feature = "serde")]
@@ -7006,7 +7065,7 @@ mod tests {
                 .header
                 .to_jsonl_line()
                 .unwrap()
-                .replace("\"minor\":4", "\"minor\":3"),
+                .replace(&format!("\"minor\":{PEVCAP_VERSION_MINOR}"), "\"minor\":3"),
             settings_observation().to_jsonl_line().unwrap()
         );
         assert!(PevcapCapture::from_jsonl(&illegal).is_err());
