@@ -3,6 +3,7 @@ import CutoutMobile
 import SwiftUI
 
 struct EucRideScreenView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let now: MonotonicMilliseconds
@@ -45,14 +46,19 @@ struct EucRideScreenView: View {
         return rideState.warningState
     }
 
-    private var safetyBars: [PevSafetyBar] {
-        guard let rideState, rideState.telemetry != nil else { return [] }
+    private var currentTelemetry: Bool {
+        guard let rideState, rideState.phase == .live else { return false }
+        return rideState.updateAge(at: now, staleAfter: RideTelemetryFreshnessPolicy.staleAfter).freshness == .fresh
+    }
+
+    var safetyBars: [PevSafetyBar] {
+        guard currentTelemetry, let rideState else { return [] }
         return liveSafetyBars(for: rideState)
     }
 
     private var dashboardTiles: [PevDashboardTile] {
-        guard let rideState, let telemetry = rideState.telemetry else { return [] }
-        return liveDashboardTiles(from: rideState, telemetry: telemetry)
+        let state = rideState ?? EucRideScreenState(phase: .starting, displayState: RideDisplayState())
+        return liveDashboardTiles(from: state, telemetry: state.telemetry ?? TelemetrySnapshot())
     }
 
     private var gpsSpeedTile: PevDashboardTile {
@@ -60,6 +66,31 @@ struct EucRideScreenView: View {
     }
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibleDashboard
+            } else {
+                EucRideInstruments(
+                    title: titleText, subtitle: phaseText, statusTone: statusTone,
+                    captureStatusText: captureStatusText, speed: speedReadout,
+                    headroom: safetyBars.first,
+                    headroomNumber: safetyBars.first == nil
+                        ? nil : rideState?.pwmHeadroomPermille.map(RideUnits.permillePercentText),
+                    batteryProgress: currentTelemetry
+                        ? rideState?.controllerOnlyEstimatePercent.map { Double($0.value) / 100 } : nil,
+                    tiles: dashboardTiles, gpsSpeed: gpsSpeedTile
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .onChange(of: warningState?.severity) { _, severity in
+            if let announcement = severity?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
+    }
+
+    private var accessibleDashboard: some View {
         PevRideDashboardShell(
             heroStyle: .electricUnicycle,
             title: titleText,
@@ -72,97 +103,21 @@ struct EucRideScreenView: View {
         ) {
             EucRideReadingsSection(safetyBars: safetyBars, tiles: dashboardTiles, gpsSpeed: gpsSpeedTile)
         }
-        .accessibilityElement(children: .contain)
-        .onChange(of: warningState?.severity) { _, severity in
-            if let announcement = severity?.accessibilityAnnouncement {
-                AccessibilityNotification.Announcement(announcement).post()
-            }
-        }
     }
 }
 
 private struct EucRideReadingsSection: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .headline) private var headroomLineHeight: CGFloat = 21
-    @ScaledMetric(relativeTo: .caption) private var footerHeight: CGFloat = 42
     let safetyBars: [PevSafetyBar]
     let tiles: [PevDashboardTile]
     let gpsSpeed: PevDashboardTile
 
-    private var metrics: [PevDashboardTile] {
-        let source =
-            tiles.isEmpty
-            ? liveDashboardTiles(
-                from: EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: TelemetrySnapshot())),
-                telemetry: TelemetrySnapshot())
-            : tiles
-        return source.filter { $0.kind != .chargeEstimate && $0.kind != .limpHomeRange }
-    }
-
     var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            PevRideAccessibleReadings(
-                headroomLabel: localizedAppText("ride.safety.pwm_headroom"),
-                headroom: safetyBars.first?.metricValue ?? .unavailable,
-                headroomProgress: safetyBars.first?.progress,
-                tiles: (tiles.isEmpty ? metrics : tiles) + [gpsSpeed]
-            )
-        } else {
-            GeometryReader { geometry in
-                let rowHeight = min(
-                    108, max(0, (geometry.size.height - headroomLineHeight - 17 - footerHeight - 32) / 2))
-                VStack(spacing: 8) {
-                    PevDashboardProgressBar(
-                        label: localizedAppText("ride.safety.pwm_headroom"),
-                        metricValue: safetyBars.first?.metricValue ?? .unavailable,
-                        progress: safetyBars.first?.progress,
-                        height: 10
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
-                    Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                        GridRow {
-                            metric(metrics[0], height: rowHeight)
-                            metric(metrics[1], height: rowHeight)
-                        }
-                        GridRow {
-                            metric(metrics[2], height: rowHeight)
-                            metric(metrics[3], height: rowHeight)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    compactMetric(tiles.first { $0.kind == .chargeEstimate })
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 26)
-                    compactMetric(tiles.first { $0.kind == .limpHomeRange })
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 16)
-                }
-            }
-        }
-    }
-
-    private func metric(_ tile: PevDashboardTile, height: CGFloat) -> some View {
-        PevDashboardMetricTile(tile, prominence: .ride)
-            .frame(height: height)
-    }
-
-    @ViewBuilder
-    private func compactMetric(_ tile: PevDashboardTile?) -> some View {
-        if let tile {
-            HStack {
-                Text(tile.label)
-                Spacer(minLength: 4)
-                Text(tile.value)
-                    .monospacedDigit()
-            }
-            .font(.caption.weight(.semibold))
-            .lineLimit(1)
-            .minimumScaleFactor(0.6)
-            .accessibilityElement(children: .combine)
-        } else {
-            Color.clear
-                .accessibilityHidden(true)
-        }
+        PevRideAccessibleReadings(
+            headroomLabel: localizedAppText("ride.safety.pwm_headroom"),
+            headroom: safetyBars.first?.metricValue ?? .unavailable,
+            headroomProgress: safetyBars.first?.progress,
+            tiles: tiles + [gpsSpeed]
+        )
     }
 }
 

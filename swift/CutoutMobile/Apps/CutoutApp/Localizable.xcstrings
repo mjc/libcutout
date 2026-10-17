@@ -1,6 +1,27 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "euc.ride.temperature" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } }
+      }
+    },
+    "euc.ride.power" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Power" } }
+      }
+    },
+    "euc.ride.voltage" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage" } }
+      }
+    },
+    "euc.ride.range" : {
+      "comment" : "Remaining riding range estimate; unavailable until supplied by telemetry.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Est. range" } }
+      }
+    },
     "setup.account.before_delete": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "If you want those public contributions removed, cancel and delete them manually before closing your account."}}}},
     "setup.account.local_data": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Local rides and Bluetooth captures stay on this device. This does not close accounts with music or leaderboard providers."}}}},
     "setup.account.retention": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Confirmation is available for 30 days. Expired confirmation records are removed on the next deletion request. Older service backups may retain account data for up to 30 days."}}}},
