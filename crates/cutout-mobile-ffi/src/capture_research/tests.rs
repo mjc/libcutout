@@ -144,7 +144,7 @@ fn builder_rejects_invalid_clock_profile_and_numeric_text_without_accepting_snap
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (directory, database, builder) = recording();
     assert!(matches!(builder.record_settings_observation(draft(), 99),
-        Err(MobileCaptureResearchError::InvalidObservation { message }) if message == "Capture time is before recording started"));
+        Err(MobileCaptureResearchError::InvalidObservation { reason }) if reason == "Capture time is before recording started"));
     let mut future = draft();
     future.observed_at_ms = Some(501);
     assert!(builder.record_settings_observation(future, 600).is_err());

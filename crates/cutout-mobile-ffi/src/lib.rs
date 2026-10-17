@@ -16993,7 +16993,7 @@ impl MobilePevcapCaptureBuilder {
         .map_err(|outcome| match outcome {
             MobileCaptureWriteOutcomeDto::Rejected => {
                 MobileCaptureResearchError::InvalidObservation {
-                    message: "Capture time is before recording started".into(),
+                    reason: "Capture time is before recording started".into(),
                 }
             }
             _ => MobileCaptureResearchError::NotRecording,
@@ -17007,7 +17007,7 @@ impl MobilePevcapCaptureBuilder {
             >= cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS
         {
             return Err(MobileCaptureResearchError::InvalidObservation {
-                message: "Settings observation limit reached".into(),
+                reason: "Settings observation limit reached".into(),
             });
         }
         let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
@@ -17029,17 +17029,17 @@ impl MobilePevcapCaptureBuilder {
         observation
             .validate()
             .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                message: error.to_string(),
+                reason: error.to_string(),
             })?;
         cutout_protocols::validate_capture_research_observation(&observation).map_err(|error| {
             MobileCaptureResearchError::InvalidObservation {
-                message: error.to_string(),
+                reason: error.to_string(),
             }
         })?;
         let receipt = match writer
             .begin_settings_observation(observation.clone())
             .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                message: error.to_string(),
+                reason: error.to_string(),
             })? {
             persistence::CaptureSettingsObservationAdmission::Accepted(receipt) => receipt,
             persistence::CaptureSettingsObservationAdmission::AdmissionLost { .. } => {

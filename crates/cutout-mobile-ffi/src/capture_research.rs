@@ -136,10 +136,10 @@ pub struct MobileCaptureResearchCatalogDto {
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum MobileCaptureResearchError {
     /// Draft or readback source is invalid.
-    #[error("{message}")]
+    #[error("{reason}")]
     InvalidObservation {
-        #[doc = "Actionable domain message."]
-        message: String,
+        #[doc = "Actionable domain reason."]
+        reason: String,
     },
     /// The capture no longer owns a recording writer.
     #[error("Capture is not recording")]
@@ -315,14 +315,14 @@ impl RideDatabaseHandle {
             .try_into()
             .map_err(|error: crate::MobileCaptureSubmissionError| {
                 MobileCaptureResearchError::InvalidObservation {
-                    message: error.to_string(),
+                    reason: error.to_string(),
                 }
             })?;
         self.inner
             .capture_settings_observations(source)
             .map(|values| values.into_iter().map(Into::into).collect())
             .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                message: error.to_string(),
+                reason: error.to_string(),
             })
     }
 }
@@ -396,7 +396,7 @@ pub(crate) fn readback_batch(
             .any(|request| request.at_ms > cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS)
     {
         return Err(MobileCaptureResearchError::InvalidObservation {
-            message: "Settings readback exceeds the capture limits".into(),
+            reason: "Settings readback exceeds the capture limits".into(),
         });
     }
     if requests.is_empty() {
@@ -418,7 +418,7 @@ pub(crate) fn readback_batch(
             let readback =
                 cutout_protocols::CaptureResearchReadback::new(&request.profile_id, request.at_ms)
                     .ok_or_else(|| MobileCaptureResearchError::InvalidObservation {
-                        message: "Choose a device profile".into(),
+                        reason: "Choose a device profile".into(),
                     })?;
             let index = readbacks.len();
             readbacks.push(readback);
@@ -502,14 +502,14 @@ impl RideDatabaseHandle {
             .try_into()
             .map_err(|error: crate::MobileCaptureSubmissionError| {
                 MobileCaptureResearchError::InvalidObservation {
-                    message: error.to_string(),
+                    reason: error.to_string(),
                 }
             })?;
         readback_batch(requests, |observe| {
             self.inner
                 .visit_capture_transport_records(source, observe)
                 .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                    message: error.to_string(),
+                    reason: error.to_string(),
                 })
         })
     }
