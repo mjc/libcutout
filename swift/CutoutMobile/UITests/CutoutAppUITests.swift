@@ -2511,6 +2511,17 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch() throws {
+        try assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch()
+    }
+
+    func
+        testCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunchInDarkAppearanceAtAccessibilityDynamicType()
+        throws
+    {
+        try assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch()
+    }
+
+    private func assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch() throws {
         #if !targetEnvironment(simulator)
             throw XCTSkip("Capture research acceptance is restricted to Simulator")
         #endif
@@ -2532,22 +2543,28 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["capture.settings.worksheet"].waitForExistence(timeout: 5))
         }
         openWorksheet()
+        let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
+        let saveValues = app.buttons["capture.settings.save"]
         let profile = app.buttons["capture.settings.profile"]
+        scrollElementFrameIntoViewport(profile, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         profile.tap()
         app.buttons["NOSFET Aero"].firstMatch.tap()
-        app.switches["Earlier observation"].tap()
+        let earlierObservation = app.switches["Earlier observation"]
+        scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        earlierObservation.tap()
         let earlierTime = app.textFields["capture.settings.time"]
+        scrollElementFrameIntoViewport(earlierTime, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         earlierTime.tap()
         earlierTime.typeText("0")
         app.buttons["capture.settings.keyboard.done"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
         let search = app.searchFields.firstMatch
         for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
         scrollElementFrameIntoViewport(search, in: app, maxScrolls: 4)
         search.tap()
         search.typeText("brightness")
         let brightness = app.textFields["capture.settings.value.display_brightness"]
+        scrollElementFrameIntoViewport(brightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
         brightness.tap()
         brightness.typeText("145")
@@ -2561,17 +2578,20 @@ final class CutoutAppUITests: XCTestCase {
         note.typeText("Before brightness change")
         app.buttons["capture.settings.keyboard.done"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        app.buttons["capture.settings.save"].tap()
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
+        saveValues.tap()
         XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(stationary.label, "Stop Stationary")
 
         openWorksheet()
-        app.switches["Earlier observation"].tap()
+        scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        earlierObservation.tap()
         let repeatedBrightness = app.textFields["capture.settings.value.display_brightness"]
-        scrollElementFrameIntoViewport(repeatedBrightness, in: app.collectionViews.firstMatch, maxScrolls: 8)
+        scrollElementFrameIntoViewport(repeatedBrightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         repeatedBrightness.tap()
         repeatedBrightness.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "30")
-        app.buttons["capture.settings.save"].tap()
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
+        saveValues.tap()
         let observations = app.buttons["capture.settings.observations"]
         scrollElementFrameIntoViewport(observations, in: recording, maxScrolls: 8)
         observations.tap()
