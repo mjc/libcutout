@@ -104,10 +104,31 @@ fn notification(
             !has_config_write(&step),
             "startup and passive readback never mutate the custom config"
         );
+        // This helper discards transport steps, so model the host submitting any
+        // newly emitted standalone configuration read before delivering replies.
+        for (frame, operation_id) in transport_writes(&step)
+            .into_iter()
+            .zip(transport_write_operation_ids(&step))
+        {
+            if matches!(frame_payload(&frame).first(), Some(14 | 17 | 93))
+                && let Some(operation_id) = operation_id.filter(|id| *id & (1 << 63) != 0)
+            {
+                assert!(owner.mark_setting_read_transport(
+                    token,
+                    operation_id,
+                    SettingTransportStatus::Submitted,
+                    MonotonicTimestamp::new(at),
+                ));
+            }
+        }
     }
 }
 
-fn vesc_session() -> (DeviceConnectionSession, cutout_core::ConnectionAttemptToken) {
+fn vesc_session_with_startup() -> (
+    DeviceConnectionSession,
+    cutout_core::ConnectionAttemptToken,
+    cutout_protocols::DeviceConnectionStep,
+) {
     let mut owner = DeviceConnectionSession::default();
     owner.begin_attempt(
         "Refloat 1.3.0 test controller".into(),
@@ -136,13 +157,32 @@ fn vesc_session() -> (DeviceConnectionSession, cutout_core::ConnectionAttemptTok
             .map(|identity| identity.protocol),
         Some(ProtocolFamily::Vesc)
     );
-    let _ = owner.ingest(
+    let startup = owner
+        .ingest(
+            &token,
+            &SessionInputDto::LinkUp {
+                monotonic_ms: MonotonicMillisDto { milliseconds: 2 },
+                max_write_len: None,
+            },
+        )
+        .expect("current VESC session starts on LinkUp");
+    (owner, token, startup)
+}
+
+fn vesc_session() -> (DeviceConnectionSession, cutout_core::ConnectionAttemptToken) {
+    let (mut owner, token, startup) = vesc_session_with_startup();
+    let operation_id = transport_writes(&startup)
+        .into_iter()
+        .zip(transport_write_operation_ids(&startup))
+        .find(|(frame, _)| frame_payload(frame).first() == Some(&14))
+        .and_then(|(_, operation_id)| operation_id)
+        .expect("test helper settles the wrapper-owned LinkUp bootstrap");
+    assert!(owner.mark_setting_read_transport(
         &token,
-        &SessionInputDto::LinkUp {
-            monotonic_ms: MonotonicMillisDto { milliseconds: 2 },
-            max_write_len: None,
-        },
-    );
+        operation_id,
+        SettingTransportStatus::Cancelled,
+        MonotonicTimestamp::new(2),
+    ));
     (owner, token)
 }
 
@@ -559,6 +599,207 @@ fn explicit_settings_read_requests_only_config_without_mutating_it() {
     assert!(
         transport_write_operation_ids(&step)[0].is_some(),
         "a config read needs an identity so native rejection/cancellation can settle it"
+    );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keeps bootstrapping, reply ownership and later guarded write admission in one lifecycle."
+)]
+fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() {
+    let (mut owner, token, startup) = vesc_session_with_startup();
+    let startup_motor_reads = transport_writes(&startup)
+        .into_iter()
+        .zip(transport_write_operation_ids(&startup))
+        .filter(|(frame, _)| frame_payload(frame).first() == Some(&14))
+        .collect::<Vec<_>>();
+    assert_eq!(startup_motor_reads.len(), 1);
+    let (motor_read, motor_read_id) = &startup_motor_reads[0];
+    let motor_read_id = motor_read_id.expect("LinkUp bootstrap reads are wrapper-owned");
+    assert_eq!(frame_payload(motor_read), &[14]);
+    assert!(owner.settings_descriptors().is_empty());
+    assert!(owner.mark_setting_read_transport(
+        &token,
+        motor_read_id,
+        SettingTransportStatus::Queued,
+        MonotonicTimestamp::new(3),
+    ));
+
+    let tick = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Tick {
+                monotonic_ms: MonotonicMillisDto { milliseconds: 102 },
+            },
+        )
+        .expect("connected VESC session accepts timer ticks");
+    let duplicate_reads = transport_writes(&tick)
+        .into_iter()
+        .zip(transport_write_operation_ids(&tick))
+        .filter(|(frame, _)| frame_payload(frame).first() == Some(&14))
+        .collect::<Vec<_>>();
+    assert!(
+        duplicate_reads.is_empty(),
+        "ticks cannot duplicate an owned read"
+    );
+    notification(&mut owner, &token, vesc_controller_7_values_reply(), 103);
+    assert_eq!(
+        owner
+            .telemetry_snapshot()
+            .and_then(|snapshot| snapshot.speed),
+        None
+    );
+    notification(
+        &mut owner,
+        &token,
+        firmware_config_reply(17, APP_DEFAULT),
+        103,
+    );
+    assert!(
+        owner.mark_setting_read_transport(
+            &token,
+            motor_read_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(103),
+        ),
+        "another config kind must not retire Motor read ownership"
+    );
+
+    notification(
+        &mut owner,
+        &token,
+        firmware_config_reply(14, MOTOR_DEFAULT),
+        104,
+    );
+    assert!(
+        !owner.mark_setting_read_transport(
+            &token,
+            motor_read_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(104),
+        ),
+        "the matching Motor response retires its read receipt"
+    );
+    notification(&mut owner, &token, vesc_controller_7_values_reply(), 105);
+    assert!(
+        owner
+            .telemetry_snapshot()
+            .is_some_and(|snapshot| snapshot.speed.is_some())
+    );
+    let firmware = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_firmware_reply(7, 0),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 106 },
+            },
+        )
+        .expect("supported firmware facts complete the firmware identity");
+    assert!(
+        !transport_writes(&firmware)
+            .iter()
+            .any(|frame| frame_payload(frame).first() == Some(&17))
+    );
+    assert!(
+        owner
+            .settings_descriptors()
+            .iter()
+            .any(|descriptor| descriptor.id == SettingId::ImuSampleRate)
+    );
+
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 107);
+    let mut refloat_config = vec![93, 0];
+    refloat_config.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    notification(&mut owner, &token, vesc_frame(&refloat_config), 108);
+
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 109 + index as u64);
+    }
+    assert!(
+        owner
+            .settings_descriptors()
+            .iter()
+            .any(|descriptor| descriptor.id == SettingId::BatterySeriesCellCount)
+    );
+
+    let request = owner
+        .submit_setting(
+            &token,
+            SettingId::BatterySeriesCellCount,
+            DeviceSettingValue::Number(17),
+            MonotonicTimestamp::new(111),
+        )
+        .expect("supported motor-image setting is admitted after stationary evidence");
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .into_iter()
+        .find(|setting| setting.id == SettingId::BatterySeriesCellCount)
+        .and_then(|setting| setting.request_id)
+        .expect("write procedure receives an operation identity");
+    assert!(
+        transport_writes(&request)
+            .iter()
+            .any(|frame| frame_payload(frame) == [14])
+    );
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::BatterySeriesCellCount,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(112),
+    ));
+    let prepared = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: firmware_config_reply(14, MOTOR_DEFAULT),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 113 },
+            },
+        )
+        .expect("the owned preflight read returns the complete motor image");
+    assert!(
+        transport_writes(&prepared)
+            .iter()
+            .any(|frame| frame_payload(frame).first() == Some(&13))
+    );
+}
+
+#[test]
+fn unsupported_firmware_motor_probe_remains_read_only_telemetry_evidence() {
+    let (mut owner, token, startup) = vesc_session_with_startup();
+    let motor_read_id = transport_writes(&startup)
+        .into_iter()
+        .zip(transport_write_operation_ids(&startup))
+        .find(|(frame, _)| frame_payload(frame).first() == Some(&14))
+        .and_then(|(_, operation_id)| operation_id)
+        .expect("LinkUp motor geometry probe is wrapper-owned");
+    assert!(owner.mark_setting_read_transport(
+        &token,
+        motor_read_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(3),
+    ));
+
+    notification(&mut owner, &token, vesc_firmware_reply(6, 0), 4);
+    notification(
+        &mut owner,
+        &token,
+        firmware_config_reply(14, MOTOR_DEFAULT),
+        5,
+    );
+    notification(&mut owner, &token, vesc_controller_7_values_reply(), 6);
+
+    assert!(owner.settings_descriptors().is_empty());
+    assert!(
+        owner
+            .telemetry_snapshot()
+            .is_some_and(|snapshot| snapshot.speed.is_some())
     );
 }
 

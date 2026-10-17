@@ -278,6 +278,7 @@ impl VescSettingsSession {
         let mut step = self
             .read_only
             .ingest_typed(protocol_input.as_ref().unwrap_or(input));
+        let requested_motor_config = step.outputs.iter().any(is_automatic_motor_config_read);
         step.outputs
             .retain(|output| !is_automatic_motor_config_read(output));
         let current = self.read_only.settings_evidence();
@@ -301,6 +302,9 @@ impl VescSettingsSession {
 
         if let SessionInputDto::Notification { .. } = input {
             self.observe_config(&mut step);
+        }
+        if requested_motor_config {
+            self.maybe_request_telemetry_motor_config(&mut step);
         }
         self.maybe_request_initial_config(&mut step);
         step
@@ -833,6 +837,22 @@ impl VescSettingsSession {
         }
     }
 
+    fn maybe_request_telemetry_motor_config(&mut self, step: &mut DeviceSessionStep) {
+        let evidence = self.read_only.settings_evidence();
+        if self.identity_invalidated
+            || self.pending.is_some()
+            || self.standalone_config_read != StandaloneConfigRead::Idle
+            || evidence.motor_config.is_some()
+            || *self.initial_config_requested.get(ConfigurationKind::Motor)
+        {
+            return;
+        }
+        *self
+            .initial_config_requested
+            .get_mut(ConfigurationKind::Motor) = true;
+        self.push_config_read(ConfigurationKind::Motor, step);
+    }
+
     fn push_config_read(&mut self, kind: ConfigurationKind, step: &mut DeviceSessionStep) {
         let Some(bytes) = encode_settings_payload(kind.read_command()) else {
             return;
@@ -1004,9 +1024,12 @@ impl VescSettingsSession {
         !self.identity_invalidated
             && match kind {
                 ConfigurationKind::Refloat => supported_package_facts(&evidence),
-                ConfigurationKind::Motor | ConfigurationKind::App => {
-                    supported_firmware_facts(&evidence)
-                }
+                // VESC's read-only decoder also probes motor geometry to calculate
+                // telemetry on firmware versions without a writable settings schema.
+                // This read never enables descriptors or writes; those still require
+                // exact supported firmware facts in `control_profile`.
+                ConfigurationKind::Motor => true,
+                ConfigurationKind::App => supported_firmware_facts(&evidence),
             }
     }
 
