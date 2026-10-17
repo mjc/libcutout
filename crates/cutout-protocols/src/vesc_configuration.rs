@@ -648,7 +648,7 @@ const FIELDS: &[FieldSpec] = &[
         453,
         4,
         WireType::F32Auto,
-        0,
+        100,
         9_999_000,
         100,
         3,
@@ -664,7 +664,7 @@ const FIELDS: &[FieldSpec] = &[
         457,
         4,
         WireType::F32Auto,
-        0,
+        100,
         999_900_000,
         100,
         2,
@@ -2241,6 +2241,23 @@ mod tests {
         bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
     }
 
+    fn framed_motor_reply(image: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(image.len() + 1);
+        payload.push(MC_GET);
+        payload.extend_from_slice(image);
+
+        let mut frame = vec![3];
+        frame.extend_from_slice(
+            &u16::try_from(payload.len())
+                .expect("motor configuration payload fits the long-frame length")
+                .to_be_bytes(),
+        );
+        frame.extend_from_slice(&payload);
+        frame.extend_from_slice(&crate::wire_crc::crc16_xmodem(&payload).to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
     #[test]
     fn accepts_only_source_pinned_signature_and_exact_complete_length() {
         for kind in [VescConfigurationKind::Motor, VescConfigurationKind::App] {
@@ -2658,6 +2675,46 @@ mod tests {
             control(SettingId::MotorPoleCount),
             Some(SettingControl::Number { step: 2, .. })
         ));
+    }
+
+    #[test]
+    fn motor_speed_geometry_rejects_zero_and_accepts_positive_catalog_values() {
+        let fixture = include_bytes!("../tests/fixtures/vesc-settings/vesc-7.00-motor-default.bin");
+        let motor = VescConfiguration::decode(VescConfigurationKind::Motor, fixture)
+            .expect("pinned source motor configuration");
+        for id in [SettingId::MotorGearRatio, SettingId::WheelDiameter] {
+            assert!(matches!(
+                control(id),
+                Some(SettingControl::Number { minimum: 100, .. })
+            ));
+            assert!(!accepts(id, DeviceSettingValue::Number(0)));
+            assert_eq!(normalize_raw(id, 0), None);
+            assert_eq!(
+                motor.changed(id, DeviceSettingValue::Number(0)),
+                Err(VescConfigurationError::InvalidValue)
+            );
+
+            for value in [100, 1_000] {
+                let semantic = DeviceSettingValue::Number(value);
+                assert!(accepts(id, semantic), "{id:?}={value}");
+                assert!(motor.changed(id, semantic).is_ok(), "{id:?}={value}");
+                assert_eq!(normalize_raw(id, i64::from(value)), Some(semantic));
+            }
+        }
+
+        let changed = motor
+            .changed(SettingId::MotorGearRatio, DeviceSettingValue::Number(1_000))
+            .expect("positive gear ratio")
+            .changed(SettingId::WheelDiameter, DeviceSettingValue::Number(1_000))
+            .expect("positive wheel diameter");
+        let frame = framed_motor_reply(changed.bytes());
+        let reply = crate::VescReadOnlyCodec::decode_reply(&frame)
+            .expect("the complete changed MC image decodes as a command-14 reply");
+        let crate::VescReadOnlyReply::MotorConfig(config) = reply else {
+            panic!("expected decoded motor configuration reply");
+        };
+        assert!(config.speed_geometry.gear_ratio_denominator.as_milli() > 0);
+        assert!(config.speed_geometry.wheel_circumference.as_millimetres() > 0);
     }
 
     #[test]
