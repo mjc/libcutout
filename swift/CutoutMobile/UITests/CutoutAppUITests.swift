@@ -395,10 +395,25 @@ final class CutoutAppUITests: XCTestCase {
         let cleanup = livePrivateSendCleanup
         livePrivateSendCleanup = nil
         cleanup?()
+        if fixture.usesSystemLiveActivity, let app {
+            if app.state == .notRunning {
+                XCTFail("The real Live Activity fixture exited before cleanup could be acknowledged")
+            } else {
+                app.activate()
+                if !app.descendants(matching: .any)["device-picker.screen"].exists,
+                    !app.buttons["dashboard.disconnect"].isHittable
+                {
+                    tapNavigationTab("ride", title: "Ride")
+                }
+            }
+        }
         let disconnect = app?.buttons["dashboard.disconnect"]
         if disconnect?.exists == true, disconnect?.isHittable == true {
             disconnect?.tap()
             _ = app?.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
+        }
+        if fixture.usesSystemLiveActivity, let app, app.state != .notRunning {
+            assertSystemLiveActivitiesEnded()
         }
         app?.terminate()
         app = nil
@@ -6344,7 +6359,7 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("PickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable") {
             arguments.append("--seed-ui-test-live-route")
         }
-        if name.contains("AcrossAccessibilityCategories") {
+        if fixture.usesSystemLiveActivity || name.contains("AcrossAccessibilityCategories") {
             arguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES", "--ui-test-live-activity-readback"]
         }
         if name.contains("LightingBrightnessSliderCommits") {
@@ -6512,6 +6527,16 @@ final class CutoutAppUITests: XCTestCase {
         case vescCriticalLiveActivityAuto
         case vescUnavailableLiveActivityAuto
         case vescStaleLiveActivityAuto
+
+        var usesSystemLiveActivity: Bool {
+            switch self {
+            case .vescLiveActivityAuto, .vescDynamicLiveActivityAuto, .vescCriticalLiveActivityAuto,
+                .vescUnavailableLiveActivityAuto, .vescStaleLiveActivityAuto:
+                true
+            default:
+                false
+            }
+        }
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("RideMapShowsUnavailableStorage") { return .rideMapStorageUnavailable }
@@ -7270,6 +7295,22 @@ final class CutoutAppUITests: XCTestCase {
         guard disconnect.waitForExistence(timeout: 2) else { return }
         disconnect.tap()
         _ = app.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
+        if fixture.usesSystemLiveActivity { assertSystemLiveActivitiesEnded() }
+    }
+
+    private func assertSystemLiveActivitiesEnded() {
+        let readback = app.staticTexts["dashboard.lifecycle-readback"]
+        let ended = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "value CONTAINS 'activityEnded=true;' AND value CONTAINS 'nativeActivityCount=0;'"
+            ), object: readback)
+        let result = XCTWaiter.wait(for: [ended], timeout: 15)
+        let value = readback.value as? String ?? "No lifecycle cleanup readback"
+        let attachment = XCTAttachment(string: value)
+        attachment.name = "Actual Live Activity end acknowledgment"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(result, .completed, value)
     }
 
     private func openEucBmsMap() -> XCUIElement? {

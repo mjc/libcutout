@@ -1,6 +1,10 @@
 import CutoutMobile
 import SwiftUI
 
+#if DEBUG && targetEnvironment(simulator)
+    import ActivityKit
+#endif
+
 #if os(macOS)
     import AppKit
 #endif
@@ -43,11 +47,16 @@ struct CutoutApp: App {
                         if CommandLine.arguments.contains("--ui-test-live-activity-readback"),
                             UserDefaults.standard.bool(forKey: "CUTOUT_UI_TEST_ENVIRONMENT_READBACK"), let model
                         {
-                            Text("Live Activity test state")
-                                .font(.system(size: 1))
-                                .opacity(0.01)
-                                .accessibilityIdentifier("dashboard.lifecycle-readback")
-                                .accessibilityValue(model.uiTestLifecycleReadback)
+                            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                                Text("Live Activity test state")
+                                    .font(.system(size: 1))
+                                    .opacity(0.01)
+                                    .accessibilityIdentifier("dashboard.lifecycle-readback")
+                                    .accessibilityValue(
+                                        model.uiTestLifecycleReadback
+                                            + ";nativeActivityCount=\(Activity<LiveActivityRideAttributes>.activities.count);"
+                                    )
+                            }
                         }
                     #endif
                 }

@@ -94,6 +94,7 @@ final class CutoutAppModel {
             return "fixture=\(String(describing: Self.uiTestFixture));script=\(script);"
                 + "phase=\(phase);session=\(session.phase);activity=\(session.activity);"
                 + "activityAcknowledged=\(activityID?.isEmpty == false);"
+                + "activityEnded=\(session.activity == .ended);"
                 + "restoration=\(rideSessionRestorationState);error=\(String(describing: liveActivityError))"
         }
     #endif
