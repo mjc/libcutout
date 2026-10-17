@@ -43,15 +43,15 @@ public enum PevRideTabs {
                 id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,
                 destinationTarget: .lighting),
             PevScreenTab(
+                id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug,
+                destinationScreenID: .vescDebug),
+            PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
+            PevScreenTab(
                 id: .tune,
                 title: pevLocalizedText("tab.tune"),
                 isSelected: !lightingSelected && selected == nil && isTuneSelected,
                 destinationTarget: .tune
             ),
-            PevScreenTab(
-                id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug,
-                destinationScreenID: .vescDebug),
-            PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
             unavailableTab(
                 id: .logs, title: pevLocalizedText("tab.logs"), reason: pevLocalizedText("tab.reason.logs_unavailable")),
         ]
