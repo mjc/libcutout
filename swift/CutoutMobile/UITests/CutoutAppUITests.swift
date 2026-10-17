@@ -4694,10 +4694,9 @@ final class CutoutAppUITests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         dismissLocationPromptIfNeeded(in: springboard)
         XCUIDevice.shared.press(.home)
-        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
-            .press(forDuration: 1)
-        let retainedDevice = springboard.descendants(matching: .any)["Device"]
-        XCTAssertTrue(retainedDevice.waitForExistence(timeout: 5), springboard.debugDescription)
+        let retainedSpeed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(retainedSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue((retainedSpeed.value as? String ?? "").contains("17.9"), retainedSpeed.debugDescription)
         attachScreenshot(of: springboard, named: "Retained Live Activity before cleanup launch")
 
         launchLiveActivityCleanup()
