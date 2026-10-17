@@ -21,6 +21,15 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
     }
 
     func testEucMain() throws {
+        assertEucMain(landscape: false)
+    }
+
+    func testEucMainInLandscape() throws {
+        assertEucMain(landscape: true)
+    }
+
+    private func assertEucMain(landscape: Bool) {
+        if landscape { XCUIDevice.shared.orientation = .landscapeLeft }
         launch(scene: "euc-main")
         connect(fixture: "euc")
 
@@ -34,7 +43,23 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         let summary = player.value as? String ?? ""
         XCTAssertTrue(summary.contains("Dusk on Colfax"), app.debugDescription)
         XCTAssertTrue(summary.contains("Mira Sol"), app.debugDescription)
-        attachScreenshot(named: "euc-main")
+        let headroom = element("euc.ride.headroom")
+        let readings = app.buttons["ride.readings.open"]
+        XCTAssertTrue(headroom.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(readings.isHittable, app.debugDescription)
+        XCTAssertFalse((headroom.value as? String ?? "").isEmpty)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(headroom.frame), app.debugDescription)
+        if !landscape {
+            XCTAssertGreaterThan(headroom.frame.midY, speed.frame.midY)
+            XCTAssertGreaterThanOrEqual(readings.frame.minY, headroom.frame.maxY - 2)
+        }
+        XCTAssertLessThanOrEqual(readings.frame.maxY, player.frame.minY + 2)
+        attachScreenshot(named: landscape ? "euc-main-landscape" : "euc-main")
+        readings.tap()
+        XCTAssertTrue(element("ride.readings.detail").waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["GPS speed"].exists, app.debugDescription)
+        app.buttons["ride.readings.done"].tap()
+        XCTAssertTrue(readings.waitForExistence(timeout: 5), app.debugDescription)
     }
 
     func testRgbControls() throws {
