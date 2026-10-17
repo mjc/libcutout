@@ -432,6 +432,144 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
 }
 
 #[test]
+fn outstanding_config_refresh_blocks_mutation_and_missing_reads_are_not_retried() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    let read = owner
+        .ingest(
+            &token,
+            &SessionInputDto::CommandAt {
+                command: DeviceCommandDto::RequestSettings,
+                monotonic_ms: MonotonicMillisDto { milliseconds: 22 },
+            },
+        )
+        .unwrap();
+    assert_eq!(transport_writes(&read).len(), 1);
+    assert_eq!(
+        owner.submit_setting(
+            &token,
+            SettingId::PwmTiltback,
+            DeviceSettingValue::Number(81),
+            MonotonicTimestamp::new(23)
+        ),
+        Err(cutout_protocols::DeviceSettingRequestError::Busy)
+    );
+
+    let (mut silent, token) = refloat_session(Some(("Refloat", 1, 3, 0)), (7, 0), None);
+    for at in [3_000, 5_000, 10_000] {
+        let step = silent
+            .ingest(
+                &token,
+                &SessionInputDto::Tick {
+                    monotonic_ms: MonotonicMillisDto { milliseconds: at },
+                },
+            )
+            .unwrap();
+        assert!(
+            transport_writes(&step)
+                .iter()
+                .all(|bytes| frame_payload(bytes).first() != Some(&93)),
+            "a missing reply must not leave multiple indistinguishable config reads outstanding"
+        );
+    }
+}
+
+#[test]
+fn same_link_controller_replacement_invalidates_settings_until_reconnect() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    let frame = vesc_controller_7_values_reply();
+    let mut payload = frame_payload(&frame).to_vec();
+    *payload.last_mut().unwrap() = 8;
+    notification(&mut owner, &token, vesc_frame(&payload), 22);
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 23);
+    let mut response = vec![93, 0];
+    response.extend_from_slice(include_bytes!(
+        "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    ));
+    notification(&mut owner, &token, vesc_frame(&response), 24);
+    assert!(
+        owner.settings_descriptors().is_empty(),
+        "a new controller cannot inherit old controller settings/telemetry authorization"
+    );
+}
+
+#[test]
+fn matching_config_before_all_host_receipts_does_not_retire_queued_writes() {
+    for submitted_stages in 0..=1 {
+        let (mut owner, token) = known_refloat_session();
+        for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+            notification(&mut owner, &token, bytes, 20 + index as u64);
+        }
+        submit_pwm_tiltback(&mut owner, &token, 22);
+        let request_id = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::PwmTiltback)
+            .and_then(|setting| setting.request_id)
+            .unwrap();
+        assert!(owner.mark_setting_transport(
+            &token,
+            SettingId::PwmTiltback,
+            request_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(23)
+        ));
+        let baseline = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
+        let mut response = vec![93, 0];
+        response.extend_from_slice(baseline);
+        let step = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: vesc_frame(&response),
+                    monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+                },
+            )
+            .unwrap();
+        assert_eq!(transport_writes(&step).len(), 2);
+        for _ in 0..submitted_stages {
+            assert!(owner.mark_setting_transport(
+                &token,
+                SettingId::PwmTiltback,
+                request_id,
+                SettingTransportStatus::Submitted,
+                MonotonicTimestamp::new(25)
+            ));
+        }
+        response[70..72].copy_from_slice(&810_i16.to_be_bytes());
+        notification(&mut owner, &token, vesc_frame(&response), 26);
+        assert!(
+            owner.setting_transport_is_current(&token, request_id, MonotonicTimestamp::new(27)),
+            "an unsolicited matching image must not cancel queued mutation/read stages"
+        );
+        for _ in submitted_stages..2 {
+            assert!(owner.mark_setting_transport(
+                &token,
+                SettingId::PwmTiltback,
+                request_id,
+                SettingTransportStatus::Submitted,
+                MonotonicTimestamp::new(28)
+            ));
+        }
+        notification(&mut owner, &token, vesc_frame(&response), 29);
+        let setting = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::PwmTiltback)
+            .unwrap();
+        assert_eq!(setting.status, SettingCommandStatus::Confirmed);
+    }
+}
+
+#[test]
 fn non_normal_modes_refuse_settings_admission() {
     for (name, package_mode, darkride) in [
         ("Handtest", 1, false),
@@ -548,6 +686,13 @@ fn whole_config_mismatch_fails_even_when_requested_field_matches() {
         MonotonicTimestamp::new(25),
     ));
 
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(25),
+    ));
     let mut mismatched = baseline.to_vec();
     mismatched[68..70].copy_from_slice(&810_i16.to_be_bytes());
     mismatched[100] ^= 1;
