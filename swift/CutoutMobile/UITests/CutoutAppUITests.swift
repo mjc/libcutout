@@ -672,7 +672,15 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["music.expand"].isHittable)
     }
 
+    func testMusicPlayerPausedAcrossEucRideMapMore() throws {
+        try assertPausedMusicAcrossEucRoutes()
+    }
+
     func testMusicPlayerPausedAcrossEucRideMapMoreAtAccessibilityDynamicType() throws {
+        try assertPausedMusicAcrossEucRoutes()
+    }
+
+    private func assertPausedMusicAcrossEucRoutes() throws {
         // Three routes, repeated Readings checks, and rotations exceed the default two minutes.
         executionTimeAllowance = 360
         XCTAssertTrue(pairAvailableDevice(.euc))
@@ -717,8 +725,7 @@ final class CutoutAppUITests: XCTestCase {
         assertRideWindowHasSettled(ride, landscape: isLandscape)
         assertRideTextSizeReadback(ride, systemCategory: rideTextSizeCategory)
         let labels =
-            rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
-            ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+            eucRideMetricLabels
         let metrics = labels.map { label in
             ride.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
         }
@@ -757,7 +764,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertFalse(player.exists, app.debugDescription)
             retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: true)
             if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-                assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+                assertAccessibleRideReadings(Self.eucDetailMetricLabels)
             }
             return
         }
@@ -773,7 +780,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: false)
         if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-            assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+            assertAccessibleRideReadings(Self.eucDetailMetricLabels)
         }
     }
 
@@ -846,8 +853,7 @@ final class CutoutAppUITests: XCTestCase {
             if route == nil, ride.exists {
                 XCTAssertEqual(ride.scrollViews.count, 0)
                 let labels =
-                    rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
-                    ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+                    eucRideMetricLabels
                 for label in labels {
                     let metric = ride.descendants(matching: .any).matching(
                         NSPredicate(format: "label == %@", label)
@@ -4018,7 +4024,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(screen.scrollViews.count, 0)
         let metricLabels =
             family == .euc
-            ? ["Battery", "pack", "power", "thermal"]
+            ? eucRideMetricLabels
             : ["voltage", "motor current", "board angle", "controller"]
         let mainMetricLabels =
             rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
@@ -4054,7 +4060,7 @@ final class CutoutAppUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-            assertAccessibleRideReadings(metricLabels)
+            assertAccessibleRideReadings(family == .euc ? Self.eucDetailMetricLabels : metricLabels)
         }
         try beforeDisconnect?(screen)
     }
@@ -6475,6 +6481,13 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         return arguments
+    }
+
+    private static let eucDetailMetricLabels = ["Battery", "pack", "power", "thermal"]
+
+    private var eucRideMetricLabels: [String] {
+        rideTextSizeCategory.hasPrefix("UICTContentSizeCategoryAccessibility")
+            ? ["Battery"] : ["Battery", "Voltage", "Power", "Temperature"]
     }
 
     private var rideTextSizeCategory: String {

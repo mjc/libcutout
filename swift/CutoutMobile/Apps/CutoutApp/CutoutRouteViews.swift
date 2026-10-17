@@ -201,9 +201,13 @@ struct DevicePickerRouteView: View {
 
 struct EucRideRouteView: View {
     let model: CutoutAppModel
+    var disconnect: (() -> Void)? = nil
 
     private func rideState(at now: MonotonicMilliseconds) -> EucRideScreenState? {
         #if DEBUG && targetEnvironment(simulator)
+            if let telemetry = CutoutWebsiteScreenshotFixture.eucRideTelemetry(at: now) {
+                return EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry))
+            }
             if let fixture = CutoutUITestSecondaryRideFixture.eucRideState(at: now) { return fixture }
         #endif
         return model.device.eucRidePresentationState
@@ -225,7 +229,8 @@ struct EucRideRouteView: View {
                 now: model.currentMonotonicTime,
                 captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
                 connectionStatusText: model.device.connectionStatusText,
-                phoneLocationReadback: phoneLocationReadback(at: model.currentMonotonicTime)
+                phoneLocationReadback: phoneLocationReadback(at: model.currentMonotonicTime),
+                disconnect: disconnect
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")

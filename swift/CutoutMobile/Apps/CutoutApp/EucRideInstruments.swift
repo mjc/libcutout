@@ -16,6 +16,7 @@ struct EucRideInstruments: View {
     let batteryProgress: Double?
     let tiles: [PevDashboardTile]
     let gpsSpeed: PevDashboardTile
+    var disconnect: (() -> Void)? = nil
 
     var body: some View {
         GeometryReader { geometry in
@@ -25,10 +26,7 @@ struct EucRideInstruments: View {
             let height = max(0, bottom - frame.minY)
             let landscape = geometry.size.width > height
             VStack(spacing: 12) {
-                PevRideStatusHeader(
-                    title: title, subtitle: subtitle, statusTone: statusTone,
-                    captureStatusText: captureStatusText
-                )
+                header
                 if landscape {
                     HStack(spacing: 24) {
                         primaryInstruments(landscape: true)
@@ -54,6 +52,28 @@ struct EucRideInstruments: View {
         .sheet(isPresented: $showsReadings) {
             PevRideReadingsDetail(tiles: tiles + [gpsSpeed], footpadText: nil)
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            PevRideStatusHeader(
+                title: title, subtitle: subtitle, statusTone: statusTone,
+                captureStatusText: captureStatusText, quietStatus: true
+            )
+            if let disconnect {
+                Button(action: disconnect) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(localizedAppText("ride.action.disconnect"))
+                .accessibilityIdentifier("dashboard.disconnect")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dashboard.top.navigation")
     }
 
     private func primaryInstruments(landscape: Bool) -> some View {
@@ -89,31 +109,39 @@ struct EucRideInstruments: View {
     }
 
     private var energyReadings: some View {
-        Button {
+        HStack(alignment: .top) {
+            // Limp-home distance is not a range-at-current-pace estimate.
+            EucInstrumentReading(
+                label: localizedAppText("euc.ride.range"), value: .unavailable,
+                unit: RideUnits.distanceUnit(forSpeedUnit: speed.displayUnit ?? RideUnits.speedUnit),
+                pointSize: 52, identifier: "euc.ride.range"
+            )
+            Spacer(minLength: 16)
+            batteryReading
+        }
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
+    }
+
+    private var batteryReading: some View {
+        let battery = tile(.batteryLevel)
+        let value = battery?.metricValue ?? .unavailable
+        return Button {
             showsReadings = true
         } label: {
-            HStack(alignment: .top) {
-                // Limp-home distance is not a range-at-current-pace estimate.
-                // Keep this slot unavailable until that estimate has a real producer.
-                EucInstrumentReading(
-                    label: localizedAppText("euc.ride.range"), value: .unavailable,
-                    unit: RideUnits.distanceUnit(forSpeedUnit: speed.displayUnit ?? RideUnits.speedUnit),
-                    pointSize: 52, identifier: "euc.ride.range"
-                )
-                Spacer(minLength: 16)
-                EucInstrumentReading(
-                    label: localizedAppText("ride.metric.battery"),
-                    value: tile(.batteryLevel)?.metricValue ?? .unavailable,
-                    unit: RideUnits.percentUnit, pointSize: 52, identifier: "euc.ride.battery",
-                    alignment: .trailing, showsDisclosure: true, showsProgress: true, progress: batteryProgress
-                )
-            }
-            .padding(.vertical, 14)
-            .overlay(alignment: .top) { Divider() }
-            .overlay(alignment: .bottom) { Divider() }
+            EucInstrumentReading(
+                label: localizedAppText("ride.metric.battery"), value: value,
+                unit: RideUnits.percentUnit, pointSize: 52, identifier: "euc.ride.battery",
+                alignment: .trailing, showsDisclosure: true, showsProgress: true, progress: batteryProgress
+            )
+            .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(localizedAppText("ride.metric.battery"))
+        .accessibilityValue(value.accessibilityValue(unit: RideUnits.percentUnit, detail: battery?.detail ?? ""))
         .accessibilityHint(localizedAppText("ride.readings.open"))
         .accessibilityIdentifier("ride.readings.open")
     }
@@ -172,8 +200,10 @@ struct EucInstrumentReading: View {
                         .font(.caption2.weight(.semibold))
                 }
             }
-            .font(.subheadline.weight(.medium))
+            .font(pointSize > 30 ? .subheadline.weight(.medium) : .caption.weight(.medium))
             .foregroundStyle(PevColors.muted)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value.displayText)
                     .font(.system(size: pointSize, weight: .semibold))

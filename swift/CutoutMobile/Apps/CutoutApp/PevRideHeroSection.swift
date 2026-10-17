@@ -123,6 +123,7 @@ struct PevRideStatusHeader: View {
     let subtitle: String
     let statusTone: PevDashboardStatusPillTone
     let captureStatusText: String?
+    var quietStatus = false
 
     var body: some View {
         let headerLayout =
@@ -147,7 +148,7 @@ struct PevRideStatusHeader: View {
                 Spacer(minLength: 0)
             }
             .layoutPriority(1)
-            PevDashboardStatusPill(title: subtitle, tone: statusTone)
+            status
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
                 .layoutPriority(1)
@@ -158,6 +159,19 @@ struct PevRideStatusHeader: View {
         .accessibilityLabel("\(title), \(subtitle)")
         .accessibilityValue(statusTone == .warning ? pevLocalizedText("status.accessibility.warning") : "")
         .accessibilityIdentifier("ride.hero.status")
+    }
 
+    @ViewBuilder
+    private var status: some View {
+        if quietStatus && statusTone != .warning {
+            HStack(spacing: 6) {
+                Circle().fill(PevColors.muted).frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text(subtitle).font(.subheadline.weight(.medium))
+            }
+            .foregroundStyle(PevColors.muted)
+        } else {
+            PevDashboardStatusPill(title: subtitle, tone: statusTone)
+        }
     }
 }

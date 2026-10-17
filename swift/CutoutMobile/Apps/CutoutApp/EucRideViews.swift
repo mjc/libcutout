@@ -10,6 +10,7 @@ struct EucRideScreenView: View {
     let captureStatusText: String?
     let connectionStatusText: String
     let phoneLocationReadback: PhoneLocationReadback
+    var disconnect: (() -> Void)? = nil
 
     private var speedReadout: RideHeroReadout {
         .euc(state: rideState, now: now)
@@ -76,9 +77,8 @@ struct EucRideScreenView: View {
                     headroom: safetyBars.first,
                     headroomNumber: safetyBars.first == nil
                         ? nil : rideState?.pwmHeadroomPermille.map(RideUnits.permillePercentText),
-                    batteryProgress: currentTelemetry
-                        ? rideState?.controllerOnlyEstimatePercent.map { Double($0.value) / 100 } : nil,
-                    tiles: dashboardTiles, gpsSpeed: gpsSpeedTile
+                    batteryProgress: rideState?.controllerOnlyEstimatePercent.map { Double($0.value) / 100 },
+                    tiles: dashboardTiles, gpsSpeed: gpsSpeedTile, disconnect: disconnect
                 )
             }
         }
