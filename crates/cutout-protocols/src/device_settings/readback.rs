@@ -24,12 +24,12 @@ impl DeviceControlProfile {
     /// Converts decoded protocol fields without granting writes or fabricating evidence.
     #[must_use]
     pub fn normalize_readback(self, readback: SettingsReadback) -> Vec<SettingObservation> {
-        self.normalize_capture_readback(readback, false)
+        self.normalize_capture_readback(&readback, false)
     }
 
     pub(super) fn normalize_capture_readback(
         self,
-        readback: SettingsReadback,
+        readback: &SettingsReadback,
         include_research: bool,
     ) -> Vec<SettingObservation> {
         let Some(protocol) = self.settings_adapter.protocol() else {

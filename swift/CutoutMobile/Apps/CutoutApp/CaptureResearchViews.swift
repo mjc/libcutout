@@ -223,7 +223,10 @@ struct CaptureSettingsWorksheet: View {
                 Toggle("Earlier observation", isOn: $draft.useEarlierTime)
                 if draft.useEarlierTime {
                     HStack {
-                        TextField("Observed at", text: $draft.earlierTime).keyboardType(.decimalPad)
+                        TextField("Observed at", text: $draft.earlierTime)
+                            #if os(iOS)
+                                .keyboardType(.decimalPad)
+                            #endif
                             .focused($focusedField, equals: "observation-time")
                             .accessibilityIdentifier("capture.settings.time")
                         Text("s from start").foregroundStyle(.secondary)

@@ -3133,7 +3133,6 @@ impl PevcapCapture {
         }
 
         let mut music_events = Vec::new();
-        let mut settings_observations = Vec::new();
         if version.supports_music() {
             let music_count = read_u32_le(&mut remaining, PevcapBinarySection::MusicCount)?;
             ensure_count_framing(music_count, remaining.len(), PevcapBinarySection::Music)?;
@@ -3152,30 +3151,7 @@ impl PevcapCapture {
             }
         }
 
-        if version.supports_settings_observations() {
-            let count = read_u32_le(
-                &mut remaining,
-                PevcapBinarySection::SettingsObservationCount,
-            )?;
-            ensure_count_framing(
-                count,
-                remaining.len(),
-                PevcapBinarySection::SettingsObservation,
-            )?;
-            for _ in 0..count {
-                let payload =
-                    read_len_prefixed(&mut remaining, PevcapBinarySection::SettingsObservation)?;
-                let observation = serde_json::from_slice::<CaptureSettingsObservation>(payload)
-                    .map_err(|source| PevcapBinaryError::Deserialize {
-                        section: PevcapBinarySection::SettingsObservation,
-                        source,
-                    })?;
-                observation
-                    .validate()
-                    .map_err(PevcapBinaryError::SettingsObservation)?;
-                settings_observations.push(observation);
-            }
-        }
+        let settings_observations = read_binary_settings_observations(&mut remaining, version)?;
         if !remaining.is_empty() {
             return Err(PevcapBinaryError::TrailingBytes {
                 len: remaining.len(),
@@ -3775,6 +3751,38 @@ fn read_len_prefixed<'input>(
 ) -> Result<&'input [u8], PevcapBinaryError> {
     let len = read_u32_le(input, section)? as usize;
     read_exact(input, len, section)
+}
+
+#[cfg(feature = "serde")]
+fn read_binary_settings_observations(
+    remaining: &mut &[u8],
+    version: PevcapFormatVersion,
+) -> Result<Vec<CaptureSettingsObservation>, PevcapBinaryError> {
+    let mut observations = Vec::new();
+    if !version.supports_settings_observations() {
+        return Ok(observations);
+    }
+    let count = read_u32_le(remaining, PevcapBinarySection::SettingsObservationCount)?;
+    ensure_count_framing(
+        count,
+        remaining.len(),
+        PevcapBinarySection::SettingsObservation,
+    )?;
+    for _ in 0..count {
+        let payload = read_len_prefixed(remaining, PevcapBinarySection::SettingsObservation)?;
+        let observation =
+            serde_json::from_slice::<CaptureSettingsObservation>(payload).map_err(|source| {
+                PevcapBinaryError::Deserialize {
+                    section: PevcapBinarySection::SettingsObservation,
+                    source,
+                }
+            })?;
+        observation
+            .validate()
+            .map_err(PevcapBinaryError::SettingsObservation)?;
+        observations.push(observation);
+    }
+    Ok(observations)
 }
 
 #[cfg(feature = "serde")]

@@ -2001,24 +2001,31 @@ fn capture_writer_action(
         CaptureWriterMessage::SettingsObservation {
             observation,
             durable,
-        } => Ok(CaptureWriterAction::Event(Box::new(
-            CaptureWriterEventLine {
-                json_line: observation
-                    .to_jsonl_line()
-                    .map_err(|error| error.to_string())?,
-                kind: LiveCaptureEventKind::Metadata,
-                receipt_monotonic_ms: observation.recorded_at_ms,
-                source_monotonic_offset_ms: None,
-                source_wall_clock_unix_ms: None,
-                location: None,
-                record: None,
-                prepared_material: None,
-                durability_reply: durable,
-            },
-        ))),
+        } => settings_observation_action(&observation, durable),
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
         CaptureWriterMessage::Barrier(kind, reply) => Ok(CaptureWriterAction::Barrier(kind, reply)),
     }
+}
+
+fn settings_observation_action(
+    observation: &CaptureSettingsObservation,
+    durable: Option<SyncSender<Result<CaptureWriterBarrierResult, String>>>,
+) -> Result<CaptureWriterAction, String> {
+    Ok(CaptureWriterAction::Event(Box::new(
+        CaptureWriterEventLine {
+            json_line: observation
+                .to_jsonl_line()
+                .map_err(|error| error.to_string())?,
+            kind: LiveCaptureEventKind::Metadata,
+            receipt_monotonic_ms: observation.recorded_at_ms,
+            source_monotonic_offset_ms: None,
+            source_wall_clock_unix_ms: None,
+            location: None,
+            record: None,
+            prepared_material: None,
+            durability_reply: durable,
+        },
+    )))
 }
 
 fn flush_capture_barrier(

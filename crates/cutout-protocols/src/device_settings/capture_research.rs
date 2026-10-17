@@ -186,28 +186,27 @@ pub fn validate_capture_research_observation(
             .iter()
             .find(|field| field.id == value.setting_id)
             .ok_or(CaptureResearchValueError::UnknownField)?;
-        if let CaptureObservedValue::Entered(text) = &value.value {
-            if let SettingControl::Number {
+        if let CaptureObservedValue::Entered(text) = &value.value
+            && let SettingControl::Number {
                 minimum,
                 maximum,
                 precision,
                 unit,
                 ..
             } = field.control
-            {
-                let number = text
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|number| number.is_finite())
-                    .ok_or(CaptureResearchValueError::InvalidNumber)?;
-                let Some(factor) = reported_unit_factor(unit, value.unit.as_deref()) else {
-                    continue;
-                };
-                let scaled = number * factor * 10_f64.powi(i32::from(precision));
-                if scaled < f64::from(minimum) || scaled > f64::from(maximum) {
-                    unusual.push(value.setting_id.clone());
-                }
+        {
+            let number = text
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+                .ok_or(CaptureResearchValueError::InvalidNumber)?;
+            let Some(factor) = reported_unit_factor(unit, value.unit.as_deref()) else {
+                continue;
+            };
+            let scaled = number * factor * 10_f64.powi(i32::from(precision));
+            if scaled < f64::from(minimum) || scaled > f64::from(maximum) {
+                unusual.push(value.setting_id.clone());
             }
         }
     }
@@ -289,20 +288,20 @@ impl CaptureResearchReadback {
             PevcapDirection::Outbound => return,
         }
         for event in output {
-            if let SessionOutput::Event(DeviceEvent::Telemetry(delta)) = &event {
-                if let Some(voltage) = delta.voltage {
-                    self.retain(CaptureResearchDecodedValue {
-                        setting_id: "displayed_pack_voltage",
-                        value: Some(DeviceSettingValue::Number(voltage.value.as_millivolts())),
-                        observed_at_ms: record.monotonic_ms.get(),
-                    });
-                }
+            if let SessionOutput::Event(DeviceEvent::Telemetry(delta)) = &event
+                && let Some(voltage) = delta.voltage
+            {
+                self.retain(CaptureResearchDecodedValue {
+                    setting_id: "displayed_pack_voltage",
+                    value: Some(DeviceSettingValue::Number(voltage.value.as_millivolts())),
+                    observed_at_ms: record.monotonic_ms.get(),
+                });
             }
             if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::Settings(readback),
             )) = event
             {
-                for observation in self.profile.normalize_capture_readback(readback, true) {
+                for observation in self.profile.normalize_capture_readback(&readback, true) {
                     let id = capture_research_setting_id(observation.id);
                     let value = CaptureResearchDecodedValue {
                         setting_id: id,
@@ -352,7 +351,6 @@ pub fn capture_research_values_differ(
     decoded: DeviceSettingValue,
 ) -> Option<bool> {
     match (&entered.value, decoded) {
-        (CaptureObservedValue::Unobserved, _) => None,
         (CaptureObservedValue::Off, DeviceSettingValue::Disabled) => Some(false),
         (CaptureObservedValue::Off, DeviceSettingValue::Number(_))
         | (CaptureObservedValue::Entered(_), DeviceSettingValue::Disabled) => {

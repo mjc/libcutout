@@ -306,25 +306,22 @@ impl Read for StoredCaptureReader {
                 self.hash.update(&output[..count]);
                 return Ok(count);
             }
-            match self
+            if let Some(chunk) = self
                 .database
                 .pevcap_capture_chunk(&self.digest, self.sequence)
                 .map_err(|_| io::Error::other("capture chunk is unavailable"))?
             {
-                Some(chunk) => {
-                    self.sequence = self
-                        .sequence
-                        .checked_add(1)
-                        .ok_or_else(|| io::Error::other("capture chunk sequence overflow"))?;
-                    self.chunk = Cursor::new(chunk);
+                self.sequence = self
+                    .sequence
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("capture chunk sequence overflow"))?;
+                self.chunk = Cursor::new(chunk);
+            } else {
+                if self.bytes == 0 || hex::encode(self.hash.clone().finalize()) != self.digest {
+                    return Err(io::Error::other("capture byte digest changed"));
                 }
-                None => {
-                    if self.bytes == 0 || hex::encode(self.hash.clone().finalize()) != self.digest {
-                        return Err(io::Error::other("capture byte digest changed"));
-                    }
-                    self.complete = true;
-                    return Ok(0);
-                }
+                self.complete = true;
+                return Ok(0);
             }
         }
     }

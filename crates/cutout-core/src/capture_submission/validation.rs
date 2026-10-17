@@ -251,7 +251,7 @@ pub fn validate_capture_submission<R: Read>(
         .next_event()
         .map_err(|error| classify(&error, &counter.borrow()))?
     {
-        if matches!(&event, PevcapEvent::SettingsObservation(_)) {
+        if let PevcapEvent::SettingsObservation(_) = &event {
             settings_observations += 1;
             if settings_observations > crate::MAX_CAPTURE_SETTINGS_OBSERVATIONS {
                 return Err(CaptureSubmissionValidationError::TooManyEvents);

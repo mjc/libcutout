@@ -144,10 +144,11 @@ impl CaptureSettingsObservation {
             &self.profile.pev_category,
             &self.profile.model,
             &self.profile.firmware,
-        ] {
-            if let Some(text) = text {
-                bounded_text(text, 128, true)?;
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bounded_text(text, 128, true)?;
         }
         if self.recorded_at_ms > MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS {
             return Err(CaptureSettingsObservationError::TimeOutOfRange);
