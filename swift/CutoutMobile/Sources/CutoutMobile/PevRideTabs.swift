@@ -37,7 +37,7 @@ public enum PevRideTabs {
         [
             PevScreenTab(
                 id: .ride, title: pevLocalizedText("tab.ride"),
-                isSelected: !lightingSelected && (selected == nil || selected == .vescRide),
+                isSelected: !lightingSelected && (selected == .vescRide || (selected == nil && !isTuneSelected)),
                 destinationTarget: .vescRide),
             PevScreenTab(
                 id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,

@@ -295,6 +295,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(explicitTune[4].destinationTarget, .tune)
 
         let explicitVescTune = PevRideTabs.vescRideTabs(isTuneSelected: true)
+        XCTAssertFalse(explicitVescTune[0].isSelected)
         XCTAssertTrue(explicitVescTune[2].isSelected)
         XCTAssertEqual(explicitVescTune[2].destinationTarget, .tune)
 
