@@ -5726,6 +5726,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testEucRideTelemetryAgesWithoutAnotherSample() {
+        assertMountedTelemetryAges(for: .euc)
+    }
+
     func testEucRideTelemetryAgesWithoutAnotherSampleAtAccessibilityDynamicType() {
         assertMountedTelemetryAges(for: .euc)
     }
@@ -5758,6 +5762,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(status.frame, statusFrame)
         XCTAssertEqual(speed.frame, speedFrame)
         XCTAssertEqual(screen.scrollViews.count, 0)
+        if family == .euc && rideTextSizeCategory == "UICTContentSizeCategoryL" {
+            let gauge = app.descendants(matching: .any)["euc.ride.headroom"]
+            XCTAssertTrue(gauge.exists)
+            XCTAssertEqual(gauge.value as? String, "unavailable")
+        }
 
     }
 
@@ -6166,11 +6175,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
-        try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
+        try assertConnectedSurface(for: .euc, requiredMetricLabel: "Voltage")
     }
 
     func testEucRidePassesAccessibilityAuditInLandscapeAtExtraExtraExtraLargeType() throws {
-        try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
+        try assertConnectedSurface(for: .euc, requiredMetricLabel: "Voltage")
     }
 
     func testVescRidePassesAccessibilityAuditWithIncreasedContrast() throws {
