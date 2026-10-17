@@ -7727,6 +7727,97 @@ final class ChargingMapDeviceUITests: XCTestCase {
 
     }
 
+    func testAccessNoteLabelAndRowWhitespaceFocusTheEditor() throws {
+        continueAfterFailure = false
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        beginChargingPlacement(in: app)
+        app.buttons["charging.placement.confirm"].tap()
+
+        let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+        revealChargingControl(note, in: app, direction: .down)
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        // Tap beside the Note label, above the text control's own bounds.
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: -16)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText("Outlet beside the gate.")
+        XCTAssertEqual(note.value as? String, "Outlet beside the gate.", app.debugDescription)
+        dismissChargingKeyboard(in: app)
+
+        revealChargingControl(note, in: app, direction: .down)
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: -16)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText(" Ask at reception.")
+        XCTAssertTrue((note.value as? String ?? "").contains("Outlet beside the gate."), app.debugDescription)
+        XCTAssertTrue((note.value as? String ?? "").contains("Ask at reception."), app.debugDescription)
+        dismissChargingKeyboard(in: app)
+        app.buttons["charging.editor.cancel"].tap()
+    }
+
+    func testAccessNoteAcceptsTypingFromTheBlankAreaAndAfterRefocusing() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 120
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        beginChargingPlacement(in: app)
+        app.buttons["charging.placement.confirm"].tap()
+
+        let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+        revealChargingControl(note, in: app, direction: .down)
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        note.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.85)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText("Outside outlet beside the entrance.")
+        XCTAssertEqual(note.value as? String, "Outside outlet beside the entrance.", app.debugDescription)
+        dismissChargingKeyboard(in: app)
+
+        let charging = app.buttons["charging.editor.kind.charging"]
+        revealChargingControl(charging, in: app)
+        charging.tap()
+        revealChargingControl(note, in: app, direction: .down)
+        note.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        note.typeText(" Ask staff first.")
+        XCTAssertTrue(
+            (note.value as? String ?? "").contains("Ask staff first."), app.debugDescription)
+        XCTAssertTrue(
+            (note.value as? String ?? "").contains("Outside outlet beside the entrance."), app.debugDescription)
+        dismissChargingKeyboard(in: app)
+        XCTAssertTrue(app.buttons["charging.editor.save"].isEnabled, app.debugDescription)
+        app.buttons["charging.editor.cancel"].tap()
+    }
+
+    func testAccessNoteAcceptsTypingAfterChoosingEachChargingKind() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+
+        for kind in ["charging", "food", "ev"] {
+            beginChargingPlacement(in: app)
+            app.buttons["charging.placement.confirm"].tap()
+            let choice = app.buttons["charging.editor.kind.\(kind)"]
+            XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
+            choice.tap()
+
+            let note = app.descendants(matching: .any)["charging.editor.access-note"].firstMatch
+            revealChargingControl(note, in: app, direction: .down)
+            note.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+            let text = "Access instructions for \(kind)."
+            note.typeText(text)
+            XCTAssertEqual(note.value as? String, text, app.debugDescription)
+            dismissChargingKeyboard(in: app)
+            app.buttons["charging.editor.cancel"].tap()
+            XCTAssertTrue(note.waitForNonExistence(timeout: 5), app.debugDescription)
+        }
+    }
+
     func testSpotCreationPersistsAcrossRelaunchAndCanBeEditedAndDeleted() throws {
         continueAfterFailure = false
         executionTimeAllowance = 240
