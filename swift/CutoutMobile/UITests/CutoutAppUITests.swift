@@ -3479,11 +3479,10 @@ final class CutoutAppUITests: XCTestCase {
         let controls = [
             "highBeam", "displayBrightness", "displayUnits", "beeperVolumePercent",
             "tiltbackSpeed", "pwmTiltback", "lateralTiltLimit", "speedAlarmThreshold", "brakeOverpressureAlarm",
-            "pedalHardness", "dynamicAssist", "pedalDipCompensation", "pedalAngle", "ridingPreset",
-            "voltageCorrection", "highSpeedMode", "lowBatteryMode", "transportMode",
+            "pedalHardness", "dynamicAssist", "pedalDipCompensation", "pedalAngle", "voltageCorrection",
         ]
-        let booleans: Set<String> = ["highBeam", "highSpeedMode", "lowBatteryMode", "transportMode"]
-        let choices: Set<String> = ["displayUnits", "ridingPreset"]
+        let booleans: Set<String> = ["highBeam"]
+        let choices: Set<String> = ["displayUnits"]
         for _ in 0..<8 where !turnOn.isHittable { screen.swipeDown() }
         for id in controls {
             let label = app.staticTexts["settings.control.\(id)"]
@@ -3504,6 +3503,9 @@ final class CutoutAppUITests: XCTestCase {
             }
             XCTAssertFalse(app.staticTexts["settings.requested.\(id)"].exists)
         }
+        for id in ["ridingPreset", "highSpeedMode", "lowBatteryMode", "transportMode"] {
+            XCTAssertFalse(app.staticTexts["settings.control.\(id)"].exists)
+        }
         XCTAssertFalse(app.staticTexts["settings.control.chargeLimitDiagnostic"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["settings.validationDisclosure"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["settings.validationAuthorization"].exists)
@@ -3515,7 +3517,7 @@ final class CutoutAppUITests: XCTestCase {
         ] {
             XCTAssertFalse(app.staticTexts[text].exists)
         }
-        attachScreenshot(of: app, named: "Tune — all 18 ordinary settings")
+        attachScreenshot(of: app, named: "Tune — all 14 ordinary settings")
     }
 
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
