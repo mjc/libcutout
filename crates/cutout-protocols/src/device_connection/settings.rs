@@ -14,6 +14,9 @@ pub enum DeviceSettingRequestError {
     /// The supplied connection no longer permits device writes.
     #[error("connection unavailable")]
     ConnectionUnavailable,
+    /// A full-configuration operation already owns the device's write slot.
+    #[error("another setting is being updated")]
+    Busy,
     /// Descriptor validation refused the request.
     #[error(transparent)]
     Profile(#[from] SettingsRequestError),
@@ -101,6 +104,13 @@ impl DeviceConnectionSession {
             })
             .collect();
         for (id, request_id) in expired {
+            if let Some(device) = self.device.as_mut() {
+                device.record_setting_transport(
+                    request_id,
+                    cutout_core::SettingTransportStatus::Cancelled,
+                    self.last_input_at,
+                );
+            }
             self.state.settings.transport(
                 id,
                 request_id,
@@ -210,6 +220,9 @@ impl DeviceConnectionSession {
             return false;
         }
         if status == SettingTransportStatus::Submitted && operation.remaining_receipts > 1 {
+            if let Some(device) = self.device.as_mut() {
+                device.record_setting_transport(request_id, status, at);
+            }
             operation.remaining_receipts -= 1;
             operation.receipt_at = at;
             if setting.transport == Some(SettingTransportStatus::Accepted) {
@@ -224,6 +237,9 @@ impl DeviceConnectionSession {
         }
         let accepted = self.state.settings.transport(id, request_id, status, at);
         if accepted {
+            if let Some(device) = self.device.as_mut() {
+                device.record_setting_transport(request_id, status, at);
+            }
             operation.receipt_at = at;
             if status == SettingTransportStatus::Submitted {
                 operation.remaining_receipts = 0;
@@ -302,6 +318,9 @@ impl DeviceConnectionSession {
             .device
             .as_mut()
             .ok_or(DeviceSettingRequestError::ConnectionUnavailable)?;
+        if device.settings_busy() {
+            return Err(DeviceSettingRequestError::Busy);
+        }
         let profile = device.control_profile();
         let command = profile.command(id, value, validation_authorized)?;
         let completion = profile

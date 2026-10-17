@@ -661,6 +661,10 @@ pub struct VescNotificationDecoder {
     polling: bool,
     motor_config_received: bool,
     refloat_info_received: bool,
+    refloat_package: Option<crate::RefloatInfo>,
+    refloat_config: Option<(crate::refloat_settings::RefloatSettings, MonotonicTimestamp)>,
+    firmware_version: Option<(u8, u8)>,
+    controller_id: Option<u8>,
     refloat_stream_pending: bool,
     generic_stream_pending: bool,
     generic_prefix: ArrayVec<u8, 4>,
@@ -684,6 +688,10 @@ impl VescNotificationDecoder {
             polling: false,
             motor_config_received: false,
             refloat_info_received: false,
+            refloat_package: None,
+            refloat_config: None,
+            firmware_version: None,
+            controller_id: None,
             refloat_stream_pending: false,
             generic_stream_pending: false,
             generic_prefix: ArrayVec::new_const(),
@@ -701,17 +709,20 @@ impl VescNotificationDecoder {
         let reports_battery_current = self
             .board_profile()
             .is_some_and(|profile| profile.reports_battery_current);
-        let mut info_received = false;
+        let mut package = None;
         let result = self.refloat_stream.feed_result(bytes, |reply| {
-            if match reply {
-                RefloatReply::Info(_) => true,
-                _ => false,
-            } {
-                info_received = true;
+            if let RefloatReply::Info(info) = reply {
+                package = Some(info.clone());
             }
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
         });
-        self.refloat_info_received |= info_received;
+        if let Some(package) = package {
+            self.refloat_info_received = true;
+            if self.refloat_package.as_ref() != Some(&package) {
+                self.refloat_config = None;
+            }
+            self.refloat_package = Some(package);
+        }
 
         match result {
             Ok(RefloatStreamResult::Replies {
@@ -778,6 +789,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.polling = false;
         self.motor_config_received = false;
         self.refloat_info_received = false;
+        self.refloat_package = None;
+        self.refloat_config = None;
+        self.firmware_version = None;
+        self.controller_id = None;
         self.refloat_stream_pending = false;
         self.generic_stream_pending = false;
         self.generic_prefix.clear();
@@ -1246,8 +1261,39 @@ impl VescNotificationDecoder {
                                     Some(VescBoardProfile::from_speed_geometry(*geometry));
                             }
                         }
-                        VescReadOnlyReply::FirmwareInfo { .. }
-                        | VescReadOnlyReply::Values(_)
+                        VescReadOnlyReply::FirmwareInfo { major, minor, .. } => {
+                            if self
+                                .firmware_version
+                                .is_some_and(|version| version != (*major, *minor))
+                            {
+                                self.refloat_package = None;
+                                self.refloat_config = None;
+                                self.refloat_info_received = false;
+                            }
+                            self.firmware_version = Some((*major, *minor));
+                        }
+                        VescReadOnlyReply::Values(values) => {
+                            if values
+                                .present_fields
+                                .contains(VescValuesMask::CONTROLLER_ID)
+                            {
+                                let id = values.controller_id.get();
+                                if self.controller_id.is_some_and(|previous| previous != id) {
+                                    self.refloat_package = None;
+                                    self.refloat_config = None;
+                                    self.refloat_info_received = false;
+                                }
+                                self.controller_id = Some(id);
+                            }
+                        }
+                        VescReadOnlyReply::CustomConfig { index: 0, bytes } => {
+                            self.refloat_config =
+                                crate::refloat_settings::RefloatSettings::decode(bytes)
+                                    .ok()
+                                    .map(|config| (config, monotonic_ms));
+                        }
+                        VescReadOnlyReply::CustomConfig { .. }
+                        | VescReadOnlyReply::CustomConfigDispatched
                         | VescReadOnlyReply::Stats(_) => {}
                     }
                     push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
@@ -1344,7 +1390,9 @@ const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount
         VescReadOnlyReply::FirmwareInfo { .. }
         | VescReadOnlyReply::Stats(_)
         | VescReadOnlyReply::MotorConfig(_)
-        | VescReadOnlyReply::MotorSetupConfig(_) => SemanticEventCount::from_events(1),
+        | VescReadOnlyReply::MotorSetupConfig(_)
+        | VescReadOnlyReply::CustomConfig { .. }
+        | VescReadOnlyReply::CustomConfigDispatched => SemanticEventCount::from_events(1),
         VescReadOnlyReply::Values(_) => SemanticEventCount::from_events(2),
     }
 }
@@ -1382,7 +1430,10 @@ fn push_vesc_reply(
                 ReadOnlyResponse::Diagnostics(vesc_stats_to_diagnostics(*stats)),
             )));
         }
-        VescReadOnlyReply::MotorConfig(_) | VescReadOnlyReply::MotorSetupConfig(_) => {}
+        VescReadOnlyReply::MotorConfig(_)
+        | VescReadOnlyReply::MotorSetupConfig(_)
+        | VescReadOnlyReply::CustomConfig { .. }
+        | VescReadOnlyReply::CustomConfigDispatched => {}
     }
 }
 
@@ -2237,6 +2288,17 @@ impl<M: ReadOnlyModelSpec> ProtocolSession for ReadOnlySession<M> {
     }
 }
 
+impl ReadOnlySession<VescGenericModel> {
+    pub(crate) fn settings_evidence(&self) -> crate::vesc_settings_session::VescSettingsEvidence {
+        crate::vesc_settings_session::VescSettingsEvidence {
+            package: self.decoder.refloat_package.clone(),
+            config: self.decoder.refloat_config.clone(),
+            firmware: self.decoder.firmware_version,
+            controller_id: self.decoder.controller_id,
+        }
+    }
+}
+
 /// Session shell that preserves model read behavior and admits allow-listed benign controls.
 pub struct BenignControlSession<M: ReadOnlyModelSpec + SupportsBenignControls> {
     read_only: ReadOnlySession<M>,
@@ -2281,8 +2343,8 @@ struct PendingSettingsSequence {
 /// Original authorization retained across native backpressure and later rearming.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SettingWriteAuthorization {
-    arm: cutout_core::StationarySettingsArm,
-    cancellation_generation: u64,
+    pub(crate) arm: cutout_core::StationarySettingsArm,
+    pub(crate) cancellation_generation: u64,
 }
 impl<M: ReadOnlyModelSpec + SupportsBenignControls> fmt::Debug for BenignControlSession<M> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

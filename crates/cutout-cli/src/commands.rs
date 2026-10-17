@@ -3074,6 +3074,12 @@ fn vesc_reply_matches(command: DeviceCommand, reply: &VescReadOnlyReply) -> bool
 
 fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
     match reply {
+        VescReadOnlyReply::CustomConfig { index, bytes } => {
+            info!(index, config_bytes = bytes.len(), "vesc custom config")
+        }
+        VescReadOnlyReply::CustomConfigDispatched => {
+            info!("vesc custom config write dispatched; device acceptance is unverified")
+        }
         VescReadOnlyReply::FirmwareInfo {
             major,
             minor,
@@ -3118,6 +3124,15 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
 
 fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
     match reply {
+        VescReadOnlyReply::CustomConfig { index, bytes } => serde_json::json!({
+            "type": "vesc_custom_config",
+            "index": index,
+            "config_bytes": bytes.len(),
+        }),
+        VescReadOnlyReply::CustomConfigDispatched => serde_json::json!({
+            "type": "vesc_custom_config_dispatched",
+            "device_acceptance": "unverified",
+        }),
         VescReadOnlyReply::FirmwareInfo {
             major,
             minor,

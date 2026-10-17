@@ -6,10 +6,11 @@ use cutout_core::{
     RideOperatingStateDto, SafetyClass, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
 };
 
+use crate::vesc_settings_session::VescSettingsSession;
 use crate::{
     ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession,
     ConcreteSessionStepResultDto, DeviceDetectionResolution, IdentityConfidence,
-    ProtocolFamilyState, VescReadOnlySession,
+    ProtocolFamilyState,
 };
 
 /// Original protocol outputs retained until shared state owners consume their evidence.
@@ -100,10 +101,26 @@ pub struct DeviceSession {
 enum DeviceSessionEngine {
     Veteran(Box<ConcreteAeroBenignControlSession>),
     Begode(Box<ConcreteFalconBenignControlSession>),
-    Vesc(Box<VescReadOnlySession>),
+    Vesc(Box<VescSettingsSession>),
 }
 
 impl DeviceSession {
+    pub(crate) fn take_failed_setting_operation(&mut self) -> Option<u64> {
+        match &mut self.engine {
+            DeviceSessionEngine::Vesc(session) => session.take_failed_setting_operation(),
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+        }
+    }
+    pub(crate) fn record_setting_transport(
+        &mut self,
+        operation_id: u64,
+        status: cutout_core::SettingTransportStatus,
+        at: cutout_core::MonotonicTimestamp,
+    ) {
+        if let DeviceSessionEngine::Vesc(session) = &mut self.engine {
+            session.record_setting_transport(operation_id, status, at);
+        }
+    }
     pub(crate) fn next_tick_at(&self) -> Option<cutout_core::MonotonicTimestamp> {
         match &self.engine {
             DeviceSessionEngine::Veteran(session) => session.next_tick_at(),
@@ -123,7 +140,9 @@ impl DeviceSession {
             DeviceSessionEngine::Begode(session) => {
                 Some(session.setting_authorization_expires_at(authorization))
             }
-            DeviceSessionEngine::Vesc(_) => None,
+            DeviceSessionEngine::Vesc(session) => {
+                session.setting_authorization_expires_at(authorization)
+            }
         }
     }
 
@@ -170,10 +189,7 @@ impl DeviceSession {
             ProtocolFamilyState::Vesc => (
                 ProtocolFamily::Vesc,
                 VehicleKind::Unknown,
-                DeviceSessionEngine::Vesc(Box::new(vesc_board_profile.map_or_else(
-                    VescReadOnlySession::default,
-                    VescReadOnlySession::with_board_profile,
-                ))),
+                DeviceSessionEngine::Vesc(Box::new(VescSettingsSession::new(vesc_board_profile))),
             ),
         };
         let model = resolution.staged.model.filter(|model| {
@@ -200,6 +216,7 @@ impl DeviceSession {
     #[must_use]
     pub fn control_profile(&self) -> crate::DeviceControlProfile {
         match (&self.engine, self.identity.model) {
+            (DeviceSessionEngine::Vesc(session), _) => session.control_profile(),
             (DeviceSessionEngine::Veteran(_), Some(model))
                 if model == &crate::NOSFET_AERO_REGISTRY_ENTRY =>
             {
@@ -224,6 +241,7 @@ impl DeviceSession {
     #[must_use]
     pub fn ingest_typed(&mut self, input: &SessionInputDto) -> DeviceSessionStep {
         if self.identity.model.is_none()
+            && self.control_profile().descriptors(false).is_empty()
             && let SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. } =
                 input
         {
@@ -281,6 +299,14 @@ impl DeviceSession {
         }
     }
 
+    /// Whether a full-configuration operation already owns the device's write slot.
+    pub(crate) fn settings_busy(&self) -> bool {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => session.settings_busy(),
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+        }
+    }
+
     /// Associates delayed settings stages with their original transport operation.
     pub(crate) fn bind_setting_operation(
         &mut self,
@@ -289,7 +315,7 @@ impl DeviceSession {
         match &mut self.engine {
             DeviceSessionEngine::Veteran(session) => session.bind_setting_operation(id),
             DeviceSessionEngine::Begode(session) => session.bind_setting_operation(id),
-            DeviceSessionEngine::Vesc(_) => (None, 0),
+            DeviceSessionEngine::Vesc(session) => session.bind_setting_operation(id),
         }
     }
 
@@ -305,7 +331,9 @@ impl DeviceSession {
             DeviceSessionEngine::Begode(session) => {
                 session.setting_write_is_current(authorization, at)
             }
-            DeviceSessionEngine::Vesc(_) => false,
+            DeviceSessionEngine::Vesc(session) => {
+                session.setting_write_is_current(authorization, at)
+            }
         }
     }
 
@@ -316,7 +344,7 @@ impl DeviceSession {
         speed: Option<i32>,
         at_ms: u64,
     ) -> bool {
-        if self.identity.model.is_none() {
+        if self.identity.model.is_none() && self.identity.protocol != ProtocolFamily::Vesc {
             return false;
         }
         match &mut self.engine {
@@ -326,7 +354,7 @@ impl DeviceSession {
             DeviceSessionEngine::Begode(session) => {
                 session.arm_settings_writes(state, speed, at_ms)
             }
-            DeviceSessionEngine::Vesc(_) => false,
+            DeviceSessionEngine::Vesc(session) => session.arm_settings_writes(state, speed, at_ms),
         }
     }
 }

@@ -534,6 +534,11 @@ impl DeviceConnectionSession {
         }
         let framing_before = device.notification_buffer_state();
         let result = device.ingest_typed(input);
+        if let Some(operation) = device.take_failed_setting_operation() {
+            self.state
+                .settings
+                .fail_operation(operation, self.last_input_at);
+        }
         let notification_framing = match (input, framing_before, device.notification_buffer_state())
         {
             (

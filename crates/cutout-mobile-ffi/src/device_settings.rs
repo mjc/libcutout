@@ -388,6 +388,9 @@ pub enum MobileDeviceSettingRequestError {
     /// Current connection no longer permits this request.
     #[error("connection unavailable")]
     ConnectionUnavailable,
+    /// A previous configuration update is still in progress.
+    #[error("another setting is being updated")]
+    Busy,
     /// The selected device has no such control.
     #[error("setting unavailable")]
     Unavailable,
@@ -406,6 +409,7 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
     fn from(value: DeviceSettingRequestError) -> Self {
         match value {
             DeviceSettingRequestError::ConnectionUnavailable => Self::ConnectionUnavailable,
+            DeviceSettingRequestError::Busy => Self::Busy,
             DeviceSettingRequestError::Profile(SettingsRequestError::Unavailable) => {
                 Self::Unavailable
             }
@@ -583,6 +587,339 @@ impl CutoutSessionStateHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REFLOAT_DEFAULT_CONFIG: &[u8] = include_bytes!(
+        "../../cutout-protocols/tests/fixtures/refloat-settings/refloat-1.3.0-default.bin"
+    );
+    const VESC_IDENTITY_REPLY: &[u8] = &[
+        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+        38, 208, 3,
+    ];
+    const VESC_VALUES_REPLY: &[u8] = &[
+        50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43, 0, 7,
+    ];
+
+    fn crc16_xmodem(bytes: &[u8]) -> u16 {
+        bytes.iter().fold(0_u16, |crc, byte| {
+            let mut value = crc ^ (u16::from(*byte) << 8);
+            for _ in 0..8 {
+                value = if value & 0x8000 != 0 {
+                    (value << 1) ^ 0x1021
+                } else {
+                    value << 1
+                };
+            }
+            value
+        })
+    }
+
+    fn vesc_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(payload.len() + 6);
+        if payload.len() <= usize::from(u8::MAX) {
+            frame.extend_from_slice(&[2, u8::try_from(payload.len()).unwrap()]);
+        } else {
+            frame.push(3);
+            frame.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_be_bytes());
+        }
+        frame.extend_from_slice(payload);
+        frame.extend_from_slice(&crc16_xmodem(payload).to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
+    fn refloat_info(package: &str, version: [u8; 3]) -> Vec<u8> {
+        let mut app = vec![101, 0, 2, 0];
+        let mut name = [0_u8; 20];
+        name[..package.len()].copy_from_slice(package.as_bytes());
+        app.extend_from_slice(&name);
+        app.extend_from_slice(&version);
+        app.extend_from_slice(&[0; 20]);
+        app.extend_from_slice(&0_u32.to_be_bytes());
+        app.extend_from_slice(&1_000_u32.to_be_bytes());
+        app.extend_from_slice(&0_u32.to_be_bytes());
+        app.push(0);
+        let mut payload = vec![36];
+        payload.extend_from_slice(&app);
+        vesc_frame(&payload)
+    }
+
+    fn refloat_custom(command: u8, body: &[u8]) -> Vec<u8> {
+        let mut payload = vec![36, 101, command];
+        payload.extend_from_slice(body);
+        vesc_frame(&payload)
+    }
+
+    fn parked_refloat_telemetry() -> [Vec<u8>; 2] {
+        let ids = [
+            2, 11, b'm', b'o', b't', b'o', b'r', b'.', b's', b'p', b'e', b'e', b'd', 9, b'i', b'm',
+            b'u', b'.', b'p', b'i', b't', b'c', b'h', 0,
+        ];
+        let data = [0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0];
+        [refloat_custom(32, &ids), refloat_custom(31, &data)]
+    }
+
+    fn frame_payload(frame: &[u8]) -> &[u8] {
+        let (start, length) = match frame.first().copied() {
+            Some(2) => (2, usize::from(frame[1])),
+            Some(3) => (3, usize::from(u16::from_be_bytes([frame[1], frame[2]]))),
+            _ => panic!("expected a VESC UART frame"),
+        };
+        &frame[start..start + length]
+    }
+
+    fn input(
+        kind: crate::MobileSessionInputKindDto,
+        at: u64,
+        bytes: Vec<u8>,
+    ) -> crate::MobileSessionInputDto {
+        crate::MobileSessionInputDto {
+            kind,
+            monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
+            max_write_len: None,
+            channel: if kind == crate::MobileSessionInputKindDto::Notification {
+                cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec()
+            } else {
+                Vec::new()
+            },
+            bytes,
+        }
+    }
+
+    fn ingest(
+        handle: &CutoutSessionStateHandle,
+        token: &MobileConnectionAttemptTokenDto,
+        at: u64,
+        frame: &[u8],
+    ) {
+        handle
+            .ingest_device_session(
+                token.clone(),
+                input(
+                    crate::MobileSessionInputKindDto::Notification,
+                    at,
+                    frame.to_vec(),
+                ),
+            )
+            .expect("current connection ingests its protocol notification");
+    }
+
+    fn refloat_settings_handle(
+        package: Option<(&str, [u8; 3])>,
+        config: Option<&[u8]>,
+    ) -> (
+        std::sync::Arc<CutoutSessionStateHandle>,
+        MobileConnectionAttemptTokenDto,
+    ) {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("Refloat settings fixture".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.observe_connection_notification(token.clone(), VESC_IDENTITY_REPLY.to_vec());
+        handle.resolve_device_session(token.clone(), false, 1);
+        handle
+            .ingest_device_session(
+                token.clone(),
+                input(crate::MobileSessionInputKindDto::LinkUp, 2, Vec::new()),
+            )
+            .expect("resolved VESC session accepts link-up");
+        let mut firmware = vec![157, 7, 0, 0];
+        firmware.extend_from_slice(b"abc123\0userhash\0");
+        ingest(&handle, &token, 3, &vesc_frame(&firmware));
+        if let Some((name, version)) = package {
+            ingest(&handle, &token, 4, &refloat_info(name, version));
+        }
+        ingest(&handle, &token, 5, &vesc_frame(VESC_VALUES_REPLY));
+        for (index, frame) in parked_refloat_telemetry().into_iter().enumerate() {
+            ingest(&handle, &token, 6 + u64::try_from(index).unwrap(), &frame);
+        }
+        if let Some(config) = config {
+            let mut response = vec![93, 0];
+            response.extend_from_slice(config);
+            ingest(&handle, &token, 8, &vesc_frame(&response));
+        }
+        (handle, token)
+    }
+
+    #[test]
+    fn settings_facade_projects_only_supported_refloat_config_controls() {
+        let (handle, token) =
+            refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
+        let settings = handle.settings();
+        assert_eq!(settings.connection.token, Some(token));
+        assert_eq!(settings.setting_descriptors.len(), 2);
+        assert!(
+            settings
+                .setting_descriptors
+                .iter()
+                .any(|descriptor| descriptor.id == MobileSettingIdDto::PwmTiltback)
+        );
+        assert!(
+            settings
+                .setting_descriptors
+                .iter()
+                .any(|descriptor| descriptor.id == MobileSettingIdDto::TiltbackSpeed)
+        );
+        let duty = settings
+            .setting_descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == MobileSettingIdDto::PwmTiltback)
+            .unwrap();
+        assert_eq!(
+            duty.control,
+            MobileSettingControlDto::Number {
+                minimum: 0,
+                maximum: 99,
+                step: 1,
+                precision: 0,
+                unit: MobileSettingUnitDto::PwmDutyPercent,
+                can_disable: true,
+            }
+        );
+        let speed = settings
+            .setting_descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == MobileSettingIdDto::TiltbackSpeed)
+            .unwrap();
+        assert_eq!(
+            speed.control,
+            MobileSettingControlDto::Number {
+                minimum: 50,
+                maximum: 1_000,
+                step: 50,
+                precision: 1,
+                unit: MobileSettingUnitDto::KilometresPerHour,
+                can_disable: true,
+            }
+        );
+        assert!(settings.default_charge_profile.is_none());
+        assert_eq!(
+            settings
+                .settings
+                .iter()
+                .find(|setting| setting.id == MobileSettingIdDto::PwmTiltback)
+                .unwrap()
+                .current,
+            Some(MobileSettingValueDto::Number { value: 80 })
+        );
+        assert_eq!(
+            settings
+                .settings
+                .iter()
+                .find(|setting| setting.id == MobileSettingIdDto::TiltbackSpeed)
+                .unwrap()
+                .current,
+            Some(MobileSettingValueDto::Disabled)
+        );
+    }
+
+    #[test]
+    fn unsupported_refloat_identity_or_config_schema_removes_settings_catalog() {
+        let (no_package, _) = refloat_settings_handle(None, None);
+        assert!(no_package.settings().setting_descriptors.is_empty());
+        let (other, _) =
+            refloat_settings_handle(Some(("Other", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
+        assert!(other.settings().setting_descriptors.is_empty());
+        let (old_version, _) =
+            refloat_settings_handle(Some(("Refloat", [1, 2, 3])), Some(REFLOAT_DEFAULT_CONFIG));
+        assert!(old_version.settings().setting_descriptors.is_empty());
+        let mut bad_signature = REFLOAT_DEFAULT_CONFIG.to_vec();
+        bad_signature[0] ^= 1;
+        let (unknown_schema, _) =
+            refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(&bad_signature));
+        assert!(unknown_schema.settings().setting_descriptors.is_empty());
+    }
+
+    #[test]
+    fn replacing_connection_clears_refloat_settings_from_generic_facade() {
+        let (handle, _) =
+            refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
+        assert_eq!(handle.settings().setting_descriptors.len(), 2);
+        let replacement = handle.begin_connection_attempt("replacement".into(), 7);
+        let settings = handle.settings();
+        assert_eq!(settings.connection, replacement);
+        assert!(settings.setting_descriptors.is_empty());
+        assert!(settings.settings.is_empty());
+    }
+
+    #[test]
+    fn busy_setting_request_preserves_first_request_and_allows_it_to_continue() {
+        let (handle, token) =
+            refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
+        handle
+            .submit_setting(
+                token.clone(),
+                MobileSettingIdDto::PwmTiltback,
+                MobileSettingValueDto::Number { value: 81 },
+                10,
+            )
+            .expect("first setting is accepted");
+        let before_busy = handle.settings();
+        let first = before_busy
+            .settings
+            .iter()
+            .find(|setting| setting.id == MobileSettingIdDto::PwmTiltback)
+            .unwrap();
+        let first_request_id = first.request_id.unwrap();
+        assert_eq!(
+            first.requested,
+            Some(MobileSettingValueDto::Number { value: 81 })
+        );
+        assert_eq!(
+            handle
+                .submit_setting(
+                    token.clone(),
+                    MobileSettingIdDto::TiltbackSpeed,
+                    MobileSettingValueDto::Number { value: 100 },
+                    11,
+                )
+                .unwrap_err(),
+            MobileDeviceSettingRequestError::Busy
+        );
+        let after_busy = handle.settings();
+        let retained = after_busy
+            .settings
+            .iter()
+            .find(|setting| setting.id == MobileSettingIdDto::PwmTiltback)
+            .unwrap();
+        assert_eq!(retained.request_id, Some(first_request_id));
+        assert_eq!(
+            retained.requested,
+            Some(MobileSettingValueDto::Number { value: 81 })
+        );
+        assert!(
+            after_busy
+                .settings
+                .iter()
+                .find(|setting| setting.id == MobileSettingIdDto::TiltbackSpeed)
+                .is_none_or(|setting| setting.requested.is_none())
+        );
+        assert!(handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::PwmTiltback,
+            first_request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            12,
+        ));
+
+        let mut preflight = vec![93, 0];
+        preflight.extend_from_slice(REFLOAT_DEFAULT_CONFIG);
+        let continued = handle
+            .ingest_device_session(
+                token,
+                input(
+                    crate::MobileSessionInputKindDto::Notification,
+                    13,
+                    vesc_frame(&preflight),
+                ),
+            )
+            .expect("the accepted request continues after a rejected competing request");
+        assert!(continued.result.outputs.iter().any(|output| {
+            output.kind == crate::MobileSessionOutputKindDto::Write
+                && frame_payload(&output.bytes).first() == Some(&95)
+        }));
+    }
 
     #[test]
     fn transport_callback_requires_verified_connection_even_when_token_is_current() {
