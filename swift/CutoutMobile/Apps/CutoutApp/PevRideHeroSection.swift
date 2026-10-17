@@ -73,39 +73,10 @@ struct PevRideHeroSection: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            let headerLayout =
-                dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-                : AnyLayout(HStackLayout(spacing: 8))
-            headerLayout {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(
-                            dynamicTypeSize.isAccessibilitySize
-                                ? .caption.weight(.semibold) : .headline.weight(.semibold)
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-                    Circle()
-                        .fill(PevColors.red)
-                        .frame(width: 8, height: 8)
-                        .opacity(captureStatusText == nil ? 0 : 1)
-                        .accessibilityLabel(captureStatusText ?? "")
-                        .accessibilityHidden(captureStatusText == nil)
-                        .accessibilityIdentifier("ride.recording.indicator")
-                    Spacer(minLength: 0)
-                }
-                .layoutPriority(1)
-                PevDashboardStatusPill(title: subtitle, tone: statusTone)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
-                    .layoutPriority(1)
-            }
-            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-            .accessibilityElement(children: .contain)
-            .accessibilityHeading(.h1)
-            .accessibilityLabel("\(title), \(subtitle)")
-            .accessibilityValue(statusTone == .warning ? pevLocalizedText("status.accessibility.warning") : "")
-            .accessibilityIdentifier("ride.hero.status")
+            PevRideStatusHeader(
+                title: title, subtitle: subtitle, statusTone: statusTone,
+                captureStatusText: captureStatusText
+            )
 
             HStack(alignment: .center, spacing: 8) {
                 Text(speedReadout.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
@@ -143,5 +114,50 @@ struct PevRideHeroSection: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .foregroundStyle(PevColors.primaryText)
+    }
+}
+
+struct PevRideStatusHeader: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let title: String
+    let subtitle: String
+    let statusTone: PevDashboardStatusPillTone
+    let captureStatusText: String?
+
+    var body: some View {
+        let headerLayout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 8))
+        headerLayout {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .caption.weight(.semibold) : .headline.weight(.semibold)
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                Circle()
+                    .fill(PevColors.red)
+                    .frame(width: 8, height: 8)
+                    .opacity(captureStatusText == nil ? 0 : 1)
+                    .accessibilityLabel(captureStatusText ?? "")
+                    .accessibilityHidden(captureStatusText == nil)
+                    .accessibilityIdentifier("ride.recording.indicator")
+                Spacer(minLength: 0)
+            }
+            .layoutPriority(1)
+            PevDashboardStatusPill(title: subtitle, tone: statusTone)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
+                .layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityHeading(.h1)
+        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityValue(statusTone == .warning ? pevLocalizedText("status.accessibility.warning") : "")
+        .accessibilityIdentifier("ride.hero.status")
+
     }
 }

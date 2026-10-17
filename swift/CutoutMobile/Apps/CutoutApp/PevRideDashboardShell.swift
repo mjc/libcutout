@@ -150,7 +150,7 @@ private struct PevRideAccessibleReading: View {
     }
 }
 
-private struct PevRideReadingsDetail: View {
+struct PevRideReadingsDetail: View {
     @Environment(\.dismiss) private var dismiss
     let tiles: [PevDashboardTile]
     let footpadText: String?

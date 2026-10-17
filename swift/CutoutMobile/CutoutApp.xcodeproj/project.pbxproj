@@ -49,6 +49,7 @@
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
 		300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 		300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
+		30000000000000000000019A /* Apps/CutoutApp/EucRideInstruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000019A /* Apps/CutoutApp/EucRideInstruments.swift */; };
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
 		E80F770012C649CCAE09F054 /* Apps/CutoutApp/CutoutWebsiteScreenshotFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80F770012C649CCAE09F056 /* Apps/CutoutApp/CutoutWebsiteScreenshotFixture.swift */; };
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
@@ -220,6 +221,7 @@
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000019A /* Apps/CutoutApp/EucRideInstruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucRideInstruments.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
 		E80F770012C649CCAE09F056 /* Apps/CutoutApp/CutoutWebsiteScreenshotFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutWebsiteScreenshotFixture.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
@@ -470,6 +472,7 @@
 				400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */,
 				400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */,
 				400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */,
+				40000000000000000000019A /* Apps/CutoutApp/EucRideInstruments.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -848,6 +851,7 @@
 				300000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift in Sources */,
 				300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */,
 				300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */,
+				30000000000000000000019A /* Apps/CutoutApp/EucRideInstruments.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
