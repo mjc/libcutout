@@ -1019,6 +1019,9 @@ fn capture_submission_freezes_and_sends_reported_settings_after_relaunch() {
     assert_eq!(uploads[0].1, original_bytes);
     let capture = cutout_core::PevcapCapture::decode(&uploads[0].1, PevcapEncoding::Jsonl).unwrap();
     assert_eq!(capture.settings_observations, vec![first, second]);
-    assert!(capture.music_events.is_empty());
+    assert_eq!(
+        capture.music_events,
+        Vec::<cutout_core::PevcapMusicEvent>::new()
+    );
     assert_eq!(sent.metadata, prepared.metadata);
 }

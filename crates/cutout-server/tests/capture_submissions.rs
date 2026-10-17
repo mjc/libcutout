@@ -1,3 +1,4 @@
+use cutout_core::PevcapMusicEvent;
 use cutout_server::{Store, router};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::{Value, json};
@@ -1362,7 +1363,7 @@ async fn private_capture_reported_settings_round_trip_exactly_and_stay_private()
             decoded.settings_observations,
             vec![first.clone(), second.clone()]
         );
-        assert!(decoded.music_events.is_empty());
+        assert_eq!(decoded.music_events, Vec::<PevcapMusicEvent>::new());
     }
     assert_eq!(
         restarted
@@ -1372,7 +1373,7 @@ async fn private_capture_reported_settings_round_trip_exactly_and_stay_private()
         StatusCode::NOT_FOUND
     );
     capture.music_events.push(
-        cutout_core::PevcapMusicEvent::new(
+        PevcapMusicEvent::new(
             cutout_core::MusicProvider::AppleMusic,
             "prohibited",
             cutout_core::MonotonicTimestamp::new(1),

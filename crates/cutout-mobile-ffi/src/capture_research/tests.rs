@@ -102,8 +102,9 @@ fn builder_settings_snapshot_is_durable_and_survives_database_reopen() {
     assert_eq!(
         database
             .capture_settings_observations(source.clone())
-            .unwrap(),
-        [first.clone()]
+            .unwrap()
+            .as_slice(),
+        std::slice::from_ref(&first)
     );
 
     let mut after = draft();
@@ -155,20 +156,23 @@ fn builder_rejects_invalid_clock_profile_and_numeric_text_without_accepting_snap
         value: "bright".into(),
     };
     assert!(builder.record_settings_observation(invalid, 600).is_err());
-    assert!(builder.settings_observations().unwrap().is_empty());
+    assert_eq!(
+        builder.settings_observations().unwrap(),
+        [] as [MobileCaptureSettingsObservationDto; 0]
+    );
     let MobileCaptureFinishOutcomeDto::DatabaseFinished {
         live_capture_id, ..
     } = builder.finish_writer_outcome()
     else {
         panic!("database writer should remain finishable after rejected drafts");
     };
-    assert!(
+    assert_eq!(
         database
             .capture_settings_observations(MobileCaptureSubmissionSourceDto::LiveCapture {
                 id: live_capture_id
             })
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        [] as [MobileCaptureSettingsObservationDto; 0]
     );
     drop(builder);
     database.shutdown().unwrap();
@@ -189,7 +193,10 @@ fn builder_requires_an_active_writer_before_and_after_recording() {
         idle.record_settings_observation(draft(), 600),
         Err(MobileCaptureResearchError::NotRecording)
     ));
-    assert!(idle.settings_observations().unwrap().is_empty());
+    assert_eq!(
+        idle.settings_observations().unwrap(),
+        [] as [MobileCaptureSettingsObservationDto; 0]
+    );
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -202,7 +209,10 @@ fn builder_requires_an_active_writer_before_and_after_recording() {
         builder.record_settings_observation(draft(), 600),
         Err(MobileCaptureResearchError::NotRecording)
     ));
-    assert!(builder.settings_observations().unwrap().is_empty());
+    assert_eq!(
+        builder.settings_observations().unwrap(),
+        [] as [MobileCaptureSettingsObservationDto; 0]
+    );
     drop(builder);
     database.shutdown().unwrap();
     drop(database);
@@ -393,12 +403,12 @@ fn batch_readback_rejects_unbounded_requests_before_reading_capture_bytes() {
             .is_err()
         );
     }
-    assert!(
+    assert_eq!(
         readback_batch(Vec::new(), |_| panic!(
             "empty review must not scan the capture"
         ))
-        .unwrap()
-        .is_empty()
+        .unwrap(),
+        [] as [MobileCaptureResearchReadbackDto; 0]
     );
 }
 

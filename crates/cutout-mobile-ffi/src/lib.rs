@@ -17075,6 +17075,9 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Returns acknowledged snapshots without reconstructing evidence in native code.
+    ///
+    /// # Errors
+    /// This cache read currently returns no errors.
     pub fn settings_observations(
         &self,
     ) -> Result<Vec<MobileCaptureSettingsObservationDto>, MobileCaptureResearchError> {

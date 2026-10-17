@@ -114,7 +114,7 @@ fn settings_observations_survive_database_relaunch_export_and_history() {
     let capture =
         PevcapCapture::decode(&fs::read(destination).unwrap(), PevcapEncoding::Jsonl).unwrap();
     assert_eq!(capture.settings_observations, vec![first, second]);
-    assert!(capture.music_events.is_empty());
+    assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn settings_observation_share_preserves_both_snapshots_while_removing_music() {
         export_capture_file_without_music(&source, &destination).unwrap();
         let retained = PevcapCapture::decode(&fs::read(destination).unwrap(), encoding).unwrap();
         assert_eq!(retained.settings_observations, vec![first, second]);
-        assert!(retained.music_events.is_empty());
+        assert_eq!(retained.music_events, Vec::<PevcapMusicEvent>::new());
         record.music = None;
         assert_eq!(retained.records, vec![record]);
         assert_eq!(fs::read(source).unwrap(), original);
@@ -451,31 +451,39 @@ fn pinned_read_scan_allows_live_admission_flush_and_finish_without_extending_its
     }
 }
 
+fn settings_test_writer(
+    path: &Path,
+    database: &RideDatabase,
+    database_backed: bool,
+) -> CaptureWriter {
+    if database_backed {
+        CaptureWriter::start_with_database(
+            path.to_path_buf(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "unsupported",
+            None,
+            &metadata(),
+            database.clone(),
+        )
+    } else {
+        CaptureWriter::start(
+            path.to_path_buf(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "unsupported",
+            None,
+            &metadata(),
+        )
+    }
+    .unwrap()
+}
+
 #[test]
 fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hidden_value() {
     for database_backed in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
         let path = directory.path().join("capture.jsonl");
-        let writer = if database_backed {
-            CaptureWriter::start_with_database(
-                path.clone(),
-                WallClockUnixTimestamp::new(1_700_000_000_000),
-                "unsupported",
-                None,
-                &metadata(),
-                database.clone(),
-            )
-        } else {
-            CaptureWriter::start(
-                path.clone(),
-                WallClockUnixTimestamp::new(1_700_000_000_000),
-                "unsupported",
-                None,
-                &metadata(),
-            )
-        }
-        .unwrap();
+        let writer = settings_test_writer(&path, &database, database_backed);
         writer.flush().unwrap();
         // An existing rendezvous barrier holds the real worker after durability.
         // Once dequeued it cannot consume another queue entry until released below.
@@ -553,7 +561,7 @@ fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hid
             let capture =
                 PevcapCapture::decode(&fs::read(path).unwrap(), PevcapEncoding::Jsonl).unwrap();
             assert_eq!(capture.settings_observations, [expected]);
-            assert!(capture.music_events.is_empty());
+            assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
             assert!(
                 writer.finish_without_export().is_err(),
                 "file completion still reports the deliberately rejected second observation"

@@ -208,7 +208,7 @@ fn aero_readback_uses_packet_times_and_never_treats_outbound_bytes_as_observatio
         later_bytes,
     );
     let mut before = CaptureResearchReadback::new("nosfet_aero", 20).unwrap();
-    assert!(before.values().is_empty());
+    assert_eq!(before.values(), &[] as &[CaptureResearchDecodedValue]);
     for record in [&first, &outbound, &later] {
         before.observe(record);
     }
@@ -292,7 +292,7 @@ fn falcon_packet_readback_keeps_independent_field_times_and_resets_on_link_chang
         Some(DeviceSettingValue::Choice(3))
     );
     readback.observe(&PevcapRecord::link_down(MonotonicTimestamp::new(30)));
-    assert!(readback.values().is_empty());
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     readback.observe(&inbound(40, crate::BEGODE_DATA_CHANNEL, &FALCON_LIVE_B));
     assert!(
         !readback
@@ -302,7 +302,7 @@ fn falcon_packet_readback_keeps_independent_field_times_and_resets_on_link_chang
     );
     assert_eq!(decoded(&readback, "maximum_speed").observed_at_ms, 40);
     readback.observe(&PevcapRecord::link_up(MonotonicTimestamp::new(50), None));
-    assert!(readback.values().is_empty());
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
 }
 
 #[test]
@@ -313,20 +313,20 @@ fn link_reset_discards_partial_packet_before_the_next_connection() {
         crate::VETERAN_DATA_CHANNEL,
         &AERO_SETTINGS[..30],
     ));
-    assert!(readback.values().is_empty());
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     readback.observe(&PevcapRecord::link_down(MonotonicTimestamp::new(20)));
     readback.observe(&inbound(
         30,
         crate::VETERAN_DATA_CHANNEL,
         &AERO_SETTINGS[30..],
     ));
-    assert!(readback.values().is_empty());
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     readback.observe(&inbound(40, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
     assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 40);
 }
 
 #[test]
-fn independent_value_comparison_respects_original_units_precision_and_value_shape() {
+fn independent_value_comparison_respects_original_units_and_precision() {
     let speed = reported(
         "tiltback_speed",
         CaptureObservedValue::Entered("34.8".into()),
@@ -358,6 +358,10 @@ fn independent_value_comparison_respects_original_units_precision_and_value_shap
         ),
         Some(false)
     );
+}
+
+#[test]
+fn independent_value_comparison_distinguishes_off_zero_false_choices_and_unknown() {
     let off = reported("pwm_tiltback", CaptureObservedValue::Off, Some("%"));
     let zero = reported(
         "pwm_tiltback",
@@ -438,8 +442,9 @@ fn independent_value_comparison_respects_original_units_precision_and_value_shap
 fn explicit_link_up_activates_passive_readback_and_uses_notification_time() {
     let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
     readback.observe(&PevcapRecord::link_up(MonotonicTimestamp::new(5), None));
-    assert!(
-        readback.values().is_empty(),
+    assert_eq!(
+        readback.values(),
+        &[] as &[CaptureResearchDecodedValue],
         "a link does not report any setting"
     );
     readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
@@ -449,7 +454,7 @@ fn explicit_link_up_activates_passive_readback_and_uses_notification_time() {
     );
     assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 10);
     readback.observe(&PevcapRecord::link_down(MonotonicTimestamp::new(20)));
-    assert!(readback.values().is_empty());
+    assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     readback.observe(&PevcapRecord::link_up(MonotonicTimestamp::new(30), None));
     readback.observe(&inbound(
         40,
