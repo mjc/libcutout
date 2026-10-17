@@ -540,6 +540,58 @@ async fn private_capture_authentication_limits_and_format_errors_are_classified(
 }
 
 #[tokio::test]
+async fn private_capture_rejects_cloudflare_oversize_before_reading_body() {
+    use tokio::io::AsyncWriteExt;
+
+    let directory = TempDir::new().expect("directory");
+    let database = directory.path().join("server.sqlite");
+    let server = Server::start(&database).await;
+    let owner = server.identity().await;
+    let operation = Uuid::new_v4().to_string();
+    let mut metadata = metadata(&capture(), "manual");
+    metadata["bytes"] = json!(100_000_001_u64);
+    let encoded = serde_json::to_string(&metadata).expect("metadata");
+    let mut connection =
+        tokio::net::TcpStream::connect(server.address.trim_start_matches("http://"))
+            .await
+            .expect("raw upload");
+    let headers = format!(
+        "PUT /v1/capture-submissions/{operation} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {owner}\r\nContent-Type: application/x-ndjson\r\nx-cutout-capture: {encoded}\r\nContent-Length: 100000001\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n"
+    );
+    connection
+        .write_all(headers.as_bytes())
+        .await
+        .expect("headers only; no capture body is sent");
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        combined_capture_headers(&mut connection),
+    )
+    .await
+    .expect("oversized request must be refused without waiting for its body");
+    assert!(
+        response.starts_with(b"HTTP/1.1 413 "),
+        "must reject the declared body above the actual ingress limit before 100 Continue: {}",
+        String::from_utf8_lossy(&response)
+    );
+    drop(connection);
+    let path = format!("/v1/capture-submissions/{operation}");
+    expect_status(
+        server.request(Method::GET, &path, &owner).await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    let inspector = rusqlite::Connection::open(&database).expect("inspector");
+    let count: u64 = inspector
+        .query_row(
+            "SELECT count(*) FROM capture_submissions WHERE operation_id=?1",
+            [&operation],
+            |row| row.get(0),
+        )
+        .expect("no capture publication");
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
 async fn private_capture_failed_storage_publishes_nothing_and_preserves_retry() {
     let directory = TempDir::new().expect("directory");
     let database = directory.path().join("server.sqlite");
