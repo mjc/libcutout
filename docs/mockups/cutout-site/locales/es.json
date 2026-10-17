@@ -28,6 +28,13 @@
     "updates": "Seguir el proyecto",
     "close": "Cerrar"
   },
+  "screenshots": {
+    "live": "Pantalla de conducción de CutOut con datos en directo de un EUC NOSFET Aero.",
+    "history": "Historial de recorridos de CutOut con el mapa y los recorridos guardados.",
+    "charging": "Mapa comunitario de carga de CutOut con puntos de carga cercanos.",
+    "rgb": "Controles de efectos RGB de CutOut para un accesorio de iluminación MELK conectado.",
+    "tune": "Ajustes de EUC en CutOut para el faro, la pantalla, el avisador, los límites de velocidad y PWM, y la sensación de conducción."
+  },
   "vehicles": {
     "tag": "Tipos de vehículos",
     "title": "Para todos los tipos de PEV.",
@@ -319,6 +326,11 @@
     "title": "¿Cuál fue tu banda sonora?",
     "body": "Guarda qué escuchabas durante cada recorrido. Vuelve a descubrir las canciones que acompañaron tu ruta favorita.",
     "preview": "Las canciones de tu recorrido"
+  },
+  "tune": {
+    "tag": "Ajustes de EUC",
+    "title": "Los controles que admite tu rueda.",
+    "body": "Consulta los ajustes de EUC disponibles en un solo lugar: iluminación, pantalla, avisador, velocidad, PWM y sensación de conducción."
   },
   "accessories": [
     {

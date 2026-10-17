@@ -2,6 +2,34 @@ use cutout_server::{Store, router};
 use reqwest::{Client, StatusCode, header};
 use tempfile::TempDir;
 
+const SCREENSHOT_ASSETS: &[(&str, &str, &[u8])] = &[
+    (
+        "/assets/screenshots/en/euc-main.png",
+        "image/png",
+        include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/euc-main.png"),
+    ),
+    (
+        "/assets/screenshots/en/ride-tracking.png",
+        "image/png",
+        include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/ride-tracking.png"),
+    ),
+    (
+        "/assets/screenshots/en/charging-map.png",
+        "image/png",
+        include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/charging-map.png"),
+    ),
+    (
+        "/assets/screenshots/en/tune.png",
+        "image/png",
+        include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/tune.png"),
+    ),
+    (
+        "/assets/screenshots/en/rgb.jpg",
+        "image/jpeg",
+        include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/rgb.jpg"),
+    ),
+];
+
 struct Server {
     address: String,
     client: Client,
@@ -114,6 +142,18 @@ async fn serves_the_mockup_assets_without_turning_unknown_api_paths_into_html() 
         }
     }
 
+    for (path, content_type, expected_bytes) in SCREENSHOT_ASSETS {
+        let response = server.get(path).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            *content_type,
+            "{path}"
+        );
+        let body = response.bytes().await.expect("screenshot body");
+        assert_eq!(body.as_ref(), *expected_bytes, "{path}");
+    }
+
     let missing_api = server.get("/v1/not-a-route").await;
     assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
     assert!(
@@ -123,4 +163,7 @@ async fn serves_the_mockup_assets_without_turning_unknown_api_paths_into_html() 
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/html"))
     );
+
+    let missing_screenshot = server.get("/assets/screenshots/en/not-approved.png").await;
+    assert_eq!(missing_screenshot.status(), StatusCode::NOT_FOUND);
 }

@@ -28,6 +28,13 @@
     "updates": "Follow the project",
     "close": "Close"
   },
+  "screenshots": {
+    "live": "CutOut live ride screen with telemetry for a NOSFET Aero EUC.",
+    "history": "CutOut ride history showing the map and saved rides.",
+    "charging": "CutOut community charging map with nearby charging spots.",
+    "rgb": "CutOut RGB effects controls for a connected MELK lighting accessory.",
+    "tune": "CutOut EUC settings for the headlight, display, beeper, speed and PWM limits, and ride feel."
+  },
   "vehicles": {
     "tag": "PEV coverage",
     "title": "Built for all PEV types.",
@@ -319,6 +326,11 @@
     "title": "What was your soundtrack?",
     "body": "Keep track of what you were listening to on each ride. Rediscover the songs that went with a favorite route.",
     "preview": "The songs from your ride"
+  },
+  "tune": {
+    "tag": "EUC settings",
+    "title": "The controls your wheel supports.",
+    "body": "See available EUC settings in one place, from lighting and display preferences to beeper, speed, PWM, and ride-feel controls."
   },
   "accessories": [
     {
