@@ -424,7 +424,7 @@ final class CutoutAppModel {
             selectedDeviceStore: selectedDeviceStore,
             restoredDeviceSelection: restoredDeviceSelection,
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager(),
+            liveActivityManager: makeLiveActivityManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
@@ -445,7 +445,7 @@ final class CutoutAppModel {
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager(),
+            liveActivityManager: Self.makeLiveActivityManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
@@ -1447,6 +1447,15 @@ final class CutoutAppModel {
             return CutoutSessionCore(rideMapState: rideMapState)
         }
         return CutoutSessionCore()
+    }
+
+    private static func makeLiveActivityManager() -> any LiveActivityRideLifecycleManaging {
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = uiTestFixture {
+                return fixture.makeLiveActivityManager()
+            }
+        #endif
+        return LiveActivityRideActivityKitManager()
     }
 
     #if DEBUG
