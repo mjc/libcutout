@@ -2646,7 +2646,8 @@ final class CutoutAppUITests: XCTestCase {
         review.tap()
 
         // Only review the locally prepared snapshot; this test never confirms Send.
-        let confirm = app.buttons["captures.send.confirm"]
+        let confirmation = app.sheets["Send this capture privately?"]
+        let confirm = confirmation.buttons.matching(identifier: "captures.send.confirm").firstMatch
         waitForReady(confirm)
         let disclosure = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Music is excluded.", "CutOut maintainer")
@@ -2657,9 +2658,29 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(disclosure.label.contains("device and platform identifiers"), disclosure.label)
         XCTAssertTrue(disclosure.label.contains("Your original recording stays on this device."), disclosure.label)
         let decline = app.buttons["Not now"]
-        waitForReady(decline)
-        decline.tap()
+        if decline.waitForExistence(timeout: 2) {
+            waitForReady(decline)
+            decline.tap()
+        } else {
+            // Native popover presentation omits its cancel-role button.
+            let dismiss = app.otherElements["PopoverDismissRegion"]
+            guard dismiss.waitForExistence(timeout: 5), confirmation.exists else {
+                XCTFail("Expected the native confirmation popover and its dismissal region")
+                return
+            }
+            let outside = dismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
+            guard dismiss.frame.contains(outside.screenPoint), !confirmation.frame.contains(outside.screenPoint) else {
+                XCTFail("The dismissal coordinate must be outside the confirmation")
+                return
+            }
+            outside.tap()
+        }
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !confirmation.exists }, object: confirmation
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, app.debugDescription)
         XCTAssertTrue(detail.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
 
         let cancel = app.buttons["captures.send.cancel"]
         scrollElementFrameIntoViewport(cancel, in: detail, maxScrolls: 8)

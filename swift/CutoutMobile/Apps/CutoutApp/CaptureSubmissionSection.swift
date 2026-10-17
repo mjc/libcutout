@@ -14,6 +14,25 @@ struct CaptureSubmissionSection: View {
     var body: some View {
         Section {
             Text("Send this recording privately to the CutOut maintainer to add or verify device and protocol support.")
+                .confirmationDialog(
+                    "Send this capture privately?", isPresented: $showsSendConfirmation, titleVisibility: .visible
+                ) {
+                    Button("Send to CutOut maintainer") { Task { await model.send() } }
+                        .accessibilityIdentifier("captures.send.confirm")
+                    Button("Not now", role: .cancel) {}
+                } message: {
+                    Text(confirmationText)
+                }
+                .confirmationDialog(
+                    "Delete the sent copy?", isPresented: $showsDeleteConfirmation, titleVisibility: .visible
+                ) {
+                    Button("Delete sent copy", role: .destructive) { Task { await model.delete() } }
+                    Button("Keep sent copy", role: .cancel) {}
+                } message: {
+                    Text(
+                        "Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain."
+                    )
+                }
             if let status = model.status {
                 disclosure(status)
                 actions(status)
@@ -45,23 +64,6 @@ struct CaptureSubmissionSection: View {
             )
         }
         .task { await model.refresh() }
-        .confirmationDialog(
-            "Send this capture privately?", isPresented: $showsSendConfirmation, titleVisibility: .visible
-        ) {
-            Button("Send to CutOut maintainer") { Task { await model.send() } }
-                .accessibilityIdentifier("captures.send.confirm")
-            Button("Not now", role: .cancel) {}
-        } message: {
-            Text(confirmationText)
-        }
-        .confirmationDialog("Delete the sent copy?", isPresented: $showsDeleteConfirmation, titleVisibility: .visible) {
-            Button("Delete sent copy", role: .destructive) { Task { await model.delete() } }
-            Button("Keep sent copy", role: .cancel) {}
-        } message: {
-            Text(
-                "Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain."
-            )
-        }
     }
 
     @ViewBuilder
