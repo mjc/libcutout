@@ -146,14 +146,14 @@ private struct DeviceSettingRow: View {
                         }
                     }
                     applyButton
-                case let .number(minimum, maximum, step, _, _, _, canDisable):
+                case let .number(minimum, maximum, step, editorStep, _, _, canDisable):
                     titleAndValue
                     let layout =
                         dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                         : AnyLayout(HStackLayout(spacing: 12))
                     layout {
-                        if minimum < maximum, step > 0 {
+                        if minimum < maximum, step > 0, editorStep > 0 {
                             Slider(
                                 value: Binding(
                                     get: {
@@ -164,7 +164,7 @@ private struct DeviceSettingRow: View {
                                     },
                                     set: { value in
                                         edit(.number(value: Int32(value.rounded())))
-                                    }), in: Double(minimum)...Double(maximum), step: Double(step)
+                                    }), in: Double(minimum)...Double(maximum), step: Double(editorStep)
                             )
                             .accessibilityLabel(localizedAppText(descriptor.labelKey))
                             .accessibilityValue(displayedValue)
