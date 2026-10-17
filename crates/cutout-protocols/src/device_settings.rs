@@ -30,6 +30,30 @@ pub enum SettingUnit {
     Seconds,
     /// Duration in minutes.
     Minutes,
+    /// Electrical potential in volts.
+    Volts,
+    /// Electrical current in amperes.
+    Amperes,
+    /// Frequency in hertz.
+    Hertz,
+    /// Angular velocity in degrees per second.
+    DegreesPerSecond,
+    /// Temperature in degrees Celsius.
+    Celsius,
+    /// Dimensionless scalar with no suffix.
+    Scalar,
+    /// Electrical power in watts.
+    Watts,
+    /// Duration in milliseconds.
+    Milliseconds,
+    /// Rotational speed in revolutions per minute.
+    RevolutionsPerMinute,
+    /// Length in millimetres.
+    Millimetres,
+    /// Battery capacity in ampere-hours.
+    AmpHours,
+    /// Device-defined raw integer with no established physical unit.
+    Raw,
 }
 
 /// Semantic grouping and stable ordering independent of device names.
@@ -45,6 +69,43 @@ pub enum SettingGroup {
     Modes,
     /// Values whose physical meaning is not established.
     Diagnostics,
+    /// Haptic and vibration feedback.
+    Haptics,
+    /// Lighting effects and appearance.
+    Lighting,
+    /// Hardware configuration.
+    Hardware,
+    /// Remote-control configuration.
+    Remote,
+    /// Battery and BMS configuration.
+    Battery,
+}
+
+/// Effect required after a setting is applied.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingApplyEffect {
+    /// The change applies immediately.
+    Immediate,
+    /// The device must restart for the change to take effect.
+    RestartRequired,
+    /// The source does not state when the change takes effect.
+    Unspecified,
+}
+
+/// Refloat lighting-output mode observed from its complete configuration image.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RefloatLightingMode {
+    /// The configuration image has not established the active mode.
+    #[default]
+    Unknown,
+    /// Lighting output is disabled.
+    Off,
+    /// Internal VESC lighting output is selected.
+    Internal,
+    /// An external controller owns lighting output.
+    External,
+    /// Both internal and external lighting outputs are selected.
+    InternalAndExternal,
 }
 
 /// A readable option may be unavailable for writing on the current protocol.
@@ -69,8 +130,10 @@ pub enum SettingControl {
         minimum: i32,
         /// Inclusive maximum in fixed-point units.
         maximum: i32,
-        /// Increment in fixed-point units.
+        /// Representability quantum in fixed-point units, anchored at minimum.
         step: i32,
+        /// UI increment in fixed-point units. This does not constrain valid values.
+        editor_step: i32,
         /// Decimal places in the physical value.
         precision: u8,
         /// Physical or ordinal quantity.
@@ -86,6 +149,21 @@ pub enum SettingControl {
 
 impl SettingControl {
     fn accepts(&self, value: DeviceSettingValue) -> bool {
+        if !self.accepts_value(value) {
+            return false;
+        }
+        match (self, value) {
+            (Self::Choices(choices), DeviceSettingValue::Choice(id)) => choices
+                .iter()
+                .any(|choice| choice.id == id && choice.writable),
+            _ => true,
+        }
+    }
+
+    /// Checks value shape and wire lattice without applying write permission.
+    /// Catalog codecs use this for readback and fixture round-trip validation;
+    /// command admission still uses `accepts` plus descriptor access.
+    pub(crate) fn accepts_value(&self, value: DeviceSettingValue) -> bool {
         match (self, value) {
             (Self::Boolean, DeviceSettingValue::Boolean(_)) => true,
             (
@@ -96,11 +174,15 @@ impl SettingControl {
                     ..
                 },
                 DeviceSettingValue::Number(value),
-            ) => (*minimum..=*maximum).contains(&value) && (value - minimum) % step == 0,
+            ) => {
+                (*minimum..=*maximum).contains(&value)
+                    && *step > 0
+                    && (i64::from(value) - i64::from(*minimum)) % i64::from(*step) == 0
+            }
             (Self::Number { can_disable, .. }, DeviceSettingValue::Disabled) => *can_disable,
-            (Self::Choices(choices), DeviceSettingValue::Choice(id)) => choices
-                .iter()
-                .any(|choice| choice.id == id && choice.writable),
+            (Self::Choices(choices), DeviceSettingValue::Choice(id)) => {
+                choices.iter().any(|choice| choice.id == id)
+            }
             _ => false,
         }
     }
@@ -115,6 +197,16 @@ pub enum SettingAccess {
     Unverified,
     /// Physical meaning or write semantics are unresolved.
     ReadOnly,
+}
+
+/// Evidence required before firmware-only VESC configuration writes are admitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FirmwareConfigurationWriteEvidence {
+    /// A fresh observation confirms the source is parked, disengaged, and normal.
+    #[default]
+    Ready,
+    /// Required source-state evidence is missing, stale, or inconsistent.
+    MissingDisengagedState,
 }
 
 /// Shared setting definition consumed by every native settings renderer.
@@ -140,6 +232,8 @@ pub struct SettingDescriptor {
     pub write_verification: VerificationStatus,
     /// Typed completion rule for an accepted write.
     pub completion: SettingCompletionStrategy,
+    /// Device effect after applying this setting.
+    pub apply_effect: SettingApplyEffect,
 }
 
 /// Per-dialect definition shared by the descriptor and completion paths.
@@ -174,6 +268,7 @@ pub(super) enum SettingEncoderBinding {
     Nosfet,
     Falcon,
     Refloat,
+    VescConfiguration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,7 +287,8 @@ impl SettingBinding {
             SettingEncoderBinding::None => SettingWriteAccess::ReadOnly,
             SettingEncoderBinding::Nosfet
             | SettingEncoderBinding::Falcon
-            | SettingEncoderBinding::Refloat => SettingWriteAccess::Writable,
+            | SettingEncoderBinding::Refloat
+            | SettingEncoderBinding::VescConfiguration => SettingWriteAccess::Writable,
         };
         Self {
             control,
@@ -208,6 +304,9 @@ impl SettingBinding {
             SettingEncoderBinding::None => None,
             SettingEncoderBinding::Refloat => {
                 crate::refloat_settings::accepts(id, value).then_some(command)
+            }
+            SettingEncoderBinding::VescConfiguration => {
+                crate::vesc_configuration::accepts(id, value).then_some(command)
             }
             SettingEncoderBinding::Nosfet => {
                 (crate::request_encoder::NosfetDialect::encode(command).is_some()
@@ -275,6 +374,8 @@ pub struct DeviceControlProfile {
     verified_settings: &'static [SettingId],
     readable: &'static [SettingId],
     default_charge_profile: Option<ChargeProfile>,
+    refloat_lighting_mode: RefloatLightingMode,
+    firmware_configuration_write_evidence: FirmwareConfigurationWriteEvidence,
 }
 
 /// Protocol-owned settings semantics selected with a verified device profile.
@@ -288,7 +389,11 @@ enum SettingsAdapter {
     None,
     Aero,
     Falcon,
-    Refloat,
+    Vesc {
+        refloat: bool,
+        motor: bool,
+        app: bool,
+    },
 }
 
 impl SettingsAdapter {
@@ -297,11 +402,40 @@ impl SettingsAdapter {
             Self::None => None,
             Self::Aero => aero::binding(id),
             Self::Falcon => falcon::binding(id),
-            Self::Refloat => Some(SettingBinding::new(
-                crate::refloat_settings::control(id)?,
-                SettingObservationBinding::MatchingField(crate::refloat_settings::field_id(id)?),
-                SettingEncoderBinding::Refloat,
-            )),
+            Self::Vesc { refloat: true, .. } if crate::refloat_settings::control(id).is_some() => {
+                let mut binding = SettingBinding::new(
+                    crate::refloat_settings::control(id)?,
+                    SettingObservationBinding::MatchingField(crate::refloat_settings::field_id(
+                        id,
+                    )?),
+                    SettingEncoderBinding::Refloat,
+                );
+                if crate::refloat_settings::access(id) != SettingAccess::Writable {
+                    binding.write_access = SettingWriteAccess::ReadOnly;
+                }
+                Some(binding)
+            }
+            Self::Vesc { motor, app, .. } => {
+                let kind = crate::vesc_configuration::kind_for_setting(id)?;
+                let enabled = match kind {
+                    crate::vesc_configuration::VescConfigurationKind::Motor => motor,
+                    crate::vesc_configuration::VescConfigurationKind::App => app,
+                };
+                if !enabled {
+                    return None;
+                }
+                let mut binding = SettingBinding::new(
+                    crate::vesc_configuration::control(id)?,
+                    SettingObservationBinding::MatchingField(crate::vesc_configuration::field_id(
+                        id,
+                    )?),
+                    SettingEncoderBinding::VescConfiguration,
+                );
+                if crate::vesc_configuration::descriptor(id, 0)?.access != SettingAccess::Writable {
+                    binding.write_access = SettingWriteAccess::ReadOnly;
+                }
+                Some(binding)
+            }
         }
     }
 
@@ -314,26 +448,41 @@ impl SettingsAdapter {
             Self::None => {}
             Self::Aero => aero::normalize_readback(entry, observations),
             Self::Falcon => falcon::normalize_readback(entry, observations),
-            Self::Refloat => {
-                let Some(id) = crate::refloat_settings::supported_setting_ids()
-                    .into_iter()
-                    .find(|id| crate::refloat_settings::field_id(*id) == Some(entry.field.id))
-                else {
+            Self::Vesc {
+                refloat,
+                motor,
+                app,
+            } => {
+                if refloat
+                    && let Some(id) = crate::refloat_settings::supported_setting_ids()
+                        .iter()
+                        .copied()
+                        .find(|id| crate::refloat_settings::field_id(*id) == Some(entry.field.id))
+                {
+                    let value = crate::refloat_settings::normalize_raw(id, entry.field.value);
+                    readback::push(observations, entry, id, value);
                     return;
-                };
-                let value = match (id, entry.field.value) {
-                    (SettingId::PwmTiltback, 100) | (SettingId::TiltbackSpeed, 0) => {
-                        Some(DeviceSettingValue::Disabled)
+                }
+                for (kind, enabled) in [
+                    (
+                        crate::vesc_configuration::VescConfigurationKind::Motor,
+                        motor,
+                    ),
+                    (crate::vesc_configuration::VescConfigurationKind::App, app),
+                ] {
+                    if !enabled {
+                        continue;
                     }
-                    (SettingId::PwmTiltback, raw @ 0..=99) => {
-                        i32::try_from(raw).ok().map(DeviceSettingValue::Number)
+                    if let Some(id) = crate::vesc_configuration::supported_setting_ids(kind)
+                        .iter()
+                        .copied()
+                        .find(|id| crate::vesc_configuration::field_id(*id) == Some(entry.field.id))
+                    {
+                        let value = crate::vesc_configuration::normalize_raw(id, entry.field.value);
+                        readback::push(observations, entry, id, value);
+                        return;
                     }
-                    (SettingId::TiltbackSpeed, raw @ 10..=1000) if raw % 10 == 0 => {
-                        i32::try_from(raw).ok().map(DeviceSettingValue::Number)
-                    }
-                    _ => None,
-                };
-                readback::push(observations, entry, id, value);
+                }
             }
         }
     }
@@ -343,7 +492,7 @@ impl SettingsAdapter {
             Self::None => None,
             Self::Aero => Some(ProtocolFamily::VeteranLeaperkimNosfet),
             Self::Falcon => Some(ProtocolFamily::BegodeGotway),
-            Self::Refloat => Some(ProtocolFamily::Vesc),
+            Self::Vesc { .. } => Some(ProtocolFamily::Vesc),
         }
     }
 }
@@ -361,6 +510,8 @@ impl DeviceControlProfile {
             verified_settings: &[],
             readable: &[],
             default_charge_profile: None,
+            refloat_lighting_mode: RefloatLightingMode::Unknown,
+            firmware_configuration_write_evidence: FirmwareConfigurationWriteEvidence::Ready,
         }
     }
 
@@ -403,6 +554,23 @@ impl DeviceControlProfile {
         self
     }
 
+    /// Supplies observed Refloat lighting configuration for applicability decisions.
+    #[must_use]
+    pub const fn with_refloat_lighting_mode(mut self, mode: RefloatLightingMode) -> Self {
+        self.refloat_lighting_mode = mode;
+        self
+    }
+
+    /// Supplies source-state evidence required for firmware-only VESC writes.
+    #[must_use]
+    pub const fn with_firmware_configuration_write_evidence(
+        mut self,
+        evidence: FirmwareConfigurationWriteEvidence,
+    ) -> Self {
+        self.firmware_configuration_write_evidence = evidence;
+        self
+    }
+
     /// Returns the protocol-selected default charge-estimation basis.
     #[must_use]
     pub const fn default_charge_profile(self) -> Option<ChargeProfile> {
@@ -416,6 +584,20 @@ impl DeviceControlProfile {
             return Vec::new();
         }
         let adapter = self.settings_adapter;
+        if let SettingsAdapter::Vesc {
+            refloat,
+            motor,
+            app,
+        } = adapter
+        {
+            return vesc_setting_descriptors(
+                refloat,
+                motor,
+                app,
+                self.refloat_lighting_mode,
+                self.firmware_configuration_write_evidence,
+            );
+        }
         CATALOG
             .iter()
             .filter_map(|&(id, label_key, group, order)| {
@@ -450,14 +632,13 @@ impl DeviceControlProfile {
                     order,
                     control,
                     access,
-                    write_verification: if adapter == SettingsAdapter::Refloat {
-                        VerificationStatus::SourceVerified
-                    } else if self.verified_settings.contains(&id) {
+                    write_verification: if self.verified_settings.contains(&id) {
                         VerificationStatus::HardwareVerified
                     } else {
                         VerificationStatus::Unverified
                     },
                     completion,
+                    apply_effect: SettingApplyEffect::Unspecified,
                 })
             })
             .collect()
@@ -491,6 +672,68 @@ impl DeviceControlProfile {
             .checked_request(id, value)
             .ok_or(SettingsRequestError::InvalidValue)
     }
+}
+
+fn vesc_setting_descriptors(
+    refloat: bool,
+    motor: bool,
+    app: bool,
+    lighting_mode: RefloatLightingMode,
+    write_evidence: FirmwareConfigurationWriteEvidence,
+) -> Vec<SettingDescriptor> {
+    let mut descriptors = Vec::new();
+    if refloat {
+        descriptors.extend(
+            crate::refloat_settings::supported_setting_ids()
+                .iter()
+                .filter_map(|id| crate::refloat_settings::descriptor(*id))
+                .map(|mut descriptor| {
+                    match crate::refloat_settings::applicability(descriptor.id, lighting_mode) {
+                        crate::refloat_settings::RefloatSettingApplicability::ExternalControllerIgnoresSetting => {
+                            descriptor.access = SettingAccess::ReadOnly;
+                            descriptor.help_key = Some("settings.refloat.lighting_external_mode_ignored.help");
+                        }
+                        crate::refloat_settings::RefloatSettingApplicability::UnknownHardware => {
+                            descriptor.access = SettingAccess::ReadOnly;
+                            descriptor.help_key = Some("settings.refloat.lighting_hardware_mode_unknown.help");
+                        }
+                        crate::refloat_settings::RefloatSettingApplicability::ConfiguredButInactive => {
+                            descriptor.help_key = Some("settings.refloat.lighting_inactive_until_enabled.help");
+                        }
+                        crate::refloat_settings::RefloatSettingApplicability::Applicable
+                        | crate::refloat_settings::RefloatSettingApplicability::NotLighting => {}
+                    }
+                    descriptor
+                }),
+        );
+    }
+    for (enabled, kind, order_offset) in [
+        (
+            motor,
+            crate::vesc_configuration::VescConfigurationKind::Motor,
+            91,
+        ),
+        (
+            app,
+            crate::vesc_configuration::VescConfigurationKind::App,
+            131, // 91 Refloat fields + 40 Motor fields.
+        ),
+    ] {
+        if enabled {
+            descriptors.extend(crate::vesc_configuration::catalog(kind).into_iter().map(
+                |mut descriptor| {
+                    descriptor.order = descriptor.order.saturating_add(order_offset);
+                    if write_evidence == FirmwareConfigurationWriteEvidence::MissingDisengagedState
+                    {
+                        descriptor.access = SettingAccess::ReadOnly;
+                        descriptor.help_key = Some("vesc.settings.read_only.disengaged_evidence");
+                    }
+                    descriptor
+                },
+            ));
+        }
+    }
+    descriptors
 }
 
 /// Aero controls retain explicit per-command verification; charge raw stays diagnostic-only.
@@ -545,13 +788,30 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
 }
 
 /// Source-backed bindings selected only after the Refloat session validates its schema.
+#[cfg(test)]
 pub(crate) fn refloat_control_profile() -> DeviceControlProfile {
-    const SETTINGS: &[SettingId] = &crate::refloat_settings::supported_setting_ids();
     let available = Capabilities::from_supported_commands([CommandKind::SetSetting]);
     DeviceControlProfile::new(available, Capabilities::default())
         .with_production_commands(available)
-        .with_settings_adapter(SettingsAdapter::Refloat)
-        .with_setting_capabilities(SETTINGS, &[])
+        .with_settings_adapter(SettingsAdapter::Vesc {
+            refloat: true,
+            motor: false,
+            app: false,
+        })
+        .with_refloat_lighting_mode(RefloatLightingMode::Internal)
+        .with_setting_capabilities(crate::refloat_settings::supported_setting_ids(), &[])
+}
+
+/// Source-selected generic VESC configuration catalogs.
+pub(crate) fn vesc_control_profile(refloat: bool, motor: bool, app: bool) -> DeviceControlProfile {
+    let available = Capabilities::from_supported_commands([CommandKind::SetSetting]);
+    DeviceControlProfile::new(available, Capabilities::default())
+        .with_production_commands(available)
+        .with_settings_adapter(SettingsAdapter::Vesc {
+            refloat,
+            motor,
+            app,
+        })
 }
 
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
@@ -805,6 +1065,7 @@ fn number(minimum: i32, maximum: i32, precision: u8, unit: SettingUnit) -> Setti
         minimum,
         maximum,
         step: 1,
+        editor_step: 1,
         precision,
         unit,
         can_disable: false,
@@ -816,6 +1077,7 @@ fn speed_control(minimum: i32, maximum: i32) -> SettingControl {
         minimum: minimum * 10,
         maximum: maximum * 10,
         step: 10,
+        editor_step: 10,
         precision: 1,
         unit: SettingUnit::KilometresPerHour,
         can_disable: false,
@@ -865,13 +1127,107 @@ fn control_value(control: SettingControl, raw: i64) -> Option<DeviceSettingValue
 mod tests {
     use super::*;
     #[test]
+    fn refloat_lighting_mode_controls_profile_writability() {
+        let external = vesc_control_profile(true, false, false)
+            .with_refloat_lighting_mode(RefloatLightingMode::External);
+        let descriptor = external
+            .descriptors(false)
+            .into_iter()
+            .find(|descriptor| descriptor.id == SettingId::LightingFrontMode)
+            .expect("Refloat lighting mode control");
+        assert_eq!(descriptor.access, SettingAccess::ReadOnly);
+        assert_eq!(
+            external.command(
+                SettingId::LightingFrontMode,
+                DeviceSettingValue::Choice(1),
+                false,
+            ),
+            Err(SettingsRequestError::ReadOnly),
+        );
+
+        let inactive = vesc_control_profile(true, false, false)
+            .with_refloat_lighting_mode(RefloatLightingMode::Off);
+        let descriptor = inactive
+            .descriptors(false)
+            .into_iter()
+            .find(|descriptor| descriptor.id == SettingId::LightingFrontMode)
+            .expect("inactive Refloat lighting control");
+        assert_eq!(descriptor.access, SettingAccess::Writable);
+        assert_eq!(
+            descriptor.help_key,
+            Some("settings.refloat.lighting_inactive_until_enabled.help")
+        );
+        assert!(
+            inactive
+                .command(
+                    SettingId::LightingFrontMode,
+                    DeviceSettingValue::Choice(1),
+                    false,
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn firmware_configuration_writes_require_disengaged_state_evidence() {
+        let missing = vesc_control_profile(false, true, true)
+            .with_firmware_configuration_write_evidence(
+                FirmwareConfigurationWriteEvidence::MissingDisengagedState,
+            );
+        let descriptors = missing.descriptors(false);
+        assert_eq!(
+            descriptors.len(),
+            75,
+            "ordinary firmware catalogs remain available"
+        );
+        for id in [SettingId::MotorDriveCurrentLimit, SettingId::ControllerId] {
+            let descriptor = descriptors
+                .iter()
+                .find(|descriptor| descriptor.id == id)
+                .expect("firmware configuration descriptor");
+            assert_eq!(descriptor.access, SettingAccess::ReadOnly);
+            assert_eq!(
+                descriptor.help_key,
+                Some("vesc.settings.read_only.disengaged_evidence")
+            );
+        }
+        assert_eq!(
+            missing.command(
+                SettingId::MotorDriveCurrentLimit,
+                DeviceSettingValue::Number(100),
+                false,
+            ),
+            Err(SettingsRequestError::ReadOnly),
+        );
+
+        let ready = vesc_control_profile(false, true, true);
+        assert_eq!(
+            ready
+                .descriptors(false)
+                .iter()
+                .find(|descriptor| descriptor.id == SettingId::MotorDriveCurrentLimit)
+                .unwrap()
+                .access,
+            SettingAccess::Writable,
+        );
+        assert!(
+            ready
+                .command(
+                    SettingId::MotorDriveCurrentLimit,
+                    DeviceSettingValue::Number(100),
+                    false,
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn refloat_catalog_uses_checked_bindings_without_granting_other_protocol_controls() {
         let profile = refloat_control_profile();
         let descriptors = profile.descriptors(false);
-        assert_eq!(descriptors.len(), 2);
+        assert_eq!(descriptors.len(), 91);
         let mut fields = std::collections::BTreeSet::new();
         for descriptor in descriptors {
-            assert_eq!(descriptor.access, SettingAccess::Writable);
             assert_eq!(
                 descriptor.completion,
                 SettingCompletionStrategy::MatchingReadback
@@ -882,6 +1238,13 @@ mod tests {
             );
             assert!(fields.insert(crate::refloat_settings::field_id(descriptor.id).unwrap()));
         }
+        assert_eq!(fields.len(), 91);
+        assert!(
+            profile
+                .descriptors(false)
+                .iter()
+                .any(|descriptor| { descriptor.access == SettingAccess::ReadOnly })
+        );
         assert_eq!(
             profile.command(
                 SettingId::Headlight,
@@ -1025,7 +1388,14 @@ mod tests {
         for (adapter, profile) in [
             (SettingsAdapter::Aero, aero_control_profile()),
             (SettingsAdapter::Falcon, falcon_control_profile()),
-            (SettingsAdapter::Refloat, refloat_control_profile()),
+            (
+                SettingsAdapter::Vesc {
+                    refloat: true,
+                    motor: false,
+                    app: false,
+                },
+                refloat_control_profile(),
+            ),
         ] {
             for descriptor in profile.descriptors(true) {
                 let binding = adapter.binding(descriptor.id).unwrap();
@@ -1149,6 +1519,39 @@ mod tests {
     }
 
     #[test]
+    fn motor_and_app_catalog_orders_remain_disjoint() {
+        let descriptors = vesc_control_profile(true, true, true).descriptors(false);
+        assert_eq!(descriptors.len(), 166);
+        let unique_orders: std::collections::BTreeSet<_> = descriptors
+            .iter()
+            .map(|descriptor| descriptor.order)
+            .collect();
+        assert_eq!(unique_orders.len(), descriptors.len());
+        let mut motor_orders = descriptors
+            .iter()
+            .filter(|descriptor| {
+                crate::vesc_configuration::kind_for_setting(descriptor.id)
+                    == Some(crate::vesc_configuration::VescConfigurationKind::Motor)
+            })
+            .map(|descriptor| descriptor.order);
+        let maximum_motor_order = motor_orders
+            .by_ref()
+            .max()
+            .expect("motor catalog contains descriptors");
+        let minimum_app_order = descriptors
+            .iter()
+            .filter(|descriptor| {
+                crate::vesc_configuration::kind_for_setting(descriptor.id)
+                    == Some(crate::vesc_configuration::VescConfigurationKind::App)
+            })
+            .map(|descriptor| descriptor.order)
+            .min()
+            .expect("App catalog contains descriptors");
+
+        assert!(minimum_app_order > maximum_motor_order);
+    }
+
+    #[test]
     fn ordinary_aero_catalog_encodes_every_supported_value_without_promoting_evidence() {
         let profile = aero_control_profile();
         let expected = [
@@ -1197,12 +1600,12 @@ mod tests {
                 SettingControl::Number {
                     minimum,
                     maximum,
-                    step,
+                    editor_step,
                     can_disable,
                     ..
                 } => {
                     let mut values: Vec<_> = (*minimum..=*maximum)
-                        .step_by(usize::try_from(*step).unwrap_or(1))
+                        .step_by(usize::try_from(*editor_step).unwrap_or(1))
                         .map(DeviceSettingValue::Number)
                         .collect();
                     if *can_disable {
@@ -1285,7 +1688,7 @@ mod tests {
                 SettingControl::Number {
                     minimum,
                     maximum,
-                    step,
+                    editor_step,
                     can_disable,
                     ..
                 } => {
@@ -1296,7 +1699,7 @@ mod tests {
                     if can_disable {
                         values.push(DeviceSettingValue::Disabled);
                     }
-                    assert!(step > 0);
+                    assert!(editor_step > 0);
                     values
                 }
                 SettingControl::ReadOnly => panic!("writable descriptor is read-only"),
@@ -1321,19 +1724,14 @@ mod tests {
     fn numeric_descriptors_and_checked_commands_agree_on_every_value() {
         for profile in [aero_control_profile(), falcon_control_profile()] {
             for descriptor in profile.descriptors(true) {
-                let SettingControl::Number {
-                    minimum,
-                    maximum,
-                    step,
-                    ..
-                } = descriptor.control
-                else {
+                let SettingControl::Number { .. } = &descriptor.control else {
                     continue;
                 };
                 for value in -256..=256 {
                     let permitted = descriptor.access == SettingAccess::Writable
-                        && (minimum..=maximum).contains(&value)
-                        && (value - minimum) % step == 0;
+                        && descriptor
+                            .control
+                            .accepts_value(DeviceSettingValue::Number(value));
                     assert_eq!(
                         profile
                             .command(descriptor.id, DeviceSettingValue::Number(value), true)
@@ -1394,5 +1792,21 @@ mod tests {
             ),
             Err(SettingsRequestError::ReadOnly)
         );
+    }
+
+    #[test]
+    fn numeric_wire_domain_does_not_enforce_editor_increment() {
+        let control = SettingControl::Number {
+            minimum: 10,
+            maximum: 1_000,
+            step: 1,
+            editor_step: 50,
+            precision: 2,
+            unit: SettingUnit::Volts,
+            can_disable: false,
+        };
+        assert!(control.accepts(DeviceSettingValue::Number(20)));
+        assert!(!control.accepts(DeviceSettingValue::Number(9)));
+        assert!(!control.accepts(DeviceSettingValue::Number(1_001)));
     }
 }

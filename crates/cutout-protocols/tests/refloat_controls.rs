@@ -11,6 +11,16 @@ use cutout_core::{
 };
 use cutout_protocols::{DeviceConnectionSession, DeviceDetectionEvent, VESC_NOTIFY_CHANNEL};
 
+const MOTOR_DEFAULT: &[u8; 488] =
+    include_bytes!("fixtures/vesc-settings/vesc-7.00-motor-default.bin");
+const APP_DEFAULT: &[u8; 284] = include_bytes!("fixtures/vesc-settings/vesc-7.00-app-default.bin");
+
+fn firmware_config_reply(command: u8, image: &[u8]) -> Vec<u8> {
+    let mut payload = vec![command];
+    payload.extend_from_slice(image);
+    vesc_frame(&payload)
+}
+
 const VESC_IDENTITY_REPLY: &[u8] = &[
     2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38,
     208, 3,
@@ -161,6 +171,16 @@ fn refloat_session(
         let mut response = vec![93, 0];
         response.extend_from_slice(config);
         notification(&mut owner, &token, vesc_frame(&response), 13);
+        // Firmware objects answer their own serialized read domains. Deliver the
+        // independently generated defaults before admitting writes in these fixtures.
+        for (command, image) in [(14, MOTOR_DEFAULT.as_slice()), (17, APP_DEFAULT.as_slice())] {
+            notification(
+                &mut owner,
+                &token,
+                firmware_config_reply(command, image),
+                13,
+            );
+        }
     }
     (owner, token)
 }
@@ -272,6 +292,250 @@ fn submit_pwm_tiltback(
 }
 
 #[test]
+// Keep the complete per-kind receipt/readback procedure in one sequence for auditability.
+#[allow(clippy::too_many_lines)]
+fn firmware_configurations_keep_their_own_preflight_receipts_and_full_image_readback() {
+    for (get, set, id, value, baseline, offset, replacement) in [
+        (
+            14,
+            13,
+            SettingId::BatterySeriesCellCount,
+            16,
+            MOTOR_DEFAULT.as_slice(),
+            462,
+            vec![16],
+        ),
+        (
+            17,
+            16,
+            SettingId::ImuSampleRate,
+            1_000,
+            APP_DEFAULT.as_slice(),
+            229,
+            1_000_u16.to_be_bytes().to_vec(),
+        ),
+    ] {
+        let (mut owner, token) = known_refloat_session();
+        for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+            notification(&mut owner, &token, bytes, 20 + index as u64);
+        }
+        let accepted = owner
+            .submit_setting(
+                &token,
+                id,
+                DeviceSettingValue::Number(value),
+                MonotonicTimestamp::new(22),
+            )
+            .unwrap();
+        assert!(accepted.result.error.is_none());
+        assert_eq!(frame_payload(&transport_writes(&accepted)[0]), &[get]);
+        let request_id = owner
+            .settings_snapshot()
+            .settings
+            .iter()
+            .find(|setting| setting.id == id)
+            .unwrap()
+            .request_id
+            .unwrap();
+        assert!(owner.mark_setting_transport(
+            &token,
+            id,
+            request_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(23)
+        ));
+
+        // A Refloat answer is a separate object and cannot authorize this write.
+        let mut unrelated = vec![93, 0];
+        unrelated.extend_from_slice(include_bytes!(
+            "fixtures/refloat-settings/refloat-1.3.0-default.bin"
+        ));
+        let unrelated = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: vesc_frame(&unrelated),
+                    monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+                },
+            )
+            .unwrap();
+        assert_eq!(transport_writes(&unrelated), Vec::<Vec<u8>>::new());
+
+        let prepared = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: firmware_config_reply(get, baseline),
+                    monotonic_ms: MonotonicMillisDto { milliseconds: 25 },
+                },
+            )
+            .unwrap();
+        let writes = transport_writes(&prepared);
+        assert_eq!(writes.len(), 2);
+        let mut expected = baseline.to_vec();
+        expected[offset..offset + replacement.len()].copy_from_slice(&replacement);
+        assert_eq!(frame_payload(&writes[0]).first(), Some(&set));
+        assert_eq!(&frame_payload(&writes[0])[1..], expected);
+        assert_eq!(frame_payload(&writes[1]), &[get]);
+        assert!(owner.mark_setting_transport(
+            &token,
+            id,
+            request_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(26)
+        ));
+        // After mutation handoff, motion revokes future mutations, not the harmless
+        // verification read that belongs to the already-submitted procedure.
+        for bytes in refloat_telemetry(3, 0x3c00) {
+            notification(&mut owner, &token, bytes, 26);
+        }
+        assert!(
+            owner.setting_transport_is_current(&token, request_id, MonotonicTimestamp::new(27)),
+            "a submitted mutation must still be allowed its read-only verification"
+        );
+        assert!(owner.mark_setting_transport(
+            &token,
+            id,
+            request_id,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(27)
+        ));
+        notification(&mut owner, &token, vesc_frame(&[set]), 28);
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .iter()
+                .find(|setting| setting.id == id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        notification(
+            &mut owner,
+            &token,
+            firmware_config_reply(get, &expected),
+            29,
+        );
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .iter()
+                .find(|setting| setting.id == id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::Confirmed
+        );
+    }
+}
+
+#[test]
+fn firmware_configuration_is_available_without_a_refloat_package() {
+    let (mut owner, token) = refloat_session(None, (7, 0), None);
+    notification(
+        &mut owner,
+        &token,
+        firmware_config_reply(14, MOTOR_DEFAULT),
+        13,
+    );
+    notification(
+        &mut owner,
+        &token,
+        firmware_config_reply(17, APP_DEFAULT),
+        13,
+    );
+    let descriptors = owner.settings_descriptors();
+    assert_eq!(descriptors.len(), 75);
+    assert!(
+        descriptors
+            .iter()
+            .any(|descriptor| descriptor.id == SettingId::BatterySeriesCellCount)
+    );
+    assert!(
+        descriptors
+            .iter()
+            .all(|descriptor| descriptor.id != SettingId::PwmTiltback)
+    );
+    assert!(
+        descriptors
+            .iter()
+            .all(|descriptor| descriptor.access == cutout_protocols::SettingAccess::ReadOnly)
+    );
+    assert!(
+        owner
+            .submit_setting(
+                &token,
+                SettingId::BatterySeriesCellCount,
+                DeviceSettingValue::Number(16),
+                MonotonicTimestamp::new(14)
+            )
+            .is_err(),
+        "configuration reads cannot supply missing parked/disengaged evidence"
+    );
+}
+
+#[test]
+fn newly_observed_configuration_change_revokes_a_queued_whole_image_mutation() {
+    let (mut owner, token) = known_refloat_session();
+    for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
+        notification(&mut owner, &token, bytes, 20 + index as u64);
+    }
+    submit_pwm_tiltback(&mut owner, &token, 22);
+    let request_id = owner
+        .settings_snapshot()
+        .settings
+        .iter()
+        .find(|setting| setting.id == SettingId::PwmTiltback)
+        .unwrap()
+        .request_id
+        .unwrap();
+    assert!(owner.mark_setting_transport(
+        &token,
+        SettingId::PwmTiltback,
+        request_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23)
+    ));
+    let original = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
+    let mut preflight = vec![93, 0];
+    preflight.extend_from_slice(original);
+    let prepared = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_frame(&preflight),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
+            },
+        )
+        .unwrap();
+    assert!(has_config_write(&prepared));
+    let mut replacement = preflight;
+    // This independent LED setting changed after preflight, before native handoff.
+    replacement[2 + 180] ^= 1;
+    notification(&mut owner, &token, vesc_frame(&replacement), 25);
+    assert!(!owner.setting_transport_is_current(&token, request_id, MonotonicTimestamp::new(26)));
+}
+
+#[test]
+fn complete_ordinary_catalog_retains_every_observation_across_bounded_readbacks() {
+    let (owner, _) = known_refloat_session();
+    assert_eq!(owner.settings_descriptors().len(), 166);
+    let snapshot = owner.settings_snapshot();
+    assert_eq!(snapshot.settings.len(), 166);
+    assert!(
+        snapshot
+            .settings
+            .iter()
+            .all(|setting| setting.current.is_some()),
+        "tail fields must not be truncated by the bounded settings response"
+    );
+}
+
+#[test]
 fn generic_vesc_without_refloat_package_exposes_no_refloat_controls() {
     let (owner, _) = refloat_session(None, (7, 0), None);
     assert_eq!(owner.settings_descriptors().len(), 0);
@@ -363,6 +627,8 @@ fn initial_config_read_cancellation_releases_slot_but_submitted_read_waits_for_r
 }
 
 #[test]
+// Keep timeout, slot-retention, and reconnect assertions together as one lifecycle regression.
+#[allow(clippy::too_many_lines)]
 fn submitted_procedure_read_timeout_keeps_config_slot_until_reply() {
     let (mut owner, token) = known_refloat_session();
     for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
@@ -445,6 +711,15 @@ fn submitted_procedure_read_timeout_keeps_config_slot_until_reply() {
             .first()
             .is_none_or(|command| *command != 93)
     }));
+    assert_eq!(
+        owner.submit_setting(
+            &token,
+            SettingId::PwmTiltback,
+            DeviceSettingValue::Number(81),
+            MonotonicTimestamp::new(2_024),
+        ),
+        Err(cutout_protocols::DeviceSettingRequestError::ConfigurationReadRequiresReconnect)
+    );
 
     notification(&mut owner, &token, vesc_frame(&preflight), 2_025);
     let allowed = owner
@@ -512,7 +787,7 @@ fn rider_feel_tune_fields_are_not_exposed_as_individual_configuration_settings()
 }
 
 #[test]
-fn unsupported_package_or_firmware_version_exposes_no_controls() {
+fn unsupported_package_does_not_hide_independently_validated_firmware_configuration() {
     let config = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
     for (package, firmware) in [
         (Some(("Other", 1, 3, 0)), (7, 0)),
@@ -520,19 +795,31 @@ fn unsupported_package_or_firmware_version_exposes_no_controls() {
         (Some(("Refloat", 1, 3, 0)), (7, 1)),
     ] {
         let (owner, _) = refloat_session(package, firmware, Some(config));
-        assert_eq!(owner.settings_descriptors().len(), 0);
+        let descriptors = owner.settings_descriptors();
+        assert_eq!(descriptors.len(), if firmware == (7, 0) { 75 } else { 0 });
+        assert!(
+            !descriptors
+                .iter()
+                .any(|descriptor| descriptor.id == SettingId::PwmTiltback)
+        );
     }
 }
 
 #[test]
-fn wrong_refloat_schema_signature_or_length_exposes_no_controls() {
+fn wrong_refloat_schema_does_not_expose_package_controls() {
     let config = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
     let mut wrong_signature = config.to_vec();
     wrong_signature[0] ^= 1;
     let truncated = &config[..config.len() - 1];
     for invalid_config in [wrong_signature.as_slice(), truncated] {
         let (owner, _) = refloat_session(Some(("Refloat", 1, 3, 0)), (7, 0), Some(invalid_config));
-        assert_eq!(owner.settings_descriptors().len(), 0);
+        let descriptors = owner.settings_descriptors();
+        assert_eq!(descriptors.len(), 75);
+        assert!(
+            !descriptors
+                .iter()
+                .any(|descriptor| descriptor.id == SettingId::PwmTiltback)
+        );
     }
 }
 
@@ -655,14 +942,41 @@ fn outstanding_config_refresh_blocks_mutation_and_missing_reads_are_not_retried(
         )
         .unwrap();
     assert_eq!(transport_writes(&read).len(), 1);
+    let read_id = transport_write_operation_ids(&read)[0].unwrap();
+    assert!(owner.mark_setting_read_transport(
+        &token,
+        read_id,
+        SettingTransportStatus::Submitted,
+        MonotonicTimestamp::new(23),
+    ));
     assert_eq!(
         owner.submit_setting(
             &token,
             SettingId::PwmTiltback,
             DeviceSettingValue::Number(81),
-            MonotonicTimestamp::new(23)
+            MonotonicTimestamp::new(24)
         ),
         Err(cutout_protocols::DeviceSettingRequestError::Busy)
+    );
+    assert_eq!(
+        owner.submit_setting(
+            &token,
+            SettingId::PwmTiltback,
+            DeviceSettingValue::Number(81),
+            MonotonicTimestamp::new(2_022),
+        ),
+        Err(cutout_protocols::DeviceSettingRequestError::Busy),
+        "a recently submitted read remains ordinary busy"
+    );
+    assert_eq!(
+        owner.submit_setting(
+            &token,
+            SettingId::PwmTiltback,
+            DeviceSettingValue::Number(81),
+            MonotonicTimestamp::new(2_023),
+        ),
+        Err(cutout_protocols::DeviceSettingRequestError::ConfigurationReadRequiresReconnect),
+        "a timed-out read explains that reconnection is required"
     );
 
     let (mut silent, token) = refloat_session(Some(("Refloat", 1, 3, 0)), (7, 0), None);
@@ -751,11 +1065,10 @@ fn matching_config_before_all_host_receipts_does_not_retire_queued_writes() {
                 MonotonicTimestamp::new(25)
             ));
         }
-        response[70..72].copy_from_slice(&810_i16.to_be_bytes());
         notification(&mut owner, &token, vesc_frame(&response), 26);
         assert!(
             owner.setting_transport_is_current(&token, request_id, MonotonicTimestamp::new(27)),
-            "an unsolicited matching image must not cancel queued mutation/read stages"
+            "a fresh image that still matches the mutation baseline must not cancel queued stages"
         );
         for _ in submitted_stages..2 {
             assert!(owner.mark_setting_transport(
@@ -766,6 +1079,7 @@ fn matching_config_before_all_host_receipts_does_not_retire_queued_writes() {
                 MonotonicTimestamp::new(28)
             ));
         }
+        response[70..72].copy_from_slice(&810_i16.to_be_bytes());
         notification(&mut owner, &token, vesc_frame(&response), 29);
         let setting = owner
             .settings_snapshot()
@@ -820,17 +1134,11 @@ fn same_millisecond_preflight_readback_is_accepted_after_its_host_receipt() {
 
 #[test]
 fn same_timestamp_config_generation_accepts_new_identical_reply_once() {
-    let (mut owner, token) = vesc_session();
-    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 10);
-    notification(&mut owner, &token, vesc_firmware_reply(7, 0), 11);
-    notification(&mut owner, &token, vesc_controller_7_values_reply(), 12);
+    let (mut owner, token) = known_refloat_session();
     for (index, bytes) in stationary_refloat_telemetry().into_iter().enumerate() {
         notification(&mut owner, &token, bytes, 20 + index as u64);
     }
     let baseline = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
-    let mut initial_config = vec![93, 0];
-    initial_config.extend_from_slice(baseline);
-    notification(&mut owner, &token, vesc_frame(&initial_config), 24);
     submit_pwm_tiltback(&mut owner, &token, 24);
     let request_id = owner
         .settings_snapshot()
@@ -1534,16 +1842,15 @@ fn late_setting_receipt_from_replaced_connection_is_rejected() {
 }
 
 #[test]
-fn exact_refloat_package_and_schema_expose_two_non_tune_controls() {
+fn exact_schemas_expose_the_complete_ordinary_configuration_catalog() {
     let (owner, _) = known_refloat_session();
     let descriptors = owner.settings_descriptors();
     let ids: std::collections::BTreeSet<_> =
         descriptors.iter().map(|descriptor| descriptor.id).collect();
-    assert_eq!(
-        ids,
-        std::collections::BTreeSet::from([SettingId::PwmTiltback, SettingId::TiltbackSpeed,])
-    );
-    assert_eq!(descriptors.len(), 2);
+    assert!(ids.contains(&SettingId::PwmTiltback));
+    assert!(ids.contains(&SettingId::TiltbackSpeed));
+    assert_eq!(ids.len(), 166);
+    assert_eq!(descriptors.len(), 166);
 
     let snapshot = owner.settings_snapshot();
     for id in ids {
@@ -1575,5 +1882,11 @@ fn oversized_config_response_invalidates_previously_supported_catalog() {
     let mut response = vec![93, 0];
     response.extend_from_slice(&[0; 283]);
     notification(&mut owner, &token, vesc_frame(&response), 20);
-    assert_eq!(owner.settings_descriptors().len(), 0);
+    assert_eq!(owner.settings_descriptors().len(), 75);
+    assert!(
+        !owner
+            .settings_descriptors()
+            .iter()
+            .any(|descriptor| descriptor.id == SettingId::PwmTiltback)
+    );
 }

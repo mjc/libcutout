@@ -1,4 +1,4 @@
-//! Source-pinned, stationary-only Refloat settings over the generic VESC session.
+//! Source-pinned persistent configuration over the generic VESC session.
 
 use cutout_core::{
     CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
@@ -11,14 +11,49 @@ use cutout_core::{
 
 use crate::refloat_settings::RefloatSettings;
 use crate::session::SettingWriteAuthorization;
+use crate::vesc_configuration::VescConfiguration;
+use crate::vesc_settings_image::{ConfigurationKind, SettingsImage};
 use crate::{
     DeviceControlProfile, DeviceSessionStep, RefloatInfo, VESC_WRITE_CHANNEL, VescBoardProfile,
     VescReadOnlySession,
 };
 
-const REFLOAT_SETTINGS_MODEL: &str = "Refloat1.3.0";
+const VESC_SETTINGS_MODEL: &str = "Vesc7.0PersistentSettings";
 const SETTINGS_EVIDENCE_MAX_AGE_MS: u64 = 2_000;
 const SETTING_OPERATION_TIMEOUT_MS: u64 = 2_000;
+
+#[derive(Clone, Copy, Debug)]
+struct ConfigurationKindValues<T> {
+    refloat: T,
+    motor: T,
+    app: T,
+}
+
+impl<T> ConfigurationKindValues<T> {
+    const fn new(refloat: T, motor: T, app: T) -> Self {
+        Self {
+            refloat,
+            motor,
+            app,
+        }
+    }
+
+    fn get(&self, kind: ConfigurationKind) -> &T {
+        match kind {
+            ConfigurationKind::Refloat => &self.refloat,
+            ConfigurationKind::Motor => &self.motor,
+            ConfigurationKind::App => &self.app,
+        }
+    }
+
+    fn get_mut(&mut self, kind: ConfigurationKind) -> &mut T {
+        match kind {
+            ConfigurationKind::Refloat => &mut self.refloat,
+            ConfigurationKind::Motor => &mut self.motor,
+            ConfigurationKind::App => &mut self.app,
+        }
+    }
+}
 
 /// Decoder evidence required to select the pinned Refloat 1.3.0 catalog.
 #[derive(Clone, Debug, Default)]
@@ -26,8 +61,39 @@ pub(crate) struct VescSettingsEvidence {
     pub(crate) package: Option<RefloatInfo>,
     pub(crate) config: Option<(RefloatSettings, MonotonicTimestamp)>,
     pub(crate) config_generation: u64,
+    pub(crate) motor_config: Option<(VescConfiguration, MonotonicTimestamp)>,
+    pub(crate) app_config: Option<(VescConfiguration, MonotonicTimestamp)>,
+    pub(crate) motor_generation: u64,
+    pub(crate) app_generation: u64,
     pub(crate) firmware: Option<(u8, u8)>,
     pub(crate) controller_id: Option<u8>,
+}
+
+impl VescSettingsEvidence {
+    fn image(&self, kind: ConfigurationKind) -> Option<(SettingsImage, MonotonicTimestamp)> {
+        match kind {
+            ConfigurationKind::Refloat => self
+                .config
+                .clone()
+                .map(|(image, at)| (SettingsImage::Refloat(image), at)),
+            ConfigurationKind::Motor => self
+                .motor_config
+                .clone()
+                .map(|(image, at)| (SettingsImage::Firmware(image), at)),
+            ConfigurationKind::App => self
+                .app_config
+                .clone()
+                .map(|(image, at)| (SettingsImage::Firmware(image), at)),
+        }
+    }
+
+    const fn generation(&self, kind: ConfigurationKind) -> u64 {
+        match kind {
+            ConfigurationKind::Refloat => self.config_generation,
+            ConfigurationKind::Motor => self.motor_generation,
+            ConfigurationKind::App => self.app_generation,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,8 +136,8 @@ struct PendingSetting {
     operation_id: Option<TransportOperationId>,
     authorization: Option<SettingWriteAuthorization>,
     controller_id: u8,
-    baseline: RefloatSettings,
-    expected: Option<RefloatSettings>,
+    baseline: SettingsImage,
+    expected: Option<SettingsImage>,
     stage: PendingStage,
 }
 
@@ -87,9 +153,11 @@ pub(crate) struct VescSettingsSession {
     last_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
     last_operating_state: Option<(RideOperatingState, MonotonicTimestamp)>,
     last_operating_mode: Option<(cutout_core::RideOperatingMode, MonotonicTimestamp)>,
-    last_config_generation: u64,
-    initial_config_requested: bool,
-    initial_config_retry_count: u8,
+    last_config_generation: ConfigurationKindValues<u64>,
+    initial_config_requested: ConfigurationKindValues<bool>,
+    initial_config_retry_count: ConfigurationKindValues<u8>,
+    standalone_kind: ConfigurationKind,
+    firmware_inventory_requested: bool,
     next_config_read_id: Option<u64>,
     standalone_config_read: StandaloneConfigRead,
     identity_invalidated: bool,
@@ -110,9 +178,11 @@ impl VescSettingsSession {
             last_speed: None,
             last_operating_state: None,
             last_operating_mode: None,
-            last_config_generation: 0,
-            initial_config_requested: false,
-            initial_config_retry_count: 0,
+            last_config_generation: ConfigurationKindValues::new(0, 0, 0),
+            initial_config_requested: ConfigurationKindValues::new(false, false, false),
+            initial_config_retry_count: ConfigurationKindValues::new(0, 0, 0),
+            standalone_kind: ConfigurationKind::Refloat,
+            firmware_inventory_requested: false,
             next_config_read_id: Some(1_u64 << 63),
             standalone_config_read: StandaloneConfigRead::Idle,
             identity_invalidated: false,
@@ -138,15 +208,46 @@ impl VescSettingsSession {
     }
 
     pub(crate) fn control_profile(&self) -> DeviceControlProfile {
-        if self.profile_is_supported() {
-            crate::device_settings::refloat_control_profile()
-        } else {
-            DeviceControlProfile::default()
+        let evidence = self.read_only.settings_evidence();
+        if self.identity_invalidated || !supported_firmware_facts(&evidence) {
+            return DeviceControlProfile::default();
         }
+        crate::device_settings::vesc_control_profile(
+            supported_package_facts(&evidence) && evidence.config.is_some(),
+            evidence.motor_config.is_some(),
+            evidence.app_config.is_some(),
+        )
+        .with_firmware_configuration_write_evidence(
+            if self.fresh_stationary_evidence_for(ConfigurationKind::Motor, self.now) {
+                crate::FirmwareConfigurationWriteEvidence::Ready
+            } else {
+                crate::FirmwareConfigurationWriteEvidence::MissingDisengagedState
+            },
+        )
+        .with_refloat_lighting_mode(
+            evidence
+                .config
+                .as_ref()
+                .map_or(crate::RefloatLightingMode::Unknown, |(config, _)| {
+                    crate::refloat_settings::lighting_mode(config)
+                }),
+        )
     }
 
     pub(crate) fn settings_busy(&self) -> bool {
         self.pending.is_some() || self.standalone_config_read != StandaloneConfigRead::Idle
+    }
+
+    pub(crate) fn settings_read_requires_reconnect(&self, at: MonotonicTimestamp) -> bool {
+        match self.standalone_config_read {
+            StandaloneConfigRead::AwaitingProcedureReply => true,
+            StandaloneConfigRead::Submitted { receipt_at, .. } => {
+                at >= receipt_at
+                    && at.saturating_duration_since(receipt_at)
+                        >= cutout_core::Duration::from_milliseconds(SETTING_OPERATION_TIMEOUT_MS)
+            }
+            StandaloneConfigRead::Idle | StandaloneConfigRead::Queued { .. } => false,
+        }
     }
 
     pub(crate) fn ingest_typed(&mut self, input: &SessionInputDto) -> DeviceSessionStep {
@@ -177,6 +278,8 @@ impl VescSettingsSession {
         let mut step = self
             .read_only
             .ingest_typed(protocol_input.as_ref().unwrap_or(input));
+        step.outputs
+            .retain(|output| !is_automatic_motor_config_read(output));
         let current = self.read_only.settings_evidence();
         if !is_connection_edge && identity_changed(&previous, &current) {
             // Same-link identity changes make outstanding replies ambiguous.
@@ -285,11 +388,20 @@ impl VescSettingsSession {
                 && current.cancellation_generation == authorization.cancellation_generation
         }) && authorization.cancellation_generation == self.cancellation_generation
             && authorization.arm == current_arm
-            && current_arm.is_valid_for(REFLOAT_SETTINGS_MODEL, at)
+            && current_arm.is_valid_for(VESC_SETTINGS_MODEL, at)
             && pending.expires_at >= at
             && self.profile_is_supported()
+            && self
+                .control_profile()
+                .command(pending.id, pending.value, true)
+                .is_ok()
+            && self
+                .read_only
+                .settings_evidence()
+                .image(pending.baseline.kind())
+                .is_some_and(|(image, _)| pending.baseline.matches(&image))
             && self.read_only.settings_evidence().controller_id == Some(pending.controller_id)
-            && self.fresh_stationary_evidence(at)
+            && self.fresh_stationary_evidence_for(pending.baseline.kind(), at)
     }
 
     pub(crate) fn setting_authorization_expires_at(
@@ -363,7 +475,7 @@ impl VescSettingsSession {
             && self.read_only.settings_evidence().controller_id.is_some())
         .then(|| {
             StationarySettingsPolicy {
-                model: REFLOAT_SETTINGS_MODEL,
+                model: VESC_SETTINGS_MODEL,
                 arm_duration: cutout_core::Duration::from_milliseconds(
                     SETTINGS_EVIDENCE_MAX_AGE_MS,
                 ),
@@ -425,6 +537,7 @@ impl VescSettingsSession {
         };
         remove_refusal(step, CommandKind::SetSetting);
         let at = self.now;
+        let kind = ConfigurationKind::for_setting(id);
         let refusal = if self.settings_busy() {
             Some(ControlRefusalReason::Busy)
         } else if !self.profile_is_supported()
@@ -435,10 +548,10 @@ impl VescSettingsSession {
             Some(ControlRefusalReason::MissingArm)
         } else if !self
             .arm
-            .is_some_and(|arm| arm.is_valid_for(REFLOAT_SETTINGS_MODEL, at))
+            .is_some_and(|arm| arm.is_valid_for(VESC_SETTINGS_MODEL, at))
         {
             Some(ControlRefusalReason::ExpiredArm)
-        } else if !self.fresh_stationary_evidence(at) {
+        } else if kind.is_none_or(|kind| !self.fresh_stationary_evidence_for(kind, at)) {
             Some(ControlRefusalReason::MissingArm)
         } else {
             None
@@ -448,7 +561,7 @@ impl VescSettingsSession {
             return;
         }
         let evidence = self.read_only.settings_evidence();
-        let Some((baseline, _observed_at)) = evidence.config else {
+        let Some((baseline, _observed_at)) = kind.and_then(|kind| evidence.image(kind)) else {
             append_refusal(
                 step,
                 CommandKind::SetSetting,
@@ -464,7 +577,7 @@ impl VescSettingsSession {
             );
             return;
         };
-        let Some(bytes) = encode_settings_payload(&[93, 0]) else {
+        let Some(bytes) = encode_settings_payload(baseline.read_command_payload()) else {
             append_refusal(
                 step,
                 CommandKind::SetSetting,
@@ -505,10 +618,17 @@ impl VescSettingsSession {
             );
             return;
         }
-        if !self.identity_invalidated
-            && supported_package_facts(&self.read_only.settings_evidence())
-        {
-            self.push_config_read(step);
+        let evidence = self.read_only.settings_evidence();
+        if !self.identity_invalidated && supported_firmware_facts(&evidence) {
+            self.firmware_inventory_requested = true;
+            self.initial_config_requested = ConfigurationKindValues::new(false, false, false);
+            let kind = if supported_package_facts(&evidence) {
+                ConfigurationKind::Refloat
+            } else {
+                ConfigurationKind::Motor
+            };
+            *self.initial_config_requested.get_mut(kind) = true;
+            self.push_config_read(kind, step);
             step.error = None;
         } else {
             append_refusal(
@@ -550,20 +670,41 @@ impl VescSettingsSession {
 
     fn observe_config(&mut self, step: &mut DeviceSessionStep) {
         let evidence = self.read_only.settings_evidence();
-        if evidence.config_generation <= self.last_config_generation {
-            if evidence.config.is_none() && self.pending.is_some() {
-                self.clear_arm_and_cancel();
+        for kind in ConfigurationKind::ALL {
+            if evidence.generation(kind) > *self.last_config_generation.get(kind) {
+                *self.last_config_generation.get_mut(kind) = evidence.generation(kind);
+                self.observe_config_image(kind, &evidence, step);
             }
-            return;
         }
-        self.last_config_generation = evidence.config_generation;
-        self.standalone_config_read = StandaloneConfigRead::Idle;
-        let Some((config, observed_at)) = evidence.config else {
-            if self.pending.is_some() {
+    }
+
+    fn observe_config_image(
+        &mut self,
+        kind: ConfigurationKind,
+        evidence: &VescSettingsEvidence,
+        step: &mut DeviceSessionStep,
+    ) {
+        if self.standalone_kind == kind {
+            self.standalone_config_read = StandaloneConfigRead::Idle;
+        }
+        let Some((config, observed_at)) = evidence.image(kind) else {
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.baseline.kind() == kind)
+            {
                 self.cancel_pending_after_read_response();
             }
             return;
         };
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.baseline.kind() != kind)
+        {
+            push_settings_readback(step, &config);
+            return;
+        }
 
         if self
             .pending
@@ -576,7 +717,6 @@ impl VescSettingsSession {
         }
 
         let Some(pending) = self.pending.clone() else {
-            self.standalone_config_read = StandaloneConfigRead::Idle;
             push_settings_readback(step, &config);
             return;
         };
@@ -597,7 +737,7 @@ impl VescSettingsSession {
                 let verified = pending
                     .expected
                     .as_ref()
-                    .is_some_and(|expected| settings_images_match(expected, &config));
+                    .is_some_and(|expected| expected.matches(&config));
                 if verified {
                     push_settings_readback(step, &config);
                     self.finish_pending();
@@ -612,7 +752,7 @@ impl VescSettingsSession {
     fn apply_preflight(
         &mut self,
         pending: &PendingSetting,
-        config: &RefloatSettings,
+        config: &SettingsImage,
         observed_at: MonotonicTimestamp,
         step: &mut DeviceSessionStep,
     ) {
@@ -624,12 +764,12 @@ impl VescSettingsSession {
             push_settings_readback(step, config);
             return;
         }
-        if !settings_images_match(&pending.baseline, config) {
+        if !pending.baseline.matches(config) {
             self.cancel_pending_after_read_response();
             push_settings_readback(step, config);
             return;
         }
-        let Ok(expected) = config.changed(pending.id, pending.value) else {
+        let Some(expected) = config.changed(pending.id, pending.value) else {
             self.cancel_pending_after_read_response();
             push_settings_readback(step, config);
             return;
@@ -642,7 +782,7 @@ impl VescSettingsSession {
             self.cancel_pending_after_read_response();
             return;
         };
-        let Some(read) = encode_settings_payload(&[93, 0]) else {
+        let Some(read) = encode_settings_payload(config.read_command_payload()) else {
             self.cancel_pending_after_read_response();
             return;
         };
@@ -670,23 +810,34 @@ impl VescSettingsSession {
 
     fn maybe_request_initial_config(&mut self, step: &mut DeviceSessionStep) {
         let evidence = self.read_only.settings_evidence();
-        if !supported_package_facts(&evidence)
+        if !supported_firmware_facts(&evidence)
             || self.identity_invalidated
-            || evidence.config.is_some()
             || self.pending.is_some()
             || self.standalone_config_read != StandaloneConfigRead::Idle
-            || self.initial_config_requested
         {
             return;
         }
-        self.initial_config_requested = true;
-        self.push_config_read(step);
+        for kind in ConfigurationKind::ALL {
+            let applicable = match kind {
+                ConfigurationKind::Refloat => supported_package_facts(&evidence),
+                ConfigurationKind::Motor | ConfigurationKind::App => true,
+            };
+            if applicable
+                && !*self.initial_config_requested.get(kind)
+                && (self.firmware_inventory_requested || evidence.image(kind).is_none())
+            {
+                *self.initial_config_requested.get_mut(kind) = true;
+                self.push_config_read(kind, step);
+                break;
+            }
+        }
     }
 
-    fn push_config_read(&mut self, step: &mut DeviceSessionStep) {
-        let Some(bytes) = encode_settings_payload(&[93, 0]) else {
+    fn push_config_read(&mut self, kind: ConfigurationKind, step: &mut DeviceSessionStep) {
+        let Some(bytes) = encode_settings_payload(kind.read_command()) else {
             return;
         };
+        self.standalone_kind = kind;
         let Some(operation_id) = self.next_config_read_id.map(TransportOperationId::new) else {
             return;
         };
@@ -704,8 +855,8 @@ impl VescSettingsSession {
                 bytes,
                 mode: WriteMode::WithoutResponse,
             }));
-        // Command93 has no request nonce. Never retry an unanswered read on
-        // this connection or let it overlap a mutation's preflight.
+        // These configuration commands have no request nonce. An unanswered
+        // submitted read retains its slot until a reply or reconnect.
     }
 
     pub(crate) fn setting_read_transport_is_current(
@@ -722,7 +873,7 @@ impl VescSettingsSession {
                 current.get() == operation_id
                     && at >= accepted_at
                     && at >= receipt_at
-                    && self.package_is_supported(&self.read_only.settings_evidence())
+                    && self.read_kind_is_supported(self.standalone_kind)
             }
             StandaloneConfigRead::Idle
             | StandaloneConfigRead::AwaitingProcedureReply
@@ -766,9 +917,11 @@ impl VescSettingsSession {
             }
             SettingTransportStatus::Rejected | SettingTransportStatus::Cancelled => {
                 self.standalone_config_read = StandaloneConfigRead::Idle;
-                if self.initial_config_retry_count == 0 {
-                    self.initial_config_retry_count = 1;
-                    self.initial_config_requested = false;
+                if *self.initial_config_retry_count.get(self.standalone_kind) == 0 {
+                    *self
+                        .initial_config_retry_count
+                        .get_mut(self.standalone_kind) = 1;
+                    *self.initial_config_requested.get_mut(self.standalone_kind) = false;
                 }
                 true
             }
@@ -799,6 +952,7 @@ impl VescSettingsSession {
                 match pending.stage {
                     PendingStage::AwaitingPreflight { .. }
                     | PendingStage::AwaitingVerification { .. } => {
+                        self.standalone_kind = pending.baseline.kind();
                         self.standalone_config_read = StandaloneConfigRead::AwaitingProcedureReply;
                     }
                     PendingStage::PreflightQueued
@@ -828,20 +982,48 @@ impl VescSettingsSession {
         self.last_speed = None;
         self.last_operating_state = None;
         self.last_operating_mode = None;
-        self.last_config_generation = 0;
-        self.initial_config_requested = false;
-        self.initial_config_retry_count = 0;
+        self.last_config_generation = ConfigurationKindValues::new(0, 0, 0);
+        self.initial_config_requested = ConfigurationKindValues::new(false, false, false);
+        self.initial_config_retry_count = ConfigurationKindValues::new(0, 0, 0);
+        self.firmware_inventory_requested = false;
         self.standalone_config_read = StandaloneConfigRead::Idle;
         self.identity_invalidated = false;
     }
 
     fn profile_is_supported(&self) -> bool {
         let evidence = self.read_only.settings_evidence();
-        self.package_is_supported(&evidence) && evidence.config.is_some()
+        !self.identity_invalidated
+            && supported_firmware_facts(&evidence)
+            && ((supported_package_facts(&evidence) && evidence.config.is_some())
+                || evidence.motor_config.is_some()
+                || evidence.app_config.is_some())
     }
 
-    fn package_is_supported(&self, evidence: &VescSettingsEvidence) -> bool {
-        !self.identity_invalidated && supported_package_facts(evidence)
+    fn read_kind_is_supported(&self, kind: ConfigurationKind) -> bool {
+        let evidence = self.read_only.settings_evidence();
+        !self.identity_invalidated
+            && match kind {
+                ConfigurationKind::Refloat => supported_package_facts(&evidence),
+                ConfigurationKind::Motor | ConfigurationKind::App => {
+                    supported_firmware_facts(&evidence)
+                }
+            }
+    }
+
+    fn fresh_stationary_evidence_for(
+        &self,
+        kind: ConfigurationKind,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.fresh_stationary_evidence(at)
+            && match kind {
+                ConfigurationKind::Refloat => true,
+                // Motor/App changes can reinitialize the drive or inputs. Zero speed while
+                // balancing is insufficient; require the package to report disengaged/parked.
+                ConfigurationKind::Motor | ConfigurationKind::App => {
+                    self.fresh_operating_state(at) == Some(RideOperatingState::Parked)
+                }
+            }
     }
 
     fn fresh_speed(&self, at: MonotonicTimestamp) -> Option<cutout_core::Speed> {
@@ -883,6 +1065,10 @@ fn identity_changed(previous: &VescSettingsEvidence, current: &VescSettingsEvide
             .is_some_and(|value| current.package.as_ref() != Some(value))
 }
 
+fn supported_firmware_facts(evidence: &VescSettingsEvidence) -> bool {
+    evidence.firmware == Some((7, 0)) && evidence.controller_id.is_some()
+}
+
 fn supported_package_facts(evidence: &VescSettingsEvidence) -> bool {
     let package_matches = evidence.package.as_ref().is_some_and(|package| {
         package.package_name.as_str() == "Refloat"
@@ -891,33 +1077,50 @@ fn supported_package_facts(evidence: &VescSettingsEvidence) -> bool {
             && package.package_patch == 0
             && package.package_version_suffix.is_empty()
     });
-    package_matches && evidence.firmware == Some((7, 0)) && evidence.controller_id.is_some()
+    package_matches && supported_firmware_facts(evidence)
 }
 
-fn settings_images_match(left: &RefloatSettings, right: &RefloatSettings) -> bool {
-    left.is_same_except_default(right)
+fn push_settings_readback(step: &mut DeviceSessionStep, config: &SettingsImage) {
+    let ids = config.ids();
+    for batch in ids.chunks(SettingsReadback::capacity()) {
+        let mut entries = [None; SettingsReadback::capacity()];
+        for (slot, id) in entries.iter_mut().zip(batch.iter().copied()) {
+            let Some(field) = config.field_id(id) else {
+                continue;
+            };
+            let value = match (id, config.value(id)) {
+                (_, Some(DeviceSettingValue::Number(value))) => i64::from(value),
+                (_, Some(DeviceSettingValue::Boolean(value))) => i64::from(value),
+                (_, Some(DeviceSettingValue::Choice(value))) => i64::from(value),
+                (SettingId::PwmTiltback, Some(DeviceSettingValue::Disabled)) => 100,
+                (SettingId::TiltbackSpeed, Some(DeviceSettingValue::Disabled)) => 0,
+                _ => i64::MIN,
+            };
+            *slot = Some(SettingsEntry {
+                field: cutout_core::RawFieldValue::new(field, value),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            });
+        }
+        step.outputs
+            .push(SessionOutput::Event(DeviceEvent::read_only_response(
+                ReadOnlyResponse::Settings(SettingsReadback::available(entries)),
+            )));
+    }
 }
 
-fn push_settings_readback(step: &mut DeviceSessionStep, config: &RefloatSettings) {
-    let entries = crate::refloat_settings::supported_setting_ids().map(|id| {
-        let field = crate::refloat_settings::field_id(id)?;
-        let value = match (id, config.value(id)) {
-            (_, Some(DeviceSettingValue::Number(value))) => i64::from(value),
-            (SettingId::PwmTiltback, Some(DeviceSettingValue::Disabled)) => 100,
-            (SettingId::TiltbackSpeed, Some(DeviceSettingValue::Disabled)) => 0,
-            _ => i64::MIN,
-        };
-        Some(SettingsEntry {
-            field: cutout_core::RawFieldValue::new(field, value),
-            source: ValueSource::Reported,
-            quality: ValueQuality::Known,
-            verification: VerificationStatus::SourceVerified,
-        })
-    });
-    step.outputs
-        .push(SessionOutput::Event(DeviceEvent::read_only_response(
-            ReadOnlyResponse::Settings(SettingsReadback::available(entries)),
-        )));
+fn is_automatic_motor_config_read(output: &SessionOutput) -> bool {
+    let SessionOutput::Transport(TransportAction::Write { bytes, .. }) = output else {
+        return false;
+    };
+    let bytes = bytes.as_slice();
+    let command = match bytes.first() {
+        Some(2) => bytes.get(2),
+        Some(3) => bytes.get(3),
+        _ => None,
+    };
+    command == Some(&14)
 }
 
 fn append_refusal(

@@ -17,6 +17,9 @@ pub enum DeviceSettingRequestError {
     /// A full-configuration operation already owns the device's write slot.
     #[error("another setting is being updated")]
     Busy,
+    /// A timed-out nonce-free configuration read still owns the reply slot.
+    #[error("a configuration read is still pending; reconnect to retry")]
+    ConfigurationReadRequiresReconnect,
     /// Descriptor validation refused the request.
     #[error(transparent)]
     Profile(#[from] SettingsRequestError),
@@ -202,6 +205,11 @@ impl DeviceConnectionSession {
         let Some(value) = setting.requested else {
             return false;
         };
+        if device.setting_mutation_submitted_at(operation_id).is_some() {
+            return operation
+                .authorization
+                .is_some_and(|authorization| device.setting_write_is_current(authorization, at));
+        }
         let Ok(command) = device
             .control_profile()
             .command(id, value, self.validation_authorized())
@@ -424,6 +432,9 @@ impl DeviceConnectionSession {
             .device
             .as_mut()
             .ok_or(DeviceSettingRequestError::ConnectionUnavailable)?;
+        if device.settings_read_requires_reconnect(at) {
+            return Err(DeviceSettingRequestError::ConfigurationReadRequiresReconnect);
+        }
         if device.settings_busy() {
             return Err(DeviceSettingRequestError::Busy);
         }

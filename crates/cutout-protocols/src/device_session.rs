@@ -343,6 +343,16 @@ impl DeviceSession {
         }
     }
 
+    pub(crate) fn settings_read_requires_reconnect(
+        &self,
+        at: cutout_core::MonotonicTimestamp,
+    ) -> bool {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => session.settings_read_requires_reconnect(at),
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+        }
+    }
+
     /// Associates delayed settings stages with their original transport operation.
     pub(crate) fn bind_setting_operation(
         &mut self,

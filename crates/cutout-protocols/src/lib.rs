@@ -108,6 +108,8 @@ mod parser;
 mod refloat_codec;
 mod refloat_settings;
 mod registry;
+mod vesc_configuration;
+mod vesc_settings_image;
 mod vesc_settings_session;
 mod wire_crc;
 pub use registry::{

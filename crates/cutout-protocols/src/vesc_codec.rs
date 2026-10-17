@@ -213,6 +213,10 @@ pub enum VescReadOnlyReply {
         /// Complete serialized configuration; its schema is validated separately.
         bytes: Vec<u8>,
     },
+    /// Serialized application configuration, validated by the selected settings schema.
+    AppConfig(Vec<u8>),
+    /// Firmware acknowledged storing a Motor/App configuration; readback is still required.
+    ConfigurationStored,
     /// The firmware dispatched a custom-config write; this is not package acceptance.
     CustomConfigDispatched,
     /// Firmware build information.
@@ -598,7 +602,7 @@ pub struct VescSpeedGeometry {
 }
 
 /// VESC motor config facts needed by read-only display code.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VescMotorConfig {
     /// Speed geometry from VESC setup config.
     pub speed_geometry: VescSpeedGeometry,
@@ -608,6 +612,9 @@ pub struct VescMotorConfig {
 
     /// Battery series cell count from VESC setup config.
     pub battery_cells: SeriesCount,
+
+    // Retain the complete wire image for preserving, schema-checked settings writes.
+    pub(crate) serialized: Vec<u8>,
 }
 
 /// VESC battery type from motor setup config.
@@ -756,7 +763,7 @@ impl VescBoardProfile {
 
     /// Creates a profile from VESC motor config and a known cell voltage curve.
     #[must_use]
-    pub const fn from_motor_config(config: VescMotorConfig) -> Self {
+    pub const fn from_motor_config(config: &VescMotorConfig) -> Self {
         Self::from_speed_geometry(config.speed_geometry)
             .with_vesc_battery_type(config.battery_type, config.battery_cells)
     }
@@ -1168,7 +1175,8 @@ fn encode_raw_command(command_id: u8, frame: &mut [u8; VESC_MAX_FRAME_LEN]) -> u
 
 /// Frames only the bounded private settings payload selected by the protocol owner.
 pub(crate) fn encode_settings_payload(payload: &[u8]) -> Option<cutout_core::WritePayload> {
-    if payload.is_empty() || payload.len() > crate::refloat_settings::REFLOAT_CONFIG_LEN + 2 {
+    if payload.is_empty() || payload.len() > cutout_core::MAX_TRANSPORT_WRITE_LEN.saturating_sub(7)
+    {
         return None;
     }
     let mut frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
@@ -1216,6 +1224,8 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
                 bytes: bytes.to_vec(),
             }))
         }
+        17 => Ok(Some(VescReadOnlyReply::AppConfig(body.to_vec()))),
+        13 | 16 if body.is_empty() => Ok(Some(VescReadOnlyReply::ConfigurationStored)),
         95 if body.is_empty() => Ok(Some(VescReadOnlyReply::CustomConfigDispatched)),
         VESC_COMM_GET_VALUES => decode_values(body, full_values_mask(body.len())?)
             .map(|values| Some(VescReadOnlyReply::Values(values))),
@@ -1566,6 +1576,7 @@ fn decode_motor_config(body: &[u8]) -> Result<VescMotorConfig, VescCodecError> {
         speed_geometry,
         battery_type: VescBatteryType::from_raw(battery_type),
         battery_cells: SeriesCount::new(battery_cells),
+        serialized: body.to_vec(),
     })
 }
 
@@ -2043,7 +2054,7 @@ mod tests {
             880
         );
         assert_eq!(
-            VescBoardProfile::from_motor_config(config)
+            VescBoardProfile::from_motor_config(&config)
                 .battery_level_from_voltage(Voltage::from_millivolts(84_000)),
             Some(BatteryLevel::from_percent(100))
         );

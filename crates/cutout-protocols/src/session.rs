@@ -664,6 +664,16 @@ pub struct VescNotificationDecoder {
     refloat_package: Option<crate::RefloatInfo>,
     refloat_config: Option<(crate::refloat_settings::RefloatSettings, MonotonicTimestamp)>,
     refloat_config_generation: u64,
+    motor_settings: Option<(
+        crate::vesc_configuration::VescConfiguration,
+        MonotonicTimestamp,
+    )>,
+    app_settings: Option<(
+        crate::vesc_configuration::VescConfiguration,
+        MonotonicTimestamp,
+    )>,
+    motor_settings_generation: u64,
+    app_settings_generation: u64,
     firmware_version: Option<(u8, u8)>,
     controller_id: Option<u8>,
     refloat_stream_pending: bool,
@@ -692,6 +702,10 @@ impl VescNotificationDecoder {
             refloat_package: None,
             refloat_config: None,
             refloat_config_generation: 0,
+            motor_settings: None,
+            app_settings: None,
+            motor_settings_generation: 0,
+            app_settings_generation: 0,
             firmware_version: None,
             controller_id: None,
             refloat_stream_pending: false,
@@ -794,6 +808,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.refloat_package = None;
         self.refloat_config = None;
         self.refloat_config_generation = 0;
+        self.motor_settings = None;
+        self.app_settings = None;
+        self.motor_settings_generation = 0;
+        self.app_settings_generation = 0;
         self.firmware_version = None;
         self.controller_id = None;
         self.refloat_stream_pending = false;
@@ -1223,9 +1241,16 @@ impl VescNotificationDecoder {
     fn observe_vesc_reply(&mut self, reply: &VescReadOnlyReply, monotonic_ms: MonotonicTimestamp) {
         match reply {
             VescReadOnlyReply::MotorConfig(config) => {
+                self.motor_settings_generation = self.motor_settings_generation.saturating_add(1);
+                self.motor_settings = crate::vesc_configuration::VescConfiguration::decode(
+                    crate::vesc_configuration::VescConfigurationKind::Motor,
+                    &config.serialized,
+                )
+                .ok()
+                .map(|image| (image, monotonic_ms));
                 self.motor_config_received = true;
                 if self.configured_board_profile.is_none() {
-                    self.learned_board_profile = Some(VescBoardProfile::from_motor_config(*config));
+                    self.learned_board_profile = Some(VescBoardProfile::from_motor_config(config));
                 }
             }
             VescReadOnlyReply::MotorSetupConfig(geometry) => {
@@ -1242,6 +1267,8 @@ impl VescNotificationDecoder {
                 {
                     self.refloat_package = None;
                     self.refloat_config = None;
+                    self.motor_settings = None;
+                    self.app_settings = None;
                     self.refloat_info_received = false;
                 }
                 self.firmware_version = Some((*major, *minor));
@@ -1255,10 +1282,23 @@ impl VescNotificationDecoder {
                     if self.controller_id.is_some_and(|previous| previous != id) {
                         self.refloat_package = None;
                         self.refloat_config = None;
+                        self.motor_settings = None;
+                        self.app_settings = None;
+                        self.learned_board_profile = None;
+                        self.motor_config_received = false;
                         self.refloat_info_received = false;
                     }
                     self.controller_id = Some(id);
                 }
+            }
+            VescReadOnlyReply::AppConfig(bytes) => {
+                self.app_settings_generation = self.app_settings_generation.saturating_add(1);
+                self.app_settings = crate::vesc_configuration::VescConfiguration::decode(
+                    crate::vesc_configuration::VescConfigurationKind::App,
+                    bytes,
+                )
+                .ok()
+                .map(|image| (image, monotonic_ms));
             }
             VescReadOnlyReply::CustomConfig { index: 0, bytes } => {
                 self.refloat_config_generation = self.refloat_config_generation.saturating_add(1);
@@ -1267,6 +1307,7 @@ impl VescNotificationDecoder {
                     .map(|config| (config, monotonic_ms));
             }
             VescReadOnlyReply::CustomConfig { .. }
+            | VescReadOnlyReply::ConfigurationStored
             | VescReadOnlyReply::CustomConfigDispatched
             | VescReadOnlyReply::Stats(_) => {}
         }
@@ -1398,7 +1439,9 @@ const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount
         | VescReadOnlyReply::MotorConfig(_)
         | VescReadOnlyReply::MotorSetupConfig(_)
         | VescReadOnlyReply::CustomConfig { .. }
-        | VescReadOnlyReply::CustomConfigDispatched => SemanticEventCount::from_events(1),
+        | VescReadOnlyReply::CustomConfigDispatched
+        | VescReadOnlyReply::AppConfig(_)
+        | VescReadOnlyReply::ConfigurationStored => SemanticEventCount::from_events(1),
         VescReadOnlyReply::Values(_) => SemanticEventCount::from_events(2),
     }
 }
@@ -1439,7 +1482,9 @@ fn push_vesc_reply(
         VescReadOnlyReply::MotorConfig(_)
         | VescReadOnlyReply::MotorSetupConfig(_)
         | VescReadOnlyReply::CustomConfig { .. }
-        | VescReadOnlyReply::CustomConfigDispatched => {}
+        | VescReadOnlyReply::CustomConfigDispatched
+        | VescReadOnlyReply::AppConfig(_)
+        | VescReadOnlyReply::ConfigurationStored => {}
     }
 }
 
@@ -2300,6 +2345,10 @@ impl ReadOnlySession<VescGenericModel> {
             package: self.decoder.refloat_package.clone(),
             config: self.decoder.refloat_config.clone(),
             config_generation: self.decoder.refloat_config_generation,
+            motor_config: self.decoder.motor_settings.clone(),
+            app_config: self.decoder.app_settings.clone(),
+            motor_generation: self.decoder.motor_settings_generation,
+            app_generation: self.decoder.app_settings_generation,
             firmware: self.decoder.firmware_version,
             controller_id: self.decoder.controller_id,
         }

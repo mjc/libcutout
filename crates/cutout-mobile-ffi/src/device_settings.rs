@@ -5,8 +5,9 @@ use cutout_core::{
     SettingTransportStatus,
 };
 use cutout_protocols::{
-    DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingCompletionStrategy,
-    SettingControl, SettingDescriptor, SettingGroup, SettingUnit, SettingsRequestError,
+    DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingApplyEffect,
+    SettingCompletionStrategy, SettingControl, SettingDescriptor, SettingGroup, SettingUnit,
+    SettingsRequestError,
 };
 
 use crate::{
@@ -21,9 +22,13 @@ macro_rules! setting_enum {
         #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
         pub enum $mobile { $(#[doc = "Corresponding shared domain variant."] $variant),+ }
         impl From<$core> for $mobile {
+            // Keep the exhaustive FFI mapping visible so added variants remain reviewable.
+            #[allow(clippy::too_many_lines)]
             fn from(value: $core) -> Self { match value { $($core::$variant => Self::$variant),+ } }
         }
         impl From<$mobile> for $core {
+            // Keep the exhaustive FFI mapping visible so added variants remain reviewable.
+            #[allow(clippy::too_many_lines)]
             fn from(value: $mobile) -> Self { match value { $($mobile::$variant => Self::$variant),+ } }
         }
     };
@@ -66,7 +71,171 @@ setting_enum!(
         Taillight,
         AutoShutdownRemaining,
         ChargeMode,
-        PowerOffDelay
+        PowerOffDelay,
+        PushbackDutyAngle,
+        PushbackDutySpeed,
+        PushbackReturnSpeed,
+        PushbackDutyBeepEnabled,
+        PushbackPersistentFatalError,
+        PushbackHighVoltageAngle,
+        PushbackHighVoltageSpeed,
+        PushbackLowVoltageAngle,
+        PushbackLowVoltageSpeed,
+        HapticsDutyFrequency,
+        HapticsDutyStrength,
+        HapticsErrorFrequency,
+        HapticsErrorStrength,
+        HapticsVibrateFrequency,
+        HapticsVibrateStrength,
+        HapticsDutySolidOffset,
+        HapticsCurrentThreshold,
+        HapticsMinStrength,
+        HapticsMaxStrengthSpeed,
+        HapticsStrengthCurvature,
+        RemoteReceiverType,
+        RemoteInputDeadband,
+        LightingOn,
+        LightingHeadlightsOn,
+        LightingHeadlightsTransition,
+        LightingDirectionTransition,
+        LightingLightsOffWhenLifted,
+        LightingStatusOnFrontWhenLifted,
+        LightingFrontMode,
+        LightingFrontBrightness,
+        LightingFrontColor1,
+        LightingFrontColor2,
+        LightingFrontSpeed,
+        LightingRearMode,
+        LightingRearBrightness,
+        LightingRearColor1,
+        LightingRearColor2,
+        LightingRearSpeed,
+        LightingHeadlightsMode,
+        LightingHeadlightsBrightness,
+        LightingHeadlightsColor1,
+        LightingHeadlightsColor2,
+        LightingHeadlightsSpeed,
+        LightingTaillightsMode,
+        LightingTaillightsBrightness,
+        LightingTaillightsColor1,
+        LightingTaillightsColor2,
+        LightingTaillightsSpeed,
+        LightingStatusBrightnessHeadlightsOff,
+        LightingStatusBrightnessHeadlightsOn,
+        LightingStatusShowSensorsWhileRunning,
+        LightingStatusMotorUtilizationThreshold,
+        LightingStatusRedBarPercentage,
+        LightingStatusIdleTimeout,
+        LightingStatusIdleMode,
+        LightingStatusIdleBrightness,
+        LightingStatusIdleColor1,
+        LightingStatusIdleColor2,
+        LightingStatusIdleSpeed,
+        PackageDisabled,
+        PushbackHv,
+        PushbackLv,
+        SensorsAdcchannel1,
+        SensorsAdcchannel2,
+        SensorsSwapFootpadAdcs,
+        SensorsFootFaultBeepEnabled,
+        HardwareBeeperEnabled,
+        LightingHardwareMode,
+        LightingHardwarePin,
+        LightingHardwarePinConfig,
+        LightingHardwareStatusOrder,
+        LightingHardwareStatusCount,
+        LightingHardwareStatusColorOrder,
+        LightingHardwareStatusReverse,
+        LightingHardwareFrontOrder,
+        LightingHardwareFrontCount,
+        LightingHardwareFrontColorOrder,
+        LightingHardwareFrontReverse,
+        LightingHardwareRearOrder,
+        LightingHardwareRearCount,
+        LightingHardwareRearColorOrder,
+        LightingHardwareRearReverse,
+        BmsEnabled,
+        BmsCellLvThreshold,
+        BmsCellHvThreshold,
+        BmsCellBalanceThreshold,
+        BmsCellHtThreshold,
+        BmsCellLtThreshold,
+        BmsBmsHtThreshold,
+        MotorDriveCurrentLimit,
+        MotorBrakingCurrentLimit,
+        BatteryCurrentOutLimit,
+        BatteryCurrentInLimit,
+        AbsoluteMotorCurrentLimit,
+        InputVoltageMinimum,
+        InputVoltageMaximum,
+        BatteryCutbackStart,
+        BatteryCutbackEnd,
+        RegenerativeBatteryCutbackStart,
+        RegenerativeBatteryCutbackEnd,
+        FetTemperatureCutbackStart,
+        FetTemperatureCutbackEnd,
+        MotorTemperatureCutbackStart,
+        MotorTemperatureCutbackEnd,
+        MotorPowerOutLimit,
+        RegenerativeMotorPowerLimit,
+        MotorDriveCurrentLimitScale,
+        MotorBrakingCurrentLimitScale,
+        MotorPoleCount,
+        MotorGearRatio,
+        WheelDiameter,
+        BatteryChemistry,
+        BatterySeriesCellCount,
+        BatteryCapacity,
+        BmsType,
+        BmsLimitMode,
+        BmsTemperatureLimitingEnabled,
+        BmsSocLimitingEnabled,
+        BmsMinimumCellVoltageLimitingEnabled,
+        BmsMaximumCellVoltageLimitingEnabled,
+        BmsTemperatureLimitStart,
+        BmsTemperatureLimitEnd,
+        BmsSocLimitStart,
+        BmsSocLimitEnd,
+        BmsCellMinimumVoltageLimitStart,
+        BmsCellMinimumVoltageLimitEnd,
+        BmsCellMaximumVoltageLimitStart,
+        BmsCellMaximumVoltageLimitEnd,
+        BmsCanForwardMode,
+        ControllerId,
+        CommandTimeout,
+        CommandTimeoutBrakeCurrent,
+        CanStatusRate1,
+        CanStatusRate2,
+        CanBaudRate,
+        CanMode,
+        ApplicationToUse,
+        KillSwitchMode,
+        PpmControlMode,
+        PpmHysteresis,
+        PpmPulseStart,
+        PpmPulseEnd,
+        PpmPulseCenter,
+        PpmSafeStart,
+        PpmRampTimePositive,
+        PpmRampTimeNegative,
+        AdcControlMode,
+        AdcHysteresis,
+        AdcVoltageStart,
+        AdcVoltageEnd,
+        AdcVoltageMinimum,
+        AdcVoltageMaximum,
+        AdcSafeStart,
+        AdcRampTimePositive,
+        AdcRampTimeNegative,
+        NunchukControlMode,
+        NunchukHysteresis,
+        NunchukRampTimePositive,
+        NunchukRampTimeNegative,
+        ImuType,
+        ImuMode,
+        ImuFilter,
+        ImuSampleRate,
+        ImuUseMagnetometer,
     ]
 );
 setting_enum!(
@@ -86,14 +255,43 @@ setting_enum!(
         Degrees,
         Level,
         Seconds,
-        Minutes
+        Minutes,
+        Volts,
+        Amperes,
+        Hertz,
+        DegreesPerSecond,
+        Celsius,
+        Scalar,
+        Watts,
+        Milliseconds,
+        RevolutionsPerMinute,
+        Millimetres,
+        AmpHours,
+        Raw
     ]
 );
 setting_enum!(
     MobileSettingGroupDto,
     SettingGroup,
     "Semantic section for native rendering.",
-    [Limits, Riding, Interface, Modes, Diagnostics]
+    [
+        Limits,
+        Riding,
+        Interface,
+        Modes,
+        Diagnostics,
+        Haptics,
+        Lighting,
+        Hardware,
+        Remote,
+        Battery
+    ]
+);
+setting_enum!(
+    MobileSettingApplyEffectDto,
+    SettingApplyEffect,
+    "Effect required after applying a setting.",
+    [Immediate, RestartRequired, Unspecified]
 );
 setting_enum!(
     MobileSettingAccessDto,
@@ -178,6 +376,7 @@ pub enum MobileSettingControlDto {
         minimum: i32,
         maximum: i32,
         step: i32,
+        editor_step: i32,
         precision: u8,
         unit: MobileSettingUnitDto,
         can_disable: bool,
@@ -198,6 +397,7 @@ impl From<SettingControl> for MobileSettingControlDto {
                 minimum,
                 maximum,
                 step,
+                editor_step,
                 precision,
                 unit,
                 can_disable,
@@ -205,6 +405,7 @@ impl From<SettingControl> for MobileSettingControlDto {
                 minimum,
                 maximum,
                 step,
+                editor_step,
                 precision,
                 unit: unit.into(),
                 can_disable,
@@ -247,6 +448,8 @@ pub struct MobileSettingDescriptorDto {
     pub write_verification: MobileVerificationStatusDto,
     /// Typed terminal completion rule for an accepted request.
     pub completion: MobileSettingCompletionStrategyDto,
+    /// Device effect after applying the setting.
+    pub apply_effect: MobileSettingApplyEffectDto,
 }
 
 impl From<SettingDescriptor> for MobileSettingDescriptorDto {
@@ -262,6 +465,7 @@ impl From<SettingDescriptor> for MobileSettingDescriptorDto {
             access: value.access.into(),
             write_verification: value.write_verification.into(),
             completion: value.completion.into(),
+            apply_effect: value.apply_effect.into(),
         }
     }
 }
@@ -391,6 +595,9 @@ pub enum MobileDeviceSettingRequestError {
     /// A previous configuration update is still in progress.
     #[error("another setting is being updated")]
     Busy,
+    /// A timed-out nonce-free configuration read still owns the reply slot.
+    #[error("a configuration read is still pending; reconnect to retry")]
+    ConfigurationReadRequiresReconnect,
     /// The selected device has no such control.
     #[error("setting unavailable")]
     Unavailable,
@@ -410,6 +617,9 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
         match value {
             DeviceSettingRequestError::ConnectionUnavailable => Self::ConnectionUnavailable,
             DeviceSettingRequestError::Busy => Self::Busy,
+            DeviceSettingRequestError::ConfigurationReadRequiresReconnect => {
+                Self::ConfigurationReadRequiresReconnect
+            }
             DeviceSettingRequestError::Profile(SettingsRequestError::Unavailable) => {
                 Self::Unavailable
             }
@@ -622,6 +832,12 @@ mod tests {
     const REFLOAT_DEFAULT_CONFIG: &[u8] = include_bytes!(
         "../../cutout-protocols/tests/fixtures/refloat-settings/refloat-1.3.0-default.bin"
     );
+    const VESC_MOTOR_DEFAULT_CONFIG: &[u8] = include_bytes!(
+        "../../cutout-protocols/tests/fixtures/vesc-settings/vesc-7.00-motor-default.bin"
+    );
+    const VESC_APP_DEFAULT_CONFIG: &[u8] = include_bytes!(
+        "../../cutout-protocols/tests/fixtures/vesc-settings/vesc-7.00-app-default.bin"
+    );
     const VESC_IDENTITY_REPLY: &[u8] = &[
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
         38, 208, 3,
@@ -734,6 +950,102 @@ mod tests {
             .expect("current connection ingests its protocol notification");
     }
 
+    fn is_refloat_setting(id: MobileSettingIdDto) -> bool {
+        matches!(
+            id,
+            MobileSettingIdDto::TiltbackSpeed
+                | MobileSettingIdDto::PwmTiltback
+                | MobileSettingIdDto::PushbackDutyAngle
+                | MobileSettingIdDto::PushbackDutySpeed
+                | MobileSettingIdDto::PushbackReturnSpeed
+                | MobileSettingIdDto::PushbackDutyBeepEnabled
+                | MobileSettingIdDto::PushbackPersistentFatalError
+                | MobileSettingIdDto::PushbackHighVoltageAngle
+                | MobileSettingIdDto::PushbackHighVoltageSpeed
+                | MobileSettingIdDto::PushbackLowVoltageAngle
+                | MobileSettingIdDto::PushbackLowVoltageSpeed
+                | MobileSettingIdDto::HapticsDutyFrequency
+                | MobileSettingIdDto::HapticsDutyStrength
+                | MobileSettingIdDto::HapticsErrorFrequency
+                | MobileSettingIdDto::HapticsErrorStrength
+                | MobileSettingIdDto::HapticsVibrateFrequency
+                | MobileSettingIdDto::HapticsVibrateStrength
+                | MobileSettingIdDto::HapticsDutySolidOffset
+                | MobileSettingIdDto::HapticsCurrentThreshold
+                | MobileSettingIdDto::HapticsMinStrength
+                | MobileSettingIdDto::HapticsMaxStrengthSpeed
+                | MobileSettingIdDto::HapticsStrengthCurvature
+                | MobileSettingIdDto::RemoteReceiverType
+                | MobileSettingIdDto::RemoteInputDeadband
+                | MobileSettingIdDto::LightingOn
+                | MobileSettingIdDto::LightingHeadlightsOn
+                | MobileSettingIdDto::LightingHeadlightsTransition
+                | MobileSettingIdDto::LightingDirectionTransition
+                | MobileSettingIdDto::LightingLightsOffWhenLifted
+                | MobileSettingIdDto::LightingStatusOnFrontWhenLifted
+                | MobileSettingIdDto::LightingFrontMode
+                | MobileSettingIdDto::LightingFrontBrightness
+                | MobileSettingIdDto::LightingFrontColor1
+                | MobileSettingIdDto::LightingFrontColor2
+                | MobileSettingIdDto::LightingFrontSpeed
+                | MobileSettingIdDto::LightingRearMode
+                | MobileSettingIdDto::LightingRearBrightness
+                | MobileSettingIdDto::LightingRearColor1
+                | MobileSettingIdDto::LightingRearColor2
+                | MobileSettingIdDto::LightingRearSpeed
+                | MobileSettingIdDto::LightingHeadlightsMode
+                | MobileSettingIdDto::LightingHeadlightsBrightness
+                | MobileSettingIdDto::LightingHeadlightsColor1
+                | MobileSettingIdDto::LightingHeadlightsColor2
+                | MobileSettingIdDto::LightingHeadlightsSpeed
+                | MobileSettingIdDto::LightingTaillightsMode
+                | MobileSettingIdDto::LightingTaillightsBrightness
+                | MobileSettingIdDto::LightingTaillightsColor1
+                | MobileSettingIdDto::LightingTaillightsColor2
+                | MobileSettingIdDto::LightingTaillightsSpeed
+                | MobileSettingIdDto::LightingStatusBrightnessHeadlightsOff
+                | MobileSettingIdDto::LightingStatusBrightnessHeadlightsOn
+                | MobileSettingIdDto::LightingStatusShowSensorsWhileRunning
+                | MobileSettingIdDto::LightingStatusMotorUtilizationThreshold
+                | MobileSettingIdDto::LightingStatusRedBarPercentage
+                | MobileSettingIdDto::LightingStatusIdleTimeout
+                | MobileSettingIdDto::LightingStatusIdleMode
+                | MobileSettingIdDto::LightingStatusIdleBrightness
+                | MobileSettingIdDto::LightingStatusIdleColor1
+                | MobileSettingIdDto::LightingStatusIdleColor2
+                | MobileSettingIdDto::LightingStatusIdleSpeed
+                | MobileSettingIdDto::PackageDisabled
+                | MobileSettingIdDto::PushbackHv
+                | MobileSettingIdDto::PushbackLv
+                | MobileSettingIdDto::SensorsAdcchannel1
+                | MobileSettingIdDto::SensorsAdcchannel2
+                | MobileSettingIdDto::SensorsSwapFootpadAdcs
+                | MobileSettingIdDto::SensorsFootFaultBeepEnabled
+                | MobileSettingIdDto::HardwareBeeperEnabled
+                | MobileSettingIdDto::LightingHardwareMode
+                | MobileSettingIdDto::LightingHardwarePin
+                | MobileSettingIdDto::LightingHardwarePinConfig
+                | MobileSettingIdDto::LightingHardwareStatusOrder
+                | MobileSettingIdDto::LightingHardwareStatusCount
+                | MobileSettingIdDto::LightingHardwareStatusColorOrder
+                | MobileSettingIdDto::LightingHardwareStatusReverse
+                | MobileSettingIdDto::LightingHardwareFrontOrder
+                | MobileSettingIdDto::LightingHardwareFrontCount
+                | MobileSettingIdDto::LightingHardwareFrontColorOrder
+                | MobileSettingIdDto::LightingHardwareFrontReverse
+                | MobileSettingIdDto::LightingHardwareRearOrder
+                | MobileSettingIdDto::LightingHardwareRearCount
+                | MobileSettingIdDto::LightingHardwareRearColorOrder
+                | MobileSettingIdDto::LightingHardwareRearReverse
+                | MobileSettingIdDto::BmsEnabled
+                | MobileSettingIdDto::BmsCellLvThreshold
+                | MobileSettingIdDto::BmsCellHvThreshold
+                | MobileSettingIdDto::BmsCellBalanceThreshold
+                | MobileSettingIdDto::BmsCellHtThreshold
+                | MobileSettingIdDto::BmsCellLtThreshold
+                | MobileSettingIdDto::BmsBmsHtThreshold
+        )
+    }
     fn refloat_settings_handle(
         package: Option<(&str, [u8; 3])>,
         config: Option<&[u8]>,
@@ -770,21 +1082,42 @@ mod tests {
             response.extend_from_slice(config);
             ingest(&handle, &token, 8, &vesc_frame(&response));
         }
+        if config.is_some() {
+            let mut motor = vec![14];
+            motor.extend_from_slice(VESC_MOTOR_DEFAULT_CONFIG);
+            ingest(&handle, &token, 9, &vesc_frame(&motor));
+            let mut app = vec![17];
+            app.extend_from_slice(VESC_APP_DEFAULT_CONFIG);
+            ingest(&handle, &token, 10, &vesc_frame(&app));
+        }
         (handle, token)
     }
 
     #[test]
-    fn settings_facade_projects_only_supported_refloat_config_controls() {
+    fn settings_facade_projects_refloat_and_firmware_configuration_controls() {
         let (handle, token) =
             refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
         let settings = handle.settings();
         assert_eq!(settings.connection.token, Some(token));
-        assert_eq!(settings.setting_descriptors.len(), 2);
+        assert_eq!(settings.setting_descriptors.len(), 166);
+        assert_eq!(settings.settings.len(), 166);
         assert!(
             settings
                 .setting_descriptors
                 .iter()
-                .any(|descriptor| descriptor.id == MobileSettingIdDto::PwmTiltback)
+                .any(|descriptor| { descriptor.id == MobileSettingIdDto::PwmTiltback })
+        );
+        assert!(
+            settings
+                .setting_descriptors
+                .iter()
+                .any(|descriptor| { descriptor.id == MobileSettingIdDto::MotorDriveCurrentLimit })
+        );
+        assert!(
+            settings
+                .setting_descriptors
+                .iter()
+                .any(|descriptor| { descriptor.id == MobileSettingIdDto::ControllerId })
         );
         assert!(
             settings
@@ -803,11 +1136,13 @@ mod tests {
                 minimum: 0,
                 maximum: 99,
                 step: 1,
+                editor_step: 1,
                 precision: 0,
                 unit: MobileSettingUnitDto::PwmDutyPercent,
                 can_disable: true,
             }
         );
+        assert_eq!(duty.apply_effect, MobileSettingApplyEffectDto::Immediate);
         let speed = settings
             .setting_descriptors
             .iter()
@@ -818,7 +1153,8 @@ mod tests {
             MobileSettingControlDto::Number {
                 minimum: 50,
                 maximum: 1_000,
-                step: 50,
+                step: 10,
+                editor_step: 50,
                 precision: 1,
                 unit: MobileSettingUnitDto::KilometresPerHour,
                 can_disable: true,
@@ -851,22 +1187,46 @@ mod tests {
         assert_eq!(no_package.settings().setting_descriptors.len(), 0);
         let (other, _) =
             refloat_settings_handle(Some(("Other", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
-        assert_eq!(other.settings().setting_descriptors.len(), 0);
+        let other_settings = other.settings();
+        assert_eq!(other_settings.setting_descriptors.len(), 75);
+        assert_eq!(other_settings.settings.len(), 75);
+        assert!(
+            other_settings
+                .setting_descriptors
+                .iter()
+                .all(|descriptor| !is_refloat_setting(descriptor.id))
+        );
         let (old_version, _) =
             refloat_settings_handle(Some(("Refloat", [1, 2, 3])), Some(REFLOAT_DEFAULT_CONFIG));
-        assert_eq!(old_version.settings().setting_descriptors.len(), 0);
+        let old_settings = old_version.settings();
+        assert_eq!(old_settings.setting_descriptors.len(), 75);
+        assert_eq!(old_settings.settings.len(), 75);
+        assert!(
+            old_settings
+                .setting_descriptors
+                .iter()
+                .all(|descriptor| !is_refloat_setting(descriptor.id))
+        );
         let mut bad_signature = REFLOAT_DEFAULT_CONFIG.to_vec();
         bad_signature[0] ^= 1;
         let (unknown_schema, _) =
             refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(&bad_signature));
-        assert_eq!(unknown_schema.settings().setting_descriptors.len(), 0);
+        let unknown_settings = unknown_schema.settings();
+        assert_eq!(unknown_settings.setting_descriptors.len(), 75);
+        assert_eq!(unknown_settings.settings.len(), 75);
+        assert!(
+            unknown_settings
+                .setting_descriptors
+                .iter()
+                .all(|descriptor| !is_refloat_setting(descriptor.id))
+        );
     }
 
     #[test]
     fn replacing_connection_clears_refloat_settings_from_generic_facade() {
         let (handle, _) =
             refloat_settings_handle(Some(("Refloat", [1, 3, 0])), Some(REFLOAT_DEFAULT_CONFIG));
-        assert_eq!(handle.settings().setting_descriptors.len(), 2);
+        assert_eq!(handle.settings().setting_descriptors.len(), 166);
         let replacement = handle.begin_connection_attempt("replacement".into(), 7);
         let settings = handle.settings();
         assert_eq!(settings.connection, replacement);
@@ -1311,6 +1671,50 @@ mod tests {
                 quality: cutout_core::ValueQuality::Known.into(),
                 verification: cutout_core::VerificationStatus::SourceVerified.into(),
             })
+        );
+    }
+
+    #[test]
+    fn pending_configuration_read_requires_reconnect_error_crosses_ffi() {
+        assert_eq!(
+            MobileDeviceSettingRequestError::from(
+                DeviceSettingRequestError::ConfigurationReadRequiresReconnect
+            ),
+            MobileDeviceSettingRequestError::ConfigurationReadRequiresReconnect,
+        );
+    }
+
+    #[test]
+    fn expanded_setting_metadata_converts_through_the_ffi() {
+        assert_eq!(
+            MobileSettingIdDto::MotorDriveCurrentLimit,
+            SettingId::MotorDriveCurrentLimit.into()
+        );
+        assert_eq!(
+            MobileSettingIdDto::PpmRampTimePositive,
+            SettingId::PpmRampTimePositive.into()
+        );
+        assert_eq!(
+            MobileSettingIdDto::HapticsDutyFrequency,
+            SettingId::HapticsDutyFrequency.into()
+        );
+        assert_eq!(
+            MobileSettingIdDto::BmsCellBalanceThreshold,
+            SettingId::BmsCellBalanceThreshold.into()
+        );
+        assert_eq!(MobileSettingUnitDto::Volts, SettingUnit::Volts.into());
+        assert_eq!(MobileSettingUnitDto::Amperes, SettingUnit::Amperes.into());
+        assert_eq!(MobileSettingUnitDto::Hertz, SettingUnit::Hertz.into());
+        assert_eq!(
+            MobileSettingUnitDto::DegreesPerSecond,
+            SettingUnit::DegreesPerSecond.into()
+        );
+        assert_eq!(MobileSettingUnitDto::Seconds, SettingUnit::Seconds.into());
+        assert_eq!(MobileSettingUnitDto::Celsius, SettingUnit::Celsius.into());
+        assert_eq!(MobileSettingGroupDto::Battery, SettingGroup::Battery.into());
+        assert_eq!(
+            MobileSettingApplyEffectDto::RestartRequired,
+            SettingApplyEffect::RestartRequired.into()
         );
     }
 }
