@@ -319,7 +319,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .lighting, .tune, .debug, .camera, .map, .logs]
+            [.ride, .lighting, .debug, .camera, .map, .tune, .logs]
         )
         let vescTabs = CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel)
         let tuneTab = try XCTUnwrap(vescTabs.first(where: { $0.id == .tune }))
@@ -493,30 +493,40 @@ final class CutoutAppRouteTests: XCTestCase {
             .availableNavigationTabs(for: .vescOnewheel)
 
         XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .camera, .map, .tune])
-        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .tune, .debug, .camera, .map])
+        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .camera, .map, .tune])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
     }
 
-    func testNestedPackRouteSurvivesSharedTabRendering() {
+    func testNestedPackRouteSurvivesSharedTabRendering() throws {
         let nestedPackRoute = CutoutAppRoute.eucPack(.bmsCellDetail(7))
         let tabs = nestedPackRoute.availableNavigationTabs(for: .electricUnicycle)
 
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .camera)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[4]), .rideMap)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[5]), .tune)
+        let rideTab = try XCTUnwrap(tabs.first(where: { $0.id == .ride }))
+        let packTab = try XCTUnwrap(tabs.first(where: { $0.id == .pack }))
+        let cameraTab = try XCTUnwrap(tabs.first(where: { $0.id == .camera }))
+        let mapTab = try XCTUnwrap(tabs.first(where: { $0.id == .map }))
+        let tuneTab = try XCTUnwrap(tabs.first(where: { $0.id == .tune }))
+        XCTAssertEqual(nestedPackRoute.destination(for: rideTab), .eucRide)
+        XCTAssertEqual(nestedPackRoute.destination(for: packTab), nestedPackRoute)
+        XCTAssertEqual(nestedPackRoute.destination(for: cameraTab), .camera)
+        XCTAssertEqual(nestedPackRoute.destination(for: mapTab), .rideMap)
+        XCTAssertEqual(nestedPackRoute.destination(for: tuneTab), .tune)
+        let debugTab = try XCTUnwrap(
+            CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)
+                .first(where: { $0.id == .debug })
+        )
         XCTAssertEqual(
-            CutoutAppRoute.vescDebug.destination(
-                for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[3]
-            ),
+            CutoutAppRoute.vescDebug.destination(for: debugTab),
             .vescDebug
         )
     }
 
-    func testUnavailableTabHasNoDestination() {
-        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[6]
+    func testUnavailableTabHasNoDestination() throws {
+        let unavailableLogsTab = try XCTUnwrap(
+            CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)
+                .first(where: { $0.id == .logs })
+        )
 
         XCTAssertNil(CutoutAppRoute.vescRide.destination(for: unavailableLogsTab))
     }

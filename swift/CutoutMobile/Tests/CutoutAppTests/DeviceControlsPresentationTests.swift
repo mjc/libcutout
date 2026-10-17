@@ -103,7 +103,11 @@ final class DeviceControlsPresentationTests: XCTestCase {
             access: .readOnly, helpKey: "vesc.settings.read_only.disengaged_evidence")
         XCTAssertEqual(DeviceControlPresentation.settings([readOnly], in: .interface), [readOnly])
         XCTAssertTrue(DeviceControlPresentation.settings([readOnly], in: .diagnostics).isEmpty)
-        XCTAssertTrue(DeviceControlPresentation.options(readOnly.control).isEmpty)
+        XCTAssertEqual(
+            DeviceControlPresentation.options(readOnly.control), [.boolean(value: false), .boolean(value: true)])
+        XCTAssertNil(
+            DeviceControlPresentation.visibleDraft(.boolean(value: true), access: readOnly.access),
+            "Read-only Boolean settings display their observation without an editable draft")
         XCTAssertEqual(
             DeviceControlPresentation.value(.boolean(value: true), control: readOnly.control), "On")
         XCTAssertEqual(
@@ -245,7 +249,9 @@ final class DeviceControlsPresentationTests: XCTestCase {
             localizedAppText("settings.effect.restart_required")
         )
         XCTAssertNil(DeviceControlPresentation.applyEffectLabel(.unspecified))
-        XCTAssertEqual(DeviceControlPresentation.groups.count, 10)
+        XCTAssertEqual(
+            DeviceControlPresentation.groups,
+            [.interface, .haptics, .limits, .riding, .modes, .hardware, .remote, .battery, .lighting])
     }
 
     func testGenericPhysicalUnitsRenderWithTheirDeclaredUnits() {
