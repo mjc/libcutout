@@ -206,7 +206,12 @@ struct EucRideRouteView: View {
     private func rideState(at now: MonotonicMilliseconds) -> EucRideScreenState? {
         #if DEBUG && targetEnvironment(simulator)
             if let telemetry = CutoutWebsiteScreenshotFixture.eucRideTelemetry(at: now) {
-                return EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry))
+                return EucRideScreenState(
+                    phase: .live,
+                    displayState: RideDisplayState(
+                        speed: SpeedReadout(snapshot: telemetry), telemetry: telemetry, lastUpdate: now
+                    )
+                )
             }
             if let fixture = CutoutUITestSecondaryRideFixture.eucRideState(at: now) { return fixture }
         #endif

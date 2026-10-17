@@ -44,8 +44,9 @@ struct EucRideInstruments: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 12)
-            .frame(width: geometry.size.width, height: height)
+            .padding(.top, landscape ? 8 : 0)
+            .padding(.bottom, 28)
+            .frame(width: geometry.size.width, height: height, alignment: .top)
             .foregroundStyle(PevColors.primaryText)
         }
         .background(PevColors.pageBackground)
@@ -135,6 +136,7 @@ struct EucRideInstruments: View {
                 unit: RideUnits.percentUnit, pointSize: 52, identifier: "euc.ride.battery",
                 alignment: .trailing, showsDisclosure: true, showsProgress: true, progress: batteryProgress
             )
+            .visualContent
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -192,6 +194,14 @@ struct EucInstrumentReading: View {
     var detail = ""
 
     var body: some View {
+        visualContent
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue(value.accessibilityValue(unit: unit, detail: detail))
+            .accessibilityIdentifier(identifier)
+    }
+
+    var visualContent: some View {
         VStack(alignment: alignment, spacing: 5) {
             HStack(spacing: 6) {
                 Text(label)
@@ -229,10 +239,6 @@ struct EucInstrumentReading: View {
                 .accessibilityHidden(true)
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(value.accessibilityValue(unit: unit, detail: detail))
-        .accessibilityIdentifier(identifier)
     }
 }
 

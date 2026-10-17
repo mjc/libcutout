@@ -3822,7 +3822,7 @@ final class CutoutAppUITests: XCTestCase {
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
                 let frame = window.frame
-                let imageSize = Self.displayedScreenshotSize(self.app.screenshot().image)
+                let imageSize = XCUIScreen.main.screenshot().image.size
                 return frame.width > 0 && frame.height > 0
                     && (frame.width > frame.height) == landscape
                     && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
@@ -3831,8 +3831,8 @@ final class CutoutAppUITests: XCTestCase {
             }, object: app
         )
         XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
-        let screenshot = app.screenshot().image
-        let displayedSize = Self.displayedScreenshotSize(screenshot)
+        let screenshot = XCUIScreen.main.screenshot().image
+        let displayedSize = screenshot.size
         let orientationProof = XCTAttachment(
             string: "device=\(XCUIDevice.shared.orientation.rawValue); window=\(window.frame); "
                 + "imageOrientation=\(screenshot.imageOrientation.rawValue); imageSize=\(screenshot.size); "
@@ -3841,22 +3841,11 @@ final class CutoutAppUITests: XCTestCase {
         orientationProof.name = "settled Ride orientation metadata"
         orientationProof.lifetime = .keepAlways
         add(orientationProof)
-        let screenshotProof = XCTAttachment(screenshot: app.screenshot())
+        let screenshotProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshotProof.name = "settled Ride native screenshot"
         screenshotProof.lifetime = .keepAlways
         add(screenshotProof)
         XCTAssertEqual(displayedSize.width > displayedSize.height, landscape)
-    }
-
-    private static func displayedScreenshotSize(_ image: UIImage) -> CGSize {
-        switch image.imageOrientation {
-        case .left, .right, .leftMirrored, .rightMirrored:
-            CGSize(width: image.size.height, height: image.size.width)
-        case .up, .down, .upMirrored, .downMirrored:
-            image.size
-        @unknown default:
-            image.size
-        }
     }
 
     func testVescEssentialRideControlsRemainVisibleWithoutScrollingAtAccessibilityDynamicType() throws {

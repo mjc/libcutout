@@ -39,7 +39,7 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         waitForRideViewport(landscape: landscape)
         let speed = element("ride.hero.speed")
         XCTAssertTrue(speed.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertFalse((speed.value as? String ?? "").isEmpty, app.debugDescription)
+        XCTAssertTrue((speed.value as? String ?? "").hasPrefix("23.9, mph,"), app.debugDescription)
         let player = app.buttons["music.expand"]
         XCTAssertTrue(player.waitForExistence(timeout: 10), app.debugDescription)
         let summary = player.value as? String ?? ""
@@ -71,14 +71,7 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
                 let frame = self.app.windows.firstMatch.frame
-                let image = XCUIScreen.main.screenshot().image
-                let imageSize: CGSize
-                switch image.imageOrientation {
-                case .left, .right, .leftMirrored, .rightMirrored:
-                    imageSize = CGSize(width: image.size.height, height: image.size.width)
-                default:
-                    imageSize = image.size
-                }
+                let imageSize = XCUIScreen.main.screenshot().image.size
                 return (frame.width > frame.height) == landscape
                     && (imageSize.width > imageSize.height) == landscape
                     && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
