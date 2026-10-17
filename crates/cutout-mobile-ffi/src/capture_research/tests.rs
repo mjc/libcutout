@@ -432,7 +432,7 @@ fn batch_readback_matches_active_builder_and_saved_database_observations() {
                     .unwrap_or(cutout_protocols::VETERAN_SERVICE_CHANNEL)
                     .as_bytes()
                     .to_vec(),
-                record.bytes,
+                record.bytes.to_vec(),
             )
         };
         assert_eq!(outcome, crate::MobileCaptureWriteOutcomeDto::Accepted);

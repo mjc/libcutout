@@ -17114,7 +17114,7 @@ impl MobilePevcapCaptureBuilder {
         &self,
         requests: Vec<MobileCaptureResearchReadbackRequestDto>,
     ) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
-        capture_research::readback_batch(requests, |observe| {
+        readback_batch(requests, |observe| {
             let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
             let writer = slot
                 .as_ref()

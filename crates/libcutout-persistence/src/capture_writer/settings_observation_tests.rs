@@ -455,7 +455,7 @@ fn pinned_read_scan_allows_live_admission_flush_and_finish_without_extending_its
 fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hidden_value() {
     for database_backed in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let database = RideDatabase::open(directory.path().join("ride.sqlite")).unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
         let path = directory.path().join("capture.jsonl");
         let writer = if database_backed {
             CaptureWriter::start_with_database(
@@ -543,7 +543,7 @@ fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hid
             assert!(matches!(
                 writer.finish_without_export().unwrap(),
                 CaptureWriterFinish::DatabaseFinished {
-                    integrity: crate::LiveCaptureIntegrity::Incomplete {
+                    integrity: LiveCaptureIntegrity::Incomplete {
                         dropped_messages: 1
                     },
                     ..
@@ -566,7 +566,7 @@ fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hid
 #[test]
 fn admitted_settings_snapshot_never_acknowledges_database_write_failure() {
     let directory = tempfile::tempdir().unwrap();
-    let database = RideDatabase::open(directory.path().join("ride.sqlite")).unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     let writer = CaptureWriter::start_with_database(
         directory.path().join("capture.jsonl"),
         WallClockUnixTimestamp::new(1_700_000_000_000),
