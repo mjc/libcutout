@@ -5287,15 +5287,49 @@ mod tests {
         assert_eq!(decoded_jsonl.version.minor, PEVCAP_VERSION_MINOR_LEGACY);
         assert_eq!(decoded_jsonl.locations.len(), 0);
 
-        let mut binary = capture.to_binary().expect("capture should encode");
-        binary.truncate(binary.len().saturating_sub(8));
-        let minor_start = PEVCAP_MAGIC.len() + 2;
-        binary[minor_start..minor_start + 2]
-            .copy_from_slice(&PEVCAP_VERSION_MINOR_LEGACY.to_le_bytes());
+        let mut legacy_capture = capture;
+        legacy_capture.version.minor = PEVCAP_VERSION_MINOR_LEGACY;
+        let binary = legacy_capture
+            .to_binary()
+            .expect("legacy capture should encode");
         let decoded_binary =
             PevcapCapture::from_binary(&binary).expect("legacy binary should remain readable");
-        assert_eq!(decoded_binary.version.minor, PEVCAP_VERSION_MINOR_LEGACY);
-        assert_eq!(decoded_binary.locations.len(), 0);
+        assert_eq!(decoded_binary, legacy_capture);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn independently_framed_v1_0_binary_retains_records_and_rejects_extra_sections() {
+        // Legacy wire layout: magic/version, header length+JSON, record count,
+        // record length+JSON. No location, music, or worksheet count follows.
+        let header = br#"{"wall_clock_start_unix_ms":1,"platform_id":"legacy","write_limit":null,"advertised_services":[],"gatt_fingerprints":[],"selected_session_key":null,"resolved_identity":null,"library_version":"0.1.0","registry_hash":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"annotations":[]}"#;
+        let record = br#"{"monotonic_ms":7,"direction":"LinkDown","characteristic":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"service":null,"write_mode":null,"bytes":[]}"#;
+        let mut binary = b"PEVCAP\0\0\x01\x00\x00\x00".to_vec();
+        binary.extend_from_slice(&u32::try_from(header.len()).unwrap().to_le_bytes());
+        binary.extend_from_slice(header);
+        binary.extend_from_slice(&1_u32.to_le_bytes());
+        binary.extend_from_slice(&u32::try_from(record.len()).unwrap().to_le_bytes());
+        binary.extend_from_slice(record);
+        let expected = PevcapRecord::link_down(ms(7));
+        let decoded = PevcapCapture::from_binary(&binary).unwrap();
+        assert_eq!(decoded.version, PevcapFormatVersion { major: 1, minor: 0 });
+        assert_eq!(decoded.records.as_slice(), std::slice::from_ref(&expected));
+        let mut reader = PevcapReader::new(binary.as_slice(), PevcapEncoding::Binary).unwrap();
+        assert_eq!(reader.next_record().unwrap(), Some(expected.clone()));
+        assert_eq!(reader.next_record().unwrap(), None);
+        binary.extend_from_slice(&0_u32.to_le_bytes());
+        assert!(matches!(
+            PevcapCapture::from_binary(&binary),
+            Err(PevcapBinaryError::TrailingBytes { len: 4 })
+        ));
+        let mut reader = PevcapReader::new(binary.as_slice(), PevcapEncoding::Binary).unwrap();
+        assert_eq!(reader.next_record().unwrap(), Some(expected));
+        assert!(matches!(
+            reader.next_record(),
+            Err(PevcapStreamError::Binary(
+                PevcapBinaryError::TrailingBytes { len: 4 }
+            ))
+        ));
     }
 
     #[cfg(feature = "serde")]
