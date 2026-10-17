@@ -571,6 +571,7 @@ enum DeviceControlPresentation {
             case .level: return text
             case .seconds: return "\(text) s"
             case .minutes: return "\(text) min"
+            case .volts: return "\(text) V"
             }
         }
     }

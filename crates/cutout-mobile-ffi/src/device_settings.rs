@@ -86,7 +86,8 @@ setting_enum!(
         Degrees,
         Level,
         Seconds,
-        Minutes
+        Minutes,
+        Volts
     ]
 );
 setting_enum!(

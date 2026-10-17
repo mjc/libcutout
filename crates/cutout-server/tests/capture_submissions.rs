@@ -1292,3 +1292,105 @@ async fn assert_combined_capture_host_isolation(
         }
     }
 }
+
+#[tokio::test]
+async fn private_capture_reported_settings_round_trip_exactly_and_stay_private() {
+    let directory = TempDir::new().expect("directory");
+    let database = directory.path().join("server.sqlite");
+    let mut capture =
+        cutout_core::PevcapCapture::decode(&capture(), cutout_core::PevcapEncoding::Jsonl)
+            .expect("capture");
+    capture.version = cutout_core::PevcapFormatVersion::current();
+    let first = cutout_core::CaptureSettingsObservation {
+        capture_id: Uuid::new_v4().to_string(),
+        profile: cutout_core::CaptureResearchProfile {
+            profile_id: "nosfet_aero".into(),
+            pev_category: Some("euc".into()),
+            model: Some("Unverified manual profile".into()),
+            firmware: None,
+            selection: cutout_core::CaptureResearchProfileSelection::Manual,
+        },
+        observed_at_ms: 10,
+        recorded_at_ms: 100,
+        source: cutout_core::CaptureObservationSource::ManufacturerApp,
+        values: vec![
+            cutout_core::CaptureSettingObservationValue {
+                setting_id: "pwm_tiltback".into(),
+                value: cutout_core::CaptureObservedValue::Off,
+                unit: Some("%".into()),
+                note: None,
+            },
+            cutout_core::CaptureSettingObservationValue {
+                setting_id: "display_brightness".into(),
+                value: cutout_core::CaptureObservedValue::Entered("0".into()),
+                unit: None,
+                note: Some("Screen displayed zero".into()),
+            },
+        ],
+        note: Some("Before switching display units".into()),
+    };
+    let mut second = first.clone();
+    second.observed_at_ms = 150;
+    second.recorded_at_ms = 200;
+    second.values[0].value = cutout_core::CaptureObservedValue::Entered("125.00".into());
+    capture.settings_observations = vec![first.clone(), second.clone()];
+    let bytes = capture
+        .encode(cutout_core::PevcapEncoding::Jsonl)
+        .expect("encode observations");
+    let server = Server::start(&database).await;
+    let owner = server.identity().await;
+    let stranger = server.identity().await;
+    let reviewer = provision(&database, "--private-capture-reviewer");
+    let operation = Uuid::new_v4().to_string();
+    expect_status(
+        server.put(&operation, &owner, &bytes, "manual").await,
+        StatusCode::CREATED,
+    )
+    .await;
+    drop(server);
+    let restarted = Server::start(&database).await;
+    let content_path = format!("/v1/capture-submissions/{operation}/content");
+    for token in [&owner, &reviewer] {
+        let response = restarted.request(Method::GET, &content_path, token).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let returned = response.bytes().await.expect("private capture");
+        assert_eq!(returned.as_ref(), bytes);
+        let decoded =
+            cutout_core::PevcapCapture::decode(&returned, cutout_core::PevcapEncoding::Jsonl)
+                .expect("decode settings");
+        assert_eq!(
+            decoded.settings_observations,
+            vec![first.clone(), second.clone()]
+        );
+        assert!(decoded.music_events.is_empty());
+    }
+    assert_eq!(
+        restarted
+            .request(Method::GET, &content_path, &stranger)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    capture.music_events.push(
+        cutout_core::PevcapMusicEvent::new(
+            cutout_core::MusicProvider::AppleMusic,
+            "prohibited",
+            cutout_core::MonotonicTimestamp::new(1),
+            cutout_core::WallClockUnixTimestamp::new(1_700_000_000_001),
+            1,
+            None,
+        )
+        .expect("legacy metadata"),
+    );
+    let rejected = capture
+        .encode(cutout_core::PevcapEncoding::Jsonl)
+        .expect("legacy capture");
+    let response = restarted
+        .put(&Uuid::new_v4().to_string(), &owner, &rejected, "manual")
+        .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response.json::<Value>().await.expect("music rejection")["error"],
+        "capture_music_prohibited"
+    );
+}

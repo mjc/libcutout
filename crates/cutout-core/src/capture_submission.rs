@@ -103,6 +103,9 @@ pub struct CaptureSubmissionCategories {
     pub notes: bool,
     /// Header annotations, including physical-action labels, are present.
     pub annotations: bool,
+    /// User-entered settings values and their optional context are present.
+    #[serde(default)]
+    pub settings_observations: bool,
 }
 
 /// A full-stream check without replaying or executing captured writes.

@@ -77,7 +77,18 @@ capture_labels!(
     AlarmSpeed,
     AngleAdjustment,
     RideMode,
-    PwmPercent
+    PwmPercent,
+    PedalHardness,
+    DisplayBrightness,
+    DynamicAssist,
+    PedalDipCompensation,
+    LateralCutoff,
+    VoltageCorrection,
+    DisplayUnits,
+    BrakeOverpressureAlarm,
+    BeeperVolume,
+    RollAngleMode,
+    LedPattern
 );
 
 /// Returns the stable annotation/localization key from the Rust vocabulary.

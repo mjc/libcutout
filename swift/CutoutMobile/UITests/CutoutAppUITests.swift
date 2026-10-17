@@ -2510,6 +2510,94 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 2, file: file, line: line)
     }
 
+    func testCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch() throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Capture research acceptance is restricted to Simulator")
+        #endif
+        executionTimeAllowance = 240
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+        enterCapture()
+        let recording = app.descendants(matching: .any)["capture.screen"]
+        let stationary = app.buttons["capture.label.powered_on_stationary.action"]
+        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
+        stationary.tap()
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+
+        func openWorksheet() {
+            let record = app.buttons["capture.settings.record"]
+            scrollElementFrameIntoViewport(record, in: recording, maxScrolls: 8)
+            record.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["capture.settings.worksheet"].waitForExistence(timeout: 5))
+        }
+        openWorksheet()
+        let profile = app.buttons["capture.settings.profile"]
+        profile.tap()
+        app.buttons["NOSFET Aero"].firstMatch.tap()
+        app.switches["Earlier observation"].tap()
+        let earlierTime = app.textFields["capture.settings.time"]
+        earlierTime.tap()
+        earlierTime.typeText("0")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let search = app.searchFields.firstMatch
+        search.tap()
+        search.typeText("brightness")
+        let brightness = app.textFields["capture.settings.value.display_brightness"]
+        XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
+        brightness.tap()
+        brightness.typeText("145")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        let note = app.descendants(matching: .any)["capture.settings.note"].firstMatch
+        note.tap()
+        note.typeText("Before brightness change")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        app.buttons["capture.settings.save"].tap()
+        XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+
+        openWorksheet()
+        app.switches["Earlier observation"].tap()
+        let repeatedBrightness = app.textFields["capture.settings.value.display_brightness"]
+        scrollElementFrameIntoViewport(repeatedBrightness, in: app.collectionViews.firstMatch, maxScrolls: 8)
+        repeatedBrightness.tap()
+        repeatedBrightness.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "30")
+        app.buttons["capture.settings.save"].tap()
+        let observations = app.buttons["capture.settings.observations"]
+        scrollElementFrameIntoViewport(observations, in: recording, maxScrolls: 8)
+        observations.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["capture.settings.review"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["145 %"].exists)
+        XCTAssertTrue(app.staticTexts["30 %"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["capture.stop"].tap()
+        let detail = app.descendants(matching: .any)["captures.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 15), app.debugDescription)
+        let saved = app.buttons["capture.settings.saved"]
+        scrollElementFrameIntoViewport(saved, in: detail, maxScrolls: 12)
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), app.debugDescription)
+        app.navigationBars.buttons.firstMatch.tap()
+        let stored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        XCTAssertTrue(stored.waitForExistence(timeout: 10), app.debugDescription)
+        let captureID = stored.identifier
+        app.terminate()
+        app.launch()
+        app.buttons["device-picker.open-setup"].tap()
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: app.descendants(matching: .any)["setup.screen"], maxScrolls: 8)
+        captures.tap()
+        app.buttons[captureID].tap()
+        let restoredSaved = app.buttons["capture.settings.saved"]
+        scrollElementFrameIntoViewport(restoredSaved, in: app.collectionViews.firstMatch, maxScrolls: 12)
+        restoredSaved.tap()
+        XCTAssertTrue(app.staticTexts["145 %"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["30 %"].exists)
+        retainCaptureScreenshot("Capture settings retained after relaunch")
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
         app.buttons["captures.labels"].tap()

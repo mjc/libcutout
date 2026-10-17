@@ -159,6 +159,7 @@ struct CaptureSubmissionSection: View {
         if status.categories.location { categories.append("location") }
         if status.categories.notes { categories.append("descriptions and notes") }
         if status.categories.annotations { categories.append("annotations and label boundaries") }
+        if status.categories.settingsObservations { categories.append("user-entered settings values and notes") }
         return categories
     }
 }

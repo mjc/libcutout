@@ -29,6 +29,7 @@
 		300000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */; };
 		30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */; };
 		CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */; };
+		CA9860000000000000000001 /* Apps/CutoutApp/CaptureResearchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9860000000000000000002 /* Apps/CutoutApp/CaptureResearchViews.swift */; };
 		CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */; };
 		CA9400000000000000000001 /* Apps/CutoutApp/CaptureSubmissionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9400000000000000000002 /* Apps/CutoutApp/CaptureSubmissionModel.swift */; };
 		CA9400000000000000000003 /* Apps/CutoutApp/CaptureSubmissionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9400000000000000000004 /* Apps/CutoutApp/CaptureSubmissionSection.swift */; };
@@ -200,6 +201,7 @@
 		400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsTopologyCells.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureViews.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureFeatureModel.swift; sourceTree = SOURCE_ROOT; };
+		CA9860000000000000000002 /* Apps/CutoutApp/CaptureResearchViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureResearchViews.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BluetoothCapturesView.swift; sourceTree = SOURCE_ROOT; };
 		CA9400000000000000000002 /* Apps/CutoutApp/CaptureSubmissionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureSubmissionModel.swift; sourceTree = SOURCE_ROOT; };
 		CA9400000000000000000004 /* Apps/CutoutApp/CaptureSubmissionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureSubmissionSection.swift; sourceTree = SOURCE_ROOT; };
@@ -453,6 +455,7 @@
 				400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */,
 				40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */,
 				CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */,
+				CA9860000000000000000002 /* Apps/CutoutApp/CaptureResearchViews.swift */,
 				CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */,
 				CA9400000000000000000002 /* Apps/CutoutApp/CaptureSubmissionModel.swift */,
 				CA9400000000000000000004 /* Apps/CutoutApp/CaptureSubmissionSection.swift */,
@@ -831,6 +834,7 @@
 				300000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift in Sources */,
 				30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */,
 				CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */,
+				CA9860000000000000000001 /* Apps/CutoutApp/CaptureResearchViews.swift in Sources */,
 				CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */,
 				CA9400000000000000000001 /* Apps/CutoutApp/CaptureSubmissionModel.swift in Sources */,
 				CA9400000000000000000003 /* Apps/CutoutApp/CaptureSubmissionSection.swift in Sources */,

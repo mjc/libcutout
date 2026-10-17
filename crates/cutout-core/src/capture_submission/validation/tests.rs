@@ -99,6 +99,7 @@ fn capture_submission_validates_unknown_gps_free_bytes_in_both_encodings() {
                 location: false,
                 notes: false,
                 annotations: true,
+                settings_observations: false,
             }
         );
     }
@@ -415,4 +416,63 @@ fn capture_submission_classifies_bounded_parser_payload_limits() {
         validate_capture_submission(oversized_line.as_slice(), PevcapEncoding::Jsonl),
         Err(CaptureSubmissionValidationError::TooLarge)
     );
+}
+
+#[test]
+fn capture_submission_preserves_settings_notes_and_still_rejects_music() {
+    use crate::{
+        CaptureObservationSource, CaptureObservedValue, CaptureResearchProfile,
+        CaptureResearchProfileSelection, CaptureSettingObservationValue,
+        CaptureSettingsObservation,
+    };
+    let mut capture = capture(&[]);
+    let observation = CaptureSettingsObservation {
+        capture_id: LIVE.into(),
+        profile: CaptureResearchProfile {
+            profile_id: "manual_unknown_device".into(),
+            pev_category: Some("euc".into()),
+            model: None,
+            firmware: None,
+            selection: CaptureResearchProfileSelection::Manual,
+        },
+        observed_at_ms: 5,
+        recorded_at_ms: 30,
+        source: CaptureObservationSource::ManufacturerApp,
+        values: vec![CaptureSettingObservationValue {
+            setting_id: "display_brightness".into(),
+            value: CaptureObservedValue::Entered("125".into()),
+            unit: Some("%".into()),
+            note: Some("as shown".into()),
+        }],
+        note: None,
+    };
+    capture.settings_observations.push(observation);
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let bytes = capture.encode(encoding).unwrap();
+        let summary = validate_capture_submission(bytes.as_slice(), encoding).unwrap();
+        assert_eq!(summary.events, 3);
+        assert!(summary.categories.notes);
+        assert!(summary.categories.annotations);
+        assert!(summary.categories.settings_observations);
+        assert!(!summary.categories.location);
+    }
+    capture.music_events.push(music());
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let bytes = capture.encode(encoding).unwrap();
+        assert_eq!(
+            validate_capture_submission(bytes.as_slice(), encoding),
+            Err(CaptureSubmissionValidationError::MusicPresent)
+        );
+    }
+}
+
+#[test]
+fn capture_submission_categories_read_legacy_persisted_status() {
+    let categories: CaptureSubmissionCategories = serde_json::from_str(
+        r#"{"device_identifiers":true,"location":false,"notes":false,"annotations":true}"#,
+    )
+    .unwrap();
+    assert!(!categories.settings_observations);
+    assert!(categories.device_identifiers);
+    assert!(categories.annotations);
 }

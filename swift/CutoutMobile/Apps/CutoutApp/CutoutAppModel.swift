@@ -541,7 +541,12 @@ final class CutoutAppModel {
             sessionState: core.rideSessionStateHandle,
             flush: { await core.flushCapture() },
             finish: { await core.finishCapture() },
-            changeCaptureLabel: { try core.changeCaptureLabel(generation: $0, action: $1) }
+            changeCaptureLabel: { try core.changeCaptureLabel(generation: $0, action: $1) },
+            saveSettingsObservation: { try await core.recordCaptureSettingsObservation(generation: $0, draft: $1) },
+            readSettingsObservations: { try core.captureSettingsObservations(generation: $0) },
+            readSettingsReadback: {
+                try await core.captureSettingsReadback(generation: $0, profileID: $1, atMilliseconds: $2)
+            }
         )
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,

@@ -46,6 +46,15 @@ final class CaptureFeatureModel {
     @ObservationIgnored private let finishOperation: @MainActor () async -> Bool
     @ObservationIgnored private let changeCaptureLabel:
         (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    @ObservationIgnored private let saveSettingsObservation:
+        (CaptureGeneration, MobileCaptureSettingsDraftDto) async throws -> MobileCaptureSettingsObservationDto
+    @ObservationIgnored private let readSettingsReadback:
+        (CaptureGeneration, String, UInt64) async throws -> [MobileCaptureResearchDecodedValueDto]
+    @ObservationIgnored private let readSettingsObservations:
+        (CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto]
+    let researchDraft = CaptureResearchDraft()
+    private(set) var settingsObservations: [MobileCaptureSettingsObservationDto] = []
+    private(set) var settingsError: String?
     @ObservationIgnored private var finishTask: Task<Bool, Never>?
     @ObservationIgnored private var finishRequestGeneration: CaptureGeneration?
 
@@ -56,12 +65,22 @@ final class CaptureFeatureModel {
         changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
             [MobileCaptureLabelDto] = { _, _ in
                 throw MobileCaptureAnnotationError.NotRecording
-            }
+            },
+        saveSettingsObservation: @escaping (CaptureGeneration, MobileCaptureSettingsDraftDto) async throws ->
+            MobileCaptureSettingsObservationDto = { _, _ in throw MobileCaptureResearchError.NotRecording },
+        readSettingsObservations: @escaping (CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto] = { _ in
+            []
+        },
+        readSettingsReadback: @escaping (CaptureGeneration, String, UInt64) async throws ->
+            [MobileCaptureResearchDecodedValueDto] = { _, _, _ in [] }
     ) {
         self.sessionState = sessionState
         flushOperation = flush
         finishOperation = finish
         self.changeCaptureLabel = changeCaptureLabel
+        self.saveSettingsObservation = saveSettingsObservation
+        self.readSettingsObservations = readSettingsObservations
+        self.readSettingsReadback = readSettingsReadback
         lifecycle = sessionState.captureLifecycleSnapshot()
     }
 
@@ -156,12 +175,40 @@ final class CaptureFeatureModel {
         progress = nil
         annotationError = nil
         activeLabels.removeAll()
+        settingsObservations.removeAll()
+        researchDraft.reset()
+        settingsError = nil
         fileName = nil
         notificationCount = 0
         label = nil
         deviceKind = nil
         device = nil
         isUserInitiated = false
+    }
+
+    func refreshSettingsObservations() {
+        guard let generation = activeGeneration else { return }
+        do {
+            settingsObservations = try readSettingsObservations(generation)
+            settingsError = nil
+        } catch { settingsError = "Could not load settings values." }
+    }
+
+    func settingsReadback(profileID: String, atMilliseconds: UInt64) async throws
+        -> [MobileCaptureResearchDecodedValueDto]
+    {
+        guard let generation = activeGeneration else { throw MobileCaptureResearchError.NotRecording }
+        let result = try await readSettingsReadback(generation, profileID, atMilliseconds)
+        guard activeGeneration == generation else { throw MobileCaptureResearchError.NotRecording }
+        return result
+    }
+
+    func recordSettingsObservation(_ draft: MobileCaptureSettingsDraftDto) async throws {
+        guard canAnnotate, let generation = activeGeneration else { throw MobileCaptureResearchError.NotRecording }
+        let saved = try await saveSettingsObservation(generation, draft)
+        guard activeGeneration == generation else { return }
+        settingsObservations.append(saved)
+        settingsError = nil
     }
 
     func startLabel(_ next: CaptureQuickLabel) {

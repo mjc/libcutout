@@ -2,12 +2,13 @@
 //! Mobile captures use SQLite as their live source; JSONL exports are created on explicit demand.
 
 use crate::storage::{
-    LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureLocationAdmission,
-    LiveCaptureLocationObservation, LiveCaptureLocationValidation, LiveCaptureState, QueryLimit,
-    RideDatabase,
+    CaptureTransportReadPrefix, LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity,
+    LiveCaptureLocationAdmission, LiveCaptureLocationObservation, LiveCaptureLocationValidation,
+    LiveCaptureState, QueryLimit, RideDatabase,
 };
 use cutout_core::{
-    CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
+    CaptureLabelState, CaptureSettingsObservation, CaptureSettingsObservationError, GattChannel,
+    GattFingerprint, MAX_CAPTURE_SETTINGS_OBSERVATIONS, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
     PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord,
     PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
@@ -33,6 +34,8 @@ mod database_completion_tests;
 #[cfg(test)]
 mod export_digest_tests;
 mod material;
+#[cfg(test)]
+pub(crate) mod settings_observation_tests;
 use material::{MaterialBaseline, MaterialDecision, PreparedMaterialRecord};
 
 const CAPTURE_POLICY_ANNOTATION_KEY: &str = "capture_recording_policy=";
@@ -265,6 +268,7 @@ struct CaptureWriterState {
     incomplete_messages: AtomicU64,
     bytes_written: AtomicU64,
     physical_bytes_written: AtomicU64,
+    settings_observations: AtomicU64,
     failure: Mutex<CaptureWriterFailure>,
 }
 
@@ -290,6 +294,7 @@ impl Default for CaptureWriterState {
             incomplete_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             physical_bytes_written: AtomicU64::new(0),
+            settings_observations: AtomicU64::new(0),
             failure: Mutex::new(CaptureWriterFailure::Healthy),
         }
     }
@@ -379,6 +384,7 @@ enum CaptureWriterMessage {
     Record,
     Location(PevcapLocationSample),
     Music(PevcapMusicEvent),
+    SettingsObservation(CaptureSettingsObservation),
     Metadata(CaptureMetadata),
     Barrier(
         CaptureBarrier,
@@ -410,6 +416,7 @@ enum CaptureWriterStorage {
 
 enum CaptureWriterBarrierResult {
     Flushed,
+    ReadPrefix(CaptureTransportReadPrefix),
     FileFinished {
         content_digest: String,
         final_header: Box<PevcapHeader>,
@@ -440,6 +447,7 @@ enum CaptureWriterAction {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CaptureBarrier {
     Flush,
+    ReadPrefix,
     Finish,
     FinishWithoutExport,
 }
@@ -447,7 +455,7 @@ enum CaptureBarrier {
 impl CaptureBarrier {
     const fn finishes(self) -> bool {
         match self {
-            Self::Flush => false,
+            Self::Flush | Self::ReadPrefix => false,
             Self::Finish | Self::FinishWithoutExport => true,
         }
     }
@@ -639,6 +647,7 @@ fn try_send_message(
         CaptureWriterMessage::Record
         | CaptureWriterMessage::Location(_)
         | CaptureWriterMessage::Music(_)
+        | CaptureWriterMessage::SettingsObservation(_)
         | CaptureWriterMessage::Metadata(_) => true,
     };
     let queued_messages = state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
@@ -702,6 +711,64 @@ impl CaptureRecordPool {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .pop_front()
+    }
+}
+
+/// An admitted durability barrier that can be awaited without retaining the writer lock.
+#[derive(Debug)]
+pub struct CaptureWriterFlushReceipt {
+    pending: CaptureWriterPendingBarrier,
+}
+
+impl CaptureWriterFlushReceipt {
+    /// Waits for this admitted prefix to become durable.
+    ///
+    /// # Errors
+    /// Returns worker or storage failure without claiming successful persistence.
+    pub fn wait(self) -> Result<(), String> {
+        match self.pending.wait()? {
+            CaptureWriterBarrierResult::Flushed => Ok(()),
+            _ => Err("capture writer returned the wrong barrier receipt".into()),
+        }
+    }
+}
+
+/// An admitted read whose bounded source is pinned by the writer after its barrier.
+#[derive(Debug)]
+pub struct CaptureWriterReadReceipt {
+    pending: CaptureWriterPendingBarrier,
+}
+
+impl CaptureWriterReadReceipt {
+    /// Waits for the pinned prefix, then scans it independently of writer admission.
+    ///
+    /// # Errors
+    /// Returns barrier, stored evidence, or file-read failure.
+    pub fn visit_transport_records(self, visit: impl FnMut(PevcapRecord)) -> Result<(), String> {
+        match self.pending.wait()? {
+            CaptureWriterBarrierResult::ReadPrefix(prefix) => prefix.visit(visit),
+            _ => Err("capture writer returned the wrong read receipt".into()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CaptureWriterPendingBarrier {
+    receiver: Receiver<Result<CaptureWriterBarrierResult, String>>,
+    state: Arc<CaptureWriterState>,
+}
+
+impl CaptureWriterPendingBarrier {
+    fn wait(self) -> Result<CaptureWriterBarrierResult, String> {
+        let result = self
+            .receiver
+            .recv()
+            .map_err(|_| "capture writer stopped before barrier".to_owned())
+            .and_then(|result| result);
+        if let Err(error) = &result {
+            self.state.fail(error);
+        }
+        result
     }
 }
 
@@ -908,6 +975,100 @@ impl CaptureWriter {
         self.ingress.try_send_record(record)
     }
 
+    /// Returns the Rust-issued capture identity used by settings observations.
+    #[must_use]
+    pub fn capture_identity(&self) -> String {
+        self.live_capture_id
+            .map_or_else(|| self.artifact_id.to_string(), |id| id.to_string())
+    }
+
+    /// Admits a read barrier without waiting for disk I/O or scanning the capture.
+    /// Drop any outer writer lock before consuming its returned receipt.
+    ///
+    /// # Errors
+    /// Returns a closed writer or barrier-admission failure.
+    pub fn begin_transport_read(&self) -> Result<CaptureWriterReadReceipt, String> {
+        Ok(CaptureWriterReadReceipt {
+            pending: self.begin_barrier(CaptureBarrier::ReadPrefix)?,
+        })
+    }
+
+    /// Flushes accepted input and scans a pinned prefix independently of later appends.
+    ///
+    /// # Errors
+    /// Returns a barrier, stored evidence, or file-read failure.
+    pub fn visit_transport_records(&self, visit: impl FnMut(PevcapRecord)) -> Result<(), String> {
+        self.begin_transport_read()?.visit_transport_records(visit)
+    }
+
+    /// Admits a flush without waiting while a caller retains its writer mutex.
+    ///
+    /// # Errors
+    /// Returns a closed writer or barrier-admission failure.
+    pub fn begin_flush(&self) -> Result<CaptureWriterFlushReceipt, String> {
+        Ok(CaptureWriterFlushReceipt {
+            pending: self.begin_barrier(CaptureBarrier::Flush)?,
+        })
+    }
+
+    fn begin_barrier(&self, kind: CaptureBarrier) -> Result<CaptureWriterPendingBarrier, String> {
+        let status = self.state.status();
+        if status.failed {
+            return Err(status
+                .last_error
+                .unwrap_or_else(|| "capture writer failed".into()));
+        }
+        let (sender, receiver) = sync_channel(1);
+        if self.try_send(CaptureWriterMessage::Barrier(kind, sender))
+            != CaptureWriteOutcome::Accepted
+        {
+            return Err(self
+                .state
+                .status()
+                .last_error
+                .unwrap_or_else(|| "capture writer barrier was not admitted".into()));
+        }
+        Ok(CaptureWriterPendingBarrier {
+            receiver,
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    /// Admits a bounded user-reported snapshot without applying device write limits.
+    ///
+    /// Queue acceptance is followed by the existing flush/finalization receipt.
+    ///
+    /// # Errors
+    /// Returns an identity, structural, payload-size, or snapshot-count error before enqueueing.
+    pub fn try_send_settings_observation(
+        &self,
+        observation: CaptureSettingsObservation,
+    ) -> Result<CaptureWriteOutcome, CaptureSettingsObservationError> {
+        observation.validate()?;
+        if observation.capture_id != self.capture_identity() {
+            return Err(CaptureSettingsObservationError::InvalidCaptureId);
+        }
+        let line = observation
+            .to_jsonl_line()
+            .map_err(|_| CaptureSettingsObservationError::TooLarge)?;
+        if line.len() > crate::LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+            return Err(CaptureSettingsObservationError::TooLarge);
+        }
+        self.state
+            .settings_observations
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < MAX_CAPTURE_SETTINGS_OBSERVATIONS as u64).then_some(count + 1)
+            })
+            .map_err(|_| CaptureSettingsObservationError::TooLarge)?;
+        let outcome = self.try_send(CaptureWriterMessage::SettingsObservation(observation));
+        if outcome != CaptureWriteOutcome::Accepted {
+            self.state
+                .settings_observations
+                .fetch_sub(1, Ordering::AcqRel);
+        }
+        Ok(outcome)
+    }
+
     /// Returns a cloneable event-admission handle for native callback ingress.
     #[must_use]
     pub fn ingress(&self) -> CaptureWriterIngress {
@@ -957,7 +1118,8 @@ impl CaptureWriter {
             Ok(Err(error)) => self.fail_flush(error),
             Ok(Ok(
                 CaptureWriterBarrierResult::FileFinished { .. }
-                | CaptureWriterBarrierResult::DatabaseFinished { .. },
+                | CaptureWriterBarrierResult::DatabaseFinished { .. }
+                | CaptureWriterBarrierResult::ReadPrefix(_),
             )) => self.fail_flush("capture writer finished before flush".into()),
             Err(_) => self.fail_flush("capture writer stopped before flush".into()),
         }
@@ -1060,8 +1222,10 @@ impl CaptureWriter {
                     }),
                 }
             }
-            CaptureWriterBarrierResult::Flushed => {
-                return Err("capture writer flushed instead of finishing".into());
+            CaptureWriterBarrierResult::Flushed | CaptureWriterBarrierResult::ReadPrefix(_) => {
+                return Err(
+                    "capture writer returned a nonterminal barrier instead of finishing".into(),
+                );
             }
         };
         Ok(finalization)
@@ -1226,6 +1390,13 @@ fn write_capture_stream(
                 )
                 .and_then(|()| match kind {
                     CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
+                    CaptureBarrier::ReadPrefix => {
+                        let file = File::open(path).map_err(|error| error.to_string())?;
+                        let bytes = file.metadata().map_err(|error| error.to_string())?.len();
+                        Ok(CaptureWriterBarrierResult::ReadPrefix(
+                            CaptureTransportReadPrefix::file(file, bytes),
+                        ))
+                    }
                     CaptureBarrier::Finish | CaptureBarrier::FinishWithoutExport => {
                         let content_digest = digest_open_file(writer.get_mut())?;
                         Ok(CaptureWriterBarrierResult::FileFinished {
@@ -1353,6 +1524,11 @@ fn finish_database_capture_barrier(
         .and_then(|()| persist_database_capture(capture, header, kind, state))
         .and_then(|integrity| match kind {
             CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
+            CaptureBarrier::ReadPrefix => {
+                CaptureTransportReadPrefix::live(capture.database.clone(), capture.id)
+                    .map(CaptureWriterBarrierResult::ReadPrefix)
+                    .map_err(|error| error.to_string())
+            }
             CaptureBarrier::Finish | CaptureBarrier::FinishWithoutExport => {
                 let integrity = integrity.ok_or_else(|| {
                     "finished database capture has no integrity result".to_string()
@@ -1650,6 +1826,7 @@ fn capture_writer_action(
     match &message {
         CaptureWriterMessage::Location(_)
         | CaptureWriterMessage::Music(_)
+        | CaptureWriterMessage::SettingsObservation(_)
         | CaptureWriterMessage::Metadata(_) => material.reset(),
         CaptureWriterMessage::Record | CaptureWriterMessage::Barrier(_, _) => {}
     }
@@ -1727,6 +1904,20 @@ fn capture_writer_action(
                 prepared_material: None,
             },
         ))),
+        CaptureWriterMessage::SettingsObservation(observation) => Ok(CaptureWriterAction::Event(
+            Box::new(CaptureWriterEventLine {
+                json_line: observation
+                    .to_jsonl_line()
+                    .map_err(|error| error.to_string())?,
+                kind: LiveCaptureEventKind::Metadata,
+                receipt_monotonic_ms: observation.recorded_at_ms,
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: None,
+                location: None,
+                record: None,
+                prepared_material: None,
+            }),
+        )),
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
         CaptureWriterMessage::Barrier(kind, reply) => Ok(CaptureWriterAction::Barrier(kind, reply)),
     }

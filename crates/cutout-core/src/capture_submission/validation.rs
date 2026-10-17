@@ -242,13 +242,21 @@ pub fn validate_capture_submission<R: Read>(
                 || value.starts_with("user_note=")
         }),
         annotations: !header.annotations.is_empty(),
+        settings_observations: false,
     };
     let annotation_count = u64::try_from(header.annotations.len()).unwrap_or(u64::MAX);
     let mut events = EventCounter::default();
+    let mut settings_observations = 0;
     while let Some(event) = reader
         .next_event()
         .map_err(|error| classify(&error, &counter.borrow()))?
     {
+        if matches!(&event, PevcapEvent::SettingsObservation(_)) {
+            settings_observations += 1;
+            if settings_observations > crate::MAX_CAPTURE_SETTINGS_OBSERVATIONS {
+                return Err(CaptureSubmissionValidationError::TooManyEvents);
+            }
+        }
         let timestamp = inspect_event(event, &mut categories)?;
         events.observe(timestamp)?;
     }
@@ -267,6 +275,12 @@ fn inspect_event(
     categories: &mut CaptureSubmissionCategories,
 ) -> Result<u64, CaptureSubmissionValidationError> {
     match event {
+        PevcapEvent::SettingsObservation(observation) => {
+            categories.notes = true;
+            categories.annotations = true;
+            categories.settings_observations = true;
+            Ok(observation.recorded_at_ms)
+        }
         PevcapEvent::Music(_) => Err(CaptureSubmissionValidationError::MusicPresent),
         PevcapEvent::Record(record) => {
             if record.music.is_some() {
