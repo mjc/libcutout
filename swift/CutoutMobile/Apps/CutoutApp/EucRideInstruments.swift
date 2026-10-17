@@ -142,6 +142,7 @@ struct EucRideInstruments: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(localizedAppText("ride.metric.battery"))
         .accessibilityValue(value.accessibilityValue(unit: RideUnits.percentUnit, detail: battery?.detail ?? ""))
         .accessibilityHint(localizedAppText("ride.readings.open"))
