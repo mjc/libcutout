@@ -49,6 +49,33 @@ final class CaptureResearchDraftTests: XCTestCase {
         XCTAssertTrue(try draft.observation().values.isEmpty)
     }
 
+    func testNumericAndReadOnlyObservationStatesPreserveEnteredValues() throws {
+        let draft = CaptureResearchDraft()
+        draft.selectProfile("nosfet_aero")
+        XCTAssertTrue(try draft.observation().values.isEmpty)
+        let readOnly = try XCTUnwrap(draft.catalog?.fields.first(where: { $0.id == "charge_limit_diagnostic" }))
+        XCTAssertEqual(readOnly.control, .readOnly)
+        draft.values["display_brightness"] = "0"
+        draft.values["charge_limit_diagnostic"] = "0xFF"
+
+        for id in ["display_brightness", "charge_limit_diagnostic"] { draft.states[id] = "unobserved" }
+        var snapshot = try draft.observation()
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "display_brightness" })?.value, .unobserved)
+        XCTAssertEqual(snapshot.values.first(where: { $0.settingId == "charge_limit_diagnostic" })?.value, .unobserved)
+        XCTAssertEqual(draft.values["display_brightness"], "0")
+        XCTAssertEqual(draft.values["charge_limit_diagnostic"], "0xFF")
+
+        for id in ["display_brightness", "charge_limit_diagnostic"] { draft.states[id] = "value" }
+        snapshot = try draft.observation()
+        XCTAssertEqual(
+            snapshot.values.first(where: { $0.settingId == "display_brightness" })?.value, .entered(value: "0"))
+        XCTAssertEqual(
+            snapshot.values.first(where: { $0.settingId == "charge_limit_diagnostic" })?.value, .entered(value: "0xFF"))
+        draft.values["display_brightness"] = ""
+        draft.values["charge_limit_diagnostic"] = ""
+        XCTAssertTrue(try draft.observation().values.isEmpty)
+    }
+
     func testUnusualValueAndOriginalUnitReachRustWithoutClamping() throws {
         let draft = CaptureResearchDraft()
         draft.selectProfile("nosfet_aero")

@@ -337,7 +337,8 @@ impl CaptureResearchReadback {
             .iter_mut()
             .find(|entry| entry.setting_id == value.setting_id)
         {
-            Some(entry) => *entry = value,
+            Some(entry) if value.observed_at_ms >= entry.observed_at_ms => *entry = value,
+            Some(_) => {}
             None => self.values.push(value),
         }
     }

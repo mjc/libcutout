@@ -257,6 +257,44 @@ fn aero_readback_uses_packet_times_and_never_treats_outbound_bytes_as_observatio
 }
 
 #[test]
+fn aero_readback_retains_newest_packet_time_when_records_arrive_out_of_order() {
+    let mut readback = CaptureResearchReadback::new("nosfet_aero", 30).unwrap();
+    readback.observe(&inbound(
+        30,
+        crate::VETERAN_DATA_CHANNEL,
+        &aero_brightness(40),
+    ));
+    readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+    assert_eq!(
+        decoded(&readback, "display_brightness"),
+        &CaptureResearchDecodedValue {
+            setting_id: "display_brightness",
+            value: Some(DeviceSettingValue::Number(40)),
+            observed_at_ms: 30,
+        }
+    );
+}
+
+#[test]
+fn aero_readback_uses_later_record_when_packet_times_are_equal() {
+    let mut readback = CaptureResearchReadback::new("nosfet_aero", 30).unwrap();
+    readback.observe(&inbound(30, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+    readback.observe(&inbound(
+        30,
+        crate::VETERAN_DATA_CHANNEL,
+        &aero_brightness(40),
+    ));
+    assert_eq!(
+        decoded(&readback, "display_brightness"),
+        &CaptureResearchDecodedValue {
+            setting_id: "display_brightness",
+            value: Some(DeviceSettingValue::Number(40)),
+            observed_at_ms: 30,
+        }
+    );
+}
+
+#[test]
 fn falcon_packet_readback_keeps_independent_field_times_and_resets_on_link_change() {
     assert_eq!(
         crate::begode_falcon_target_voltage_profile(),

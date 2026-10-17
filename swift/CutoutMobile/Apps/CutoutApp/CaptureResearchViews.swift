@@ -325,19 +325,22 @@ struct CaptureSettingsWorksheet: View {
                     }
                 }.labelsHidden()
             case .number(_, _, _, _, _, let canDisable):
-                if canDisable {
-                    Picker("Value", selection: state(field.id, default: "value")) {
-                        Text("Value").tag("value")
-                        Text("Off").tag("off")
-                        Text("Not observed").tag("unobserved")
-                    }.pickerStyle(.segmented)
-                }
+                valueStateControl(field, canDisable: canDisable)
                 if draft.states[field.id] != "off" && draft.states[field.id] != "unobserved" { entry(field) }
-            case .readOnly: entry(field)
+            case .readOnly:
+                valueStateControl(field, canDisable: false)
+                if draft.states[field.id] != "unobserved" { entry(field) }
             }
         }
         .padding(.vertical, 4)
         .accessibilityIdentifier("capture.settings.field.\(field.id)")
+    }
+    private func valueStateControl(_ field: MobileCaptureResearchFieldDto, canDisable: Bool) -> some View {
+        Picker("Value", selection: state(field.id, default: "value")) {
+            Text("Value").tag("value")
+            if canDisable { Text("Off").tag("off") }
+            Text("Not observed").tag("unobserved")
+        }.pickerStyle(.segmented)
     }
     private func entry(_ field: MobileCaptureResearchFieldDto) -> some View {
         HStack {
