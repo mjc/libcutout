@@ -2545,6 +2545,26 @@ final class CutoutAppUITests: XCTestCase {
         openWorksheet()
         let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
         let saveValues = app.buttons["capture.settings.save"]
+        func findBrightness() -> XCUIElement {
+            let search = app.searchFields.firstMatch
+            for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
+            scrollElementFrameIntoViewport(search, in: app, maxScrolls: 4)
+            search.tap()
+            let currentText = search.value as? String ?? ""
+            if currentText != "brightness" {
+                let clear = search.buttons["Clear text"]
+                if clear.exists && clear.isHittable {
+                    clear.tap()
+                } else {
+                    search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentText.count))
+                }
+                search.typeText("brightness")
+            }
+            let brightness = app.textFields["capture.settings.value.display_brightness"]
+            scrollElementFrameIntoViewport(brightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+            XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
+            return brightness
+        }
         let profile = app.buttons["capture.settings.profile"]
         scrollElementFrameIntoViewport(profile, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         profile.tap()
@@ -2558,14 +2578,7 @@ final class CutoutAppUITests: XCTestCase {
         earlierTime.typeText("0")
         app.buttons["capture.settings.keyboard.done"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        let search = app.searchFields.firstMatch
-        for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
-        scrollElementFrameIntoViewport(search, in: app, maxScrolls: 4)
-        search.tap()
-        search.typeText("brightness")
-        let brightness = app.textFields["capture.settings.value.display_brightness"]
-        scrollElementFrameIntoViewport(brightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
-        XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
+        let brightness = findBrightness()
         brightness.tap()
         brightness.typeText("145")
         app.buttons["capture.settings.keyboard.done"].tap()
@@ -2580,18 +2593,21 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
         saveValues.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
+        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
         XCTAssertEqual(stationary.label, "Stop Stationary")
 
         openWorksheet()
         scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         earlierObservation.tap()
-        let repeatedBrightness = app.textFields["capture.settings.value.display_brightness"]
-        scrollElementFrameIntoViewport(repeatedBrightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        let repeatedBrightness = findBrightness()
         repeatedBrightness.tap()
         repeatedBrightness.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "30")
         scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
         saveValues.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
         let observations = app.buttons["capture.settings.observations"]
         scrollElementFrameIntoViewport(observations, in: recording, maxScrolls: 8)
         observations.tap()
