@@ -609,6 +609,13 @@ fn explicit_settings_read_requests_only_config_without_mutating_it() {
 )]
 fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() {
     let (mut owner, token, startup) = vesc_session_with_startup();
+    let firmware_info_reads = transport_writes(&startup)
+        .into_iter()
+        .filter(|frame| frame_payload(frame).first() == Some(&157))
+        .collect::<Vec<_>>();
+    assert_eq!(firmware_info_reads.len(), 1);
+    assert_eq!(frame_payload(&firmware_info_reads[0]), &[157]);
+
     let startup_motor_reads = transport_writes(&startup)
         .into_iter()
         .zip(transport_write_operation_ids(&startup))
@@ -687,6 +694,8 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
             .telemetry_snapshot()
             .is_some_and(|snapshot| snapshot.speed.is_some())
     );
+    // This reply settles the Firmware Info read issued by the verified VESC
+    // LinkUp above; it is not an unsolicited fact injected into the session.
     let firmware = owner
         .ingest(
             &token,

@@ -303,6 +303,12 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 let mut step = session.ingest_typed(input);
                 if let SessionInputDto::LinkUp { monotonic_ms, .. } = input {
+                    let firmware = session.ingest_typed(&SessionInputDto::CommandAt {
+                        command: cutout_core::DeviceCommandDto::RequestFirmwareInfo,
+                        monotonic_ms: *monotonic_ms,
+                    });
+                    step.outputs.extend(firmware.outputs);
+                    step.error = step.error.or(firmware.error);
                     let startup = session.ingest_typed(&SessionInputDto::CommandAt {
                         command: cutout_core::DeviceCommandDto::RequestTelemetry,
                         monotonic_ms: *monotonic_ms,
