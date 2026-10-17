@@ -5,12 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Community charging-spot directory for rides.cutout.lol"
+description = "Cutout music, charging and website server"
 
 [dependencies]
 axum.workspace = true
 clap.workspace = true
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+cutout-soundcloud-auth-broker = { path = "../cutout-soundcloud-auth-broker", version = "0.1.0" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,6 +19,7 @@ reqwest = { workspace = true, features = ["json"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net"] }
+tower = { version = "0.5", features = ["util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

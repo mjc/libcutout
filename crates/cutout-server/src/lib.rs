@@ -4,7 +4,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-//! The Axum and SQLite community charging directory.
+//! Cutout's music broker, charging directory and website, served on separate hosts.
 //!
 //! Public registration budgets group canonical IPv4 addresses and IPv6 /64
 //! prefixes. IPv4-mapped IPv6 addresses use the corresponding IPv4 budget.
@@ -21,6 +21,7 @@ mod signup;
 mod signup_sync;
 mod site;
 mod store;
+pub mod vhosts;
 
 pub use http::{TrustedProxy, router};
 pub use runtime::run_from_arguments;
