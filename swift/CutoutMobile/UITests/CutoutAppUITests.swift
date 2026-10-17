@@ -376,6 +376,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
 @MainActor
 final class CutoutAppUITests: XCTestCase {
     private var app: XCUIApplication!
+    private var livePrivateSendCleanup: (() -> Void)?
 
     override func setUp() async throws {
         try await super.setUp()
@@ -391,6 +392,9 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        let cleanup = livePrivateSendCleanup
+        livePrivateSendCleanup = nil
+        cleanup?()
         let disconnect = app?.buttons["dashboard.disconnect"]
         if disconnect?.exists == true, disconnect?.isHittable == true {
             disconnect?.tap()
@@ -2731,6 +2735,224 @@ final class CutoutAppUITests: XCTestCase {
         waitForReady(restoredShare)
         restoredShare.tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    func testFinishCapturePrivateSendLiveUnsupportedFixturePersistsReceiptAndDeletesOnlySentCopy() throws {
+        try assertLivePrivateCaptureSend(fixture: .unknownDevice, caseName: "unsupported")
+    }
+
+    func testFinishCapturePrivateSendLiveUnverifiedFixturePersistsReceiptAndDeletesOnlySentCopy() throws {
+        try assertLivePrivateCaptureSend(fixture: .probeDevice, caseName: "unverified")
+    }
+
+    private func assertLivePrivateCaptureSend(fixture: Fixture, caseName: String) throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Live private Send acceptance is restricted to Simulator")
+        #endif
+        guard ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_PRIVATE_SEND_LIVE"] == "1" else {
+            throw XCTSkip("Set CUTOUT_UI_TEST_PRIVATE_SEND_LIVE=1 to send synthetic captures to the production service")
+        }
+        executionTimeAllowance = 240
+        app.terminate()
+        app.launchArguments =
+            fixture.launchArguments + [
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+                "-CUTOUT_UI_TEST_MUSIC", "silent", "-io.cutout.music.monitoring.enabled", "NO",
+            ]
+        app.launchEnvironment = fixture.launchEnvironment
+        let databaseID = UUID().uuidString
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = databaseID
+        app.launch()
+
+        func waitForReady(_ element: XCUIElement) {
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in element.exists && element.isEnabled && element.isHittable },
+                object: element
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
+        }
+
+        func receiptOperationID(in container: XCUIElement) throws -> String {
+            let receipt = app.descendants(matching: .any)["captures.send.receipt"]
+            scrollElementFrameIntoViewport(
+                receipt, in: container, maxScrolls: 12
+            )
+            XCTAssertTrue(receipt.waitForExistence(timeout: 60), app.debugDescription)
+            let values =
+                [receipt.label, receipt.value as? String ?? ""]
+                + receipt.staticTexts.allElementsBoundByIndex.map(\.label)
+            let components = values.flatMap { $0.components(separatedBy: CharacterSet(charactersIn: " ,\n")) }
+            return try XCTUnwrap(components.first(where: { UUID(uuidString: $0) != nil }), "Expected a receipt UUID")
+        }
+
+        // These existing scan fixtures exercise native entry and the real service,
+        // not Bluetooth hardware or raw notification delivery.
+        let captureSetup = openCaptureSetup()
+        let description = app.textFields["captures.description"]
+        waitForReady(description)
+        description.tap()
+        description.typeText("Synthetic \(caseName) fixture; no hardware measurement; acceptance \(databaseID).")
+        let start = app.buttons["captures.start"]
+        scrollElementFrameIntoViewport(start, in: captureSetup, maxScrolls: 8)
+        waitForReady(start)
+        start.tap()
+        let recording = app.descendants(matching: .any)["capture.screen"]
+        XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
+        app.buttons["captures.labels"].tap()
+        let annotation = reachableCaptureAnnotation("ride", in: recording)
+        waitForReady(annotation)
+        annotation.tap()
+        let finish = app.buttons["capture.stop"]
+        scrollElementFrameIntoViewport(finish, in: recording, maxScrolls: 8)
+        waitForReady(finish)
+        finish.tap()
+        let detail = app.descendants(matching: .any)["captures.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
+
+        let review = app.buttons["captures.send.review"]
+        scrollElementFrameIntoViewport(review, in: detail, maxScrolls: 12)
+        waitForReady(review)
+        review.tap()
+        let confirmation = app.sheets["Send this capture privately?"]
+        let confirm = confirmation.buttons.matching(identifier: "captures.send.confirm").firstMatch
+        waitForReady(confirm)
+        let disclosure = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Music is excluded.", "CutOut maintainer")
+        ).firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5), app.debugDescription)
+        let identity = XCTAttachment(string: "Synthetic \(caseName) fixture; isolated database \(databaseID)")
+        identity.name = "Live private Send cleanup identity"
+        identity.lifetime = .keepAlways
+        add(identity)
+        var operationIDForCleanup: String?
+        livePrivateSendCleanup = { [weak self] in
+            self?.bestEffortDeleteLivePrivateCapture(
+                databaseID: databaseID, caseName: caseName, operationID: operationIDForCleanup
+            )
+        }
+        confirm.tap()
+        let operationID = try receiptOperationID(in: detail)
+        operationIDForCleanup = operationID
+        let receipt = XCTAttachment(string: "Synthetic \(caseName) fixture; production operation \(operationID)")
+        receipt.name = "Live private Send receipt"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+        XCTAssertTrue(app.staticTexts["Received privately"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
+
+        app.navigationBars.buttons.firstMatch.tap()
+        let home = app.descendants(matching: .any)["captures.home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let storedCapture = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        XCTAssertTrue(storedCapture.waitForExistence(timeout: 10), app.debugDescription)
+        let storedCaptureID = storedCapture.identifier
+        app.terminate()
+        app.launch()
+        let setupButton = app.buttons["device-picker.open-setup"]
+        waitForReady(setupButton)
+        setupButton.tap()
+        let setup = app.descendants(matching: .any)["setup.screen"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5), app.debugDescription)
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: setup, maxScrolls: 8)
+        waitForReady(captures)
+        captures.tap()
+        XCTAssertTrue(home.waitForExistence(timeout: 5), app.debugDescription)
+        let restoredCapture = app.buttons[storedCaptureID]
+        waitForReady(restoredCapture)
+        restoredCapture.tap()
+        assertStoredCaptureDetail()
+        let restoredDetail = app.collectionViews.firstMatch
+        let delete = app.buttons["captures.send.delete"]
+        scrollElementFrameIntoViewport(delete, in: restoredDetail, maxScrolls: 12)
+        XCTAssertEqual(try receiptOperationID(in: restoredDetail), operationID)
+        waitForReady(delete)
+        delete.tap()
+        let deleteConfirmation = app.sheets["Delete the sent copy?"]
+        let confirmDeletion = deleteConfirmation.buttons.matching(identifier: "Delete sent copy").firstMatch
+        waitForReady(confirmDeletion)
+        confirmDeletion.tap()
+        XCTAssertTrue(app.staticTexts["Sent copy deleted"].waitForExistence(timeout: 60), app.debugDescription)
+        livePrivateSendCleanup = nil
+        XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
+
+        let export = app.buttons["Export recording"]
+        scrollElementFrameIntoViewport(export, in: restoredDetail, maxScrolls: 12)
+        waitForReady(export)
+        export.tap()
+        let share = app.buttons["Share recording"]
+        waitForReady(share)
+        share.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
+        retainCaptureScreenshot("Synthetic \(caseName) Send deleted; original recording remains shareable")
+    }
+
+    /// Failure cleanup never invokes assertion helpers: the original test failure
+    /// must not prevent an attempt to remove its synthetic production submission.
+    private func bestEffortDeleteLivePrivateCapture(databaseID: String, caseName: String, operationID: String?) {
+        let deadline = Date().addingTimeInterval(60)
+        var recoveredOperationID = operationID
+        var removed = false
+        defer {
+            let evidence = XCTAttachment(
+                string:
+                    "Synthetic \(caseName); database \(databaseID); operation \(recoveredOperationID ?? "not recovered"); "
+                    + (removed ? "cleanup confirmed" : "cleanup unconfirmed; retain this database for operator cleanup")
+            )
+            evidence.name = "Live private Send failure cleanup"
+            evidence.lifetime = .keepAlways
+            add(evidence)
+        }
+
+        func tapIfReachable(_ element: XCUIElement, in container: XCUIElement, maxScrolls: Int = 8) -> Bool {
+            for attempt in 0...maxScrolls {
+                guard Date() < deadline else { return false }
+                if element.exists, element.isEnabled, element.isHittable {
+                    element.tap()
+                    return true
+                }
+                guard attempt < maxScrolls, container.exists else { return false }
+                if element.exists, element.frame.maxY < container.frame.minY {
+                    container.swipeDown()
+                } else {
+                    container.swipeUp()
+                }
+            }
+            return false
+        }
+
+        app.terminate()
+        app.launch()
+        let setupButton = app.buttons["device-picker.open-setup"]
+        guard setupButton.waitForExistence(timeout: 5), tapIfReachable(setupButton, in: app) else { return }
+        guard tapIfReachable(app.buttons["setup.captures"], in: app.collectionViews.firstMatch) else { return }
+        let stored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        guard stored.waitForExistence(timeout: 5), tapIfReachable(stored, in: app.collectionViews.firstMatch) else {
+            return
+        }
+        let receipt = app.descendants(matching: .any)["captures.send.receipt"]
+        if receipt.waitForExistence(timeout: 5) {
+            let values =
+                [receipt.label, receipt.value as? String ?? ""]
+                + receipt.staticTexts.allElementsBoundByIndex.map(\.label)
+            recoveredOperationID = values.first(where: { UUID(uuidString: $0) != nil }) ?? recoveredOperationID
+        }
+        let detail = app.collectionViews.firstMatch
+        if tapIfReachable(app.buttons["captures.send.delete"], in: detail) {
+            let confirmation = app.sheets["Delete the sent copy?"]
+            let confirm = confirmation.buttons.matching(identifier: "Delete sent copy").firstMatch
+            guard confirm.waitForExistence(timeout: 5), tapIfReachable(confirm, in: confirmation, maxScrolls: 0) else {
+                return
+            }
+            removed = app.staticTexts["Sent copy deleted"].waitForExistence(
+                timeout: max(0, deadline.timeIntervalSinceNow)
+            )
+        } else if tapIfReachable(app.buttons["captures.send.cancel"], in: detail) {
+            removed = app.staticTexts["Send cancelled"].waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow))
+        }
     }
 
     func testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType() throws {
