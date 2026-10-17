@@ -399,16 +399,11 @@ final class CutoutAppUITests: XCTestCase {
         let activityFixtureExited = fixture.usesSystemLiveActivity && app?.state == .notRunning
         if fixture.usesSystemLiveActivity, let app {
             if activityFixtureExited {
-                app.launchEnvironment = Fixture.bluetoothUnavailable.launchEnvironment
-                app.launchArguments =
-                    Fixture.bluetoothUnavailable.launchArguments + [
-                        "--ui-test-cleanup-live-activities", "--ui-test-live-activity-readback",
-                        "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
-                    ]
-                app.launch()
+                launchLiveActivityCleanup()
             } else {
                 app.activate()
-                if !app.descendants(matching: .any)["device-picker.screen"].exists,
+                if !app.launchArguments.contains("--ui-test-cleanup-live-activities"),
+                    !app.descendants(matching: .any)["device-picker.screen"].exists,
                     !app.buttons["dashboard.disconnect"].isHittable
                 {
                     tapNavigationTab("ride", title: "Ride")
@@ -4687,6 +4682,30 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescLiveActivityAutoFixtureCleanupLaunchEndsRetainedActivity() {
+        assertLiveActivityForegroundAcknowledged()
+        let readback = app.staticTexts["dashboard.lifecycle-readback"]
+        let nativeActivity = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS 'nativeActivityCount=1;'"), object: readback)
+        XCTAssertEqual(XCTWaiter.wait(for: [nativeActivity], timeout: 15), .completed, app.debugDescription)
+
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissLocationPromptIfNeeded(in: springboard)
+        XCUIDevice.shared.press(.home)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
+            .press(forDuration: 1)
+        let retainedDevice = springboard.descendants(matching: .any)["Device"]
+        XCTAssertTrue(retainedDevice.waitForExistence(timeout: 5), springboard.debugDescription)
+        attachScreenshot(of: springboard, named: "Retained Live Activity before cleanup launch")
+
+        launchLiveActivityCleanup()
+        assertSystemLiveActivitiesEnded()
+        XCTAssertFalse(app.buttons["dashboard.disconnect"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists, app.debugDescription)
+    }
+
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
         try assertVescLiveActivityAutoFixture(.critical, assertsLockScreen: true)
     }
@@ -7309,6 +7328,16 @@ final class CutoutAppUITests: XCTestCase {
         disconnect.tap()
         _ = app.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
         if fixture.usesSystemLiveActivity { assertSystemLiveActivitiesEnded() }
+    }
+
+    private func launchLiveActivityCleanup() {
+        app.launchEnvironment = Fixture.bluetoothUnavailable.launchEnvironment
+        app.launchArguments =
+            Fixture.bluetoothUnavailable.launchArguments + [
+                "--ui-test-cleanup-live-activities", "--ui-test-live-activity-readback",
+                "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+            ]
+        app.launch()
     }
 
     private func assertSystemLiveActivitiesEnded() {
