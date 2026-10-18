@@ -282,8 +282,8 @@ fn inspect_event(
 ) -> Result<u64, CaptureSubmissionValidationError> {
     match event {
         PevcapEvent::SettingsObservation(observation) => {
-            categories.notes = true;
-            categories.annotations = true;
+            categories.notes |= observation.note.is_some()
+                || observation.values.iter().any(|value| value.note.is_some());
             categories.settings_observations = true;
             Ok(observation.recorded_at_ms)
         }

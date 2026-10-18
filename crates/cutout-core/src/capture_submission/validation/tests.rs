@@ -452,7 +452,7 @@ fn capture_submission_preserves_settings_notes_and_still_rejects_music() {
         let summary = validate_capture_submission(bytes.as_slice(), encoding).unwrap();
         assert_eq!(summary.events, 3);
         assert!(summary.categories.notes);
-        assert!(summary.categories.annotations);
+        assert!(!summary.categories.annotations);
         assert!(summary.categories.settings_observations);
         assert!(!summary.categories.location);
     }
@@ -523,5 +523,50 @@ fn capture_submission_settings_count_limit_preserves_too_many_events_classificat
             validate_capture_submission(excessive.as_slice(), encoding),
             Err(CaptureSubmissionValidationError::TooManyEvents)
         );
+    }
+}
+
+#[test]
+fn capture_submission_settings_disclosure_matches_retained_note_fields_and_header_annotations() {
+    let cases = [
+        (None, None, Vec::new(), false, false),
+        (Some("snapshot note"), None, Vec::new(), true, false),
+        (None, Some("value note"), Vec::new(), true, false),
+        (Some(""), Some(""), Vec::new(), true, false),
+        (Some(" \t"), Some("\n "), Vec::new(), true, false),
+        (None, None, vec!["capture_label=ride_start"], false, true),
+        (None, None, vec!["note=retained header note"], true, true),
+    ];
+    for (snapshot_note, value_note, annotations, notes, labels) in cases {
+        let observation: crate::CaptureSettingsObservation =
+            serde_json::from_value(serde_json::json!({
+                "capture_id":LIVE,
+                "profile":{"profile_id":"manual_unknown_device","pev_category":"euc","model":null,"firmware":null,"selection":"manual"},
+                "observed_at_ms":5,"recorded_at_ms":30,"source":"manufacturer_app",
+                "values":[{"setting_id":"display_brightness","value":{"kind":"entered","value":"125"},"unit":"%","note":value_note}],
+                "note":snapshot_note
+            })).unwrap();
+        let mut capture = capture(&annotations);
+        capture.settings_observations.push(observation);
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).unwrap();
+            let summary = validate_capture_submission(bytes.as_slice(), encoding).unwrap();
+            assert_eq!(summary.categories.notes, notes);
+            assert_eq!(summary.categories.annotations, labels);
+            assert!(summary.categories.settings_observations);
+            assert_eq!(
+                summary.annotation_count,
+                u64::try_from(annotations.len()).unwrap()
+            );
+            assert_eq!(summary.sha256, format!("{:x}", Sha256::digest(&bytes)));
+            let decoded = PevcapCapture::decode(&bytes, encoding).unwrap();
+            let retained = decoded.settings_observations.first().unwrap();
+            assert_eq!(retained.note, snapshot_note.map(str::to_owned));
+            assert_eq!(
+                retained.values.first().unwrap().note,
+                value_note.map(str::to_owned)
+            );
+            assert_eq!(decoded.encode(encoding).unwrap(), bytes);
+        }
     }
 }

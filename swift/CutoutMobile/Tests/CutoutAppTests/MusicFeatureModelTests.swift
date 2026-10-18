@@ -1993,6 +1993,21 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
             generation: CaptureGeneration,
             action: MobileCaptureLabelActionDto
         ) throws -> [MobileCaptureLabelDto] { [] }
+        func recordCaptureSettingsObservation(
+            generation _: CaptureGeneration, draft _: MobileCaptureSettingsDraftDto
+        ) async throws -> MobileCaptureSettingsObservationDto {
+            throw MobileCaptureResearchError.NotRecording
+        }
+        func captureSettingsObservations(generation _: CaptureGeneration) throws
+            -> [MobileCaptureSettingsObservationDto]
+        {
+            throw MobileCaptureResearchError.NotRecording
+        }
+        func captureSettingsReadbackBatch(
+            generation _: CaptureGeneration, requests _: [MobileCaptureResearchReadbackRequestDto]
+        ) async throws -> [MobileCaptureResearchReadbackDto] {
+            throw MobileCaptureResearchError.NotRecording
+        }
         func annotateCapture(key: String, value: String) -> Bool { false }
         func flushCapture() async -> Bool { true }
         func finishCapture() async -> Bool { true }

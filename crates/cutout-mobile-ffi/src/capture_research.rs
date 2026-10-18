@@ -402,71 +402,56 @@ pub(crate) fn readback_batch(
     if requests.is_empty() {
         return Ok(Vec::new());
     }
-    let maximum_cutoff = requests
-        .iter()
-        .map(|request| request.at_ms)
-        .max()
-        .unwrap_or_default();
-    let mut readbacks = Vec::new();
-    let mut positions = std::collections::BTreeMap::new();
-    let mut indices = Vec::with_capacity(requests.len());
+    let mut cutoffs_by_profile = std::collections::BTreeMap::<String, Vec<u64>>::new();
     for request in &requests {
-        let key = (request.profile_id.clone(), request.at_ms);
-        let index = if let Some(index) = positions.get(&key) {
-            *index
-        } else {
-            let readback =
-                cutout_protocols::CaptureResearchReadback::new(&request.profile_id, request.at_ms)
-                    .ok_or_else(|| MobileCaptureResearchError::InvalidObservation {
-                        reason: "Choose a device profile".into(),
-                    })?;
-            let index = readbacks.len();
-            readbacks.push(readback);
-            positions.insert(key, index);
-            index
-        };
-        indices.push(index);
+        cutoffs_by_profile
+            .entry(request.profile_id.clone())
+            .or_default()
+            .push(request.at_ms);
     }
-    // Each decoder keeps its own cutoff and framing state. Packet timestamps may
-    // arrive out of order, so no request is completed merely because a later packet appeared.
+    let mut readbacks: std::collections::BTreeMap<_, _> = cutoffs_by_profile
+        .into_iter()
+        .filter_map(|(profile_id, cutoffs)| {
+            cutout_protocols::CaptureResearchReadbackBatch::new(&profile_id, &cutoffs)
+                .map(|readback| (profile_id, readback))
+        })
+        .collect();
+    // Preserve source validation even when every requested profile is unknown.
     read(&mut |record| {
-        if record.monotonic_ms.get() > maximum_cutoff {
-            return;
-        }
-        for readback in &mut readbacks {
+        for readback in readbacks.values_mut() {
             readback.observe(&record);
         }
     })?;
-    requests
+    Ok(requests
         .into_iter()
-        .zip(indices)
-        .map(|(request, index)| {
-            let readback = readbacks
-                .get(index)
-                .ok_or(MobileCaptureResearchError::WriterFailed)?;
-            Ok(MobileCaptureResearchReadbackDto {
+        .map(|request| {
+            let values = readbacks
+                .get(&request.profile_id)
+                .and_then(|readback| readback.values_at(request.at_ms))
+                .unwrap_or_default()
+                .iter()
+                .map(|value| MobileCaptureResearchDecodedValueDto {
+                    setting_id: value.setting_id.into(),
+                    value: value.value.map(Into::into),
+                    observed_at_ms: value.observed_at_ms,
+                })
+                .collect();
+            MobileCaptureResearchReadbackDto {
                 profile_id: request.profile_id,
                 at_ms: request.at_ms,
-                values: readback
-                    .values()
-                    .iter()
-                    .map(|value| MobileCaptureResearchDecodedValueDto {
-                        setting_id: value.setting_id.into(),
-                        value: value.value.map(Into::into),
-                        observed_at_ms: value.observed_at_ms,
-                    })
-                    .collect(),
-            })
+                values,
+            }
         })
-        .collect()
+        .collect())
 }
 
 #[uniffi::export]
 impl RideDatabaseHandle {
     /// Replays retained input bytes without issuing any wheel commands.
+    /// Unknown research profiles return unavailable values after source validation.
     ///
     /// # Errors
-    /// Returns an unknown profile, invalid source or storage failure.
+    /// Returns an invalid source, resource bound or storage failure.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI exports require owned strings"
@@ -490,9 +475,10 @@ impl RideDatabaseHandle {
     }
 
     /// Reads all displayed observation cutoffs in one retained transport scan.
+    /// Unknown profiles keep their request position with unavailable values.
     ///
     /// # Errors
-    /// Returns an unknown profile, invalid source, resource bound or storage failure.
+    /// Returns an invalid source, resource bound or storage failure.
     pub fn capture_research_readback_batch(
         &self,
         source: MobileCaptureSubmissionSourceDto,

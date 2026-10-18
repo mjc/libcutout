@@ -1,5 +1,7 @@
 //! Passive field catalog and readback for independently reported capture values.
 
+use std::collections::BTreeMap;
+
 use cutout_core::{
     CaptureObservedValue, CaptureSettingsObservation, DeviceEvent, DeviceSettingValue,
     PevcapDirection, PevcapRecord, ProtocolFamily, ProtocolSession, ReadOnlyResponse, SessionInput,
@@ -225,7 +227,7 @@ pub struct CaptureResearchDecodedValue {
 }
 
 /// Replays input notifications only. Outbound captured writes are never executed.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CaptureResearchReadback {
     profile: DeviceControlProfile,
     session: crate::RegisteredEucSession,
@@ -368,6 +370,110 @@ impl CaptureResearchReadback {
             Some(_) => {}
             None => self.values.push(value),
         }
+    }
+}
+
+/// Shares passive decoder prefixes across requested cutoffs for one research profile.
+///
+/// Ordered packets update one decoder state. Delayed packets split only the cutoff
+/// groups which require different packet histories, retaining each cutoff's framing
+/// and connection context without buffering or reordering captured transport records.
+#[derive(Debug)]
+pub struct CaptureResearchReadbackBatch {
+    cutoffs: Vec<u64>,
+    groups: BTreeMap<u64, CaptureResearchReadbackGroup>,
+    #[cfg(test)]
+    decoder_updates: usize,
+}
+
+#[derive(Debug)]
+struct CaptureResearchReadbackGroup {
+    minimum_cutoff: u64,
+    readback: CaptureResearchReadback,
+}
+
+impl CaptureResearchReadbackBatch {
+    /// Selects a passive decoder for bounded capture observation cutoffs.
+    ///
+    /// Returns `None` for an unknown profile, empty requests or existing capture
+    /// count/time bounds being exceeded. Duplicate cutoffs share their result.
+    #[must_use]
+    pub fn new(profile_id: &str, cutoffs: &[u64]) -> Option<Self> {
+        if cutoffs.len() > cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS
+            || cutoffs
+                .iter()
+                .any(|at| *at > cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS)
+        {
+            return None;
+        }
+        let mut cutoffs = cutoffs.to_vec();
+        cutoffs.sort_unstable();
+        cutoffs.dedup();
+        let minimum_cutoff = *cutoffs.first()?;
+        let maximum_cutoff = *cutoffs.last()?;
+        let readback = CaptureResearchReadback::new(profile_id, maximum_cutoff)?;
+        Some(Self {
+            cutoffs,
+            groups: BTreeMap::from([(
+                maximum_cutoff,
+                CaptureResearchReadbackGroup {
+                    minimum_cutoff,
+                    readback,
+                },
+            )]),
+            #[cfg(test)]
+            decoder_updates: 0,
+        })
+    }
+
+    /// Consumes one retained record once per distinct eligible decoder prefix.
+    pub fn observe(&mut self, record: &PevcapRecord) {
+        if record.direction == PevcapDirection::Outbound {
+            return;
+        }
+        let at_ms = record.monotonic_ms.get();
+        self.split_at(at_ms);
+        for (_, group) in self.groups.range_mut(at_ms..) {
+            group.readback.observe(record);
+            #[cfg(test)]
+            {
+                self.decoder_updates += 1;
+            }
+        }
+    }
+
+    /// Returns a requested cutoff's values, preserving original packet times.
+    #[must_use]
+    pub fn values_at(&self, at_ms: u64) -> Option<&[CaptureResearchDecodedValue]> {
+        self.cutoffs.binary_search(&at_ms).ok()?;
+        self.groups
+            .range(at_ms..)
+            .next()
+            .map(|(_, group)| group.readback.values())
+    }
+
+    fn split_at(&mut self, at_ms: u64) {
+        let Some((_, group)) = self.groups.range_mut(at_ms..).next() else {
+            return;
+        };
+        if group.minimum_cutoff >= at_ms {
+            return;
+        }
+        let split = self.cutoffs.partition_point(|cutoff| *cutoff < at_ms);
+        let Some((&lower_maximum, &upper_minimum)) = self
+            .cutoffs
+            .get(..split)
+            .and_then(<[u64]>::last)
+            .zip(self.cutoffs.get(split))
+        else {
+            return;
+        };
+        let lower_group = CaptureResearchReadbackGroup {
+            minimum_cutoff: group.minimum_cutoff,
+            readback: group.readback.clone(),
+        };
+        group.minimum_cutoff = upper_minimum;
+        self.groups.insert(lower_maximum, lower_group);
     }
 }
 

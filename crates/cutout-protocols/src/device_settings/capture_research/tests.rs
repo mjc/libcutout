@@ -688,3 +688,134 @@ fn explicit_link_up_activates_passive_readback_and_uses_notification_time() {
     );
     assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 40);
 }
+
+fn assert_batch_matches_independent_cutoffs(
+    profile_id: &str,
+    cutoffs: &[u64],
+    records: &[PevcapRecord],
+) {
+    let mut batch = CaptureResearchReadbackBatch::new(profile_id, cutoffs).unwrap();
+    for record in records {
+        batch.observe(record);
+    }
+    for &cutoff in cutoffs {
+        let mut reference = CaptureResearchReadback::new(profile_id, cutoff).unwrap();
+        for record in records {
+            reference.observe(record);
+        }
+        assert_eq!(
+            batch.values_at(cutoff),
+            Some(reference.values()),
+            "profile {profile_id}, cutoff {cutoff}"
+        );
+    }
+    assert_eq!(batch.values_at(999), None, "only requested cutoffs exist");
+}
+
+#[test]
+fn batch_prefixes_match_independent_aero_framing_boundaries_and_equal_times() {
+    let records = vec![
+        inbound(30, crate::VETERAN_DATA_CHANNEL, &AERO_LATERAL_SETTINGS),
+        inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS),
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        inbound(15, crate::VETERAN_DATA_CHANNEL, &aero_brightness(50)),
+        inbound(40, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS[..30]),
+        PevcapRecord::link_up(MonotonicTimestamp::new(25), None),
+        inbound(45, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS[30..]),
+        inbound(45, crate::VETERAN_DATA_CHANNEL, &aero_brightness(40)),
+        PevcapRecord::outbound_write(
+            MonotonicTimestamp::new(46),
+            crate::VETERAN_DATA_CHANNEL,
+            WriteMode::WithoutResponse,
+            aero_brightness(60),
+        ),
+        inbound(45, crate::VETERAN_DATA_CHANNEL, &aero_brightness(35)),
+        PevcapRecord::link_down(MonotonicTimestamp::new(45)),
+        inbound(45, crate::VETERAN_DATA_CHANNEL, &aero_brightness(30)),
+    ];
+    assert_batch_matches_independent_cutoffs(
+        "nosfet_aero",
+        &[50, 5, 12, 25, 35, 42, 45, 35],
+        &records,
+    );
+}
+
+#[test]
+fn batch_prefixes_keep_future_partial_frames_out_of_older_cutoffs() {
+    let records = vec![
+        inbound(30, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS[..30]),
+        inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS),
+        inbound(40, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS[30..]),
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        inbound(50, crate::VETERAN_DATA_CHANNEL, &aero_brightness(40)),
+    ];
+    assert_batch_matches_independent_cutoffs("nosfet_aero", &[12, 25, 35, 45, 55], &records);
+}
+
+#[test]
+fn batch_prefixes_preserve_falcon_units_context_for_delayed_older_packets() {
+    let imperial_live_b = hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a");
+    let records = vec![
+        inbound(30, crate::BEGODE_DATA_CHANNEL, &imperial_live_b),
+        inbound(10, crate::BEGODE_DATA_CHANNEL, &FALCON_LIVE_A),
+        inbound(15, crate::BEGODE_DATA_CHANNEL, &FALCON_LIVE_B),
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        inbound(35, crate::BEGODE_DATA_CHANNEL, &FALCON_LIVE_A),
+    ];
+    assert_batch_matches_independent_cutoffs("begode_falcon", &[12, 18, 25, 32, 40], &records);
+}
+
+#[test]
+fn ordered_packets_update_one_decoder_prefix_for_all_1024_cutoffs() {
+    let cutoffs: Vec<_> = (0..1024).collect();
+    let mut batch = CaptureResearchReadbackBatch::new("nosfet_aero", &cutoffs).unwrap();
+    for packet in 0..16 {
+        batch.observe(&inbound(
+            packet * 64,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(u8::try_from(packet + 20).unwrap()),
+        ));
+    }
+    assert_eq!(batch.decoder_updates, 16);
+    assert_eq!(batch.groups.len(), 16);
+    for cutoff in cutoffs {
+        let brightness = batch
+            .values_at(cutoff)
+            .unwrap()
+            .iter()
+            .find(|value| value.setting_id == "display_brightness")
+            .unwrap();
+        assert_eq!(brightness.observed_at_ms, cutoff / 64 * 64);
+        assert_eq!(
+            brightness.value,
+            Some(DeviceSettingValue::Number(
+                i32::try_from(cutoff / 64 + 20).unwrap()
+            ))
+        );
+    }
+}
+
+#[test]
+fn duplicate_cutoffs_share_decoder_state_and_existing_capture_bounds() {
+    let mut batch = CaptureResearchReadbackBatch::new("nosfet_aero", &[30, 30, 30]).unwrap();
+    batch.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+    assert_eq!(batch.decoder_updates, 1);
+    assert_eq!(batch.groups.len(), 1);
+    assert_eq!(batch.cutoffs, [30]);
+    assert!(CaptureResearchReadbackBatch::new("future_profile", &[30]).is_none());
+    assert!(CaptureResearchReadbackBatch::new("nosfet_aero", &[]).is_none());
+    assert!(
+        CaptureResearchReadbackBatch::new(
+            "nosfet_aero",
+            &[cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS + 1]
+        )
+        .is_none()
+    );
+    assert!(
+        CaptureResearchReadbackBatch::new(
+            "nosfet_aero",
+            &vec![0; cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS + 1]
+        )
+        .is_none()
+    );
+}

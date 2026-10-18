@@ -383,10 +383,6 @@ fn batch_readback_rejects_unbounded_requests_before_reading_capture_bytes() {
             profile_id: "nosfet_aero".into(),
             at_ms: cutout_core::MAX_CAPTURE_SETTINGS_OFFSET_MILLISECONDS + 1,
         }],
-        vec![MobileCaptureResearchReadbackRequestDto {
-            profile_id: "unknown".into(),
-            at_ms: 0,
-        }],
         vec![
             MobileCaptureResearchReadbackRequestDto {
                 profile_id: "nosfet_aero".into(),
@@ -462,4 +458,93 @@ fn batch_readback_matches_active_builder_and_saved_database_observations() {
     database.shutdown().unwrap();
     drop(database);
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn batch_readback_preserves_known_results_and_unknown_profile_positions() {
+    let requests = vec![
+        MobileCaptureResearchReadbackRequestDto {
+            profile_id: "nosfet_aero".into(),
+            at_ms: 12,
+        },
+        MobileCaptureResearchReadbackRequestDto {
+            profile_id: "future_profile".into(),
+            at_ms: 35,
+        },
+        MobileCaptureResearchReadbackRequestDto {
+            profile_id: "begode_falcon".into(),
+            at_ms: 35,
+        },
+        MobileCaptureResearchReadbackRequestDto {
+            profile_id: "nosfet_aero".into(),
+            at_ms: 35,
+        },
+    ];
+    let mut scans = 0;
+    let results = readback_batch(requests.clone(), |observe| {
+        scans += 1;
+        observe(batch_packet(10));
+        observe(cutout_core::PevcapRecord::inbound_notification(
+            cutout_core::MonotonicTimestamp::new(20),
+            cutout_protocols::BEGODE_DATA_CHANNEL,
+            cutout_protocols::VETERAN_SERVICE_CHANNEL,
+            hex::decode("55aa000000320000000f003200030502000004185a5a5a5a").unwrap(),
+        ));
+        observe(batch_packet(30));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(scans, 1);
+    assert_eq!(results.len(), requests.len());
+    for (result, request) in results.iter().zip(requests) {
+        assert_eq!(result.profile_id, request.profile_id);
+        assert_eq!(result.at_ms, request.at_ms);
+    }
+    assert_eq!(results[1].values, []);
+    let maximum_speed = results[2]
+        .values
+        .iter()
+        .find(|value| value.setting_id == "maximum_speed")
+        .unwrap();
+    assert_eq!(maximum_speed.observed_at_ms, 20);
+    assert_eq!(
+        maximum_speed.value,
+        Some(crate::MobileSettingValueDto::Number { value: 500 })
+    );
+    for (index, expected_at) in [(0, 10), (3, 30)] {
+        let brightness = results[index]
+            .values
+            .iter()
+            .find(|value| value.setting_id == "display_brightness")
+            .unwrap();
+        assert_eq!(brightness.observed_at_ms, expected_at);
+        assert_eq!(
+            brightness.value,
+            Some(crate::MobileSettingValueDto::Number { value: 30 })
+        );
+    }
+}
+
+#[test]
+fn batch_readback_unknown_profiles_still_validate_the_retained_source() {
+    let requests = vec![MobileCaptureResearchReadbackRequestDto {
+        profile_id: "future_profile".into(),
+        at_ms: 35,
+    }];
+    let mut scans = 0;
+    let results = readback_batch(requests.clone(), |observe| {
+        scans += 1;
+        observe(batch_packet(10));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(scans, 1);
+    assert_eq!(results[0].profile_id, "future_profile");
+    assert_eq!(results[0].at_ms, 35);
+    assert_eq!(results[0].values, []);
+    let failure = readback_batch(requests, |_| Err(MobileCaptureResearchError::WriterFailed));
+    assert!(matches!(
+        failure,
+        Err(MobileCaptureResearchError::WriterFailed)
+    ));
 }
