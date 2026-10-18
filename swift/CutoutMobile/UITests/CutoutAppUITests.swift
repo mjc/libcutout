@@ -2659,7 +2659,9 @@ final class CutoutAppUITests: XCTestCase {
         let repeatedBrightness = findBrightness()
         XCTAssertEqual(repeatedBrightness.value as? String, "145")
         repeatedBrightness.tap()
-        repeatedBrightness.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "30")
+        repeatedBrightness.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).doubleTap()
+        repeatedBrightness.typeText("30")
+        XCTAssertEqual(repeatedBrightness.value as? String, "30", app.debugDescription)
         scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
         saveValues.tap()
         XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
@@ -2670,10 +2672,10 @@ final class CutoutAppUITests: XCTestCase {
         observations.tap()
         let review = app.descendants(matching: .any)["capture.settings.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
-        scrollElementFrameIntoViewport(app.staticTexts["145 %"], in: review, maxScrolls: 12)
-        XCTAssertTrue(app.staticTexts["145 %"].exists)
-        scrollElementFrameIntoViewport(app.staticTexts["30 %"], in: review, maxScrolls: 12)
-        XCTAssertTrue(app.staticTexts["30 %"].exists)
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 145 %"], in: review, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 145 %"].exists)
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: review, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
         let secondObservation = app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH[c] %@", "Observation 2 · ")
         ).firstMatch
@@ -2704,10 +2706,10 @@ final class CutoutAppUITests: XCTestCase {
         restoredSaved.tap()
         let restoredReview = app.descendants(matching: .any)["capture.settings.review"]
         XCTAssertTrue(restoredReview.waitForExistence(timeout: 5))
-        scrollElementFrameIntoViewport(app.staticTexts["145 %"], in: restoredReview, maxScrolls: 12)
-        XCTAssertTrue(app.staticTexts["145 %"].waitForExistence(timeout: 10))
-        scrollElementFrameIntoViewport(app.staticTexts["30 %"], in: restoredReview, maxScrolls: 12)
-        XCTAssertTrue(app.staticTexts["30 %"].exists)
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 145 %"], in: restoredReview, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 145 %"].waitForExistence(timeout: 10))
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: restoredReview, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
         retainCaptureScreenshot("Capture settings retained after relaunch")
     }
 
