@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.RideMapRuntime
 import org.junit.Test
+import uniffi.cutout_mobile_ffi.MobileRideEventDto
 import uniffi.cutout_mobile_ffi.MobileRideLifecycleStateDto
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -67,7 +68,15 @@ open class RideMapRuntimeTest {
             val current = await { done ->
                 runtime.withCore({ it.currentSnapshot(2UL) }, done)
             }
-            check(current == null) { "Saving should retire the active ride projection" }
+            val savedProjection = checkNotNull(current) { "Rust should retain its terminal saved snapshot" }
+            check(savedProjection.state == MobileRideLifecycleStateDto.SAVED)
+            check(savedProjection.recordingToken == null) { "A saved ride cannot retain a recording token" }
+            check(savedProjection.liveActivityStatistics == null) {
+                "A saved ride cannot retain live activity statistics"
+            }
+            check(savedProjection.allowedActions == listOf(MobileRideEventDto.START)) {
+                "A saved ride may offer only a new recording, not live ride actions"
+            }
         } finally {
             runtime.close()
         }

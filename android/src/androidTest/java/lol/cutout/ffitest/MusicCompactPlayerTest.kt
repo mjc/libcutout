@@ -2,6 +2,7 @@ package lol.cutout.ffitest
 
 import android.view.View
 import android.view.ViewGroup
+import android.graphics.Rect
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
@@ -32,20 +33,32 @@ open class MusicCompactPlayerTest {
         host.layout(0, 0, width, height)
 
         check(player.height == height) { "Compact player should retain the Swift 52dp row height" }
-        val title = checkNotNull(player.findViewWithTag<TextView>("music.now-playing-title"))
+        val expandTrack = checkNotNull(player.findViewWithTag<View>("music.expand"))
+        val title = checkNotNull(expandTrack.findViewWithTag<TextView>("music.now-playing-title"))
         check(title.maxLines == 1 && title.ellipsize == android.text.TextUtils.TruncateAt.END)
-        val metadata = descendants(player).filterIsInstance<TextView>().filter { it !== title && it.text.isNotBlank() }
-        check(metadata.isNotEmpty()) { "The long podcast artist should remain present in the compact metadata stack" }
+        val metadataContainer = title.parent as ViewGroup
+        val metadata = (0 until metadataContainer.childCount).map { metadataContainer.getChildAt(it) as TextView }
+        val artist = metadata.single { it !== title }
+        check(artist.text.isNotBlank()) { "The long podcast artist should remain present in the compact metadata stack" }
         check(metadata.all { it.maxLines == 1 && it.ellipsize == android.text.TextUtils.TruncateAt.END })
+        check(title.layout.getEllipsisCount(0) > 0 && artist.layout.getEllipsisCount(0) > 0) {
+            "Long title and artist should truncate within the compact metadata column"
+        }
         val transport = descendants(player).filter { it.tag?.toString()?.startsWith("music.command.") == true }
         check(transport.map { it.tag.toString() }.toSet() == setOf("music.command.pause", "music.command.next"))
-        transport.forEach { target ->
-            check(target.measuredHeight >= ui.dp(44)) { "${target.tag} must expose at least a 44dp touch target" }
+        val hide = descendants(player).single { it.contentDescription == player.context.getString(lol.cutout.R.string.music_hide) }
+        (transport + hide).forEach { target ->
+            check(target.measuredWidth >= ui.dp(44) && target.measuredHeight >= ui.dp(44)) {
+                "${target.tag} measured ${target.measuredWidth}×${target.measuredHeight}px; require a 44dp touch target"
+            }
         }
-        fun rightOnScreen(view: View): Int = IntArray(2).also(view::getLocationOnScreen)[0] + view.width
-        fun leftOnScreen(view: View): Int = IntArray(2).also(view::getLocationOnScreen)[0]
-        check(metadata.maxOf(::rightOnScreen) <= transport.minOf(::leftOnScreen)) {
-            "Long metadata must not overlap the compact transport controls"
+        fun rectInHost(view: View) = Rect(0, 0, view.width, view.height).apply {
+            host.offsetDescendantRectToMyCoords(view, this)
+        }
+        val metadataBounds = rectInHost(metadataContainer)
+        val firstTransportBounds = rectInHost(transport.minBy { rectInHost(it).left })
+        check(metadataBounds.right <= firstTransportBounds.left) {
+            "Metadata ends at ${metadataBounds.right}px while transport begins at ${firstTransportBounds.left}px in the $width×$height host"
         }
     }
 
