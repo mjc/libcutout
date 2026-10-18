@@ -1,0 +1,10 @@
+<resources>
+    <string name="lighting_bluetooth_permission">Bluetooth permission is required to find and control an accessory.</string>
+    <string name="lighting_enable_bluetooth">Enable Bluetooth</string>
+    <string name="lighting_retrying">Reconnecting, attempt %1$d. Next attempt in %2$d seconds.</string>
+    <string name="lighting_failed">Could not connect to the lighting accessory: %1$s</string>
+    <string name="lighting_percent">%1$d%%</string>
+    <string name="lighting_effect_id">Effect %1$d</string>
+    <string name="lighting_confirmed">Last reported color: %1$d, %2$d, %3$d</string>
+    <string name="lighting_associated_vehicle">Associated with vehicle %1$s</string>
+</resources>
