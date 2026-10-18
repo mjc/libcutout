@@ -1,0 +1,3 @@
+<resources>
+    <string name="settings_stale_attempt">This connection changed. Reconnect before submitting this setting.</string>
+</resources>
