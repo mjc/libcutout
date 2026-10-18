@@ -513,8 +513,10 @@ struct CaptureSavedSettingsSection: View {
     let source: MobileCaptureSubmissionSourceDto
     @State private var observations: [MobileCaptureSettingsObservationDto] = []
     @State private var error: String?
+    @State private var isLoading = true
     var body: some View {
         Section {
+            if isLoading { ProgressView(localizedAppText("app.startup.loading")) }
             if let error { Text(error).foregroundStyle(PevColors.warningText) }
             if !observations.isEmpty {
                 NavigationLink {
@@ -531,6 +533,7 @@ struct CaptureSavedSettingsSection: View {
             }
         }
         .task {
+            defer { isLoading = false }
             do {
                 let database = try await RustPersistenceStore.open()
                 let selectedSource = source
