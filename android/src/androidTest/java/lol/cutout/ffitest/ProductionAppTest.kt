@@ -14,11 +14,12 @@ import org.junit.Test
 
 open class ProductionAppTest {
     @Test
-    fun launcherOpensDevicePickerAndSettingsNavigation() = withActivity { activity ->
+    fun launcherOpensDevicePickerAndGeneralSetupWithoutAConnectedPev() = withActivity { activity ->
         val context = activity
         check(visibleText(activity, context.getString(R.string.picker_title)))
-        clickDescription(activity, context.getString(R.string.configuration))
-        check(visibleText(activity, CutoutUi(context).label("settings.readback.unavailable")))
+        clickDescription(activity, context.getString(R.string.more))
+        clickDescription(activity, context.getString(R.string.setup))
+        check(visibleText(activity, context.getString(R.string.setup_ride_autostart)))
         clickDescription(activity, context.getString(R.string.devices))
         check(visibleText(activity, context.getString(R.string.picker_title)))
     }
@@ -28,6 +29,8 @@ open class ProductionAppTest {
         val replay = productionReplayPresentation()
         withActivity { activity ->
             activity.render(replay)
+            clickDescription(activity, activity.getString(R.string.configuration))
+            check(visibleText(activity, CutoutUi(activity).label("controls.tune.title")))
             clickDescription(activity, activity.getString(R.string.ride))
             val speed = checkNotNull(activity.window.decorView.findViewWithTag<TextView>("ride.hero.speed"))
             val before = speed.text.toString()

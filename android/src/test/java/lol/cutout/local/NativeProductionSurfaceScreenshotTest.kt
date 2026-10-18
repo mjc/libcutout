@@ -92,6 +92,37 @@ class NativeProductionSurfaceScreenshotTest {
         }
     }
 
+    @Test
+    @Config(qualifiers = "w393dp-h852dp-night-xhdpi")
+    fun rendersMoreAndPackWithoutReplacingLiveReadingRows() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        try {
+            (activity.application as CutoutApplication).bluetooth.observe(null)
+            (activity.application as CutoutApplication).bluetooth.stopScan()
+            val replay = productionReplayPresentation()
+            activity.render(replay)
+            fun open(label: Int) = descendants(activity.window.decorView).single {
+                it.isShown && it.isClickable && it.contentDescription?.toString() == activity.getString(label)
+            }.performClick()
+            check(open(R.string.more))
+            NativeSurfaceCapture.save(activity.window.decorView, "app-more-dark")
+            check(open(R.string.pack))
+            val tag = "pack.metric.${activity.getString(R.string.voltage)}"
+            val voltage = checkNotNull(activity.window.decorView.findViewWithTag<android.widget.TextView>(tag))
+            val text = voltage.text.toString()
+            check(text != "—")
+            activity.render(replay.copy())
+            check(activity.window.decorView.findViewWithTag<android.widget.TextView>(tag) === voltage) {
+                "Live pack updates must retain the visible reading instead of rebuilding the page"
+            }
+            check(voltage.text.toString() == text)
+            NativeSurfaceCapture.save(activity.window.decorView, "app-pack-dark")
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
     private fun configuredContext(context: Context, dark: Boolean): Context {
         val configuration = Configuration(context.resources.configuration)
         val nightMask = Configuration.UI_MODE_NIGHT_MASK

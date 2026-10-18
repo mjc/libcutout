@@ -29,7 +29,8 @@ APP = "lol.cutout"
 RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
 GRADLE_CACHE = TARGET / "android-tests/gradle-cache"
 SHARED_LABEL_PREFIXES = ("settings.", "actions.", "controls.", "euc.", "vesc.",
-                         "ride.", "status.", "footpad.")
+                         "ride.", "status.", "footpad.", "music.", "bms.", "lighting.",
+                         "charging.", "setup.", "navigation.", "ride_map.", "camera.", "captures.")
 
 
 def select_device(output: str, selector: str | None) -> str:
@@ -285,6 +286,11 @@ class Run:
                     skipped.append(result)
                 results.append(result)
         if not results:
+            if self.last_returncode:
+                raise ValueError(
+                    f"Android UI compilation or test startup failed ({self.last_returncode}); "
+                    "inspect android-local-ui-tests.log"
+                )
             raise ValueError("Gradle reported no local UI test cases; inspect android-local-ui-tests.log")
         suite = ET.Element("testsuite", name="cutout-android-local-ui",
                            tests=str(len(results)),

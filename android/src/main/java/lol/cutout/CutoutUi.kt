@@ -53,6 +53,22 @@ class CutoutUi(val context: Context) {
             rounded(14, if (primary) yellow else card, !primary), null)
         setOnClickListener { onClick() }
     }
+    fun navigationRow(title: String, symbol: CutoutSymbol, onClick: () -> Unit) = row().apply {
+        minimumHeight = dp(56); setPadding(dp(16), dp(12), dp(16), dp(12))
+        background = RippleDrawable(ColorStateList.valueOf(if (dark) 0x22FFFFFF else 0x11000000), null, null)
+        addView(icon(symbol, brand, 22))
+        addView(text(title).apply { setPadding(dp(12), 0, dp(8), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(icon(CutoutSymbol.CHEVRON, muted, 16))
+        isClickable = true; isFocusable = true; contentDescription = title
+        setOnClickListener { onClick() }
+        accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info); info.className = Button::class.java.name
+            }
+        }
+        descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        for (index in 0 until childCount) getChildAt(index).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
     fun icon(symbol: CutoutSymbol, color: Int = foreground, size: Int = 24) = ImageView(context).apply {
         setImageDrawable(CutoutIcon(symbol, color)); layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -68,7 +84,7 @@ class CutoutUi(val context: Context) {
     }
 }
 
-enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL }
+enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL, MAP, MORE, CAMERA, LIGHTING, PACK, MUSIC }
 
 /** Small native stroke icons keep navigation independent of a platform emoji/font. */
 class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Drawable() {
@@ -79,6 +95,12 @@ class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Draw
         canvas.scale(bounds.width() / 24f, bounds.height() / 24f)
         fun path(vararg points: Float) { val path = Path(); path.moveTo(points[0], points[1]); for (i in 2 until points.size step 2) path.lineTo(points[i], points[i + 1]); canvas.drawPath(path, paint) }
         when (symbol) {
+            CutoutSymbol.MAP -> { path(3f, 5f, 9f, 3f, 15f, 5f, 21f, 3f, 21f, 19f, 15f, 21f, 9f, 19f, 3f, 21f, 3f, 5f); path(9f, 3f, 9f, 19f); path(15f, 5f, 15f, 21f) }
+            CutoutSymbol.MORE -> { for (x in listOf(5f, 12f, 19f)) canvas.drawCircle(x, 12f, 1.3f, paint) }
+            CutoutSymbol.CAMERA -> { canvas.drawRoundRect(2f, 6f, 16f, 19f, 3f, 3f, paint); path(16f, 10f, 22f, 6f, 22f, 19f, 16f, 15f) }
+            CutoutSymbol.LIGHTING -> { canvas.drawOval(6f, 2f, 18f, 16f, paint); path(8f, 15f, 10f, 21f, 14f, 21f, 16f, 15f); path(7f, 11f, 17f, 11f) }
+            CutoutSymbol.PACK -> { canvas.drawRoundRect(2f, 6f, 20f, 18f, 3f, 3f, paint); path(23f, 10f, 23f, 14f); path(6f, 9f, 6f, 15f); path(10f, 9f, 10f, 15f); path(14f, 9f, 14f, 15f) }
+            CutoutSymbol.MUSIC -> { path(9f, 17f, 9f, 5f, 20f, 2f, 20f, 14f); canvas.drawOval(3f, 15f, 9f, 20f, paint); canvas.drawOval(14f, 12f, 20f, 17f, paint) }
             CutoutSymbol.CHEVRON -> path(9f, 5f, 16f, 12f, 9f, 19f)
             CutoutSymbol.CLOSE -> { path(6f, 6f, 18f, 18f); path(18f, 6f, 6f, 18f) }
             CutoutSymbol.BLUETOOTH -> { path(12f, 2f, 12f, 22f, 19f, 16f, 5f, 6f); path(12f, 2f, 19f, 8f, 5f, 18f) }
