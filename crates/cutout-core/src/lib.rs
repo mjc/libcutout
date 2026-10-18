@@ -39,6 +39,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod vesc_drivetrain;
+pub use vesc_drivetrain::*;
 mod vehicle;
 pub use vehicle::*;
 mod connection_lifecycle;
@@ -7533,6 +7535,18 @@ pub struct TelemetrySnapshot {
 }
 
 impl TelemetrySnapshot {
+    /// Discards speed calculated from a configuration that no longer applies.
+    /// Other values and their observation timestamps remain unchanged.
+    pub fn invalidate_calculated_speed(&mut self) {
+        if self
+            .speed
+            .is_some_and(|speed| speed.source == ValueSource::Calculated)
+        {
+            self.speed = None;
+            self.speed_observed_at_ms = None;
+        }
+    }
+
     /// Applies a partial telemetry update, preserving fields absent from it.
     pub const fn apply_delta(&mut self, delta: TelemetryDelta) {
         self.at_ms = Some(delta.at_ms);
@@ -8066,6 +8080,11 @@ where
                 limit,
                 actual: ParserQueuedOutputCount::from_outputs(actual),
             })
+    }
+
+    /// Clears calculated speed after its local conversion basis changes, without a sample.
+    pub fn invalidate_calculated_speed(&mut self) {
+        self.state.telemetry.current.invalidate_calculated_speed();
     }
 
     /// Returns the latest telemetry snapshot.

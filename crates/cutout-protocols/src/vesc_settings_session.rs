@@ -192,6 +192,10 @@ impl VescSettingsSession {
             .record_application_query_transport(id, index, count, status, at)
     }
 
+    pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
+        self.read_only.configure_user_drivetrain(value);
+        self.last_speed = None;
+    }
     pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
         self.read_only.application_discovery()
     }

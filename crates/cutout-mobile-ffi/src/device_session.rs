@@ -9,6 +9,64 @@ use crate::{
     MobileSessionStepResultDto, MobileTelemetrySnapshotDto,
 };
 
+/// Native drivetrain form; Rust owns parsing and conversion.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVescDrivetrainDraft {
+    /// Wheel diameter in millimetres.
+    pub wheel_diameter_mm: String,
+    /// Positive whole motor pole-pair count.
+    pub motor_pole_pairs: String,
+    /// Motor revolutions per wheel revolution.
+    pub motor_to_wheel_ratio: String,
+}
+impl From<cutout_core::VescDrivetrain> for MobileVescDrivetrainDraft {
+    fn from(value: cutout_core::VescDrivetrain) -> Self {
+        Self {
+            wheel_diameter_mm: value.diameter_text(),
+            motor_pole_pairs: value.pole_pairs_text(),
+            motor_to_wheel_ratio: value.reduction_text(),
+        }
+    }
+}
+/// Failure of a local geometry operation; no controller write is performed.
+#[derive(Debug, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileVescDrivetrainError {
+    /// Invalid diameter text or representability.
+    #[error("invalid wheel diameter")]
+    InvalidWheelDiameter,
+    /// Pole pairs must be a whole number from 1 through 255.
+    #[error("invalid motor pole pairs")]
+    InvalidMotorPolePairs,
+    /// Invalid positive thousandths reduction.
+    #[error("invalid reduction")]
+    InvalidReduction,
+    /// Attempt was replaced or disconnected.
+    #[error("connection unavailable")]
+    ConnectionUnavailable,
+    /// Only standard VESC accepts user drivetrain configuration.
+    #[error("unsupported device")]
+    UnsupportedDevice,
+    /// No durable database was configured.
+    #[error("persistence unavailable")]
+    PersistenceUnavailable,
+    /// Database did not commit or load the requested geometry.
+    #[error("drivetrain persistence failed: {error}")]
+    Persistence {
+        /// Storage failure.
+        error: crate::MobileRideDatabaseError,
+    },
+}
+
+impl From<cutout_core::VescDrivetrainError> for MobileVescDrivetrainError {
+    fn from(value: cutout_core::VescDrivetrainError) -> Self {
+        match value {
+            cutout_core::VescDrivetrainError::WheelDiameter => Self::InvalidWheelDiameter,
+            cutout_core::VescDrivetrainError::MotorPolePairs => Self::InvalidMotorPolePairs,
+            cutout_core::VescDrivetrainError::Reduction => Self::InvalidReduction,
+        }
+    }
+}
+
 /// Native layout category, independent from the controller protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileVehicleKindDto {
@@ -446,6 +504,87 @@ impl CutoutSessionStateHandle {
         )
     }
 
+    /// Saves local geometry and applies it only to the same standard VESC attempt.
+    ///
+    /// Future telemetry uses the saved geometry; historical distance is not reconstructed.
+    ///
+    /// # Errors
+    /// Returns field validation, connection admission or durable storage failure.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI receives owned form strings"
+    )]
+    pub fn save_connection_vesc_drivetrain(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        draft: MobileVescDrivetrainDraft,
+        updated_at_ms: u64,
+    ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
+        let value = cutout_core::VescDrivetrain::parse(
+            &draft.wheel_diameter_mm,
+            &draft.motor_pole_pairs,
+            &draft.motor_to_wheel_ratio,
+        )
+        .map_err(MobileVescDrivetrainError::from)?;
+        self.save_drivetrain_with_persistence(token, value, |selection| {
+            self.diagnostic_database
+                .as_ref()
+                .ok_or(MobileVescDrivetrainError::PersistenceUnavailable)?
+                .save_user_vesc_drivetrain(
+                    selection.platform_identifier(),
+                    selection.drivetrain(),
+                    updated_at_ms,
+                )
+                .map_err(|error| MobileVescDrivetrainError::Persistence {
+                    error: crate::map_ride_database_error(error),
+                })
+        })
+    }
+
+    /// Copies canonical telemetry for this exact selected connection without observing a sample.
+    #[must_use]
+    pub fn connection_telemetry_snapshot(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<MobileTelemetrySnapshotDto> {
+        let inner = self.lock_inner();
+        let token = token.into();
+        if inner.snapshot().connection.token.as_ref() != Some(&token) {
+            return None;
+        }
+        inner.telemetry_snapshot().map(Into::into)
+    }
+
+    /// Returns this attempt's editable user geometry.
+    #[must_use]
+    pub fn connection_vesc_drivetrain(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<MobileVescDrivetrainDraft> {
+        self.lock_inner()
+            .user_vesc_drivetrain(&token.into())
+            .map(Into::into)
+    }
+
+    /// Loads saved local geometry without overwriting an edit made during the load.
+    ///
+    /// # Errors
+    /// Returns stale connection, unsupported device or storage failure.
+    pub fn restore_connection_vesc_drivetrain(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Result<Option<MobileVescDrivetrainDraft>, MobileVescDrivetrainError> {
+        self.restore_drivetrain_with_load(token, |identifier| {
+            self.diagnostic_database
+                .as_ref()
+                .ok_or(MobileVescDrivetrainError::PersistenceUnavailable)?
+                .user_vesc_drivetrain(identifier)
+                .map_err(|error| MobileVescDrivetrainError::Persistence {
+                    error: crate::map_ride_database_error(error),
+                })
+        })
+    }
+
     /// Attaches saved controller geometry to the pending attempt without asserting identity.
     pub fn configure_connection_vesc_profile(
         &self,
@@ -578,6 +717,68 @@ impl CutoutSessionStateHandle {
 }
 
 impl CutoutSessionStateHandle {
+    fn save_drivetrain_with_persistence(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        value: cutout_core::VescDrivetrain,
+        persist: impl FnOnce(
+            &cutout_protocols::VescDrivetrainSelection,
+        ) -> Result<(), MobileVescDrivetrainError>,
+    ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
+        // Reuse the durable device-selection ordering lock; snapshots never acquire it.
+        let _selection = self
+            .vehicle_selection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let token: cutout_core::ConnectionAttemptToken = token.into();
+        let selection = {
+            let inner = self.lock_inner();
+            if inner.snapshot().connection.token.as_ref() != Some(&token) {
+                return Err(MobileVescDrivetrainError::ConnectionUnavailable);
+            }
+            inner
+                .prepare_vesc_drivetrain_selection(&token, value)
+                .ok_or(MobileVescDrivetrainError::UnsupportedDevice)?
+        };
+        persist(&selection)?;
+        if !self.lock_inner().apply_vesc_drivetrain_selection(selection) {
+            return Err(MobileVescDrivetrainError::ConnectionUnavailable);
+        }
+        Ok(value.into())
+    }
+
+    fn restore_drivetrain_with_load(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        load: impl FnOnce(
+            &str,
+        )
+            -> Result<Option<cutout_core::VescDrivetrain>, MobileVescDrivetrainError>,
+    ) -> Result<Option<MobileVescDrivetrainDraft>, MobileVescDrivetrainError> {
+        let token: cutout_core::ConnectionAttemptToken = token.into();
+        {
+            let inner = self.lock_inner();
+            if inner.snapshot().connection.token.as_ref() != Some(&token) {
+                return Err(MobileVescDrivetrainError::ConnectionUnavailable);
+            }
+            if let Some(value) = inner.user_vesc_drivetrain(&token) {
+                return Ok(Some(value.into()));
+            }
+        }
+        let loaded = load(token.platform_identifier())?;
+        let mut inner = self.lock_inner();
+        if inner.snapshot().connection.token.as_ref() != Some(&token) {
+            return Err(MobileVescDrivetrainError::ConnectionUnavailable);
+        }
+        if let Some(value) = loaded
+            && !inner.restore_vesc_drivetrain(&token, value)
+            && inner.user_vesc_drivetrain(&token).is_none()
+        {
+            return Err(MobileVescDrivetrainError::UnsupportedDevice);
+        }
+        Ok(inner.user_vesc_drivetrain(&token).map(Into::into))
+    }
+
     fn select_vehicle_kind_with_persistence(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -713,6 +914,13 @@ mod tests {
             .begin_connection_attempt(identifier.to_owned(), 0)
             .token
             .unwrap();
+        standard_vesc_on_attempt(handle, token)
+    }
+
+    fn standard_vesc_on_attempt(
+        handle: &CutoutSessionStateHandle,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> MobileConnectionAttemptTokenDto {
         handle.connection_link_established(token.clone());
         handle.observe_connection_notification(token.clone(), VESC_REPLY.to_vec());
         handle.resolve_device_session(token.clone(), false, 1);
@@ -758,6 +966,378 @@ mod tests {
             MobileVehicleClassificationRequirementDto::UserSelectionRequired
         );
         token
+    }
+
+    fn drivetrain_erpm(
+        handle: &CutoutSessionStateHandle,
+        token: MobileConnectionAttemptTokenDto,
+        reverse: bool,
+        at: u64,
+    ) -> MobileDeviceSessionStepDto {
+        let bytes = if reverse {
+            vec![2, 9, 50, 0, 0, 0, 128, 255, 255, 232, 144, 142, 215, 3]
+        } else {
+            vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3]
+        };
+        handle
+            .ingest_device_session(
+                token,
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::Notification,
+                    monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
+                    max_write_len: None,
+                    channel: cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                    bytes,
+                },
+            )
+            .unwrap()
+    }
+
+    fn drivetrain_draft() -> MobileVescDrivetrainDraft {
+        MobileVescDrivetrainDraft {
+            wheel_diameter_mm: "90".to_owned(),
+            motor_pole_pairs: "7".to_owned(),
+            motor_to_wheel_ratio: "2.5".to_owned(),
+        }
+    }
+
+    #[test]
+    fn user_drivetrain_save_applies_live_and_restores_only_same_device() {
+        let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let path =
+            std::env::temp_dir().join(format!("cutout-drivetrain-{}.sqlite", uuid::Uuid::new_v4()));
+        let database = crate::open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let handle = CutoutSessionStateHandle::with_database(database.clone());
+        let token = absent_vesc_application(&handle, "controller-a");
+        let identity = handle.device_session_snapshot().identity;
+        let before = drivetrain_erpm(&handle, token.clone(), false, 3_001);
+        assert_eq!(before.telemetry.speed, None);
+        assert_eq!(
+            handle
+                .save_connection_vesc_drivetrain(token.clone(), drivetrain_draft(), 1)
+                .unwrap(),
+            drivetrain_draft()
+        );
+        assert_eq!(
+            handle.connection_vesc_drivetrain(token.clone()),
+            Some(drivetrain_draft())
+        );
+        assert_eq!(handle.device_session_snapshot().identity, identity);
+        let forward = drivetrain_erpm(&handle, token.clone(), false, 3_002);
+        assert_eq!(forward.telemetry.speed.unwrap().value.value, 1_617);
+        assert_eq!(
+            forward.telemetry.speed_observed_at_ms.unwrap().milliseconds,
+            3_002
+        );
+        assert_eq!(forward.telemetry.distance, None);
+        assert_eq!(forward.telemetry.trip_distance, None);
+        let reverse = drivetrain_erpm(&handle, token.clone(), true, 3_003);
+        assert_eq!(reverse.telemetry.speed.unwrap().value.value, -1_617);
+        assert!(matches!(
+            handle.save_connection_vesc_drivetrain(
+                token.clone(),
+                MobileVescDrivetrainDraft {
+                    motor_to_wheel_ratio: "1".to_owned(),
+                    ..drivetrain_draft()
+                },
+                u64::MAX
+            ),
+            Err(MobileVescDrivetrainError::Persistence { .. })
+        ));
+        assert_eq!(
+            handle.connection_vesc_drivetrain(token.clone()),
+            Some(drivetrain_draft())
+        );
+        let replacement = handle
+            .begin_connection_attempt("controller-b".to_owned(), 4_000)
+            .token
+            .unwrap();
+        assert_eq!(
+            handle
+                .restore_connection_vesc_drivetrain(replacement)
+                .unwrap(),
+            None
+        );
+        let reconnected = handle
+            .begin_connection_attempt("controller-a".to_owned(), 0)
+            .token
+            .unwrap();
+        assert_eq!(
+            handle
+                .restore_connection_vesc_drivetrain(reconnected.clone())
+                .unwrap(),
+            Some(drivetrain_draft())
+        );
+        assert_eq!(handle.connection_vesc_drivetrain(token), None);
+        let reconnected = standard_vesc_on_attempt(&handle, reconnected);
+        assert_eq!(
+            drivetrain_erpm(&handle, reconnected, false, 7_001)
+                .telemetry
+                .speed
+                .unwrap()
+                .value
+                .value,
+            1_617
+        );
+        database.shutdown().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn user_drivetrain_storage_does_not_lock_session_or_apply_to_replacement() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let geometry = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let result = handle.save_drivetrain_with_persistence(token, geometry, |_| {
+            assert!(
+                handle.inner.try_lock().is_ok(),
+                "storage must not hold session mutex"
+            );
+            handle.begin_connection_attempt("controller-b".to_owned(), 4_000);
+            Ok(())
+        });
+        assert_eq!(
+            result,
+            Err(MobileVescDrivetrainError::ConnectionUnavailable)
+        );
+        let replacement = handle.device_session_snapshot().connection.token.unwrap();
+        assert_eq!(handle.connection_vesc_drivetrain(replacement), None);
+    }
+
+    #[test]
+    fn user_drivetrain_edit_invalidates_existing_speed_until_a_new_measurement() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let original = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        handle
+            .save_drivetrain_with_persistence(token.clone(), original, |_| Ok(()))
+            .unwrap();
+        drivetrain_erpm(&handle, token.clone(), false, 3_001);
+        handle
+            .ingest_device_session(
+                token.clone(),
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::Notification,
+                    monotonic_ms: crate::MobileMonotonicMillisDto {
+                        milliseconds: 3_001,
+                    },
+                    max_write_len: None,
+                    channel: cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                    bytes: vec![2, 11, 50, 0, 0, 1, 8, 0, 0, 4, 216, 1, 244, 17, 228, 3],
+                },
+            )
+            .unwrap();
+        let before = handle.connection_telemetry_snapshot(token.clone()).unwrap();
+        assert_eq!(before.speed.unwrap().value.value, 1_617);
+        assert_eq!(before.voltage.unwrap().value.value, 50_000);
+        assert!(before.battery_current.is_some());
+        let identity = handle.device_session_snapshot();
+        let edited = cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap();
+        handle
+            .save_drivetrain_with_persistence(token.clone(), edited, |_| Ok(()))
+            .unwrap();
+        let cleared = handle.connection_telemetry_snapshot(token.clone()).unwrap();
+        assert_eq!(cleared.speed, None);
+        assert_eq!(cleared.speed_observed_at_ms, None);
+        assert_eq!(cleared.at_ms, before.at_ms);
+        assert_eq!(cleared.voltage, before.voltage);
+        assert_eq!(cleared.battery_current, before.battery_current);
+        assert_eq!(handle.device_session_snapshot(), identity);
+        let next = drivetrain_erpm(&handle, token.clone(), false, 3_002);
+        assert_eq!(next.telemetry.speed.unwrap().value.value, 1_794);
+        assert_eq!(
+            next.telemetry.speed_observed_at_ms.unwrap().milliseconds,
+            3_002
+        );
+        handle.begin_connection_attempt("replacement".to_owned(), 4_000);
+        assert_eq!(handle.connection_telemetry_snapshot(token), None);
+    }
+
+    #[test]
+    fn user_drivetrain_new_edit_wins_over_delayed_restore() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let old = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let new = cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap();
+        let restored = handle
+            .restore_drivetrain_with_load(token.clone(), |_| {
+                handle.save_drivetrain_with_persistence(token.clone(), new, |_| Ok(()))?;
+                Ok(Some(old))
+            })
+            .unwrap();
+        assert_eq!(restored, Some(new.into()));
+        assert_eq!(handle.connection_vesc_drivetrain(token), Some(new.into()));
+    }
+
+    #[test]
+    fn user_drivetrain_late_refloat_proof_invalidates_prior_local_speed() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let value = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        handle
+            .save_drivetrain_with_persistence(token.clone(), value, |_| Ok(()))
+            .unwrap();
+        drivetrain_erpm(&handle, token.clone(), false, 3_001);
+        let at = handle
+            .connection_telemetry_snapshot(token.clone())
+            .unwrap()
+            .at_ms;
+        let step = handle
+            .ingest_device_session(
+                token.clone(),
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::Notification,
+                    monotonic_ms: crate::MobileMonotonicMillisDto {
+                        milliseconds: 3_002,
+                    },
+                    max_write_len: None,
+                    channel: cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                    bytes: vec![
+                        2, 61, 36, 101, 0, 2, 0, 82, 101, 102, 108, 111, 97, 116, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 232, 0, 0, 0, 0, 0, 89, 106, 3,
+                    ],
+                },
+            )
+            .unwrap();
+        assert_eq!(step.telemetry.speed, None);
+        assert_eq!(step.telemetry.speed_observed_at_ms, None);
+        assert_eq!(step.telemetry.at_ms, at);
+        assert_eq!(
+            handle
+                .connection_telemetry_snapshot(token.clone())
+                .unwrap()
+                .speed,
+            None
+        );
+        assert_eq!(
+            drivetrain_erpm(&handle, token.clone(), false, 3_003)
+                .telemetry
+                .speed,
+            None,
+            "Refloat ignores local user geometry"
+        );
+        for (at, bytes) in [
+            (
+                3_004,
+                vec![
+                    2, 17, 36, 101, 32, 1, 11, 109, 111, 116, 111, 114, 46, 115, 112, 101, 101,
+                    100, 0, 201, 182, 3,
+                ],
+            ),
+            (
+                3_005,
+                vec![
+                    2, 24, 36, 101, 31, 4, 0, 0, 0, 0, 42, 19, 193, 0, 6, 60, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 51, 168, 3,
+                ],
+            ),
+        ] {
+            handle
+                .ingest_device_session(
+                    token.clone(),
+                    MobileSessionInputDto {
+                        kind: crate::MobileSessionInputKindDto::Notification,
+                        monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
+                        max_write_len: None,
+                        channel: cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                        bytes,
+                    },
+                )
+                .unwrap();
+        }
+        let reported = handle.connection_telemetry_snapshot(token).unwrap();
+        assert_eq!(
+            reported.speed.unwrap().source,
+            crate::MobileValueSourceDto::Reported
+        );
+        assert_eq!(reported.speed.unwrap().value.value, 278);
+        assert_eq!(reported.speed_observed_at_ms.unwrap().milliseconds, 3_005);
+    }
+
+    #[test]
+    fn user_drivetrain_refloat_evidence_rejects_save_and_restore() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        handle
+            .ingest_device_session(
+                token.clone(),
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::Notification,
+                    monotonic_ms: crate::MobileMonotonicMillisDto {
+                        milliseconds: 3_001,
+                    },
+                    max_write_len: None,
+                    channel: cutout_protocols::VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                    bytes: vec![
+                        2, 61, 36, 101, 0, 2, 0, 82, 101, 102, 108, 111, 97, 116, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 232, 0, 0, 0, 0, 0, 89, 106, 3,
+                    ],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            handle
+                .device_session_snapshot()
+                .identity
+                .unwrap()
+                .vesc_application,
+            Some(MobileVescApplicationDiscoveryDto::Refloat)
+        );
+        let value = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        assert_eq!(
+            handle.save_drivetrain_with_persistence(token.clone(), value, |_| panic!(
+                "Refloat must never enter local save"
+            )),
+            Err(MobileVescDrivetrainError::UnsupportedDevice)
+        );
+        assert_eq!(
+            handle.restore_drivetrain_with_load(token.clone(), |_| Ok(Some(value))),
+            Err(MobileVescDrivetrainError::UnsupportedDevice)
+        );
+        assert_eq!(handle.connection_vesc_drivetrain(token), None);
+    }
+
+    #[test]
+    fn user_drivetrain_restore_completion_does_not_modify_a_replacement_attempt() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let value = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let result = handle.restore_drivetrain_with_load(token, |_| {
+            handle.begin_connection_attempt("controller-b".to_owned(), 4_000);
+            Ok(Some(value))
+        });
+        assert_eq!(
+            result,
+            Err(MobileVescDrivetrainError::ConnectionUnavailable)
+        );
+        let replacement = handle.device_session_snapshot().connection.token.unwrap();
+        assert_eq!(handle.connection_vesc_drivetrain(replacement), None);
+    }
+
+    #[test]
+    fn user_drivetrain_invalid_draft_never_enters_storage() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        assert_eq!(
+            handle.save_connection_vesc_drivetrain(
+                token.clone(),
+                MobileVescDrivetrainDraft {
+                    motor_to_wheel_ratio: "2.5001".to_owned(),
+                    ..drivetrain_draft()
+                },
+                1
+            ),
+            Err(MobileVescDrivetrainError::InvalidReduction)
+        );
+        assert_eq!(
+            handle.save_connection_vesc_drivetrain(token.clone(), drivetrain_draft(), 1),
+            Err(MobileVescDrivetrainError::PersistenceUnavailable)
+        );
+        assert_eq!(handle.connection_vesc_drivetrain(token), None);
     }
 
     #[test]

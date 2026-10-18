@@ -467,90 +467,7 @@ impl Default for VescValuesTelemetry {
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MotorPolePairs(u8);
-
-impl MotorPolePairs {
-    /// Creates a motor pole-pair count.
-    #[must_use]
-    pub const fn new(value: u8) -> Self {
-        Self(value)
-    }
-
-    /// Converts an even, nonzero motor pole count to pole pairs.
-    #[must_use]
-    pub const fn from_motor_poles(poles: u8) -> Option<Self> {
-        if poles == 0 || !poles.is_multiple_of(2) {
-            None
-        } else {
-            Some(Self(poles / 2))
-        }
-    }
-
-    /// Returns the motor pole-pair count.
-    #[must_use]
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-/// Mechanical gear-reduction denominator stored in thousandths.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct GearRatioDenominator(u32);
-
-impl GearRatioDenominator {
-    /// Creates an exact integer reduction; zero leaves speed unavailable.
-    #[must_use]
-    pub const fn new(value: u8) -> Self {
-        Self((value as u32) * 1_000)
-    }
-
-    /// Creates a positive reduction in thousandths of motor revolutions per wheel revolution.
-    #[must_use]
-    pub const fn from_milli(value: u32) -> Option<Self> {
-        if value == 0 { None } else { Some(Self(value)) }
-    }
-
-    /// Creates a reduction representable in thousandths by the VESC float.
-    ///
-    /// A thousandths round trip must reproduce the input float, so ordinary
-    /// controller values such as 2.7 are accepted without rounding finer inputs.
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::float_cmp,
-        reason = "Range checks precede conversion; float equality checks exact wire representability."
-    )]
-    pub fn from_ratio(value: f32) -> Option<Self> {
-        if !value.is_finite() || value <= 0.0 {
-            return None;
-        }
-        let scaled = (f64::from(value) * 1_000.0).round();
-        if !(1.0..=f64::from(u32::MAX)).contains(&scaled) {
-            return None;
-        }
-        let milli = scaled as u32;
-        if (f64::from(milli) / 1_000.0) as f32 != value {
-            return None;
-        }
-        Self::from_milli(milli)
-    }
-
-    /// Returns motor revolutions per wheel revolution without integer truncation.
-    #[must_use]
-    pub fn get(self) -> f64 {
-        f64::from(self.0) / 1_000.0
-    }
-
-    /// Returns the ratio in thousandths.
-    #[must_use]
-    pub const fn as_milli(self) -> u32 {
-        self.0
-    }
-}
+pub use cutout_core::{GearRatioDenominator, MotorPolePairs, VescSpeedGeometry};
 
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -603,43 +520,6 @@ impl Default for VescStatsTelemetry {
             motor_temperature_avg: Temperature::from_millicelsius(0),
             motor_temperature_max: Temperature::from_millicelsius(0),
             count_time: Duration::from_milliseconds(0),
-        }
-    }
-}
-
-/// VESC speed geometry from motor setup config.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VescSpeedGeometry {
-    /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
-    pub motor_pole_pairs: MotorPolePairs,
-
-    /// Mechanical gear reduction denominator.
-    pub gear_ratio_denominator: GearRatioDenominator,
-
-    /// Wheel circumference.
-    pub wheel_circumference: Distance,
-}
-
-impl VescSpeedGeometry {
-    /// Checks complete geometry before it can produce physical speed.
-    #[must_use]
-    pub const fn new(
-        motor_pole_pairs: MotorPolePairs,
-        gear_ratio_denominator: GearRatioDenominator,
-        wheel_circumference: Distance,
-    ) -> Option<Self> {
-        if motor_pole_pairs.get() == 0
-            || gear_ratio_denominator.as_milli() == 0
-            || wheel_circumference.as_millimetres() == 0
-            || wheel_circumference.as_millimetres() > u64::MAX / 2
-        {
-            None
-        } else {
-            Some(Self {
-                motor_pole_pairs,
-                gear_ratio_denominator,
-                wheel_circumference,
-            })
         }
     }
 }
@@ -802,6 +682,16 @@ impl VescBoardProfile {
     #[must_use]
     pub const fn with_reported_battery_current(mut self) -> Self {
         self.reports_battery_current = true;
+        self
+    }
+
+    /// Replaces local speed geometry without inventing pack or charge facts.
+    #[must_use]
+    pub const fn with_speed_geometry(mut self, geometry: VescSpeedGeometry) -> Self {
+        self.motor_pole_pairs = geometry.motor_pole_pairs;
+        self.gear_ratio_denominator = geometry.gear_ratio_denominator;
+        self.wheel_circumference = geometry.wheel_circumference;
+        self.calculates_speed = true;
         self
     }
 

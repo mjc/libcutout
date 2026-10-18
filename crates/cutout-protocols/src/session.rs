@@ -839,6 +839,7 @@ pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
     configured_board_profile: Option<VescBoardProfile>,
+    user_drivetrain: Option<cutout_core::VescDrivetrain>,
     learned_board_profile: Option<VescBoardProfile>,
     last_poll_ms: Option<u64>,
     now_ms: u64,
@@ -868,7 +869,15 @@ pub struct VescNotificationDecoder {
 
 impl VescNotificationDecoder {
     fn board_profile(&self) -> Option<VescBoardProfile> {
-        self.configured_board_profile.or(self.learned_board_profile)
+        let reported = self.configured_board_profile.or(self.learned_board_profile);
+        match (self.refloat_discovery.application(), self.user_drivetrain) {
+            (VescApplicationDiscovery::Absent, Some(value)) => Some(
+                reported
+                    .unwrap_or_else(VescBoardProfile::without_geometry)
+                    .with_speed_geometry(value.geometry()),
+            ),
+            _ => reported,
+        }
     }
 
     /// Creates a VESC decoder that can calculate speed from explicit board geometry.
@@ -878,6 +887,7 @@ impl VescNotificationDecoder {
             stream: VescReadOnlyStreamDecoder::new(),
             refloat_stream: RefloatStreamDecoder::new(),
             configured_board_profile: Some(board_profile),
+            user_drivetrain: None,
             learned_board_profile: None,
             last_poll_ms: None,
             now_ms: 0,
@@ -1956,20 +1966,14 @@ fn vesc_values_to_delta(
                 board_profile.and_then(|profile| profile.battery_level_from_voltage(voltage))
             })
             .map(Measured::estimated),
-        battery_current: board_profile
-            .filter(|profile| profile.reports_battery_current)
-            .filter(|_| {
+        battery_current: values
+            .present_fields
+            .contains(VescValuesMask::AVG_CURRENT_INPUT)
+            .then_some(Measured::reported(
                 values
-                    .present_fields
-                    .contains(VescValuesMask::AVG_CURRENT_INPUT)
-            })
-            .map(|_| {
-                Measured::reported(
-                    values
-                        .input_current
-                        .normalize(BatteryCurrentPolarity::PositiveIsOut),
-                )
-            }),
+                    .input_current
+                    .normalize(BatteryCurrentPolarity::PositiveIsOut),
+            )),
         motor_current: values
             .present_fields
             .contains(VescValuesMask::AVG_CURRENT_MOTOR)
@@ -2778,6 +2782,15 @@ impl<M: ReadOnlyModelSpec> ProtocolSession for ReadOnlySession<M> {
 }
 
 impl ReadOnlySession<VescGenericModel> {
+    pub(crate) fn user_drivetrain_is_active(&self) -> bool {
+        self.decoder.user_drivetrain.is_some()
+            && self.decoder.refloat_discovery.application() == VescApplicationDiscovery::Absent
+    }
+
+    pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
+        self.decoder.user_drivetrain = Some(value);
+    }
+
     /// Current connection's query progress, separate from passive application evidence.
     #[must_use]
     pub fn application_query_state(&self) -> crate::VescApplicationQueryState {
@@ -5038,7 +5051,12 @@ mod tests {
             delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(37_500),))
         );
-        assert_eq!(delta.battery_current, None);
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(
+                cutout_core::BatteryCurrent::current_out(40)
+            ))
+        );
         assert_eq!(delta.motor_current, None);
         assert_eq!(delta.controller_temperature, None);
         assert_eq!(
@@ -5088,7 +5106,12 @@ mod tests {
             delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(61_900),))
         );
-        assert_eq!(delta.battery_current, None);
+        // The captured full Values packet reports zero input current; a measured
+        // zero is distinct from a selective packet that omits the field.
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(cutout_core::BatteryCurrent::Zero))
+        );
         assert_eq!(
             delta.motor_current,
             Some(Measured::reported(
@@ -5786,6 +5809,50 @@ mod tests {
     }
 
     #[test]
+    fn user_drivetrain_preserves_pack_facts_and_does_not_replace_refloat_geometry() {
+        let reported = VescBoardProfile::new(
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        )
+        .with_vesc_battery_type(crate::VescBatteryType::LiIon, SeriesCount::new(12));
+        let mut decoder = VescNotificationDecoder::with_board_profile(reported);
+        let user = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        decoder.user_drivetrain = Some(user);
+        decoder.refloat_discovery.observed = Some(VescApplicationDiscovery::Refloat);
+        assert_eq!(decoder.board_profile(), Some(reported));
+        decoder.refloat_discovery.observed = Some(VescApplicationDiscovery::Absent);
+        let local = decoder.board_profile().unwrap();
+        assert_eq!(local, reported.with_speed_geometry(user.geometry()));
+        assert_eq!(local.battery_profile, reported.battery_profile);
+        assert_eq!(local.charge_profile, None);
+    }
+
+    #[test]
+    fn standard_vesc_reported_input_current_does_not_require_geometry_or_pack_model() {
+        let mut values = VescValuesTelemetry {
+            present_fields: VescValuesMask::AVG_CURRENT_INPUT,
+            ..VescValuesTelemetry::default()
+        };
+        for (raw, expected) in [
+            (1_250, BatteryCurrent::current_out(1_250)),
+            (-2_500, BatteryCurrent::current_in(2_500)),
+            (0, BatteryCurrent::Zero),
+        ] {
+            values.input_current = cutout_core::ReportedBatteryCurrent::from_milliamps(raw);
+            let delta = vesc_values_to_delta(&values, ms(42), None);
+            assert_eq!(delta.battery_current, Some(Measured::reported(expected)));
+            assert_eq!(delta.battery_level_estimated, None);
+            assert_eq!(delta.speed, None);
+        }
+        values.present_fields = VescValuesMask::RPM;
+        assert_eq!(
+            vesc_values_to_delta(&values, ms(43), None).battery_current,
+            None
+        );
+    }
+
+    #[test]
     fn generic_vesc_session_emits_calculated_speed_when_board_profile_is_explicit() {
         let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(
             MotorPolePairs::new(1),
@@ -5943,8 +6010,14 @@ mod tests {
 
         assert_eq!(
             vesc_values_to_delta(&values, ms(3), None).battery_current,
+            Some(Measured::reported(BatteryCurrent::current_in(2_500))),
+            "a present DC input-current field does not require drivetrain or pack geometry"
+        );
+        values.present_fields = VescValuesMask::RPM;
+        assert_eq!(
+            vesc_values_to_delta(&values, ms(4), None).battery_current,
             None,
-            "default/unverified profiles must not publish the zero-filled placeholder"
+            "a selective packet must not publish an unselected current field"
         );
     }
 

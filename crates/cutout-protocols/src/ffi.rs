@@ -415,6 +415,12 @@ impl VescReadOnlySession {
             .record_application_query_transport(id, index, count, status, at)
     }
 
+    pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
+        self.host
+            .protocol_session_mut()
+            .configure_user_drivetrain(value);
+        self.host.invalidate_calculated_speed();
+    }
     pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
         self.host.protocol_session().application_discovery()
     }
@@ -445,7 +451,11 @@ impl VescReadOnlySession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
+        let local_speed_basis = self.host.protocol_session().user_drivetrain_is_active();
         ingest_timestamped_command(&mut self.host, input);
+        if local_speed_basis && !self.host.protocol_session().user_drivetrain_is_active() {
+            self.host.invalidate_calculated_speed();
+        }
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.

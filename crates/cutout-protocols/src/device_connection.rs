@@ -30,6 +30,25 @@ struct ValidationGrant {
     generation: u64,
 }
 
+/// Prepared local geometry bound to the current standard VESC attempt.
+#[derive(Debug)]
+pub struct VescDrivetrainSelection {
+    token: ConnectionAttemptToken,
+    drivetrain: cutout_core::VescDrivetrain,
+}
+impl VescDrivetrainSelection {
+    /// Device receiving this saved local configuration.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        self.token.platform_identifier()
+    }
+    /// Checked local geometry.
+    #[must_use]
+    pub const fn drivetrain(&self) -> cutout_core::VescDrivetrain {
+        self.drivetrain
+    }
+}
+
 /// A current, non-Refloat VESC attempt's validated physical-type choice.
 ///
 /// Persistence may consume its device identity before the same owner applies the choice.
@@ -103,6 +122,7 @@ pub struct DeviceConnectionSession {
     device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
+    user_vesc_drivetrain: Option<cutout_core::VescDrivetrain>,
     user_vehicle_classification: Option<cutout_core::VehicleClassification>,
     validation_grant: Option<ValidationGrant>,
     setting_operations:
@@ -398,6 +418,7 @@ impl DeviceConnectionSession {
         self.retain_detection();
         self.last_input_at = at;
         self.vesc_board_profile = None;
+        self.user_vesc_drivetrain = None;
         self.user_vehicle_classification = None;
         self.validation_grant = None;
         self.state.reset_device_identity();
@@ -408,6 +429,89 @@ impl DeviceConnectionSession {
         self.state.actions.disconnect();
         self.detector = DeviceDetectionSession::default();
         self.device = None;
+    }
+
+    /// Prepares a local user geometry change for a verified standard VESC.
+    #[must_use]
+    pub fn prepare_vesc_drivetrain_selection(
+        &self,
+        token: &ConnectionAttemptToken,
+        drivetrain: cutout_core::VescDrivetrain,
+    ) -> Option<VescDrivetrainSelection> {
+        let identity = self.device.as_ref()?.identity();
+        if !self.state.connection.is_verified(token)
+            || identity.protocol != ProtocolFamily::Vesc
+            || identity.vesc_application != Some(crate::VescApplicationDiscovery::Absent)
+        {
+            return None;
+        }
+        Some(VescDrivetrainSelection {
+            token: token.clone(),
+            drivetrain,
+        })
+    }
+
+    /// Applies durable geometry without sending controller configuration commands.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "consumes the prepared selection so it cannot be reused"
+    )]
+    pub fn apply_vesc_drivetrain_selection(&mut self, selection: VescDrivetrainSelection) -> bool {
+        if self
+            .prepare_vesc_drivetrain_selection(&selection.token, selection.drivetrain)
+            .is_none()
+        {
+            return false;
+        }
+        self.install_user_drivetrain(selection.drivetrain);
+        true
+    }
+
+    /// Current attempt's user geometry, independent of physical type.
+    #[must_use]
+    pub fn user_vesc_drivetrain(
+        &self,
+        token: &ConnectionAttemptToken,
+    ) -> Option<cutout_core::VescDrivetrain> {
+        self.state
+            .connection
+            .is_current(token)
+            .then_some(self.user_vesc_drivetrain)
+            .flatten()
+    }
+
+    /// Restores saved facts unless an explicit edit or earlier restore already supplied geometry.
+    pub fn restore_vesc_drivetrain(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        drivetrain: cutout_core::VescDrivetrain,
+    ) -> bool {
+        if !self.state.connection.is_current(token) || self.user_vesc_drivetrain.is_some() {
+            return false;
+        }
+        match self.state.connection.snapshot().readiness {
+            ConnectionReadiness::Pending | ConnectionReadiness::Verified => {}
+            ConnectionReadiness::Disconnected
+            | ConnectionReadiness::RecordOnly
+            | ConnectionReadiness::Failed
+            | ConnectionReadiness::Conflicted => return false,
+        }
+        if self.device.as_ref().is_some_and(|device| {
+            let identity = device.identity();
+            identity.protocol != ProtocolFamily::Vesc
+                || identity.vesc_application == Some(crate::VescApplicationDiscovery::Refloat)
+        }) {
+            return false;
+        }
+        self.install_user_drivetrain(drivetrain);
+        true
+    }
+
+    fn install_user_drivetrain(&mut self, drivetrain: cutout_core::VescDrivetrain) {
+        self.user_vesc_drivetrain = Some(drivetrain);
+        if let Some(device) = self.device.as_mut() {
+            device.configure_user_drivetrain(drivetrain);
+        }
     }
 
     /// Supplies saved controller geometry for this pending attempt without asserting identity.
@@ -641,6 +745,9 @@ impl DeviceConnectionSession {
         if let Some(mut device) =
             DeviceSession::from_detection_with_vesc_profile(&resolution, self.vesc_board_profile)
         {
+            if let Some(drivetrain) = self.user_vesc_drivetrain {
+                device.configure_user_drivetrain(drivetrain);
+            }
             if let Some(classification) = self.user_vehicle_classification {
                 let _ = device.configure_vehicle_kind(classification.kind());
             }

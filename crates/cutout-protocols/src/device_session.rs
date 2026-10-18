@@ -107,6 +107,11 @@ enum DeviceSessionEngine {
 }
 
 impl DeviceSession {
+    pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
+        if let DeviceSessionEngine::Vesc(session) = &mut self.engine {
+            session.configure_user_drivetrain(value);
+        }
+    }
     pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
         match &self.engine {
             DeviceSessionEngine::Vesc(session) => session.application_query_deadline(),
