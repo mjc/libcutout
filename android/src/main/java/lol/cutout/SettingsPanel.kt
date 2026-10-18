@@ -67,7 +67,7 @@ class SettingsPanel(
     fun render(snapshot: MobileSettingsDto?) {
         if (snapshot == null) {
             if (renderedGeneration != null) rebuild(emptyList(), null)
-            emptyMessage.text = ui.label("controls.empty")
+            emptyMessage.text = ui.label("settings.readback.unavailable")
             if (emptyMessage.parent == null) page.addView(emptyMessage)
             return
         }
@@ -260,7 +260,10 @@ class SettingsPanel(
                     val buttons = ui.row().apply { gravity = Gravity.END }
                     val apply = ui.action(ui.label("controls.apply"), primary = true) {
                         draft?.let { send(it) }
-                    }.apply { tag = "settings.apply.${descriptor.id}" }
+                    }.apply {
+                        tag = "settings.apply.${descriptor.id}"
+                        contentDescription = formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))
+                    }
                     applyButton = apply
                     buttons.addView(apply)
                     controls.addView(buttons)
@@ -275,6 +278,10 @@ class SettingsPanel(
                 send(MobileSettingValueDto.Boolean(value))
             }
             button.tag = value
+            button.contentDescription = formatLabel(
+                "controls.boolean.action", ui.label(descriptor.labelKey),
+                ui.label(if (value) "controls.on" else "settings.choice.off"),
+            )
             button.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                 marginStart = ui.dp(6)
             }
@@ -310,9 +317,12 @@ class SettingsPanel(
                 })
             }
             numericEdit = input
+            input.contentDescription = ui.label(descriptor.labelKey)
             line.addView(input, LinearLayout.LayoutParams(0, ui.dp(52), 1f))
             val decrement = ui.action("−") { step(shape, false) }
+                .apply { contentDescription = context.getString(R.string.setting_decrease, ui.label(descriptor.labelKey), "") }
             val increment = ui.action("+") { step(shape, true) }
+                .apply { contentDescription = context.getString(R.string.setting_increase, ui.label(descriptor.labelKey), "") }
             decrementButton = decrement
             incrementButton = increment
             line.addView(decrement)
@@ -321,10 +331,15 @@ class SettingsPanel(
             val buttons = ui.row().apply { gravity = Gravity.END }
             if (shape.canDisable) buttons.addView(ui.action(ui.label("settings.choice.off")) {
                 edit(MobileSettingValueDto.Disabled)
+            }.apply {
+                contentDescription = formatLabel("controls.disable.accessibility", ui.label(descriptor.labelKey))
             })
             val apply = ui.action(ui.label("controls.apply"), primary = true) {
                 draft?.let { send(it) }
-            }.apply { tag = "settings.apply.${descriptor.id}" }
+            }.apply {
+                tag = "settings.apply.${descriptor.id}"
+                contentDescription = formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))
+            }
             applyButton = apply
             buttons.addView(apply)
             controls.addView(buttons)
@@ -485,12 +500,24 @@ class SettingsPanel(
                 it != current && state?.status != MobileSettingStatusDto.IDLE && state?.status != MobileSettingStatusDto.CONFIRMED
             }
             summary.text = if (requested == null) primary else "$primary\n${ui.label("settings.value.requested")}: ${valueText(requested)}"
+            if (control is MobileSettingControlDto.Number) {
+                numericEdit?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(draft ?: current)}"
+                decrementButton?.contentDescription = context.getString(
+                    R.string.setting_decrease, ui.label(descriptor.labelKey), valueText(draft ?: current),
+                )
+                incrementButton?.contentDescription = context.getString(
+                    R.string.setting_increase, ui.label(descriptor.labelKey), valueText(draft ?: current),
+                )
+                applyButton?.contentDescription = "${ui.label("controls.apply.accessibility").replace("%@", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
+            }
             if (control is MobileSettingControlDto.Choices) {
+                choiceButton?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(draft ?: current)}"
+                applyButton?.contentDescription = "${ui.label("controls.apply.accessibility").replace("%@", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
                 choiceButton?.text = valueText(draft ?: current)
                 choiceButton?.isEnabled = interactable && control.choices.any { it.writable }
             }
             val selected = when {
-                state?.transport == MobileSettingTransportStatusDto.REJECTED -> current
+                failure != null || state?.transport == MobileSettingTransportStatusDto.REJECTED -> current
                 state?.status == MobileSettingStatusDto.WAITING_FOR_CONFIRMATION || state?.status == MobileSettingStatusDto.SENT_WITHOUT_CONFIRMATION -> state?.requested
                 else -> current
             }
@@ -499,7 +526,27 @@ class SettingsPanel(
                     val child = line.getChildAt(index)
                     if (child.tag is Boolean) {
                         val chosenBoolean = selected as? MobileSettingValueDto.Boolean
-                        child.alpha = if (chosenBoolean?.value == child.tag) 1f else .65f
+                        val isSelected = chosenBoolean?.value == child.tag
+                        child.alpha = if (isSelected) 1f else .65f
+                        child.isSelected = isSelected
+                        val selectionState = when {
+                            !isSelected -> null
+                            state?.requested == selected &&
+                                (state?.status == MobileSettingStatusDto.WAITING_FOR_CONFIRMATION ||
+                                    state?.status == MobileSettingStatusDto.SENT_WITHOUT_CONFIRMATION) ->
+                                ui.label("controls.accessibility.requested")
+                            state?.current == selected -> when (state?.currentSource) {
+                                MobileSettingValueSourceDto.LIVE_READBACK -> ui.label("controls.accessibility.reported")
+                                MobileSettingValueSourceDto.CAPTURE_REPLAY -> ui.label("settings.value.replay")
+                                MobileSettingValueSourceDto.USER_REQUEST -> ui.label("controls.accessibility.requested")
+                                else -> null
+                            }
+                            else -> null
+                        }
+                        val option = ui.label(if (child.tag == true) "controls.on" else "settings.choice.off")
+                        child.contentDescription = formatLabel(
+                            "controls.boolean.action", ui.label(descriptor.labelKey), option,
+                        ) + selectionState?.let { ", $it" }.orEmpty()
                     }
                 }
             }

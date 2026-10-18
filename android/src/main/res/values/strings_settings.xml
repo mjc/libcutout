@@ -1,3 +1,5 @@
 <resources>
     <string name="settings_stale_attempt">This connection changed. Reconnect before submitting this setting.</string>
+    <string name="setting_decrease">Decrease %1$s: %2$s</string>
+    <string name="setting_increase">Increase %1$s: %2$s</string>
 </resources>

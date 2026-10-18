@@ -8,16 +8,133 @@ import android.widget.EditText
 import androidx.test.platform.app.InstrumentationRegistry
 import java.math.BigDecimal
 import lol.cutout.MainActivity
+import lol.cutout.CutoutUi
 import lol.cutout.SettingsPanel
 import lol.cutout.R
 import uniffi.cutout_mobile_ffi.MobileSettingAccessDto
+import uniffi.cutout_mobile_ffi.MobileSettingValueSourceDto
 import uniffi.cutout_mobile_ffi.MobileSettingControlDto
 import uniffi.cutout_mobile_ffi.MobileSettingGroupDto
 import uniffi.cutout_mobile_ffi.MobileSettingStatusDto
 import uniffi.cutout_mobile_ffi.MobileSettingValueDto
 import org.junit.Test
 
-class SettingsPanelTest {
+open class SettingsPanelTest {
+
+    @Test
+    fun emptyReadbackAndSettingControlsExposeContextualAccessibilityState() {
+        val initial = checkNotNull(productionReplayPresentation().settings) {
+            "Production replay did not publish settings"
+        }
+        val booleanDescriptor = initial.settingDescriptors.firstOrNull {
+            it.access == MobileSettingAccessDto.WRITABLE && it.control is MobileSettingControlDto.Boolean
+        } ?: error("Production replay has no writable boolean setting descriptor")
+        val numericDescriptor = initial.settingDescriptors.firstOrNull {
+            it.access == MobileSettingAccessDto.WRITABLE && it.control is MobileSettingControlDto.Number &&
+                it.group != MobileSettingGroupDto.DIAGNOSTICS
+        } ?: error("Production replay has no writable numeric setting descriptor")
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        try {
+            instrumentation.runOnMainSync {
+                val panel = SettingsPanel(activity) { _, _, _, _ -> }
+                val labels = CutoutUi(activity)
+                activity.setContentView(panel)
+                panel.render(null)
+                val unavailable = labels.label("settings.readback.unavailable")
+                check(visibleText(panel, unavailable)) {
+                    "Missing settings readback should be described as unavailable"
+                }
+
+                val currentReported = initial.copy(settings = initial.settings.map {
+                    if (it.id == booleanDescriptor.id) it.copy(
+                        current = MobileSettingValueDto.Boolean(true),
+                        requested = MobileSettingValueDto.Boolean(true),
+                        currentSource = MobileSettingValueSourceDto.LIVE_READBACK,
+                        status = MobileSettingStatusDto.CONFIRMED,
+                        transport = null,
+                    ) else it
+                })
+                panel.render(currentReported)
+                val booleanRow = descendants(panel).firstOrNull { it.tag == booleanDescriptor.id }
+                    ?: error("Missing boolean row")
+                val reportedOn = descendants(booleanRow).firstOrNull { it is Button && it.tag == true } as? Button
+                    ?: error("Missing reported boolean button")
+                val settingName = labels.label(booleanDescriptor.labelKey)
+                check(reportedOn.contentDescription.toString().contains(settingName))
+                check(reportedOn.contentDescription.toString().contains(labels.label("controls.accessibility.reported"))) {
+                    "Reported boolean selection was not announced"
+                }
+                check(reportedOn.isSelected) { "Reported boolean selection lacks selected semantics" }
+
+                val replayBooleanSnapshot = currentReported.copy(settings = currentReported.settings.map {
+                    if (it.id == booleanDescriptor.id) it.copy(
+                        currentSource = MobileSettingValueSourceDto.CAPTURE_REPLAY,
+                    ) else it
+                })
+                panel.render(replayBooleanSnapshot)
+                val replayOn = descendants(booleanRow).firstOrNull { it is Button && it.tag == true } as? Button
+                    ?: error("Missing replay boolean button")
+                check(replayOn.contentDescription.toString().contains(labels.label("settings.value.replay"))) {
+                    "Replay state was not distinguished from live wheel readback"
+                }
+                check(!replayOn.contentDescription.toString().contains(labels.label("controls.accessibility.reported"))) {
+                    "Replay state was incorrectly announced as reported by the wheel"
+                }
+
+                val requestedOffSnapshot = currentReported.copy(settings = currentReported.settings.map {
+                    if (it.id == booleanDescriptor.id) it.copy(
+                        requested = MobileSettingValueDto.Boolean(false),
+                        status = MobileSettingStatusDto.WAITING_FOR_CONFIRMATION,
+                    ) else it
+                })
+                panel.render(requestedOffSnapshot)
+                val requestedOff = descendants(booleanRow).firstOrNull { it is Button && it.tag == false } as? Button
+                    ?: error("Missing requested boolean button")
+                check(requestedOff.contentDescription.toString().contains(labels.label("controls.accessibility.requested"))) {
+                    "Requested boolean selection was not announced"
+                }
+                check(requestedOff.isSelected) { "Requested boolean selection lacks selected semantics" }
+
+                val numeric = numericDescriptor.control as MobileSettingControlDto.Number
+                val currentNumber = initial.settings.firstOrNull { it.id == numericDescriptor.id }?.current as? MobileSettingValueDto.Number
+                val raw = if (currentNumber?.value == numeric.minimum &&
+                    numeric.minimum.toLong() + numeric.step.toLong() <= numeric.maximum.toLong()) {
+                    numeric.minimum + numeric.step
+                } else {
+                    numeric.minimum
+                }
+                check(currentNumber == null || raw != currentNumber.value) {
+                    "Replay numeric descriptor exposes no draft value distinct from readback"
+                }
+                val editor = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
+                val apply = tagged<Button>(panel, "settings.apply.${numericDescriptor.id}")
+                editor.setText(BigDecimal.valueOf(raw.toLong(), numeric.precision.toInt()).toPlainString())
+                val numericName = labels.label(numericDescriptor.labelKey)
+                check(editor.contentDescription.toString().startsWith("$numericName:")) {
+                    "Numeric editor has no setting-specific accessibility label/value"
+                }
+                check(apply.contentDescription.toString().startsWith(
+                    labels.label("controls.apply.accessibility").replace("%@", numericName) + ":",
+                )) {
+                    "Apply button does not identify the setting and draft value"
+                }
+                val numericRow = descendants(panel).firstOrNull { it.tag == numericDescriptor.id }
+                    ?: error("Missing numeric row")
+                val decrement = descendants(numericRow).filterIsInstance<Button>()
+                    .firstOrNull { it.text.toString() == "−" }
+                val decrementLabel = activity.getString(R.string.setting_decrease, numericName, "")
+                check(decrement?.contentDescription.toString().startsWith(decrementLabel.substringBeforeLast(":"))) {
+                    "Numeric decrement button has no accessible purpose"
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test
     fun restoredSubmissionComesFromRustSnapshotRatherThanLocalAdmission() {
         val initial = checkNotNull(productionReplayPresentation().settings) {
@@ -225,6 +342,14 @@ class SettingsPanelTest {
             }
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun descendants(view: View): Sequence<View> = sequence {
+        if (view is ViewGroup) for (index in 0 until view.childCount) {
+            val child = view.getChildAt(index)
+            yield(child)
+            yieldAll(descendants(child))
         }
     }
 
