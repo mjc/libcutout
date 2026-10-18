@@ -10,6 +10,29 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+
+/** Keeps the same immutable Rust operation alive across transport-unknown retries. */
+internal class ChargingReportOperationStore<T>(
+    private val create: (spotId: String, message: String) -> T,
+    private val close: (T) -> Unit,
+) : Closeable {
+    private val operations = ConcurrentHashMap<String, T>()
+
+    fun getOrCreate(spotId: String, message: String): T =
+        operations.computeIfAbsent(spotId) { create(spotId, message) }
+
+    fun get(spotId: String): T? = operations[spotId]
+
+    fun received(spotId: String, operation: T) {
+        if (operations.remove(spotId, operation)) close(operation)
+    }
+
+    override fun close() {
+        operations.values.forEach(close)
+        operations.clear()
+    }
+}
 
 data class ChargingClientStatus(
     val credentialState: MobileChargingSyncCredentialState,
@@ -27,6 +50,7 @@ class AndroidChargingClient(
     private val runtime: RideMapRuntime,
     private val credentials: AndroidChargingCredentials = AndroidChargingCredentials(context),
 ) : Closeable {
+    private data class PendingChargingReport(val message: String, val report: MobileChargingContentReport)
     private val main = Handler(Looper.getMainLooper())
     // Charging FFI calls can await bounded HTTP. Keep that wait and its retry delay away
     // from RideMapRuntime's serialized recording and required-callback worker.
@@ -38,6 +62,10 @@ class AndroidChargingClient(
     @Volatile var status: ChargingClientStatus = ChargingClientStatus(MobileChargingSyncCredentialState.MISSING)
         private set
     @Volatile private var closed = false
+    private val reportOperations = ChargingReportOperationStore(
+        create = { spotId, message -> PendingChargingReport(message, MobileChargingContentReport(spotId, message)) },
+        close = { it.report.close() },
+    )
 
     fun <T> withDatabase(operation: suspend (RideDatabaseHandle) -> T, completed: (Result<T>) -> Unit) {
         if (closed) {
@@ -164,11 +192,17 @@ class AndroidChargingClient(
         withDatabase({ it.refreshChargingDirectory() }, completed)
 
     fun submitReport(spotId: String, message: String, completed: (Result<MobileChargingReportReceiptDto>) -> Unit) {
+        val pending = reportOperations.getOrCreate(spotId, message)
         withDatabase({
             val credential = credentialForExplicitAction()
-            MobileChargingContentReport(spotId, message).use { report -> report.submit(credential.token) }
-        }, completed)
+            pending.report.submit(credential.token)
+        }) { result ->
+            result.onSuccess { reportOperations.received(spotId, pending) }
+            completed(result)
+        }
     }
+
+    fun pendingReportMessage(spotId: String): String? = reportOperations.get(spotId)?.message
 
     fun deleteAccount(completed: (Result<MobileCommunityAccountDeletionReceiptDto>) -> Unit) {
         withDatabase({ database ->
@@ -245,6 +279,7 @@ class AndroidChargingClient(
 
     override fun close() {
         closed = true
+        reportOperations.close()
         worker.shutdown()
     }
 }

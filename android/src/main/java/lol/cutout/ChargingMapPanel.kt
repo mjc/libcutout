@@ -1,11 +1,20 @@
 package lol.cutout
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.RippleDrawable
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ScrollView
 import org.maplibre.android.geometry.LatLng
 import uniffi.cutout_mobile_ffi.*
@@ -28,22 +37,36 @@ class ChargingMapPanel(
     private val content = ui.column()
     private val controls = ui.row()
     private val controller = ChargingMapController(client)
-    private val reviewButton = ui.action(context.getString(R.string.charging_review_changes)) {
-        mode = Mode.REVIEW
-        controller.loadBlockedOperations()
-    }
-    private val deleteAccountButton = ui.action(context.getString(R.string.charging_account_delete)) { confirmDeleteAccount() }
-    private val syncButton = ui.action(context.getString(R.string.charging_sync)) {
-        synchronize(client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED)
+    private val mapModeButton = ui.action(context.getString(R.string.charging_view_map)) { setMode(Mode.MAP) }.apply { tag = "charging_view_map" }
+    private val listModeButton = ui.action(context.getString(R.string.charging_view_list)) { setMode(Mode.LIST) }.apply { tag = "charging_view_list" }
+    private val moreButton = ui.action("···") { showActionsMenu() }.apply {
+        contentDescription = context.getString(R.string.charging_more_actions)
+        tag = "charging_more_actions"
     }
     private var mode = Mode.MAP
+    private var directoryMode = Mode.MAP
     private var editorReturnMode = Mode.MAP
     private var editor: ChargingSpotEditorPanel? = null
+    private var modalDialog: Dialog? = null
+    private var modalBodyContainer: FrameLayout? = null
+    private var modalFeedback: android.widget.TextView? = null
+    private var modalMode: Mode? = null
+    private var modalSpotID: String? = null
+    private var modalSpotSnapshot: MobileChargingSpotDto? = null
+    private var modalTitle: android.widget.TextView? = null
+    private var modalCostBadge: android.widget.TextView? = null
+    private var editorStatus: String? = null
+    private var syncRequestedOnActivation = false
     private var syncMessage: String? = null
     private val status = ui.text("", 14f, false, ui.muted)
+    private val communityActions = ui.row().apply { visibility = View.GONE }
+    private val emptyAction = ui.action(context.getString(R.string.charging_empty)) { addSpot() }.apply {
+        tag = "charging_empty_add"
+        visibility = View.GONE
+    }
     private val page = ui.column()
     var onLayoutModeChanged: (() -> Unit)? = null
-    val isMapMode: Boolean get() = mode == Mode.MAP
+    val isMapMode: Boolean get() = directoryMode == Mode.MAP
     private var reportedMapMode: Boolean? = null
 
     init {
@@ -51,25 +74,22 @@ class ChargingMapPanel(
         clipToPadding = false
         content.setPadding(ui.dp(18), ui.dp(8), ui.dp(18), ui.dp(16))
         addView(content, LayoutParams(-1, -2))
-        controls.addView(ui.action(context.getString(R.string.charging_view_map)) { setMode(Mode.MAP) }.apply { tag = "charging_view_map" },
+        controls.addView(mapModeButton,
             LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-        controls.addView(ui.action(context.getString(R.string.charging_view_list)) { setMode(Mode.LIST) }.apply { tag = "charging_view_list" },
+        controls.addView(listModeButton,
             LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
         controls.addView(ui.action(context.getString(R.string.charging_filter)) { showFilters() },
             LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
+        controls.addView(ui.action("+", true) { addSpot() }.apply {
+            contentDescription = context.getString(R.string.charging_add)
+            tag = "charging_add"
+        }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { leftMargin = ui.dp(8) })
+        controls.addView(moreButton, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { leftMargin = ui.dp(4) })
         content.addView(controls)
-        val actions = ui.row()
-        actions.addView(ui.action(context.getString(R.string.charging_add)) { addSpot() },
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-        actions.addView(ui.action(context.getString(R.string.charging_refresh)) { refreshDirectory() },
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        actions.addView(syncButton,
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        content.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-        content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-        content.addView(reviewButton, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(6) })
-        content.addView(deleteAccountButton, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(6) })
         content.addView(page, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        content.addView(emptyAction, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
+        content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        content.addView(communityActions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         controller.onChanged = ::render
         mapView.onViewportChanged = { bounds -> controller.load(bounds) }
         mapView.onChargingSpotSelected = { id -> mode = Mode.DETAILS; controller.select(id); render() }
@@ -82,6 +102,8 @@ class ChargingMapPanel(
     }
 
     fun dispose() {
+        modalDialog?.dismiss()
+        modalDialog = null
         locationClient.close()
         controller.onChanged = null
         mapView.onViewportChanged = null
@@ -91,70 +113,302 @@ class ChargingMapPanel(
     fun activate() {
         render()
         locationClient.refresh()
+        if (!syncRequestedOnActivation) {
+            syncRequestedOnActivation = true
+            synchronize(explicitRetry = false)
+        }
     }
 
-    fun deactivate() { locationClient.cancel() }
+    fun deactivate() { locationClient.cancel(); syncRequestedOnActivation = false }
 
     fun refreshLocation() { locationClient.refresh() }
 
     fun handleBack(): Boolean = when (mode) {
-        Mode.DETAILS -> { mode = Mode.MAP; controller.select(null); render(); true }
-        Mode.EDITOR -> { editor = null; mode = editorReturnMode; render(); true }
-        Mode.REVIEW -> { mode = Mode.MAP; render(); true }
+        Mode.DETAILS -> { closeSheet(Mode.DETAILS); true }
+        Mode.EDITOR -> { closeSheet(Mode.EDITOR); true }
+        Mode.REVIEW -> { closeSheet(Mode.REVIEW); true }
         else -> false
     }
 
     private fun setMode(value: Mode) {
         if (mode == Mode.EDITOR) return
         mode = value
-        if (value == Mode.MAP || value == Mode.LIST) render()
+        directoryMode = value
+        render()
     }
 
     private fun render() {
-        syncButton.text = context.getString(if (client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED)
-            R.string.charging_retry_sync else R.string.charging_sync)
-        reviewButton.visibility = if (controller.state.blockedOperations.isEmpty()
-            && !controller.state.loadingBlockedOperations && controller.state.error == null) View.GONE else View.VISIBLE
-        deleteAccountButton.visibility = if (client.status.credentialState in setOf(
-                MobileChargingSyncCredentialState.READY,
-                MobileChargingSyncCredentialState.DELETION_PENDING,
-            )) View.VISIBLE else View.GONE
-        if (mode != Mode.EDITOR || page.childCount != 1 || page.getChildAt(0) !== editor) {
-            page.removeAllViews()
-        }
+        if ((mode == Mode.MAP || mode == Mode.LIST) && modalDialog != null) clearSheet()
+        styleModeButton(mapModeButton, directoryMode == Mode.MAP)
+        styleModeButton(listModeButton, directoryMode == Mode.LIST)
+        page.removeAllViews()
         mapView.showChargingSpots(controller.state.spots, controller.state.selected?.id)
         status.text = listOfNotNull(
             controller.state.error,
             syncMessage,
-            controller.state.blockedOperations.size.takeIf { it > 0 }?.let {
-                context.getString(R.string.charging_review_pending, it)
-            },
+            controller.state.blockedOperations.size.takeIf { it > 0 }?.let { context.getString(R.string.charging_review_pending, it) },
             controller.state.loading.takeIf { it }?.let { context.getString(R.string.charging_loading) },
         ).joinToString("\n")
+        emptyAction.visibility = if (controller.state.spots.isEmpty() && !controller.state.loading &&
+            controller.state.error == null) View.VISIBLE else View.GONE
         status.visibility = if (status.text.isNullOrBlank()) View.GONE else View.VISIBLE
+        val syncNeedsAttention = client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED ||
+            client.status.pendingCount > 0u || client.status.result in setOf(
+                MobileChargingSyncResult.AUTHENTICATION_REQUIRED,
+                MobileChargingSyncResult.OFFLINE,
+                MobileChargingSyncResult.CONFLICT,
+                MobileChargingSyncResult.REJECTED,
+                MobileChargingSyncResult.THROTTLED,
+                MobileChargingSyncResult.STORAGE_UNAVAILABLE,
+            )
+        val reviewNeedsAttention = controller.state.blockedOperations.isNotEmpty() || controller.state.error != null
+        communityActions.removeAllViews()
+        if (syncNeedsAttention || reviewNeedsAttention) {
+            communityActions.visibility = View.VISIBLE
+            if (syncNeedsAttention) communityActions.addView(
+                ui.action(context.getString(if (client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED)
+                    R.string.charging_retry_sync else R.string.charging_sync)) {
+                    synchronize(client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED)
+                }, LinearLayout.LayoutParams(0, ui.dp(48), 1f),
+            )
+            if (reviewNeedsAttention) communityActions.addView(
+                ui.action(context.getString(R.string.charging_review_changes)) {
+                    mode = Mode.REVIEW
+                    controller.loadBlockedOperations()
+                    render()
+                }, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply {
+                    if (communityActions.childCount > 0) leftMargin = ui.dp(8)
+                },
+            )
+        } else communityActions.visibility = View.GONE
         when (mode) {
             Mode.MAP -> Unit
             Mode.LIST -> renderDirectory()
-            Mode.DETAILS -> controller.state.selected?.let(::renderDetails) ?: renderDirectory()
-            Mode.EDITOR -> editor?.let { if (it.parent == null) page.addView(it) } ?: renderDirectory()
-            Mode.REVIEW -> renderBlockedOperations()
+            Mode.DETAILS -> controller.state.selected?.let { spot ->
+                if (directoryMode == Mode.LIST) renderDirectory()
+                if (modalMode != Mode.DETAILS || modalSpotID != spot.id) {
+                    showChargingSheet(Mode.DETAILS, spot.id, spot.input?.name ?: context.getString(R.string.charging_unknown),
+                        detailContent(spot), spot.input?.cost)
+                } else updateDetailSheet(spot)
+            } ?: closeSheet(Mode.DETAILS)
+            Mode.EDITOR -> editor?.let { panel ->
+                if (directoryMode == Mode.LIST) renderDirectory()
+                if (modalMode != Mode.EDITOR) showChargingSheet(
+                    Mode.EDITOR, null, context.getString(if (editorReturnMode == Mode.REVIEW)
+                        R.string.charging_review_edit else R.string.charging_edit), panel,
+                ) else updateEditorFeedback()
+            } ?: closeSheet(Mode.EDITOR)
+            Mode.REVIEW -> {
+                if (directoryMode == Mode.LIST) renderDirectory()
+                if (modalMode != Mode.REVIEW) showChargingSheet(
+                    Mode.REVIEW, null, context.getString(R.string.charging_review_changes), reviewContent(),
+                ) else updateChargingSheetBody(reviewContent())
+            }
         }
-        val mapMode = isMapMode
+        val mapMode = directoryMode == Mode.MAP
         if (reportedMapMode != mapMode) {
             reportedMapMode = mapMode
             onLayoutModeChanged?.invoke()
         }
     }
 
-    private fun renderBlockedOperations() {
-        page.addView(ui.action(context.getString(R.string.charging_close)) { handleBack() },
-            LinearLayout.LayoutParams(-1, ui.dp(48)))
-        page.addView(ui.text(context.getString(R.string.charging_review_explanation), 15f, false, ui.muted), spaced())
+    private fun styleModeButton(button: android.widget.Button, selected: Boolean) {
+        button.isSelected = selected
+        button.setTextColor(if (selected) Color.BLACK else ui.foreground)
+        button.background = RippleDrawable(ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
+            ui.rounded(22, if (selected) ui.yellow else ui.card, outlined = !selected), null)
+        button.contentDescription = button.text.toString() + if (selected) ", " + context.getString(R.string.charging_selected) else ""
+    }
+
+    private fun reviewContent(): ScrollView {
+        val scroll = ScrollView(context)
+        val body = ui.column()
+        body.setPadding(0, ui.dp(4), 0, ui.dp(12))
+        scroll.addView(body, FrameLayout.LayoutParams(-1, -2))
+        renderBlockedOperations(body)
+        return scroll
+    }
+
+    private fun showActionsMenu() {
+        PopupMenu(context, moreButton).apply {
+            menu.add(context.getString(R.string.charging_refresh)).setOnMenuItemClickListener {
+                refreshDirectory(); true
+            }
+            menu.add(context.getString(if (client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED)
+                R.string.charging_retry_sync else R.string.charging_sync)).setOnMenuItemClickListener {
+                synchronize(client.status.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED); true
+            }
+            val hasReview = controller.state.blockedOperations.isNotEmpty() ||
+                controller.state.loadingBlockedOperations || controller.state.error != null
+            if (hasReview) menu.add(context.getString(R.string.charging_review_changes)).setOnMenuItemClickListener {
+                mode = Mode.REVIEW
+                controller.loadBlockedOperations()
+                render()
+                true
+            }
+            if (client.status.credentialState in setOf(
+                    MobileChargingSyncCredentialState.READY,
+                    MobileChargingSyncCredentialState.DELETION_PENDING,
+                )) menu.add(context.getString(R.string.charging_account_delete)).setOnMenuItemClickListener {
+                confirmDeleteAccount(); true
+            }
+            show()
+        }
+    }
+
+    private fun showChargingSheet(
+        sheetMode: Mode,
+        spotID: String?,
+        title: String,
+        body: View,
+        cost: MobileChargingCostDto? = null,
+    ) {
+        modalDialog?.setOnDismissListener(null)
+        modalDialog?.dismiss()
+        val dialog = Dialog(context)
+        modalDialog = dialog
+        modalMode = sheetMode
+        modalSpotID = spotID
+        modalSpotSnapshot = if (sheetMode == Mode.DETAILS) controller.state.selected else null
+        val sheet = ui.column().apply {
+            background = ui.rounded(28)
+            setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(20))
+        }
+        val header = ui.row()
+        val titleArea = ui.row().apply { gravity = Gravity.CENTER_VERTICAL }
+        modalTitle = ui.text(title, 22f, true)
+        titleArea.addView(modalTitle, LinearLayout.LayoutParams(0, -2, 1f))
+        modalCostBadge = ui.text("", 12f, true).apply { visibility = View.GONE }
+        titleArea.addView(modalCostBadge, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = ui.dp(8) })
+        updateCostBadge(cost)
+        header.addView(titleArea, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+        header.addView(ui.action("×") { closeSheet(sheetMode) }.apply {
+            contentDescription = context.getString(R.string.charging_close)
+            tag = "charging_sheet_close"
+        }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
+        sheet.addView(header)
+        val feedback = ui.text("", 14f, false, ui.red).apply { visibility = View.GONE }
+        modalFeedback = feedback
+        sheet.addView(feedback, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+        val bodyContainer = FrameLayout(context)
+        modalBodyContainer = bodyContainer
+        bodyContainer.addView(body, FrameLayout.LayoutParams(-1, -1))
+        sheet.addView(bodyContainer, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(8) })
+        dialog.setContentView(sheet)
+        dialog.setOnDismissListener {
+            if (modalDialog === dialog) {
+                modalDialog = null
+                modalBodyContainer = null
+                modalFeedback = null
+                modalMode = null
+                modalSpotID = null
+                modalSpotSnapshot = null
+                modalTitle = null
+                modalCostBadge = null
+                if (mode == sheetMode) {
+                    mode = when (sheetMode) {
+                        Mode.EDITOR -> editorReturnMode
+                        else -> directoryMode
+                    }
+                    if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
+                    if (sheetMode == Mode.EDITOR) editor = null
+                    if (sheetMode == Mode.DETAILS) controller.select(null)
+                    render()
+                }
+            }
+        }
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            setLayout(WindowManager.LayoutParams.MATCH_PARENT,
+                (context.resources.displayMetrics.heightPixels * 0.86f).toInt())
+            attributes = attributes.apply { dimAmount = 0.32f }
+        }
+        dialog.setCancelable(true)
+        dialog.show()
+        dialog.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
+            (context.resources.displayMetrics.heightPixels * 0.86f).toInt())
+    }
+
+    private fun closeSheet(expected: Mode) {
+        if (mode != expected) return
+        mode = when (expected) {
+            Mode.EDITOR -> editorReturnMode
+            else -> directoryMode
+        }
+        if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
+        if (expected == Mode.EDITOR) editor = null
+        if (expected == Mode.DETAILS) controller.select(null)
+        val dialog = modalDialog
+        modalDialog = null
+        modalBodyContainer = null
+        modalFeedback = null
+        modalMode = null
+        modalSpotID = null
+        modalSpotSnapshot = null
+        modalTitle = null
+        modalCostBadge = null
+        dialog?.setOnDismissListener(null)
+        dialog?.dismiss()
+        render()
+    }
+
+    private fun clearSheet() {
+        val dialog = modalDialog
+        modalDialog = null
+        modalBodyContainer = null
+        modalFeedback = null
+        modalMode = null
+        modalSpotID = null
+        modalSpotSnapshot = null
+        modalTitle = null
+        modalCostBadge = null
+        dialog?.setOnDismissListener(null)
+        dialog?.dismiss()
+    }
+
+    private fun updateChargingSheetBody(body: View) {
+        val container = modalBodyContainer ?: return
+        container.removeAllViews()
+        container.addView(body, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun updateDetailSheet(spot: MobileChargingSpotDto) {
+        if (modalSpotSnapshot == spot) return
+        modalSpotSnapshot = spot
+        modalTitle?.text = spot.input?.name ?: context.getString(R.string.charging_unknown)
+        updateCostBadge(spot.input?.cost)
+        updateChargingSheetBody(detailContent(spot))
+    }
+
+    private fun updateCostBadge(cost: MobileChargingCostDto?) {
+        val badge = modalCostBadge ?: return
+        if (cost == null) {
+            badge.visibility = View.GONE
+            return
+        }
+        val free = cost == MobileChargingCostDto.FREE
+        badge.text = context.getString(if (free) R.string.charging_cost_free else R.string.charging_cost_paid)
+        badge.setTextColor(if (free) ui.green else ui.yellow)
+        badge.background = ui.rounded(18, if (free) Color.rgb(34, 73, 44) else Color.rgb(75, 60, 18), false)
+        badge.setPadding(ui.dp(9), ui.dp(5), ui.dp(9), ui.dp(5))
+        badge.visibility = View.VISIBLE
+    }
+
+    private fun updateEditorFeedback() {
+        modalFeedback?.let {
+            it.text = editorStatus.orEmpty()
+            it.visibility = if (editorStatus.isNullOrBlank()) View.GONE else View.VISIBLE
+        }
+    }
+
+    private fun renderBlockedOperations(target: LinearLayout) {
+        target.addView(ui.text(context.getString(R.string.charging_review_explanation), 15f, false, ui.muted), spaced())
         if (controller.state.loadingBlockedOperations) {
-            page.addView(ui.text(context.getString(R.string.charging_loading), 14f, false, ui.muted), spaced())
+            target.addView(ui.text(context.getString(R.string.charging_loading), 14f, false, ui.muted), spaced())
         }
         if (!controller.state.loadingBlockedOperations && controller.state.blockedOperations.isEmpty()) {
-            page.addView(ui.text(context.getString(R.string.charging_no_review), 15f, false, ui.muted), spaced())
+            target.addView(ui.text(context.getString(R.string.charging_no_review), 15f, false, ui.muted), spaced())
         }
         controller.state.blockedOperations.forEach { conflict ->
             val card = ui.column().apply {
@@ -191,7 +445,7 @@ class ChargingMapPanel(
                     confirmResolve(conflict, MobileChargingResolutionDto.RETRY)
                 }, spaced())
             }
-            page.addView(card, spaced())
+            target.addView(card, spaced())
         }
     }
 
@@ -223,6 +477,7 @@ class ChargingMapPanel(
 
     private fun openBlockedEditor(conflict: MobileChargingSyncConflictDto) {
         val input = conflict.input ?: return
+        editorStatus = null
         editorReturnMode = Mode.REVIEW
         editor = ChargingSpotEditorPanel(context, null, input.coordinate,
             onCancel = { editor = null; mode = Mode.REVIEW; render() },
@@ -230,7 +485,7 @@ class ChargingMapPanel(
                 controller.replaceBlocked(conflict, updated) { result ->
                     result.fold(
                         onSuccess = { editor = null; mode = Mode.REVIEW; render() },
-                        onFailure = { syncMessage = it.message ?: context.getString(R.string.charging_validation); render() },
+                        onFailure = { editorStatus = it.message ?: context.getString(R.string.charging_validation); render() },
                     )
                 }
             },
@@ -258,9 +513,6 @@ class ChargingMapPanel(
     }
 
     private fun renderDirectory() {
-        if (controller.state.spots.isEmpty() && !controller.state.loading) {
-            page.addView(ui.text(context.getString(R.string.charging_empty), 16f, false, ui.muted))
-        }
         controller.state.spots.forEach { spot ->
             val input = spot.input
             val card = ui.column().apply {
@@ -285,29 +537,45 @@ class ChargingMapPanel(
         }
     }
 
-    private fun renderDetails(spot: MobileChargingSpotDto) {
-        page.addView(ui.action(context.getString(R.string.charging_close)) { handleBack() },
-            LinearLayout.LayoutParams(-1, ui.dp(48)))
+    private fun detailContent(spot: MobileChargingSpotDto): ScrollView {
+        val scroll = ScrollView(context)
+        val body = ui.column().apply { setPadding(0, ui.dp(8), 0, ui.dp(16)) }
+        scroll.addView(body, FrameLayout.LayoutParams(-1, -2))
         val input = spot.input
-        page.addView(ui.text(input?.name?.takeIf(String::isNotBlank) ?: context.getString(R.string.charging_unknown), 24f, true), spaced())
         input?.let { value ->
-            page.addView(ui.text(value.accessNote, 18f, false), spaced())
-            addDetail(context.getString(if (value.cost == MobileChargingCostDto.FREE) R.string.charging_cost_free else R.string.charging_cost_paid))
-            value.venue?.let { addDetail(context.getString(venueString(it))) }
-            value.hours?.takeIf(String::isNotBlank)?.let { addDetail(it) }
-            value.terms?.let { addDetail(context.getString(termsString(it))) }
-            value.price?.let { addDetail(priceSummary(it)) }
-            value.supplies.forEach { addDetail(supplyText(it)) }
+            body.addView(ui.text(value.accessNote, 20f, false), spaced(16))
+            value.supplies.forEach { supply ->
+                val card = ui.column().apply {
+                    background = ui.rounded(14, if (ui.dark) Color.rgb(36, 34, 25) else Color.rgb(255, 249, 225), false)
+                    setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
+                    minimumHeight = ui.dp(56)
+                }
+                card.addView(ui.text(supplyText(supply), 16f, true))
+                body.addView(card, spaced(16))
+            }
+            value.venue?.takeIf { it != MobileChargingVenueDto.OTHER }?.let {
+                body.addView(ui.text("⌖  " + context.getString(venueString(it)), 15f, false, ui.muted), spaced(12))
+            }
+            value.hours?.takeIf(String::isNotBlank)?.let {
+                body.addView(ui.text("◷  $it", 15f, false, ui.muted), spaced(12))
+            }
+            value.terms?.let { body.addView(ui.text(context.getString(R.string.charging_terms) + ": " + context.getString(termsString(it)), 15f, false, ui.muted), spaced(12)) }
+            value.price?.let { body.addView(ui.text(context.getString(R.string.charging_price) + ": " + priceSummary(it), 15f, false, ui.muted), spaced(12)) }
+        }
+        controller.state.error?.let { body.addView(ui.text(it, 14f, false, ui.red), spaced(10)) }
+        if (spot.pendingVote || controller.state.busySpotId == spot.id) {
+            body.addView(ui.text(context.getString(R.string.charging_vote_queued), 14f, false, ui.muted), spaced(12))
         }
         if (spot.owned && (spot.status == MobileChargingStatusDto.QUEUED || spot.status == MobileChargingStatusDto.PUBLISHED)) {
-            page.addView(ui.action(context.getString(R.string.charging_edit)) { openEditor(spot) }, spaced())
-            page.addView(ui.action(context.getString(R.string.charging_delete)) { confirmDelete(spot) }, spaced())
+            val actions = ui.row()
+            actions.addView(ui.action(context.getString(R.string.charging_edit), true) { openEditor(spot) },
+                LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+            actions.addView(ui.action(context.getString(R.string.charging_delete)) { confirmDelete(spot) },
+                LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(10) })
+            body.addView(actions, spaced(20))
         }
         if (spot.remoteId != null && spot.status == MobileChargingStatusDto.PUBLISHED) {
-            page.addView(ui.action(context.getString(R.string.charging_report)) { promptReport(spot) }, spaced())
-        }
-        if (spot.pendingVote || controller.state.busySpotId == spot.id) {
-            page.addView(ui.text(context.getString(R.string.charging_vote_queued), 14f, false, ui.muted), spaced())
+            body.addView(ui.action(context.getString(R.string.charging_report)) { promptReport(spot) }, spaced(12))
         }
         val votes = ui.row()
         votes.addView(ui.action("${context.getString(R.string.charging_up_vote)} · ${spot.votesUp}") {
@@ -316,11 +584,11 @@ class ChargingMapPanel(
         votes.addView(ui.action("${context.getString(R.string.charging_down_vote)} · ${spot.votesDown}") {
             controller.vote(spot, MobileChargingVoteDto.DOWN) { }
         }, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        page.addView(votes, spaced())
+        body.addView(votes, spaced(12))
+        return scroll
     }
 
-    private fun addDetail(value: String) { page.addView(ui.text(value, 15f, false, ui.muted), spaced()) }
-    private fun spaced() = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) }
+    private fun spaced(top: Int = 8) = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(top) }
 
     private fun addSpot() {
         val fix = locationClient.freshFix()
@@ -334,14 +602,16 @@ class ChargingMapPanel(
 
     private fun openEditor(spot: MobileChargingSpotDto?, coordinate: MobileMapCoordinateDto? = null) {
         val actual = coordinate ?: spot?.input?.coordinate ?: return
-        editorReturnMode = if (spot == null) Mode.MAP else Mode.DETAILS
+        editorStatus = null
+        editorReturnMode = if (spot == null) directoryMode else Mode.DETAILS
         editor = ChargingSpotEditorPanel(
             context = context,
             spot = spot,
             initialCoordinate = actual,
             onCancel = {
                 editor = null
-                mode = if (spot == null) Mode.MAP else Mode.DETAILS
+                mode = if (spot == null) editorReturnMode else Mode.DETAILS
+                directoryMode = if (mode == Mode.MAP || mode == Mode.LIST) mode else directoryMode
                 render()
             },
             onSave = { input ->
@@ -349,13 +619,15 @@ class ChargingMapPanel(
                     result.fold(
                         onSuccess = { saved ->
                             editor = null
-                            if (saved == null) { mode = Mode.MAP; syncMessage = context.getString(R.string.charging_saved_queued) }
-                            else { mode = Mode.DETAILS; controller.select(saved.id) }
+                            if (saved == null) {
+                                mode = editorReturnMode
+                                syncMessage = context.getString(R.string.charging_saved_queued)
+                            } else { mode = Mode.DETAILS; controller.select(saved.id) }
                             render()
                         },
                         onFailure = { error ->
                             if (error is MobileChargingException.Conflict) showConflict(spot)
-                            else syncMessage = error.message ?: context.getString(R.string.charging_validation)
+                            else editorStatus = error.message ?: context.getString(R.string.charging_validation)
                             render()
                         },
                     )
@@ -381,7 +653,12 @@ class ChargingMapPanel(
             .setNegativeButton(R.string.charging_cancel, null)
             .setPositiveButton(R.string.charging_delete) { _, _ ->
                 controller.withdraw(spot) { result ->
-                    result.onSuccess { mode = Mode.MAP; render() }
+                    result.onSuccess {
+                        mode = directoryMode
+                        clearSheet()
+                        controller.select(null)
+                        render()
+                    }
                     result.onFailure { syncMessage = it.message; render() }
                 }
             }.show()
@@ -389,23 +666,82 @@ class ChargingMapPanel(
 
     private fun promptReport(spot: MobileChargingSpotDto) {
         val remoteId = spot.remoteId ?: return
+        val retainedMessage = client.pendingReportMessage(remoteId)
         val message = EditText(context).apply {
             hint = context.getString(R.string.charging_report_details)
+            setText(retainedMessage.orEmpty())
+            isEnabled = retainedMessage == null
             minHeight = ui.dp(96)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setTextColor(ui.foreground)
+            setHintTextColor(ui.muted)
+            background = ui.rounded(14)
+            setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
         }
-        AlertDialog.Builder(context).setTitle(R.string.charging_report).setView(message)
+        val state = ui.text("", 14f, false, ui.muted)
+        val form = ui.column().apply {
+            setPadding(ui.dp(20), ui.dp(8), ui.dp(20), ui.dp(4))
+            if (retainedMessage == null) {
+                addView(ui.text(context.getString(R.string.charging_report_explanation), 14f, false, ui.muted),
+                    LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) })
+            }
+            if (retainedMessage != null) {
+                addView(ui.text(context.getString(R.string.charging_report_retry_note), 13f, false, ui.muted),
+                    LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
+            }
+            addView(message, LinearLayout.LayoutParams(-1, -2))
+            addView(state, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        }
+        val dialog = AlertDialog.Builder(context).setTitle(R.string.charging_report).setView(form)
             .setNegativeButton(R.string.charging_cancel, null)
-            .setPositiveButton(R.string.charging_report_submit) { _, _ ->
-                val reportText = message.text.toString()
-                client.submitReport(remoteId, reportText) { result ->
+            .setPositiveButton(if (retainedMessage == null) R.string.charging_report_submit else R.string.charging_report_retry, null)
+            .create()
+        var submitting = false
+        var received = false
+        dialog.setOnShowListener {
+            val cancel = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            val submit = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            cancel.setOnClickListener {
+                if (!submitting) dialog.dismiss()
+            }
+            submit.setOnClickListener {
+                if (received) {
+                    dialog.dismiss()
+                    return@setOnClickListener
+                }
+                if (submitting) return@setOnClickListener
+                submitting = true
+                dialog.setCancelable(false)
+                message.isEnabled = false
+                cancel.isEnabled = false
+                submit.isEnabled = false
+                state.text = context.getString(R.string.charging_report_sending)
+                client.submitReport(remoteId, message.text.toString()) { result ->
+                    submitting = false
                     result.fold(
-                        onSuccess = { syncMessage = context.getString(R.string.charging_report_receipt) },
-                        onFailure = { syncMessage = it.message ?: context.getString(R.string.charging_report_auth) },
+                        onSuccess = { receipt ->
+                            received = true
+                            state.text = context.getString(R.string.charging_report_receipt_id, receipt.reportId)
+                            submit.text = context.getString(R.string.charging_close)
+                            submit.isEnabled = true
+                            cancel.visibility = View.GONE
+                            dialog.setCancelable(true)
+                            syncMessage = context.getString(R.string.charging_report_receipt)
+                        },
+                        onFailure = { error ->
+                            state.text = error.message ?: context.getString(R.string.charging_report_auth)
+                            submit.text = context.getString(R.string.charging_report_retry)
+                            submit.isEnabled = true
+                            cancel.isEnabled = true
+                            dialog.setCancelable(true)
+                        },
                     )
                     render()
                 }
-            }.show()
+            }
+        }
+        dialog.setCancelable(true)
+        dialog.show()
     }
 
     private fun refreshDirectory() = client.refreshDirectory { result ->

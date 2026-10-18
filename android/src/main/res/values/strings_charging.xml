@@ -60,6 +60,13 @@
     <string name="charging_report_details">Describe the issue</string>
     <string name="charging_report_submit">Submit report</string>
     <string name="charging_report_receipt">Report submitted</string>
+    <string name="charging_report_receipt_id">Report submitted · %1$s</string>
+    <string name="charging_report_retry">Retry report</string>
+    <string name="charging_report_sending">Submitting report…</string>
+    <string name="charging_report_retry_note">The earlier report has no receipt yet. Retry it with the same details.</string>
+    <string name="charging_more_actions">More charging actions</string>
+    <string name="charging_selected">Selected</string>
+    <string name="charging_report_explanation">Tell the community moderator what is wrong with this charging location.</string>
     <string name="charging_report_auth">A contributor account is required to submit this report.</string>
     <string name="charging_sync_status">Community directory and contributions</string>
     <string name="charging_sync_pending">%1$d pending changes</string>
