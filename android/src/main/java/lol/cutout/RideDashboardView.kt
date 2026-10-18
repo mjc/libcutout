@@ -177,7 +177,7 @@ class RideDashboardView(
             resources.configuration.fontScale >= 1.2f -> "scaled-text"
             else -> "standard-text"
         }
-        return "${displayKind.name}:$showInstruments:$landscape:$sizeClass:$fontScaleClass"
+        return "${displayKind.name}:$showInstruments:$landscape:$sizeClass:$fontScaleClass:$geometryWidth:$geometryHeight"
     }
 
     private fun eucStatus(state: RideOperatingState): String = when (state) {
@@ -368,7 +368,12 @@ class RideDashboardView(
         val contentWidth = (geometryWidth - ui.dp(48)).coerceAtLeast(ui.dp(160))
         if (landscape) {
             val row = ui.row().apply { gravity = Gravity.CENTER }
-            val speed = speedReading((contentWidth * 0.22f).toInt() - ui.dp(44))
+            val slotWidthDp = contentWidth / resources.displayMetrics.density * 0.5f
+            val speedPointSize = minOf(170f, slotWidthDp * 0.22f).toInt().coerceAtLeast(28)
+            val speed = speedReading(
+                maxTextWidthPx = contentWidth / 2 - ui.dp(44),
+                maxPointSizeSp = speedPointSize,
+            )
             row.addView(speed, LinearLayout.LayoutParams(0, -1, 1f))
             row.addView(createGauge(), LinearLayout.LayoutParams(0, -1, 1f))
             val side = ui.column()
@@ -378,7 +383,12 @@ class RideDashboardView(
             root.addView(row, LinearLayout.LayoutParams(-1, 0, 1f))
         } else {
             val primary = ui.column().apply { gravity = Gravity.CENTER }
-            val speed = speedReading((contentWidth * 0.44f).toInt() - ui.dp(44))
+            val speedPointSize = minOf(170f, contentWidth / resources.displayMetrics.density * 0.44f)
+                .toInt().coerceAtLeast(28)
+            val speed = speedReading(
+                maxTextWidthPx = contentWidth - ui.dp(44),
+                maxPointSizeSp = speedPointSize,
+            )
             primary.addView(speed, LinearLayout.LayoutParams(-1, 0, 0.42f))
             primary.addView(ui.space(4))
             primary.addView(createGauge(), LinearLayout.LayoutParams(-1, 0, 0.58f))
@@ -415,13 +425,13 @@ class RideDashboardView(
         else { root.addView(hero, LinearLayout.LayoutParams(-1, 0, 0.7f)); root.addView(metricGrid(), LinearLayout.LayoutParams(-1, 0, 1.3f)) }
     }
 
-    private fun speedReading(maxSpeedWidth: Int = ui.dp(280)): LinearLayout = ui.row().apply {
+    private fun speedReading(maxTextWidthPx: Int = ui.dp(280), maxPointSizeSp: Int = 170): LinearLayout = ui.row().apply {
         gravity = Gravity.CENTER
         val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
-        val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
-            setSingleLine(true); maxLines = 1; maxWidth = maxSpeedWidth.coerceAtLeast(ui.dp(80))
+        val speed = ui.text(context.getString(R.string.unavailable), maxPointSizeSp.toFloat(), true).apply {
+            setSingleLine(true); maxLines = 1; maxWidth = maxTextWidthPx.coerceAtLeast(ui.dp(1))
             setHorizontallyScrolling(false)
-            setAutoSizeTextTypeUniformWithConfiguration(28, 170, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            setAutoSizeTextTypeUniformWithConfiguration(28, maxPointSizeSp.coerceAtLeast(28), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
         speed.tag = "ride.hero.speed"
