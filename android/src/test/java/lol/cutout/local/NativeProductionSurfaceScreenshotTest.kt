@@ -32,7 +32,7 @@ import java.util.UUID
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class NativeProductionSurfaceScreenshotTest {
     @Test
-    @Config(qualifiers = "w393dp-h852dp-xhdpi-night")
+    @Config(qualifiers = "w393dp-h852dp-night-xhdpi")
     fun rendersConnectedRideWithProductionNavigation() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()

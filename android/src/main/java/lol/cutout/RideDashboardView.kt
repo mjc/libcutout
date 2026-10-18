@@ -146,9 +146,15 @@ class RideDashboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         geometryWidth = MeasureSpec.getSize(widthMeasureSpec)
         geometryHeight = MeasureSpec.getSize(heightMeasureSpec)
-        // Rebuild before measuring children. Replacing the hierarchy from onSizeChanged
-        // leaves the new children unmeasured and can produce a blank first frame.
-        latestPresentation?.let(::render)
+        // Rebuild before measuring children, but only when geometry changes the surface.
+        // Replacing the hierarchy from onSizeChanged leaves new children unmeasured;
+        // rerendering on every measure also needlessly updates the text hierarchy.
+        val currentKey = surfaceKey
+        val showInstruments = currentKey?.split(':')?.getOrNull(1) == "true"
+        val landscape = geometryWidth > geometryHeight && geometryWidth > 0
+        if (latestPresentation != null && surfaceKey(showInstruments, landscape) != currentKey) {
+            render(checkNotNull(latestPresentation))
+        }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
@@ -408,9 +414,9 @@ class RideDashboardView(
 
     private fun speedReading(): LinearLayout = ui.row().apply {
         gravity = Gravity.CENTER
-        val readout = ui.row().apply { gravity = Gravity.CENTER; isBaselineAligned = true }
+        val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
-            setSingleLine(true); maxLines = 1; maxWidth = ui.dp(220)
+            setSingleLine(true); maxLines = 1; maxWidth = ui.dp(280)
             setAutoSizeTextTypeUniformWithConfiguration(28, 170, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
@@ -426,8 +432,10 @@ class RideDashboardView(
         val column = ui.column().apply { gravity = Gravity.CENTER }
         ui.text(context.getString(R.string.pwm_headroom), 20f, true).apply {
             gravity = Gravity.CENTER; maxLines = 1; setSingleLine(true)
+            minimumHeight = ui.dp(32)
+            tag = "euc.ride.headroom.label"
             setAutoSizeTextTypeUniformWithConfiguration(14, 24, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-        }.also(column::addView)
+        }.also { column.addView(it, LinearLayout.LayoutParams(-1, -2)) }
         gaugeView = HeadroomGauge(ui).apply {
             contentDescription = context.getString(R.string.pwm_headroom)
             tag = "euc.ride.headroom"
@@ -501,8 +509,10 @@ class RideDashboardView(
             gravity = alignment
             if (carded) { background = ui.rounded(16); setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6)) }
         }
-        cell.addView(ui.text(label, 13f, color = ui.muted).apply { maxLines = 1; setSingleLine(true) })
-        val valueRow = ui.row().apply { isBaselineAligned = true; gravity = alignment or Gravity.CENTER_VERTICAL }
+        cell.addView(ui.text(label, 13f, color = ui.muted).apply {
+            maxLines = 1; setSingleLine(true); gravity = alignment
+        })
+        val valueRow = ui.row().apply { isBaselineAligned = true; gravity = alignment or Gravity.TOP }
         val value = ui.text(initial, size, true).apply {
             setSingleLine(true); maxLines = 1
             setAutoSizeTextTypeUniformWithConfiguration(16, size.toInt().coerceAtLeast(16), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
