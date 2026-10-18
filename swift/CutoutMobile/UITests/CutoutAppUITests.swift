@@ -2617,7 +2617,13 @@ final class CutoutAppUITests: XCTestCase {
         let profile = app.buttons["capture.settings.profile"]
         scrollElementFrameIntoViewport(profile, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         profile.tap()
-        app.buttons["NOSFET Aero"].firstMatch.tap()
+        let aeroProfile = app.buttons["NOSFET Aero"].firstMatch
+        XCTAssertTrue(aeroProfile.waitForExistence(timeout: 5), app.debugDescription)
+        aeroProfile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        let selectedProfile = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "NOSFET Aero"), object: profile
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selectedProfile], timeout: 5), .completed, app.debugDescription)
         let earlierObservation = app.switches["Earlier observation"]
         scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         earlierObservation.switches.firstMatch.tap()
