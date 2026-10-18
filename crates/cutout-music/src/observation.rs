@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use cutout_core::{CaptureGeneration, Duration, MonotonicTimestamp, WallClockUnixTimestamp};
+use cutout_core::{Duration, MonotonicTimestamp, WallClockUnixTimestamp};
 
 use crate::{
     MusicPlaybackState, MusicProvider, MusicRideEventKind, MusicSnapshot,
@@ -37,24 +37,11 @@ pub(crate) enum SkipCommandOutcome {
     Rejected,
 }
 
-/// Capture ownership sampled before asynchronous observation processing.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum MusicCaptureTarget {
-    /// No capture existed when the observation was admitted.
-    NoCapture,
-    /// The caller did not supply usable capture ownership.
-    #[default]
-    Unavailable,
-    /// Original Rust-issued writer generation.
-    Capture(CaptureGeneration),
-}
-
 /// Wall-clock correlation retained with a history transition until durable acknowledgement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicObservationTiming {
     wall_clock_at: WallClockUnixTimestamp,
     clock_uncertainty_milliseconds: u64,
-    capture_target: MusicCaptureTarget,
 }
 
 impl MusicObservationTiming {
@@ -67,21 +54,7 @@ impl MusicObservationTiming {
         Self {
             wall_clock_at,
             clock_uncertainty_milliseconds,
-            capture_target: MusicCaptureTarget::Unavailable,
         }
-    }
-
-    /// Associates the original capture owner with this source observation.
-    #[must_use]
-    pub const fn with_capture_target(mut self, target: MusicCaptureTarget) -> Self {
-        self.capture_target = target;
-        self
-    }
-
-    /// Returns capture ownership retained with the original pending transition.
-    #[must_use]
-    pub const fn capture_target(self) -> MusicCaptureTarget {
-        self.capture_target
     }
 
     /// Returns the correlated wall-clock time.
@@ -647,119 +620,6 @@ mod tests {
             MusicCapabilities::new(),
         )
         .expect("valid snapshot")
-    }
-
-    #[test]
-    fn pending_capture_target_survives_retry_from_a_replacement_capture() {
-        let mut tracker = MusicObservationTracker::new();
-        let original = MusicCaptureTarget::Capture(CaptureGeneration::new(1));
-        let replacement = MusicCaptureTarget::Capture(CaptureGeneration::new(2));
-        let MusicObservationOutcome::Accepted(first) = tracker.observe(
-            snapshot(
-                MusicProvider::AppleMusic,
-                Some("first"),
-                MusicPlaybackState::Playing,
-                None,
-                100,
-            ),
-            timing(1_000).with_capture_target(original),
-        ) else {
-            panic!("first observation accepted");
-        };
-        let pending = first.history_transition().unwrap().clone();
-        let MusicObservationOutcome::Accepted(retry) = tracker.observe(
-            snapshot(
-                MusicProvider::AppleMusic,
-                Some("second"),
-                MusicPlaybackState::Playing,
-                None,
-                200,
-            ),
-            timing(2_000).with_capture_target(replacement),
-        ) else {
-            panic!("replacement observation accepted");
-        };
-        assert_eq!(retry.history_transition(), Some(&pending));
-        assert_eq!(
-            retry
-                .history_transition()
-                .unwrap()
-                .timing()
-                .capture_target(),
-            original
-        );
-        assert_eq!(
-            tracker.acknowledge_history_transition(pending.id()),
-            MusicHistoryTransitionAcknowledgement::Acknowledged
-        );
-        let MusicObservationOutcome::Accepted(next) = tracker.observe(
-            snapshot(
-                MusicProvider::AppleMusic,
-                Some("second"),
-                MusicPlaybackState::Playing,
-                None,
-                300,
-            ),
-            timing(3_000).with_capture_target(MusicCaptureTarget::NoCapture),
-        ) else {
-            panic!("next observation accepted");
-        };
-        assert_eq!(
-            next.history_transition().unwrap().timing().capture_target(),
-            replacement
-        );
-    }
-
-    #[test]
-    fn provisional_skip_capture_target_survives_confirmation_and_retry() {
-        let mut tracker = MusicObservationTracker::new();
-        let MusicObservationOutcome::Accepted(first) = tracker.observe(
-            snapshot(
-                MusicProvider::Spotify,
-                Some("first"),
-                MusicPlaybackState::Playing,
-                None,
-                100,
-            ),
-            timing(1_000),
-        ) else {
-            panic!("first observation accepted");
-        };
-        let _ = tracker.acknowledge_history_transition(first.history_transition().unwrap().id());
-        let request = TransportRequestId::from_raw(1);
-        tracker.issue_skip(request, MonotonicTimestamp::new(150));
-        let original = MusicCaptureTarget::Capture(CaptureGeneration::new(1));
-        let _ = tracker.observe(
-            snapshot(
-                MusicProvider::Spotify,
-                Some("second"),
-                MusicPlaybackState::Playing,
-                None,
-                200,
-            ),
-            timing(2_000).with_capture_target(original),
-        );
-        tracker.finish_skip(request, SkipCommandOutcome::Accepted);
-        let MusicObservationOutcome::Accepted(retry) = tracker.observe(
-            snapshot(
-                MusicProvider::Spotify,
-                Some("second"),
-                MusicPlaybackState::Playing,
-                None,
-                300,
-            ),
-            timing(3_000)
-                .with_capture_target(MusicCaptureTarget::Capture(CaptureGeneration::new(2))),
-        ) else {
-            panic!("retry accepted");
-        };
-        let settled = retry.history_transition().unwrap();
-        assert_eq!(settled.kind(), MusicRideEventKind::Skip);
-        assert_eq!(settled.timing().capture_target(), original);
-        assert_eq!(
-            settled.timing().wall_clock_at(),
-            timing(2_000).wall_clock_at()
-        );
     }
 
     #[test]

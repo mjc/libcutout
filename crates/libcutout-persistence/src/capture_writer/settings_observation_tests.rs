@@ -114,7 +114,6 @@ fn settings_observations_survive_database_relaunch_export_and_history() {
     let capture =
         PevcapCapture::decode(&fs::read(destination).unwrap(), PevcapEncoding::Jsonl).unwrap();
     assert_eq!(capture.settings_observations, vec![first, second]);
-    assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
 }
 
 #[test]
@@ -185,54 +184,6 @@ fn settings_observation_writer_rejects_wrong_capture_and_oversized_input() {
         Err(CaptureSettingsObservationError::TooLarge)
     ));
     writer.finish().unwrap();
-}
-
-#[test]
-fn settings_observation_share_preserves_both_snapshots_while_removing_music() {
-    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
-        let directory = tempfile::tempdir().unwrap();
-        let header = capture_header(
-            WallClockUnixTimestamp::new(1_700_000_000_000),
-            "unsupported",
-            None,
-            &metadata(),
-        )
-        .unwrap();
-        let first = observation(Uuid::new_v4().to_string(), 100);
-        let mut second = first.clone();
-        second.observed_at_ms = 150;
-        second.recorded_at_ms = 200;
-        second.values[0].value = CaptureObservedValue::Entered("125.00".into());
-        let music = PevcapMusicEvent::new(
-            cutout_core::MusicProvider::AppleMusic,
-            "legacy-song",
-            cutout_core::MonotonicTimestamp::new(1),
-            WallClockUnixTimestamp::new(1_700_000_000_001),
-            1,
-            None,
-        )
-        .unwrap();
-        let mut record = tests::stationary_record(1);
-        record.music = Some(music.clone());
-        let capture = PevcapCapture::new_with_settings_observations(
-            header,
-            vec![record.clone()],
-            vec![],
-            vec![music],
-            vec![first.clone(), second.clone()],
-        );
-        let original = capture.encode(encoding).unwrap();
-        let source = directory.path().join("original");
-        let destination = directory.path().join("shared");
-        fs::write(&source, &original).unwrap();
-        export_capture_file_without_music(&source, &destination).unwrap();
-        let retained = PevcapCapture::decode(&fs::read(destination).unwrap(), encoding).unwrap();
-        assert_eq!(retained.settings_observations, vec![first, second]);
-        assert_eq!(retained.music_events, Vec::<PevcapMusicEvent>::new());
-        record.music = None;
-        assert_eq!(retained.records, vec![record]);
-        assert_eq!(fs::read(source).unwrap(), original);
-    }
 }
 
 #[test]
@@ -561,7 +512,7 @@ fn settings_snapshot_receipt_uses_the_last_queue_slot_and_rejection_keeps_no_hid
             let capture =
                 PevcapCapture::decode(&fs::read(path).unwrap(), PevcapEncoding::Jsonl).unwrap();
             assert_eq!(capture.settings_observations, [expected]);
-            assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
+
             assert!(
                 writer.finish_without_export().is_err(),
                 "file completion still reports the deliberately rejected second observation"

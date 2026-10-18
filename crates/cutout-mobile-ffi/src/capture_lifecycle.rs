@@ -116,52 +116,6 @@ fn apply_writer_health(
     }
 }
 
-/// Capture ownership sampled before a callback starts asynchronous work.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMusicCaptureTarget {
-    /// No capture was active at original source admission.
-    NoCapture,
-    /// Capture ownership could not be established.
-    Unavailable,
-    /// Original writer; retries must retain this identity.
-    Capture {
-        generation: MobileCaptureGenerationDto,
-    },
-}
-
-/// Rust's admission of an original music capture target.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMusicCaptureAdmission {
-    /// Pre-writer context may be updated without writing evidence.
-    ContextOnly,
-    /// The original writer still owns capture admission.
-    Recording,
-    /// The original association is unavailable or superseded.
-    Rejected,
-}
-
-impl From<MobileMusicCaptureTarget> for cutout_music::MusicCaptureTarget {
-    fn from(target: MobileMusicCaptureTarget) -> Self {
-        match target {
-            MobileMusicCaptureTarget::NoCapture => Self::NoCapture,
-            MobileMusicCaptureTarget::Unavailable => Self::Unavailable,
-            MobileMusicCaptureTarget::Capture { generation } => Self::Capture(generation.into()),
-        }
-    }
-}
-
-impl From<cutout_music::MusicCaptureTarget> for MobileMusicCaptureTarget {
-    fn from(target: cutout_music::MusicCaptureTarget) -> Self {
-        match target {
-            cutout_music::MusicCaptureTarget::NoCapture => Self::NoCapture,
-            cutout_music::MusicCaptureTarget::Unavailable => Self::Unavailable,
-            cutout_music::MusicCaptureTarget::Capture(generation) => Self::Capture {
-                generation: generation.into(),
-            },
-        }
-    }
-}
-
 /// One Rust-issued writer attempt, not a connection or device identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCaptureGenerationDto {
@@ -237,54 +191,6 @@ impl From<MobileCaptureFinishTokenDto> for CaptureFinishToken {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Samples ownership without the ride database or BLE queue.
-    #[must_use]
-    pub fn music_capture_target(&self) -> MobileMusicCaptureTarget {
-        let inner = self.lock_inner();
-        let capture = &inner.session_state().capture;
-        match capture.snapshot() {
-            Some(attempt)
-                if capture.admits_result(attempt.generation) && attempt.stage.reserves_writer() =>
-            {
-                MobileMusicCaptureTarget::Capture {
-                    generation: attempt.generation.into(),
-                }
-            }
-            Some(attempt) if attempt.stage.reserves_writer() => {
-                MobileMusicCaptureTarget::Unavailable
-            }
-            _ => MobileMusicCaptureTarget::NoCapture,
-        }
-    }
-
-    /// Admits only the original target using Rust's capture lifecycle.
-    #[must_use]
-    pub fn admit_music_capture_target(
-        &self,
-        target: MobileMusicCaptureTarget,
-    ) -> MobileMusicCaptureAdmission {
-        let inner = self.lock_inner();
-        let capture = &inner.session_state().capture;
-        match target {
-            MobileMusicCaptureTarget::Capture { generation }
-                if capture.admits_result(generation.into())
-                    && capture
-                        .snapshot()
-                        .is_some_and(|attempt| attempt.stage.reserves_writer()) =>
-            {
-                MobileMusicCaptureAdmission::Recording
-            }
-            MobileMusicCaptureTarget::NoCapture
-                if capture
-                    .snapshot()
-                    .is_none_or(|attempt| !attempt.stage.reserves_writer()) =>
-            {
-                MobileMusicCaptureAdmission::ContextOnly
-            }
-            _ => MobileMusicCaptureAdmission::Rejected,
-        }
-    }
-
     /// Reads admission without copying unrelated telemetry or settings.
     pub fn capture_lifecycle_snapshot(&self) -> MobileCaptureLifecycleSnapshotDto {
         let inner = self.lock_inner();
@@ -483,59 +389,6 @@ impl CutoutSessionStateHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn music_capture_target_never_admits_a_replacement_writer() {
-        let owner = CutoutSessionStateHandle::new();
-        assert_eq!(
-            owner.music_capture_target(),
-            MobileMusicCaptureTarget::NoCapture
-        );
-        assert_eq!(
-            owner.admit_music_capture_target(MobileMusicCaptureTarget::NoCapture),
-            MobileMusicCaptureAdmission::ContextOnly
-        );
-        let first = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
-        assert!(owner.capture_writer_started(first));
-        let original = owner.music_capture_target();
-        assert_eq!(
-            original,
-            MobileMusicCaptureTarget::Capture { generation: first }
-        );
-        assert_eq!(
-            owner.admit_music_capture_target(original),
-            MobileMusicCaptureAdmission::Recording
-        );
-        assert!(owner.retire_capture_writer(first));
-        assert_eq!(
-            owner.admit_music_capture_target(original),
-            MobileMusicCaptureAdmission::Rejected
-        );
-        assert_eq!(
-            owner.music_capture_target(),
-            MobileMusicCaptureTarget::NoCapture
-        );
-        let second = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
-        assert!(owner.capture_writer_started(second));
-        assert_eq!(
-            owner.admit_music_capture_target(original),
-            MobileMusicCaptureAdmission::Rejected
-        );
-        assert_eq!(
-            owner.admit_music_capture_target(MobileMusicCaptureTarget::NoCapture),
-            MobileMusicCaptureAdmission::Rejected
-        );
-        assert_eq!(
-            owner.admit_music_capture_target(MobileMusicCaptureTarget::Unavailable),
-            MobileMusicCaptureAdmission::Rejected
-        );
-        assert_eq!(
-            owner.admit_music_capture_target(MobileMusicCaptureTarget::Capture {
-                generation: second
-            }),
-            MobileMusicCaptureAdmission::Recording
-        );
-    }
 
     #[test]
     fn writer_failure_does_not_invalidate_a_verified_connection() {

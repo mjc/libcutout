@@ -265,8 +265,6 @@ pub struct MobileMusicHistoryTransitionId {
 /// Command-confirmed transition awaiting durable history handling.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicHistoryTransition {
-    /// Original capture ownership; never replaced by a retrying callback.
-    pub capture_target: crate::MobileMusicCaptureTarget,
     pub id: MobileMusicHistoryTransitionId,
     pub snapshot: MobileMusicSnapshotDto,
     pub kind: MobileMusicRideEventKindDto,
@@ -586,23 +584,6 @@ impl MobileMusicProviderLifecycle {
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
     ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
-        self.observe_music_for_capture(
-            ride_id,
-            snapshot,
-            wall_clock_at_ms,
-            clock_uncertainty_ms,
-            crate::MobileMusicCaptureTarget::Unavailable,
-        )
-    }
-
-    fn observe_music_for_capture(
-        &self,
-        ride_id: Option<String>,
-        snapshot: MobileMusicSnapshotDto,
-        wall_clock_at_ms: u64,
-        clock_uncertainty_ms: u64,
-        capture_target: crate::MobileMusicCaptureTarget,
-    ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let mut lifecycle = self.lock_inner();
@@ -622,7 +603,6 @@ impl MobileMusicProviderLifecycle {
             snapshot,
             wall_clock_at_ms,
             clock_uncertainty_ms,
-            capture_target,
         )
     }
 
@@ -681,7 +661,6 @@ impl MobileMusicProviderLifecycle {
         &self,
         lease: Arc<crate::MobileMusicObservationLease>,
         recording: Option<crate::MobileRideMapRecordingTokenDto>,
-        capture_target: crate::MobileMusicCaptureTarget,
         snapshot: MobileMusicSnapshotDto,
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
@@ -689,13 +668,7 @@ impl MobileMusicProviderLifecycle {
         lease.validate_provider_owner(&self.observation_owner)?;
         let ride_id = recording.as_ref().map(|token| token.ride_id.clone());
         self.observation_queue().observe(&lease, recording, || {
-            self.observe_music_for_capture(
-                ride_id,
-                snapshot,
-                wall_clock_at_ms,
-                clock_uncertainty_ms,
-                capture_target,
-            )
+            self.observe_music_for_ride(ride_id, snapshot, wall_clock_at_ms, clock_uncertainty_ms)
         })
     }
 
@@ -856,7 +829,6 @@ impl MobileMusicProviderLifecycle {
             snapshot,
             wall_clock_at_ms,
             clock_uncertainty_ms,
-            crate::MobileMusicCaptureTarget::Unavailable,
         )
     }
 
@@ -1336,7 +1308,6 @@ impl MobileMusicProviderLifecycle {
                 .retire_history_association()
                 .into_iter()
                 .map(|pending| crate::MobileMusicUnsettledHistoryTransition {
-                    capture_target: pending.timing.capture_target().into(),
                     id: pending.id.into(),
                     snapshot: (&pending.snapshot).into(),
                     kind: match pending.kind {
@@ -1368,19 +1339,16 @@ impl MobileMusicProviderLifecycle {
         snapshot: CoreMusicSnapshot,
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
-        capture_target: crate::MobileMusicCaptureTarget,
     ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
         let timing = MusicObservationTiming::new(
             WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
             clock_uncertainty_ms,
-        )
-        .with_capture_target(capture_target.into());
+        );
         Ok(match lifecycle.observe_music(snapshot, timing) {
             MusicObservationOutcome::Accepted(decision) => Some(MobileMusicObservationDecision {
                 snapshot: decision.snapshot().into(),
                 history_transition: decision.history_transition().map(|transition| {
                     MobileMusicHistoryTransition {
-                        capture_target: transition.timing().capture_target().into(),
                         id: transition.id().into(),
                         snapshot: transition.snapshot().into(),
                         kind: transition.kind().into(),

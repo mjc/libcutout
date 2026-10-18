@@ -9,7 +9,7 @@ use crate::storage::{
 use cutout_core::{
     CaptureLabelState, CaptureSettingsObservation, CaptureSettingsObservationError, GattChannel,
     GattFingerprint, MAX_CAPTURE_SETTINGS_OBSERVATIONS, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
-    PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord,
+    PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapReader, PevcapRecord,
     PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
 use sha2::{Digest, Sha256};
@@ -383,7 +383,6 @@ pub struct CaptureMetadata {
 enum CaptureWriterMessage {
     Record,
     Location(PevcapLocationSample),
-    Music(PevcapMusicEvent),
     SettingsObservation {
         observation: CaptureSettingsObservation,
         durable: Option<SyncSender<Result<CaptureWriterBarrierResult, String>>>,
@@ -650,7 +649,6 @@ fn try_send_message(
         CaptureWriterMessage::Barrier(_, _) => false,
         CaptureWriterMessage::Record
         | CaptureWriterMessage::Location(_)
-        | CaptureWriterMessage::Music(_)
         | CaptureWriterMessage::SettingsObservation { .. }
         | CaptureWriterMessage::Metadata(_) => true,
     };
@@ -1337,12 +1335,6 @@ impl CaptureWriter {
     pub fn record_location(&self, location: PevcapLocationSample) -> CaptureWriteOutcome {
         self.ingress.record_location(location)
     }
-
-    /// Admits an already privacy-filtered music event without waiting for disk I/O.
-    #[must_use]
-    pub fn record_music(&self, music: PevcapMusicEvent) -> CaptureWriteOutcome {
-        self.try_send(CaptureWriterMessage::Music(music))
-    }
 }
 
 fn metadata_reserves_label_closures(metadata: &CaptureMetadata) -> bool {
@@ -1735,7 +1727,7 @@ fn persist_database_capture(
 }
 
 impl RideDatabase {
-    /// Streams retained Bluetooth evidence without obsolete music metadata on explicit demand.
+    /// Streams retained current-format Bluetooth evidence on explicit demand.
     /// Interrupted/incomplete captures remain exportable; integrity is never promoted to complete.
     /// Existing files are never overwritten and failed partial exports are removed.
     ///
@@ -1749,58 +1741,6 @@ impl RideDatabase {
         };
         export_database_capture(path, &capture, &CaptureWriterState::default())
     }
-}
-
-/// Exports a completed local capture with obsolete music metadata removed.
-/// The source and its receipt remain untouched; the returned digest identifies the new bytes.
-///
-/// # Errors
-/// Returns invalid source, transform, destination, or sync failure. Existing destinations
-/// are never replaced and a failed partial export is removed.
-pub fn export_capture_file_without_music(source: &Path, path: &Path) -> Result<String, String> {
-    let metadata = fs::symlink_metadata(source).map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err("capture source must be a regular file".to_owned());
-    }
-    let mut input = File::open(source).map_err(|error| error.to_string())?;
-    let mut prefix = [0_u8; 8];
-    let count = input.read(&mut prefix).map_err(|error| error.to_string())?;
-    input.rewind().map_err(|error| error.to_string())?;
-    let encoding = if count == 8 && prefix == cutout_core::PEVCAP_MAGIC {
-        cutout_core::PevcapEncoding::Binary
-    } else {
-        cutout_core::PevcapEncoding::Jsonl
-    };
-    let mut created = false;
-    let result = (|| {
-        let mut output = sync_parent_directory_after(path, || {
-            let file = OpenOptions::new()
-                .create_new(true)
-                .read(true)
-                .write(true)
-                .open(path)?;
-            created = true;
-            Ok(file)
-        })?;
-        crate::storage::sanitize_capture_music(&mut input, &mut output, encoding)
-            .map_err(|error| error.to_string())?;
-        output.sync_all().map_err(|error| error.to_string())?;
-        output.rewind().map_err(|error| error.to_string())?;
-        let mut digest = Sha256::new();
-        let mut chunk = vec![0; 65_536];
-        loop {
-            let count = output.read(&mut chunk).map_err(|error| error.to_string())?;
-            if count == 0 {
-                break;
-            }
-            digest.update(&chunk[..count]);
-        }
-        Ok(hex::encode(digest.finalize()))
-    })();
-    if result.is_err() && created {
-        let _ = fs::remove_file(path);
-    }
-    result
 }
 
 fn export_database_capture(
@@ -1841,7 +1781,11 @@ fn export_database_capture_from_pages(
     let mut created = false;
     let result = (|| {
         let file = sync_parent_directory_after(path, || {
-            let file = OpenOptions::new().create_new(true).write(true).open(path)?;
+            let file = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(path)?;
             created = true;
             Ok(file)
         })?;
@@ -1865,21 +1809,12 @@ fn export_database_capture_from_pages(
                 return Err("live capture changed during export".into());
             }
             for event in &snapshot.events {
-                let mut retained = Vec::new();
-                crate::storage::sanitize_capture_music(
-                    &mut event.payload.as_slice(),
-                    &mut retained,
-                    cutout_core::PevcapEncoding::Jsonl,
-                )
-                .map_err(|error| error.to_string())?;
-                if retained.is_empty() {
-                    continue;
-                }
+                let retained = &event.payload;
                 output
-                    .write_all(&retained)
+                    .write_all(retained)
                     .and_then(|()| output.write_all(b"\n"))
                     .map_err(|error| error.to_string())?;
-                digest.update(&retained);
+                digest.update(retained);
                 digest.update(b"\n");
                 bytes_written = bytes_written.saturating_add(retained.len() as u64 + 1);
             }
@@ -1894,9 +1829,20 @@ fn export_database_capture_from_pages(
         }
 
         output.flush().map_err(|error| error.to_string())?;
-        let file = output
+        let mut file = output
             .into_inner()
             .map_err(|error| error.into_error().to_string())?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| error.to_string())?;
+        let mut reader =
+            PevcapReader::new(&mut file, cutout_core::PevcapEncoding::Jsonl).map_err(|error| {
+                format!("stored capture is not valid current-format PEVCAP: {error}")
+            })?;
+        while reader
+            .next_event()
+            .map_err(|error| format!("stored capture is not valid current-format PEVCAP: {error}"))?
+            .is_some()
+        {}
         file.sync_all().map_err(|error| error.to_string())?;
         state
             .physical_bytes_written
@@ -1916,7 +1862,6 @@ fn capture_writer_action(
 ) -> Result<CaptureWriterAction, String> {
     match &message {
         CaptureWriterMessage::Location(_)
-        | CaptureWriterMessage::Music(_)
         | CaptureWriterMessage::SettingsObservation { .. }
         | CaptureWriterMessage::Metadata(_) => material.reset(),
         CaptureWriterMessage::Record | CaptureWriterMessage::Barrier(_, _) => {}
@@ -1985,19 +1930,6 @@ fn capture_writer_action(
                 },
             )))
         }
-        CaptureWriterMessage::Music(music) => Ok(CaptureWriterAction::Event(Box::new(
-            CaptureWriterEventLine {
-                json_line: music.to_jsonl_line().map_err(|error| error.to_string())?,
-                kind: LiveCaptureEventKind::Music,
-                receipt_monotonic_ms: music.monotonic_at.as_milliseconds(),
-                source_monotonic_offset_ms: None,
-                source_wall_clock_unix_ms: Some(music.wall_clock_unix_ms.as_milliseconds()),
-                location: None,
-                record: None,
-                prepared_material: None,
-                durability_reply: None,
-            },
-        ))),
         CaptureWriterMessage::SettingsObservation {
             observation,
             durable,

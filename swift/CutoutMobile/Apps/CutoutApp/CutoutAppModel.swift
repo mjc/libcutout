@@ -574,11 +574,6 @@ final class CutoutAppModel {
             selectedHistoryRideID: { rideHistory.selectedRideID },
             clearSelectedHistoryMusic: { rideHistory.clearMusicMetadata() },
             removeSelectedSpotifyHistory: { rideHistory.removeSpotifyMusicMetadata() },
-            prepareCaptureMetadataCleanup: { await core.prepareCaptureMetadataCleanup() },
-            captureDirectories: [
-                FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path,
-                FileManager.default.temporaryDirectory.appendingPathComponent("CaptureExports", isDirectory: true).path,
-            ].compactMap { $0 },
             setRideHistoryError: { rideHistory.setError($0) },
             appleMonitor: musicMonitor,
             providerCommandHandler: musicCommandHandler

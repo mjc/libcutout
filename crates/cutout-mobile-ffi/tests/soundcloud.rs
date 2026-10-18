@@ -135,57 +135,6 @@ fn handoff_timeout_cancellation_and_provider_switch_reject_late_completion() {
 }
 
 #[test]
-fn soundcloud_cannot_supply_track_identifiers_to_capture() {
-    for policy in [
-        cutout_mobile_ffi::MobileMusicHistoryPolicyDto::Disabled,
-        cutout_mobile_ffi::MobileMusicHistoryPolicyDto::OpaqueItem,
-        cutout_mobile_ffi::MobileMusicHistoryPolicyDto::HumanReadable,
-    ] {
-        assert_eq!(
-            cutout_mobile_ffi::pevcap_music_track_identifier(
-                policy,
-                MobileMusicProviderDto::SoundCloud,
-                "invented-track".to_owned()
-            ),
-            None
-        );
-    }
-}
-
-#[test]
-fn enabled_capture_history_rejects_fabricated_soundcloud_observations() {
-    use cutout_mobile_ffi::{
-        MobileCaptureWriteOutcomeDto, MobileMusicHistoryPolicyDto, MobilePevcapCaptureBuilder,
-        MobilePevcapMusicEventDto, MobileWallClockUnixMillisDto,
-    };
-
-    for policy in [
-        MobileMusicHistoryPolicyDto::OpaqueItem,
-        MobileMusicHistoryPolicyDto::HumanReadable,
-    ] {
-        let builder = MobilePevcapCaptureBuilder::new(
-            MobileWallClockUnixMillisDto { milliseconds: 100 },
-            "ios-corebluetooth".to_owned(),
-            None,
-        );
-        assert!(builder.set_music_history_policy(policy));
-        let observation = MobilePevcapMusicEventDto {
-            provider: MobileMusicProviderDto::SoundCloud,
-            track_id: "invented-track".to_owned(),
-            monotonic_at_ms: 10,
-            wall_clock_unix_ms: 110,
-            clock_uncertainty_ms: 0,
-            ride_sequence: None,
-        };
-        assert!(!builder.set_music_context(Some(observation.clone())));
-        assert_eq!(
-            builder.record_music_event(observation),
-            MobileCaptureWriteOutcomeDto::Failed
-        );
-    }
-}
-
-#[test]
 fn admitted_soundcloud_player_projection_stays_unavailable_and_ordered() {
     use cutout_mobile_ffi::MobileMusicObservationAdmission;
     use std::sync::Arc;

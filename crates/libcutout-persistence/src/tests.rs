@@ -1,8 +1,6 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-#[path = "capture_music_privacy_tests.rs"]
-mod capture_music_privacy_tests;
 #[path = "ride_session_marker_tests.rs"]
 mod ride_session_marker_tests;
 
@@ -10004,8 +10002,7 @@ fn settings_count_capture(encoding: PevcapEncoding, count: usize) -> Vec<u8> {
         "values":[{"setting_id":"display_brightness","value":{"kind":"entered","value":"125"},"unit":"%","note":"as shown"}],
         "note":null
     })).unwrap();
-    let mut capture = PevcapCapture::new(pevcap_header(), vec![]);
-    capture.version = cutout_core::PevcapFormatVersion { major: 1, minor: 4 };
+    let capture = PevcapCapture::new(pevcap_header(), vec![]);
     let mut bytes = capture.encode(encoding).unwrap();
     match encoding {
         PevcapEncoding::Jsonl => {
@@ -10016,7 +10013,7 @@ fn settings_count_capture(encoding: PevcapEncoding, count: usize) -> Vec<u8> {
             }
         }
         PevcapEncoding::Binary => {
-            // The v1.4 empty envelope ends in its zero settings count. Write the
+            // The current empty envelope ends in its zero settings count. Write the
             // input section directly without asking the encoder to emit an invalid count.
             bytes.truncate(bytes.len() - 4);
             bytes.extend_from_slice(&u32::try_from(count).unwrap().to_le_bytes());
@@ -10083,7 +10080,7 @@ fn pevcap_preflight_rejects_excess_settings_before_publication_and_imports_exact
         assert_eq!(retained, original);
         let decoded = PevcapCapture::decode(&retained, encoding).unwrap();
         assert_eq!(decoded.settings_observations.len(), limit);
-        assert_eq!(decoded.music_events, []);
+
         database.shutdown().unwrap();
     }
 }
