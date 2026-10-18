@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 @MainActor
@@ -21,20 +22,61 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
     }
 
     func testEucMain() throws {
+        assertEucMain(landscape: false)
+    }
+
+    func testEucMainInLandscape() throws {
+        assertEucMain(landscape: true)
+    }
+
+    private func assertEucMain(landscape: Bool) {
         launch(scene: "euc-main")
+        if landscape { XCUIDevice.shared.orientation = .landscapeLeft }
         connect(fixture: "euc")
 
         let ride = element("dashboard.screen.eucRide")
         XCTAssertTrue(ride.waitForExistence(timeout: 20), app.debugDescription)
+        waitForRideViewport(landscape: landscape)
         let speed = element("ride.hero.speed")
         XCTAssertTrue(speed.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertFalse((speed.value as? String ?? "").isEmpty, app.debugDescription)
+        XCTAssertTrue((speed.value as? String ?? "").hasPrefix("23.9, mph,"), app.debugDescription)
         let player = app.buttons["music.expand"]
         XCTAssertTrue(player.waitForExistence(timeout: 10), app.debugDescription)
         let summary = player.value as? String ?? ""
         XCTAssertTrue(summary.contains("Dusk on Colfax"), app.debugDescription)
         XCTAssertTrue(summary.contains("Mira Sol"), app.debugDescription)
-        attachScreenshot(named: "euc-main")
+        let headroom = element("euc.ride.headroom")
+        let readings = app.buttons["ride.readings.open"]
+        XCTAssertTrue(headroom.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(readings.isHittable, app.debugDescription)
+        XCTAssertEqual(headroom.value as? String, "58%", app.debugDescription)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(headroom.frame), app.debugDescription)
+        if !landscape {
+            XCTAssertGreaterThan(headroom.frame.midY, speed.frame.midY)
+            XCTAssertGreaterThanOrEqual(readings.frame.minY, headroom.frame.maxY - 2)
+        }
+        XCTAssertLessThanOrEqual(readings.frame.maxY, player.frame.minY + 2)
+        attachScreenshot(
+            named: landscape ? "euc-main-landscape" : "euc-main",
+            screenshot: XCUIScreen.main.screenshot()
+        )
+        readings.tap()
+        XCTAssertTrue(element("ride.readings.detail").waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["GPS speed"].exists, app.debugDescription)
+        app.buttons["ride.readings.done"].tap()
+        XCTAssertTrue(readings.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    private func waitForRideViewport(landscape: Bool) {
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let frame = self.app.windows.firstMatch.frame
+                let imageSize = XCUIScreen.main.screenshot().image.size
+                return (frame.width > frame.height) == landscape
+                    && (imageSize.width > imageSize.height) == landscape
+                    && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
+            }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, app.debugDescription)
     }
 
     func testRgbControls() throws {
@@ -238,8 +280,8 @@ final class CutoutWebsiteScreenshotTests: XCTestCase {
         return expression.matches(in: text, range: NSRange(text.startIndex..., in: text))
     }
 
-    private func attachScreenshot(named scene: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+    private func attachScreenshot(named scene: String, screenshot: XCUIScreenshot? = nil) {
+        let attachment = XCTAttachment(screenshot: screenshot ?? app.screenshot())
         attachment.name = "website-\(scene)"
         attachment.lifetime = .keepAlways
         add(attachment)

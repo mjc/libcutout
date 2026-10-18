@@ -1,6 +1,27 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "euc.ride.temperature" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } }
+      }
+    },
+    "euc.ride.power" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Power" } }
+      }
+    },
+    "euc.ride.voltage" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage" } }
+      }
+    },
+    "euc.ride.range" : {
+      "comment" : "Remaining riding range estimate; unavailable until supplied by telemetry.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Est. range" } }
+      }
+    },
     "capture.settings.profile_required": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose a device profile."}}}},
     "capture.settings.invalid_time": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Enter the observation time in seconds from capture start."}}}},
     "capture.settings.not_recording": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This capture is no longer recording."}}}},

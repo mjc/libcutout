@@ -38,6 +38,19 @@
             return UUID(uuidString: rawID)
         }
 
+        static func eucRideTelemetry(at now: MonotonicMilliseconds? = nil) -> TelemetrySnapshot? {
+            guard screen == .eucMain else { return nil }
+            return TelemetrySnapshot(
+                at: now,
+                speed: Speed(value: 10_700), speedSource: .reported, speedQuality: .known,
+                operatingState: .riding, voltage: Voltage(value: 120_000),
+                batteryCurrent: BatteryCurrent.currentOut(milliamps: 7_000),
+                power: Power(value: 840_000), powerFlow: .discharge,
+                controllerTemperature: Temperature(value: 38_000),
+                pwm: DutyCycle(permille: 420), batteryLevelReported: BatteryLevel(value: 78)
+            )
+        }
+
         static func phoneLocationReadback(at now: MonotonicMilliseconds) -> PhoneLocationReadback? {
             guard screen == .eucMain else { return nil }
             let sourceTime = Date().timeIntervalSince1970
