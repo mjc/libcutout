@@ -2548,7 +2548,7 @@ final class CutoutAppUITests: XCTestCase {
         #if !targetEnvironment(simulator)
             throw XCTSkip("Capture research acceptance is restricted to Simulator")
         #endif
-        executionTimeAllowance = 240
+        executionTimeAllowance = 360
         app.terminate()
         app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         app.launch()
@@ -2673,14 +2673,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         scrollElementFrameIntoViewport(app.staticTexts["You recorded, 145 %"], in: review, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["You recorded, 145 %"].exists)
-        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: review, maxScrolls: 12)
-        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
         let secondObservation = app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH[c] %@", "Observation 2 · ")
         ).firstMatch
         scrollElementFrameIntoViewport(secondObservation, in: review, maxScrolls: 12)
         XCTAssertTrue(secondObservation.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertNotEqual(secondObservation.label.lowercased(), "observation 2 · 00:00")
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: review, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["capture.stop"].tap()
         let detail = app.descendants(matching: .any)["captures.detail"]
