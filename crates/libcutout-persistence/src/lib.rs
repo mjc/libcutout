@@ -16,9 +16,10 @@ mod ride_session_marker;
 mod storage;
 pub use capture_writer::{
     CAPTURE_LOCATION_BATCH_CAPACITY, CaptureArtifactId, CaptureFlushOutcome, CaptureJsonlExport,
-    CaptureMetadata, CaptureRecordAdmission, CaptureRecordingPolicy, CaptureWriteOutcome,
-    CaptureWriter, CaptureWriterFinish, CaptureWriterIngress, CaptureWriterMonitor,
-    CaptureWriterStatus, SavedCaptureArtifact, SavedDatabaseCapture,
+    CaptureMetadata, CaptureRecordAdmission, CaptureRecordingPolicy,
+    CaptureSettingsObservationAdmission, CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish,
+    CaptureWriterFlushReceipt, CaptureWriterIngress, CaptureWriterMonitor,
+    CaptureWriterReadReceipt, CaptureWriterStatus, SavedCaptureArtifact, SavedDatabaseCapture,
     export_capture_file_without_music,
 };
 pub use recording::{

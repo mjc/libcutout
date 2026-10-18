@@ -23,6 +23,8 @@ use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
+mod capture_research;
+pub use capture_research::*;
 mod capture_annotations;
 pub use capture_annotations::*;
 #[cfg(feature = "serde")]

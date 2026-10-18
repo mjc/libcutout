@@ -34,6 +34,13 @@ protocol CutoutSessionDriving: AnyObject {
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws
         -> [MobileCaptureLabelDto]
+    func recordCaptureSettingsObservation(
+        generation: CaptureGeneration, draft: MobileCaptureSettingsDraftDto
+    ) async throws -> MobileCaptureSettingsObservationDto
+    func captureSettingsObservations(generation: CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto]
+    func captureSettingsReadbackBatch(
+        generation: CaptureGeneration, requests: [MobileCaptureResearchReadbackRequestDto]
+    ) async throws -> [MobileCaptureResearchReadbackDto]
     func annotateCapture(key: String, value: String) -> Bool
     func prepareCaptureMetadataCleanup() async -> Bool
     func flushCapture() async -> Bool

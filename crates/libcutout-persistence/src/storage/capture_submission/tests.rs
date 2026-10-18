@@ -967,3 +967,61 @@ fn capture_submission_account_deletion_retires_late_receipt_and_preserves_origin
         receipt.artifact_id()
     );
 }
+
+#[test]
+fn capture_submission_freezes_and_sends_reported_settings_after_relaunch() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let writer = recording(&database, directory.path());
+    let first = crate::capture_writer::settings_observation_tests::observation(
+        writer.capture_identity(),
+        100,
+    );
+    let mut second = first.clone();
+    second.observed_at_ms = 180;
+    second.recorded_at_ms = 200;
+    second.values[0].value = cutout_core::CaptureObservedValue::Entered("125.00".into());
+    for value in [&first, &second] {
+        assert_eq!(
+            writer.try_send_settings_observation(value.clone()).unwrap(),
+            CaptureWriteOutcome::Accepted
+        );
+    }
+    let (id, receipt) = finished(writer);
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert!(prepared.categories.annotations);
+    let original_snapshot = directory.path().join("snapshot.jsonl");
+    database
+        .export_pevcap_capture(&prepared.metadata.sha256, &original_snapshot)
+        .unwrap();
+    let original_bytes = std::fs::read(original_snapshot).unwrap();
+    database.purge_capture_music_metadata(&[]).unwrap();
+    drop(database);
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    assert_eq!(
+        reopened.prepare_capture_submission(source).unwrap(),
+        prepared
+    );
+    let transport = Transport::default();
+    let sent = ready(reopened.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    let uploads = transport.uploads.lock().unwrap();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].1, original_bytes);
+    let capture = cutout_core::PevcapCapture::decode(&uploads[0].1, PevcapEncoding::Jsonl).unwrap();
+    assert_eq!(capture.settings_observations, vec![first, second]);
+    assert_eq!(
+        capture.music_events,
+        Vec::<cutout_core::PevcapMusicEvent>::new()
+    );
+    assert_eq!(sent.metadata, prepared.metadata);
+}

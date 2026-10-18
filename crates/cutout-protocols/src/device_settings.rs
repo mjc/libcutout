@@ -4,6 +4,8 @@ mod aero;
 mod falcon;
 mod readback;
 pub use readback::SettingObservation;
+mod capture_research;
+pub use capture_research::*;
 
 use cutout_core::{
     Capabilities, Capacity, CapacitySource, ChargeProfile, ChargeProfileIdentity, CommandKind,

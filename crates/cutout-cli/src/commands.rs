@@ -4539,6 +4539,32 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_converter_preserves_independent_reported_settings_in_both_directions() {
+        let mut capture = sample_pevcap_capture();
+        let observation: cutout_core::CaptureSettingsObservation = serde_json::from_value(serde_json::json!({
+            "capture_id": "6b20c1f8-c544-49e5-bc20-247647de00b5",
+            "profile": {"profile_id":"nosfet_aero", "pev_category":"euc", "model":null, "firmware":"unverified", "selection":"manual"},
+            "observed_at_ms":5, "recorded_at_ms":20, "source":"manufacturer_app",
+            "values":[{"setting_id":"pwm_tiltback", "value":{"kind":"off"}, "unit":"%", "note":null}, {"setting_id":"display_brightness", "value":{"kind":"entered","value":"125.00"}, "unit":"%", "note":"as shown"}],
+            "note":"before changing brightness"
+        })).expect("reported settings fixture");
+        capture.settings_observations.push(observation);
+        for (input_format, output_format) in [
+            (PevcapFormat::Jsonl, PevcapFormat::Binary),
+            (PevcapFormat::Binary, PevcapFormat::Jsonl),
+        ] {
+            let input = capture
+                .encode(pevcap_encoding(input_format))
+                .expect("capture encodes");
+            let converted = convert_pevcap_bytes(&input, input_format, output_format)
+                .expect("capture converts");
+            let decoded = PevcapCapture::decode(&converted, pevcap_encoding(output_format))
+                .expect("converted capture decodes");
+            assert_eq!(decoded, capture);
+        }
+    }
+
+    #[test]
     fn cli_encodes_session_capture_to_pevcap_bytes() {
         let summary = pevcap_test_summary();
         let capture = pevcap_test_capture();

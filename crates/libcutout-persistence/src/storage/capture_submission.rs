@@ -325,7 +325,7 @@ pub(super) enum Command {
 }
 
 impl RideDatabase {
-    fn submission_source(
+    pub(super) fn submission_source(
         &self,
         source: CaptureSubmissionSource,
     ) -> Result<SourceRecord, CaptureSubmissionError> {

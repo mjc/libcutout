@@ -20,6 +20,8 @@ mod phone_alarm;
 pub use phone_alarm::*;
 mod capture_labels;
 pub use capture_labels::*;
+mod capture_research;
+pub use capture_research::*;
 #[cfg(test)]
 mod capture_finalization_tests;
 mod capture_lifecycle;
@@ -16722,6 +16724,15 @@ pub struct MobilePevcapCaptureBuilder {
     capture_start_monotonic_ms: Mutex<Option<u64>>,
     recording_policy: Mutex<persistence::CaptureRecordingPolicy>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
+    settings_observations: Mutex<Vec<cutout_core::CaptureSettingsObservation>>,
+    settings_observation_save_lock: Mutex<()>,
+    #[cfg(test)]
+    settings_observation_acknowledgement_gate: Mutex<
+        Option<(
+            std::sync::mpsc::SyncSender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
 }
 
 const PEVCAP_MUSIC_CONTEXT_CAPACITY: usize = 8;
@@ -16960,6 +16971,167 @@ fn capture_relative_timestamp(
 
 #[uniffi::export]
 impl MobilePevcapCaptureBuilder {
+    /// Saves an independent reported-value snapshot through the current capture writer.
+    ///
+    /// # Errors
+    /// Returns a typed draft/admission error or a failed durability barrier.
+    pub fn record_settings_observation(
+        &self,
+        draft: MobileCaptureSettingsDraftDto,
+        monotonic_ms: u64,
+    ) -> Result<MobileCaptureSettingsObservationDto, MobileCaptureResearchError> {
+        let _save = self
+            .settings_observation_save_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let recorded_at_ms = capture_relative_timestamp(
+            self,
+            MobileMonotonicMillisDto {
+                milliseconds: monotonic_ms,
+            },
+        )
+        .map_err(|outcome| match outcome {
+            MobileCaptureWriteOutcomeDto::Rejected => {
+                MobileCaptureResearchError::InvalidObservation {
+                    reason: "Capture time is before recording started".into(),
+                }
+            }
+            _ => MobileCaptureResearchError::NotRecording,
+        })?
+        .get();
+        if self
+            .settings_observations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+            >= cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS
+        {
+            return Err(MobileCaptureResearchError::InvalidObservation {
+                reason: "Settings observation limit reached".into(),
+            });
+        }
+        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let writer = slot
+            .as_ref()
+            .ok_or(MobileCaptureResearchError::NotRecording)?;
+        let mut profile: cutout_core::CaptureResearchProfile = draft.profile.into();
+        // A worksheet selection is a manual report, never resolver authority.
+        profile.selection = cutout_core::CaptureResearchProfileSelection::Manual;
+        let observation = cutout_core::CaptureSettingsObservation {
+            capture_id: writer.capture_identity(),
+            profile,
+            observed_at_ms: draft.observed_at_ms.unwrap_or(recorded_at_ms),
+            recorded_at_ms,
+            source: draft.source.into(),
+            values: draft.values.into_iter().map(Into::into).collect(),
+            note: draft.note,
+        };
+        observation
+            .validate()
+            .map_err(|error| MobileCaptureResearchError::InvalidObservation {
+                reason: error.to_string(),
+            })?;
+        cutout_protocols::validate_capture_research_observation(&observation).map_err(|error| {
+            MobileCaptureResearchError::InvalidObservation {
+                reason: error.to_string(),
+            }
+        })?;
+        let receipt = match writer
+            .begin_settings_observation(observation.clone())
+            .map_err(|error| MobileCaptureResearchError::InvalidObservation {
+                reason: error.to_string(),
+            })? {
+            persistence::CaptureSettingsObservationAdmission::Accepted(receipt) => receipt,
+            persistence::CaptureSettingsObservationAdmission::AdmissionLost { .. } => {
+                return Err(MobileCaptureResearchError::AdmissionLost);
+            }
+            persistence::CaptureSettingsObservationAdmission::Failed => {
+                return Err(MobileCaptureResearchError::WriterFailed);
+            }
+        };
+        drop(slot);
+        #[cfg(test)]
+        if let Some((entered, release)) = self
+            .settings_observation_acknowledgement_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            entered
+                .send(())
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+            release
+                .recv()
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+        }
+        receipt
+            .wait()
+            .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+        self.settings_observations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(observation.clone());
+        Ok(observation.into())
+    }
+
+    /// Returns acknowledged snapshots without reconstructing evidence in native code.
+    ///
+    /// # Errors
+    /// This cache read currently returns no errors.
+    pub fn settings_observations(
+        &self,
+    ) -> Result<Vec<MobileCaptureSettingsObservationDto>, MobileCaptureResearchError> {
+        Ok(self
+            .settings_observations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))
+        .map(|observations| observations.iter().cloned().map(Into::into).collect())
+    }
+
+    /// Decodes the acknowledged active recording at the selected capture time.
+    ///
+    /// # Errors
+    /// Returns an unknown profile, retired writer, or failed source-read error.
+    pub fn capture_research_readback(
+        &self,
+        profile_id: String,
+        at_ms: u64,
+    ) -> Result<Vec<MobileCaptureResearchDecodedValueDto>, MobileCaptureResearchError> {
+        self.capture_research_readback_batch(vec![MobileCaptureResearchReadbackRequestDto {
+            profile_id,
+            at_ms,
+        }])
+        .map(|results| {
+            results
+                .into_iter()
+                .next()
+                .map_or_else(Vec::new, |result| result.values)
+        })
+    }
+
+    /// Reads all observation cutoffs with one pinned scan of the active capture.
+    ///
+    /// # Errors
+    /// Returns an unknown profile, resource bound, retired writer or source-read error.
+    pub fn capture_research_readback_batch(
+        &self,
+        requests: Vec<MobileCaptureResearchReadbackRequestDto>,
+    ) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
+        readback_batch(requests, |observe| {
+            let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+            let writer = slot
+                .as_ref()
+                .ok_or(MobileCaptureResearchError::NotRecording)?;
+            let receipt = writer
+                .begin_transport_read()
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
+            drop(slot);
+            receipt
+                .visit_transport_records(observe)
+                .map_err(|_| MobileCaptureResearchError::WriterFailed)
+        })
+    }
+
     /// Creates an empty PEVCAP capture builder.
     #[uniffi::constructor]
     #[must_use]
@@ -16985,6 +17157,10 @@ impl MobilePevcapCaptureBuilder {
             capture_start_monotonic_ms: Mutex::new(None),
             recording_policy: Mutex::new(persistence::CaptureRecordingPolicy::EveryObservation),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
+            settings_observations: Mutex::new(Vec::new()),
+            settings_observation_save_lock: Mutex::new(()),
+            #[cfg(test)]
+            settings_observation_acknowledgement_gate: Mutex::new(None),
         })
     }
 

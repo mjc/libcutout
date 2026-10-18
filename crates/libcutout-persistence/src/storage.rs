@@ -40,7 +40,9 @@ use uuid::Uuid;
 
 mod capture_data;
 mod capture_history;
+mod capture_settings;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+pub(crate) use capture_settings::CaptureTransportReadPrefix;
 mod live_capture_history;
 pub use live_capture_history::{
     LiveCaptureHistoryCursor, LiveCaptureHistoryEntry, LiveCaptureHistoryPage,

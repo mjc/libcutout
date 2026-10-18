@@ -4,8 +4,8 @@ use super::{
     MAX_CAPTURE_SUBMISSION_DURATION_MILLISECONDS, MAX_CAPTURE_SUBMISSION_EVENTS,
 };
 use crate::{
-    PevcapBinaryError, PevcapEncoding, PevcapEvent, PevcapJsonlError, PevcapReader,
-    PevcapStreamError,
+    CaptureSettingsObservationError, PevcapBinaryError, PevcapEncoding, PevcapEvent,
+    PevcapJsonlError, PevcapReader, PevcapStreamError,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -167,7 +167,7 @@ impl<R: Read> Read for CountedReader<R> {
 
 fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissionValidationError {
     use CaptureSubmissionValidationError::{
-        InvalidPevcap, ReadFailure, TooLarge, UnsupportedFormat,
+        InvalidPevcap, ReadFailure, TooLarge, TooManyEvents, UnsupportedFormat,
     };
     if counter.too_large {
         return TooLarge;
@@ -178,6 +178,12 @@ fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissi
     match error {
         PevcapStreamError::Jsonl(PevcapJsonlError::LineTooLong { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::PayloadTooLarge { .. }) => TooLarge,
+        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        ))
+        | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        )) => TooManyEvents,
         PevcapStreamError::Jsonl(PevcapJsonlError::UnsupportedVersion { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::UnsupportedVersion { .. }) => {
             UnsupportedFormat
@@ -242,13 +248,21 @@ pub fn validate_capture_submission<R: Read>(
                 || value.starts_with("user_note=")
         }),
         annotations: !header.annotations.is_empty(),
+        settings_observations: false,
     };
     let annotation_count = u64::try_from(header.annotations.len()).unwrap_or(u64::MAX);
     let mut events = EventCounter::default();
+    let mut settings_observations = 0;
     while let Some(event) = reader
         .next_event()
         .map_err(|error| classify(&error, &counter.borrow()))?
     {
+        if let PevcapEvent::SettingsObservation(_) = &event {
+            settings_observations += 1;
+            if settings_observations > crate::MAX_CAPTURE_SETTINGS_OBSERVATIONS {
+                return Err(CaptureSubmissionValidationError::TooManyEvents);
+            }
+        }
         let timestamp = inspect_event(event, &mut categories)?;
         events.observe(timestamp)?;
     }
@@ -267,6 +281,12 @@ fn inspect_event(
     categories: &mut CaptureSubmissionCategories,
 ) -> Result<u64, CaptureSubmissionValidationError> {
     match event {
+        PevcapEvent::SettingsObservation(observation) => {
+            categories.notes |= observation.note.is_some()
+                || observation.values.iter().any(|value| value.note.is_some());
+            categories.settings_observations = true;
+            Ok(observation.recorded_at_ms)
+        }
         PevcapEvent::Music(_) => Err(CaptureSubmissionValidationError::MusicPresent),
         PevcapEvent::Record(record) => {
             if record.music.is_some() {

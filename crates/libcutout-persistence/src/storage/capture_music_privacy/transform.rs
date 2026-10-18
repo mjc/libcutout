@@ -250,6 +250,16 @@ pub(super) fn remove_with_provenance(
                     let _ = read_json(source)?;
                 }
             }
+            if version.supports_settings_observations() {
+                let count = read_u32(source)?;
+                if count as usize > cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS {
+                    return Err(invalid());
+                }
+                output.write_all(&count.to_le_bytes())?;
+                for _ in 0..count {
+                    write_json(output, &read_json(source)?)?;
+                }
+            }
             let mut trailing = [0];
             if source.read(&mut trailing)? != 0 {
                 return Err(invalid());

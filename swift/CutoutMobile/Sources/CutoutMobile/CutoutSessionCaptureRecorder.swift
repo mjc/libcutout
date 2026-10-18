@@ -57,6 +57,11 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func publishStarted()
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto]
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
     func musicMetadataCleanupBarrier() -> @Sendable () -> Bool
     @discardableResult func publishProgress() -> CaptureProgress
@@ -91,6 +96,17 @@ protocol CutoutSessionCaptureRecording: AnyObject {
 }
 
 extension CutoutSessionCaptureRecording {
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    {
+        throw MobileCaptureResearchError.NotRecording
+    }
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] { [] }
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
+    {
+        throw MobileCaptureResearchError.NotRecording
+    }
     func musicMetadataCleanupBarrier() -> @Sendable () -> Bool { { true } }
 }
 
@@ -208,6 +224,26 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] {
         guard let builder else { throw MobileCaptureAnnotationError.NotRecording }
         return try builder.changeLabel(action: action)
+    }
+
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        let recordedAt = clock.now().rawValue
+        return { draft in try builder.recordSettingsObservation(draft: draft, monotonicMs: recordedAt) }
+    }
+
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        return try builder.settingsObservations()
+    }
+
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
+    {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        return { requests in try builder.captureResearchReadbackBatch(requests: requests) }
     }
 
     func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }

@@ -262,7 +262,13 @@ struct CaptureRouteView: View {
             canAnnotate: capture.canAnnotate,
             finishCapture: finish,
             startCaptureLabel: capture.startLabel,
-            stopCaptureLabel: capture.stopLabel
+            stopCaptureLabel: capture.stopLabel,
+            researchDraft: capture.researchDraft,
+            settingsObservations: capture.settingsObservations,
+            settingsError: capture.settingsError,
+            refreshSettingsObservations: capture.refreshSettingsObservations,
+            recordSettingsObservation: capture.recordSettingsObservation,
+            readSettingsReadback: capture.settingsReadback
         )
     }
 

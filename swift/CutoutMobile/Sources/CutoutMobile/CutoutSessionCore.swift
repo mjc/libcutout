@@ -1070,6 +1070,47 @@ public final class CutoutSessionCore: NSObject {
         }.get()
     }
 
+    public func recordCaptureSettingsObservation(
+        generation: CaptureGeneration, draft: MobileCaptureSettingsDraftDto
+    ) async throws -> MobileCaptureSettingsObservationDto {
+        let write = try onBleQueue {
+            Result {
+                guard captureGeneration == generation, captureRecorder.hasWriter else {
+                    throw MobileCaptureResearchError.NotRecording
+                }
+                return try captureRecorder.settingsObservationWriter()
+            }
+        }.get()
+        return try await Task.detached(priority: .userInitiated) { try write(draft) }.value
+    }
+
+    public func captureSettingsReadbackBatch(
+        generation: CaptureGeneration, requests: [MobileCaptureResearchReadbackRequestDto]
+    ) async throws -> [MobileCaptureResearchReadbackDto] {
+        let read = try onBleQueue {
+            Result {
+                guard captureGeneration == generation, captureRecorder.hasWriter else {
+                    throw MobileCaptureResearchError.NotRecording
+                }
+                return try captureRecorder.settingsReadbackBatchReader()
+            }
+        }.get()
+        return try await Task.detached(priority: .userInitiated) { try read(requests) }.value
+    }
+
+    public func captureSettingsObservations(generation: CaptureGeneration) throws
+        -> [MobileCaptureSettingsObservationDto]
+    {
+        try onBleQueue {
+            Result {
+                guard captureGeneration == generation, captureRecorder.hasWriter else {
+                    throw MobileCaptureResearchError.NotRecording
+                }
+                return try captureRecorder.settingsObservations()
+            }
+        }.get()
+    }
+
     @discardableResult
     public func annotateCapture(key: String, value: String) -> Bool {
         onBleQueue {
