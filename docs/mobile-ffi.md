@@ -326,10 +326,23 @@ decoding use separate replay passes; the capture's model label is not an input
 to detection. Tests check fragmented parsing, semantic outputs, retention of all
 fragmented capture bytes, owned snapshot lifetime and stale-token refusal. The receipt
 includes the source capture's hash. This exercises Kotlin consumption of the
-existing session API; live scanning, permissions, GATT queues and transport
-receipt delivery remain LIBCU-34.
+existing session API. The production Android adapter below supplies scanning,
+permissions, GATT queues and transport receipt delivery for LIBCU-34.
 
-### Physical Android tests
+### Android app and physical tests
+
+The production Gradle project is `android/`, application ID `lol.cutout`, for
+ARM64 Android 13/API33 or newer. It reuses the original test project's SDK,
+generator, native staging and Gradle cache. Its native launcher provides Devices,
+Ride and descriptor-driven Configuration. `PevSession` consumes the shared Rust
+owner; `AndroidBleClient` supplies permission-aware scanning, GATT inventory,
+subscriptions, serialized writes, MTU limits and attempt-scoped callbacks.
+The main Ride view is fixed; device and configuration lists can scroll.
+
+The existing shared assertions now belong to the production app's instrumentation
+target rather than its main sources. Only generated FFI and production adapters
+ship in the app. Settings labels reuse the checked-in shared string catalogs;
+Android presentation strings live in `android/src/main/res/values/strings.xml`.
 
 The host JVM and Android instrumentation use the same assertions in
 `tests/mobile-ffi/shared/MobileFfiSmoke.kt`. The Android wrapper supplies an
@@ -344,6 +357,7 @@ devenv tasks run test:mobile-ffi-runner
 devenv tasks run test:kotlin-bindings-smoke
 devenv tasks run build:android-tests
 CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 devenv tasks run test:android-device
+CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 CUTOUT_ANDROID_SERIAL=ZY22K6J64X devenv tasks run run:android-app
 ```
 
 The address above is an example. Use `devenv shell -- adb devices -l` to select
@@ -357,11 +371,31 @@ For a previously authorized TCP connection, reconnect with
 `devenv shell -- adb connect ADDRESS:5555`. Rebooting the phone can require
 re-enabling TCP debugging over USB.
 
-The minimal app and instrumentation packages are `lol.cutout.ffitest` and
-`lol.cutout.ffitest.test`. Installation updates only those packages, preserves
-their app data, and never clears production Cutout data. Each test removes its
-own temporary storage after closing native handles. Uninstall these test
-packages explicitly with ADB when no longer needed.
+The production app and instrumentation packages are `lol.cutout` and
+`lol.cutout.test`. Installation updates only those packages, preserves
+their app data. Each storage test removes its own temporary storage after closing
+native handles. Uninstall the instrumentation package explicitly with ADB when
+no longer needed. The earlier test-only
+package is not used or modified by the production runner.
+
+The native GATT queue is bounded and checks the original attempt before every
+submission. Subscription failure, rejected operations, overflow or missing
+callbacks retire that GATT connection; an untagged late callback cannot advance
+another request after timeout. A native API submission is distinct from device
+readback. Queued cancellation, partial ATT submission and full submission retain
+different receipts. ATT chunks preserve the original payload and respect the
+negotiated limit, capped at 512 bytes. The Rust-owned next-wakeup deadline drives
+session polling; there is no Kotlin polling interval or model-specific protocol
+loop. Permission revocation and explicit disconnect retire the native connection
+and invalidate its Rust attempt. Configuration submissions retain the attempt
+that opened the editor.
+
+The first Android app slice does not claim reliable locked/background riding
+(LIBCU-35) or live recording/export (LIBCU-36). Production-adapter replay and
+runtime smoke are not live PEV acceptance: record the exact wheel/profile/firmware
+when hardware becomes available. Android framework contracts are documented in
+the [GATT API](https://developer.android.com/reference/android/bluetooth/BluetoothGatt)
+and [permission guide](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions).
 
 Devenv provisions API 35, Build Tools 35.0.0 and the existing NDK, accepting the
 SDK licenses for this composition. Its `CUTOUT_ANDROID_API`,
