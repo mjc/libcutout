@@ -2621,7 +2621,7 @@ final class CutoutAppUITests: XCTestCase {
         app.buttons["NOSFET Aero"].firstMatch.tap()
         let earlierObservation = app.switches["Earlier observation"]
         scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
-        earlierObservation.tap()
+        earlierObservation.switches.firstMatch.tap()
         let earlierTime = app.textFields["capture.settings.time"]
         scrollElementFrameIntoViewport(earlierTime, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         earlierTime.tap()
@@ -2654,7 +2654,7 @@ final class CutoutAppUITests: XCTestCase {
         openWorksheet()
         scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         XCTAssertEqual(earlierObservation.value as? String, "1")
-        earlierObservation.tap()
+        earlierObservation.switches.firstMatch.tap()
         XCTAssertEqual(earlierObservation.value as? String, "0")
         let repeatedBrightness = findBrightness()
         XCTAssertEqual(repeatedBrightness.value as? String, "145")

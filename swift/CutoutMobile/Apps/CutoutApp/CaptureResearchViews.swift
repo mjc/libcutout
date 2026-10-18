@@ -355,6 +355,7 @@ struct CaptureSettingsWorksheet: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.settings.field.\(field.id)")
     }
     private func valueStateControl(_ field: MobileCaptureResearchFieldDto, canDisable: Bool) -> some View {
