@@ -20,11 +20,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
-ANDROID = ROOT / "tests/mobile-ffi/android"
+ANDROID = ROOT / "android"
 BINDINGS = TARGET / "uniffi-smoke/kotlin"
 REPLAY_SOURCE = TARGET / "uniffi-smoke/replay/EucReplayFixture.kt"
 REPLAY_CAPTURE = ROOT / "crates/cutout-cli/fixtures/pevcap/aero-veteran-live.jsonl"
-APP = "lol.cutout.ffitest"
+APP = "lol.cutout"
 RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
 
 
@@ -100,6 +100,15 @@ def prepare_replay() -> None:
         lines.append(f"    MobileSessionInputDto(MobileSessionInputKindDto.{kind}, "
                      f"MobileMonotonicMillisDto({record['monotonic_ms']}UL), {limit_source}, "
                      f"{arrays[0]}, {arrays[1]}),")
+    lines.extend([")", "internal fun eucReplayGatt(): List<MobileGattFingerprintDto> = listOf("])
+    for fingerprint in rows[0]["header"]["gatt_fingerprints"]:
+        arrays = ["byteArrayOf(" + ", ".join(str(b if b < 128 else b - 256) for b in fingerprint[field]) + ")"
+                  for field in ("service", "characteristic")]
+        roles = {"Read": "READ", "Write": "WRITE", "WriteWithoutResponse": "WRITE_WITHOUT_RESPONSE",
+                 "Notify": "NOTIFY", "Indicate": "INDICATE"}
+        role_source = ", ".join("MobileGattRoleDto." + roles[role] for role in fingerprint["roles"]["roles"])
+        lines.append(f"    MobileGattFingerprintDto({arrays[0]}, {arrays[1]}, listOf({role_source}), "
+                     "MobileVerificationStatusDto.HARDWARE_VERIFIED),")
     source = "\n".join([*lines, ")", ""])
     REPLAY_SOURCE.parent.mkdir(parents=True, exist_ok=True)
     if not REPLAY_SOURCE.exists() or REPLAY_SOURCE.read_text() != source:
@@ -107,8 +116,8 @@ def prepare_replay() -> None:
 
 
 def validate_device(device: dict[str, str], expected_serial: str | None) -> None:
-    if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 26 or device["emulator"] == "1":
-        raise ValueError(f"Expected a physical ARM64 Android 26+ phone: {device}")
+    if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 33 or device["emulator"] == "1":
+        raise ValueError(f"Expected a physical ARM64 Android 33+ phone: {device}")
     if expected_serial and device["serial"] != expected_serial:
         raise ValueError("Physical serial does not match CUTOUT_ANDROID_SERIAL; nothing installed")
 
@@ -122,7 +131,7 @@ class Run:
         self.env = dict(os.environ, CARGO_BUILD_JOBS="1")
         self.receipt = {"mode": mode, "status": "running", "logs": str(self.logs),
                         "rust_jobs": 1, "gradle_workers": 2, "build_status": "not_run",
-                        "install_status": "not_run", "test_status": "not_run"}
+                        "install_status": "not_run", "test_status": "not_run", "launch_status": "not_run"}
         self.selector = ""
 
     def command(self, args: list[str], name: str, timeout: int = 1800) -> str:
@@ -142,6 +151,21 @@ class Run:
 
     def prepare(self, android: bool) -> Path:
         prepare_replay()
+        if android:
+            labels = {}
+            for source in (ROOT / "swift/CutoutMobile/Sources/CutoutMobile/Localizable.xcstrings",
+                           ROOT / "swift/CutoutMobile/Apps/CutoutApp/Localizable.xcstrings"):
+                for key, entry in json.loads(source.read_text())["strings"].items():
+                    if key.startswith(("settings.", "actions.")):
+                        for language, value in entry.get("localizations", {}).items():
+                            text = value.get("stringUnit", {}).get("value")
+                            if text is not None:
+                                labels.setdefault(language, {})[key] = text
+            resource = TARGET / "android-tests/resources/raw/shared_labels.json"
+            resource.parent.mkdir(parents=True, exist_ok=True)
+            contents = json.dumps(labels, sort_keys=True, ensure_ascii=False)
+            if not resource.exists() or resource.read_text() != contents:
+                resource.write_text(contents)
         self.receipt["replay_capture_sha256"] = digest(REPLAY_CAPTURE)
         args = ["cargo", "build", "--locked", "--jobs", "1", "-p", "cutout-mobile-ffi", "--lib"]
         folder = TARGET / "debug"
@@ -163,7 +187,10 @@ class Run:
         classpath = os.pathsep.join([self.env["JNA_JAR"], self.env["KOTLIN_COROUTINES_JAR"]])
         jar = TARGET / "uniffi-smoke/kotlin-smoke.jar"
         self.command(["kotlinc", str(BINDINGS / "uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt"),
+                      str(ANDROID / "src/main/java/lol/cutout/GattOperationQueue.kt"),
+                      str(ANDROID / "src/main/java/lol/cutout/PevSession.kt"),
                       str(ROOT / "tests/mobile-ffi/shared/MobileFfiSmoke.kt"),
+                      str(ROOT / "tests/mobile-ffi/shared/AndroidTransportSmoke.kt"),
                       str(ROOT / "tests/mobile-ffi/shared/EucReplaySmoke.kt"), str(REPLAY_SOURCE),
                       str(ROOT / "tests/mobile-ffi/kotlin-smoke.kt"), "-cp", classpath,
                       "-include-runtime", "-d", str(jar)], "compile-host")
@@ -188,10 +215,12 @@ class Run:
                       "-p", str(ANDROID), "assembleDebug", "assembleDebugAndroidTest"], "android-apks")
         apks = []
         for variant, package in (("debug", APP), ("androidTest/debug", APP + ".test")):
-            matches = list((TARGET / "android-tests/build/outputs/apk" / variant).glob("*.apk"))
-            if len(matches) != 1:
-                raise ValueError(f"Expected exactly one {variant} APK, found {matches}")
-            apk = matches[0]
+            folder = TARGET / "android-tests/build/outputs/apk" / variant
+            metadata = json.loads((folder / "output-metadata.json").read_text())
+            elements = metadata["elements"]
+            if len(elements) != 1:
+                raise ValueError(f"Expected exactly one {variant} APK, found {elements}")
+            apk = folder / elements[0]["outputFile"]
             aapt = Path(self.env["ANDROID_HOME"]) / "build-tools" / self.env["CUTOUT_ANDROID_BUILD_TOOLS"] / "aapt"
             info = self.command([str(aapt), "dump", "badging", str(apk)], "apk-identity")
             if not info.startswith(f"package: name='{package}' "):
@@ -211,7 +240,7 @@ class Run:
                   "abi": "ro.product.cpu.abi", "emulator": "ro.kernel.qemu"}
         return {key: self.adb(["shell", "getprop", prop], key).strip() for key, prop in fields.items()}
 
-    def device(self, selector: str | None, expected_serial: str | None):
+    def device(self, selector: str | None, expected_serial: str | None, launch: bool = False):
         output = self.command(["adb", "devices", "-l"], "adb-devices", 30)
         self.selector = select_device(output, selector)
         device = self.identity()
@@ -226,6 +255,13 @@ class Run:
         self.receipt["install_status"] = "passed"
         if self.identity() != device:
             raise ValueError("Device identity changed before instrumentation")
+        if launch:
+            self.receipt["launch_status"] = "running"
+            result = self.adb(["shell", "am", "start", "-W", "-n", APP + "/.MainActivity"], "launch")
+            if "Status: ok" not in result:
+                raise ValueError("Android did not confirm activity launch")
+            self.receipt["launch_status"] = "passed"
+            return
         self.receipt["test_status"] = "running"
         output = self.adb(["shell", "am", "instrument", "-w", "-r", RUNNER], "instrumentation", 180)
         # Keep the raw protocol even when the runner exits zero after a test crash.
@@ -249,7 +285,7 @@ class Run:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("host", "build", "device"))
+    parser.add_argument("mode", choices=("host", "build", "device", "app"))
     parser.add_argument("--device", default=os.environ.get("CUTOUT_ANDROID_DEVICE"))
     parser.add_argument("--expected-serial", default=os.environ.get("CUTOUT_ANDROID_SERIAL"))
     args = parser.parse_args()
@@ -270,8 +306,8 @@ def main() -> int:
             run.receipt["tracked_diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
             run.receipt["tools"] = {tool: run.command([tool, "--version"], tool).strip()
                                     for tool in ("rustc", "java", "gradle")}
-            if args.mode == "device":
-                run.device(args.device, args.expected_serial)
+            if args.mode in ("device", "app"):
+                run.device(args.device, args.expected_serial, launch=args.mode == "app")
             elif args.mode == "build":
                 run.build()
             else:
@@ -281,7 +317,7 @@ def main() -> int:
         except Exception as error:
             run.receipt["status"] = "failed"
             run.receipt["error"] = str(error)
-            for field in ("build_status", "install_status", "test_status"):
+            for field in ("build_status", "install_status", "test_status", "launch_status"):
                 if run.receipt[field] == "running":
                     run.receipt[field] = "failed"
             (run.logs / "failure.log").write_text(traceback.format_exc())

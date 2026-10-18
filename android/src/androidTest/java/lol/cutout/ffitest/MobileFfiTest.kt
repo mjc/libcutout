@@ -8,6 +8,8 @@ import java.nio.file.Files
 import lol.cutout.smoke.checkCaptureHistoryBoundary
 import lol.cutout.smoke.checkSessionAndCameraBoundary
 import lol.cutout.smoke.checkEucCaptureReplay
+import lol.cutout.smoke.checkNativeGattQueue
+import lol.cutout.smoke.checkProductionSessionReplay
 import org.junit.Before
 import org.junit.Test
 
@@ -27,6 +29,12 @@ class MobileFfiTest {
 
     @Test
     fun eucCaptureReplayAndConnectionReplacement() = checkEucCaptureReplay()
+
+    @Test
+    fun nativeGattQueueAndReceipts() = checkNativeGattQueue()
+
+    @Test
+    fun productionSessionReplayAndStaleCallbacks() = checkProductionSessionReplay()
 
     private fun withStorage(test: (File) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

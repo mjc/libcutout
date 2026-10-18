@@ -232,7 +232,9 @@ in
   tasks."test:mobile-ffi-runner".exec =
     "python3 -m unittest discover -s tests/mobile-ffi -p 'test_runner.py'";
   tasks."build:android-tests".exec = "python3 scripts/test-mobile-ffi.py build";
+  tasks."build:android-app".after = [ "build:android-tests" ];
   tasks."test:android-device".exec = "python3 scripts/test-mobile-ffi.py device";
+  tasks."run:android-app".exec = "python3 scripts/test-mobile-ffi.py app";
   tasks."build:ios-ui-tests" = {
     exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];

@@ -5,17 +5,17 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.2.21"
 }
 
-val repository = rootDir.resolve("../../..").canonicalFile
+val repository = rootDir.parentFile
 layout.buildDirectory.set(repository.resolve("target/android-tests/build"))
 
 android {
-    namespace = "lol.cutout.ffitest"
+    namespace = "lol.cutout"
     compileSdk = providers.environmentVariable("CUTOUT_ANDROID_API").get().toInt()
     buildToolsVersion = providers.environmentVariable("CUTOUT_ANDROID_BUILD_TOOLS").get()
     ndkPath = providers.environmentVariable("ANDROID_NDK_ROOT").get()
     defaultConfig {
-        applicationId = "lol.cutout.ffitest"
-        minSdk = 26
+        applicationId = "lol.cutout"
+        minSdk = 33
         targetSdk = compileSdk
         versionCode = 1
         versionName = "1.0"
@@ -23,9 +23,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets["main"].apply {
-        java.srcDirs("../shared", repository.resolve("target/uniffi-smoke/kotlin"),
-            repository.resolve("target/uniffi-smoke/replay"))
+        java.srcDir(repository.resolve("target/uniffi-smoke/kotlin"))
         jniLibs.srcDir(repository.resolve("target/android-tests/jniLibs"))
+        res.srcDir(repository.resolve("target/android-tests/resources"))
+    }
+    sourceSets["androidTest"].apply {
+        java.srcDirs(repository.resolve("tests/mobile-ffi/shared"),
+            repository.resolve("target/uniffi-smoke/replay"))
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

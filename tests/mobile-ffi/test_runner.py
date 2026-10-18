@@ -22,6 +22,13 @@ def status(name, code=0, failure=""):
 
 
 class DeviceSelectionTests(unittest.TestCase):
+    def test_requires_supported_physical_arm64_android(self):
+        valid = {"serial": "PHONE", "abi": "arm64-v8a", "api": "35", "emulator": ""}
+        for override in ({"abi": "x86_64"}, {"api": "32"}, {"emulator": "1"}, {"serial": ""}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                runner.validate_device(dict(valid, **override), "PHONE")
+        runner.validate_device(valid, "PHONE")
+
     def test_network_endpoint_cannot_substitute_a_different_physical_serial(self):
         device = {"serial": "OTHER", "abi": "arm64-v8a", "api": "35", "emulator": ""}
         with self.assertRaisesRegex(ValueError, "Physical serial"):

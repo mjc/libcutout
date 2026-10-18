@@ -9,6 +9,8 @@ on:
       - 'rust-toolchain.toml'
       - 'devenv.*'
       - 'tests/mobile-ffi/**'
+      - 'android/**'
+      - 'swift/CutoutMobile/**/Localizable.xcstrings'
       - 'scripts/test-mobile-ffi.py'
       - '.github/workflows/android-ffi.yml'
   push:

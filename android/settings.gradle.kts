@@ -11,4 +11,4 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "cutout-ffi-tests"
+rootProject.name = "cutout"
