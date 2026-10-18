@@ -6,6 +6,7 @@ import android.content.Intent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ScrollView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.BlePresentation
@@ -17,6 +18,7 @@ import org.junit.Test
 import java.util.Locale
 import uniffi.cutout_mobile_ffi.MobileFootpadContactState
 import uniffi.cutout_mobile_ffi.MobileFootpadTelemetryDto
+import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
 import uniffi.cutout_mobile_ffi.MobileVehicleKindDto
 import uniffi.cutout_mobile_ffi.MobileVescRideOperatingModeDto
@@ -73,6 +75,44 @@ open class RideDashboardProjectionTest {
         check(originalSpeed == expectedSpeed) { "Ride speed did not use Swift's millimeters-per-second to mph conversion" }
         check(children(ride).filterIsInstance<TextView>().any { it.text.toString().trim() == speedUnit }) {
             "The Ride hero did not render its localized speed unit"
+        }
+    }
+
+    @Test
+    fun identifiedEucRetainsInstrumentsWhileRustReadinessIsPendingWithoutRetainingReadings() = withActivity { activity ->
+        val replay = productionReplayPresentation()
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+        ride.render(replay)
+        val speed = tagged<TextView>(ride, "ride.hero.speed")
+        val gauge = tagged<View>(ride, "euc.ride.headroom")
+        val verifiedSpeed = speed.text.toString()
+        check(verifiedSpeed.isNotBlank() && verifiedSpeed != activity.getString(lol.cutout.R.string.unavailable))
+
+        val pending = replay.copy(
+            phase = lol.cutout.NativePhase.IDENTIFYING,
+            session = checkNotNull(replay.session).copy(
+                connection = checkNotNull(replay.session).connection.copy(
+                    readiness = MobileConnectionReadinessDto.PENDING,
+                ),
+            ),
+        )
+        ride.render(pending)
+        check(tagged<TextView>(ride, "ride.hero.speed") === speed) {
+            "Pending Rust readiness replaced the identified EUC speed instrument"
+        }
+        check(tagged<View>(ride, "euc.ride.headroom") === gauge) {
+            "Pending Rust readiness replaced the identified EUC headroom instrument"
+        }
+        check(speed.text.toString() == activity.getString(lol.cutout.R.string.unavailable)) {
+            "Unverified readiness retained a previously verified speed reading"
+        }
+        check(speed.text.toString() != verifiedSpeed)
+
+        ride.render(replay)
+        check(tagged<TextView>(ride, "ride.hero.speed") === speed)
+        check(speed.text.toString() == verifiedSpeed) {
+            "Verified readiness did not restore the current Rust speed on the retained instrument"
         }
     }
 

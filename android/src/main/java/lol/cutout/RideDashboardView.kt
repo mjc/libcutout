@@ -130,11 +130,12 @@ class RideDashboardView(
                 is MobileRiderDashboardMetricDescriptorDto.LimpHomeRange -> Unit
             } }
         }
+        val showInstruments = snapshot != null || displayKind != DisplayKind.UNKNOWN
         val landscape = width > height && width > 0
-        val key = surfaceKey(snapshot != null, landscape)
+        val key = surfaceKey(showInstruments, landscape)
         if (key != surfaceKey) {
             surfaceKey = key
-            createSurface(snapshot != null, landscape)
+            createSurface(showInstruments, landscape)
         }
         updateSurface(speed, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery,
             vescVoltageText, motorCurrentText, boardAngleText, vescTemperatureText, footpadText)
@@ -142,9 +143,9 @@ class RideDashboardView(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        val snapshotPresent = surfaceKey?.split(':')?.getOrNull(1) == "true"
+        val instrumentsPresent = surfaceKey?.split(':')?.getOrNull(1) == "true"
         val desiredLandscape = w > h && w > 0
-        val key = surfaceKey(snapshotPresent, desiredLandscape)
+        val key = surfaceKey(instrumentsPresent, desiredLandscape)
         if (key != surfaceKey) latestPresentation?.let(::render)
     }
 
@@ -153,7 +154,7 @@ class RideDashboardView(
         latestPresentation?.let(::render)
     }
 
-    private fun surfaceKey(hasTelemetry: Boolean, landscape: Boolean): String {
+    private fun surfaceKey(showInstruments: Boolean, landscape: Boolean): String {
         val density = resources.displayMetrics.density.coerceAtLeast(1f)
         val widthDp = width / density
         val heightDp = height / density
@@ -167,7 +168,7 @@ class RideDashboardView(
             resources.configuration.fontScale >= 1.2f -> "scaled-text"
             else -> "standard-text"
         }
-        return "${displayKind.name}:$hasTelemetry:$landscape:$sizeClass:$fontScaleClass"
+        return "${displayKind.name}:$showInstruments:$landscape:$sizeClass:$fontScaleClass"
     }
 
     private fun eucStatus(state: RideOperatingState): String = when (state) {
@@ -230,7 +231,7 @@ class RideDashboardView(
         null -> String.format(Locale.getDefault(), ui.label("footpad.state").replace("%lld", "%d"), footpad.state.toInt())
     }
 
-    private fun createSurface(hasTelemetry: Boolean, landscape: Boolean) {
+    private fun createSurface(showInstruments: Boolean, landscape: Boolean) {
         removeAllViews()
         readingValues.clear()
         gaugeView = null; batteryProgress = null; footpadView = null
@@ -268,7 +269,7 @@ class RideDashboardView(
         header.addView(close, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
         root.addView(header, LinearLayout.LayoutParams(-1, ui.dp(48)))
 
-        if (!hasTelemetry) {
+        if (!showInstruments) {
             val empty = ui.column().apply { gravity = Gravity.CENTER }
             empty.addView(ui.icon(CutoutSymbol.RIDE, ui.muted, 40)); empty.addView(ui.space(12))
             emptyStatusView = ui.text(statusText, 20f, true).also { empty.addView(it) }
