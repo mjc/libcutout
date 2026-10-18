@@ -1,0 +1,34 @@
+<resources>
+    <string name="picker_title">Choose device</string>
+    <string name="picker_subtitle">Nearby Bluetooth devices</string>
+    <string name="picker_open_setup">Open setup</string>
+    <string name="picker_status_permission_denied">Bluetooth permission is needed to find nearby devices.</string>
+    <string name="picker_status_bluetooth_unavailable">Bluetooth is turned off.</string>
+    <string name="picker_status_connecting">Connecting to device…</string>
+    <string name="picker_status_live">Connected</string>
+    <string name="picker_status_connection_failed">Connection failed.</string>
+    <string name="picker_status_record_only">Device identified; live ride data is unavailable.</string>
+    <string name="picker_status_conflicted">Device identity needs review.</string>
+    <string name="picker_status_scanning">Searching nearby…</string>
+    <string name="picker_status_scan_problem">Couldn’t scan for devices.</string>
+    <string name="picker_status_no_devices">No nearby devices found.</string>
+    <string name="picker_status_scan_complete">Nearby devices</string>
+    <string name="picker_status_starting">Getting Bluetooth ready…</string>
+    <string name="picker_permission_detail">Allow CutOut to find nearby devices. Android will ask for permission when you continue.</string>
+    <string name="picker_bluetooth_detail">Turn on Bluetooth to search for nearby devices.</string>
+    <string name="picker_problem_detail">Check Bluetooth and try searching again.</string>
+    <string name="picker_empty_detail">Move closer to your device, then search again.</string>
+    <string name="picker_open_settings">Open app settings</string>
+    <string name="picker_allow_nearby">Allow nearby devices</string>
+    <string name="picker_enable_bluetooth">Turn on Bluetooth</string>
+    <string name="picker_try_again">Try again</string>
+    <string name="picker_scan_again">Scan again</string>
+    <string name="picker_connect">Connect</string>
+    <string name="picker_probe">Probe device</string>
+    <string name="picker_details">Device details</string>
+    <string name="picker_details_for_device">Details for %1$s</string>
+    <string name="picker_device_identifier">Device identifier</string>
+    <string name="picker_advertised_name">Advertised name</string>
+    <string name="picker_signal">Signal</string>
+    <string name="picker_done">Done</string>
+</resources>

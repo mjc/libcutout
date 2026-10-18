@@ -16,7 +16,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import uniffi.cutout_mobile_ffi.*
 
-data class NearbyPev(val id: String, val name: String, val rssi: Int, val suggested: Boolean)
+data class NearbyPev(val id: String, val name: String, val rssi: Int, val suggested: Boolean,
+    val candidate: DiscoveryCandidate? = null, val advertisedName: String? = null)
 enum class NativePhase { IDLE, CONNECTING, DISCOVERING, IDENTIFYING }
 data class BlePresentation(
     val scanning: Boolean = false,
@@ -88,12 +89,15 @@ class AndroidBleClient(private val context: Context) {
                         if (found.size >= 128 && id !in found) return@forEach
                         state.observeDiscovery(DiscoveryObservation(id, name?.encodeToByteArray(),
                             signal.second, emptyList(), signal.first.toShort()))
-                        val candidate = mobileDiscoveryCandidateFromAdvertisement(id, name, signal.second)
                         found[id] = device to NearbyPev(id, name ?: context.getString(R.string.device_fallback),
-                            signal.first, candidate.isPickerCandidate)
+                            signal.first, false, advertisedName = name)
                     }
-                    view = view.copy(devices = found.values.map { it.second }
-                        .sortedWith(compareByDescending<NearbyPev> { it.suggested }.thenByDescending { it.rssi }))
+                    // Rust owns candidate admission and ordering; signal changes do not
+                    // independently reorder the native rows or promote Bluetooth noise.
+                    view = view.copy(devices = state.discoverySnapshot().pickerCandidates.mapNotNull { candidate ->
+                        found[candidate.platformIdentifier]?.second?.copy(name = candidate.displayName,
+                            suggested = candidate.isPickerCandidate, candidate = candidate)
+                    })
                     publish()
                 }
             }
@@ -128,8 +132,9 @@ class AndroidBleClient(private val context: Context) {
         if (!isEnabled()) { view = view.copy(problem = true); publish(); return@post }
         stopScanOnOwner()
         connection?.retire()
+        state.selectDiscoveredPlatform(id)
         val token = checkNotNull(state.beginConnectionAttempt(id, now()).token)
-        state.observeConnectionAdvertisement(token, selected.second.name.encodeToByteArray())
+        state.observeConnectionAdvertisement(token, selected.second.advertisedName?.encodeToByteArray())
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null,
             session = state.deviceSessionSnapshot(), problem = false)
         val next = Connection(token)
