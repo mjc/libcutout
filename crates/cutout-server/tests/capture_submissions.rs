@@ -1,4 +1,3 @@
-use cutout_core::PevcapMusicEvent;
 use cutout_server::{Store, router};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::{Value, json};
@@ -122,7 +121,7 @@ fn capture() -> Vec<u8> {
     let template = include_str!("../../cutout-cli/fixtures/pevcap/falcon-begode-banner.jsonl");
     let mut header: Value =
         serde_json::from_str(template.lines().next().expect("fixture header")).expect("header");
-    header["version"]["minor"] = json!(3);
+    header["version"]["minor"] = json!(cutout_core::PevcapFormatVersion::current().minor);
     header["header"]["platform_id"] = json!("unverified-peripheral");
     header["header"]["selected_session_key"] = Value::Null;
     header["header"]["resolved_identity"] = Value::Null;
@@ -358,13 +357,16 @@ async fn private_capture_rejects_music_and_corruption_without_publishing() {
         .join("\n")
         .into_bytes();
     let independent = format!("{original}{}\n", json!({"kind":"music","music":music})).into_bytes();
-    for bytes in [embedded, independent] {
+    for (bytes, error_code) in [
+        (embedded, "capture_music_prohibited"),
+        (independent, "capture_invalid"),
+    ] {
         let operation = Uuid::new_v4().to_string();
         let response = server.put(&operation, &owner, &bytes, "manual").await;
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             response.json::<Value>().await.expect("error")["error"],
-            "capture_music_prohibited"
+            error_code
         );
         assert_eq!(
             server
@@ -1363,7 +1365,6 @@ async fn private_capture_reported_settings_round_trip_exactly_and_stay_private()
             decoded.settings_observations,
             vec![first.clone(), second.clone()]
         );
-        assert_eq!(decoded.music_events, Vec::<PevcapMusicEvent>::new());
     }
     assert_eq!(
         restarted
@@ -1372,26 +1373,14 @@ async fn private_capture_reported_settings_round_trip_exactly_and_stay_private()
             .status(),
         StatusCode::NOT_FOUND
     );
-    capture.music_events.push(
-        PevcapMusicEvent::new(
-            cutout_core::MusicProvider::AppleMusic,
-            "prohibited",
-            cutout_core::MonotonicTimestamp::new(1),
-            cutout_core::WallClockUnixTimestamp::new(1_700_000_000_001),
-            1,
-            None,
-        )
-        .expect("legacy metadata"),
-    );
-    let rejected = capture
-        .encode(cutout_core::PevcapEncoding::Jsonl)
-        .expect("legacy capture");
+    let mut rejected = bytes.clone();
+    rejected.extend_from_slice(b"{\"kind\":\"music\",\"music\":{\"provider\":\"apple_music\",\"track_id\":\"prohibited\"}}\n");
     let response = restarted
         .put(&Uuid::new_v4().to_string(), &owner, &rejected, "manual")
         .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         response.json::<Value>().await.expect("music rejection")["error"],
-        "capture_music_prohibited"
+        "capture_invalid"
     );
 }

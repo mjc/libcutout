@@ -63,7 +63,6 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
         [MobileCaptureResearchReadbackDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool
     @discardableResult func publishProgress() -> CaptureProgress
     func publishFailure()
     func writerStatus() -> MobileCaptureWriterStatusDto?
@@ -107,7 +106,7 @@ extension CutoutSessionCaptureRecording {
     {
         throw MobileCaptureResearchError.NotRecording
     }
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool { { true } }
+
 }
 
 /// Owns PEVCAP writer state and capture-local timing; Rust/Core retain lifecycle and failure policy.
@@ -173,13 +172,12 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
                     reason: reason,
                     evidence: evidence,
                     annotations: annotations,
-                    origin: origin,
-                    musicHistoryPolicy: .disabled
+                    origin: origin
                 ),
                 database: database
             )
             let startedAt = clock.now()
-            let admitted = try prepared.start(monotonicMs: startedAt.rawValue, musicContext: nil)
+            let admitted = try prepared.start(monotonicMs: startedAt.rawValue)
             let builder = admitted.builder
             let url = URL(fileURLWithPath: admitted.path)
 
@@ -247,18 +245,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     }
 
     func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }
-
-    /// Snapshot native writer ownership on the BLE queue; wait only on a background executor.
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool {
-        let active = builder
-        let completions = writerCompletionGroup
-        return {
-            completions.wait()
-            guard active?.prepareMusicMetadataCleanup() ?? true else { return false }
-            completions.wait()
-            return true
-        }
-    }
 
     @discardableResult
     func publishProgress() -> CaptureProgress {

@@ -2697,13 +2697,6 @@ public final class CutoutSessionCore: NSObject {
         rideMapPresentation.publishAvailability(availability)
     }
 
-    /// Waits for owned writer publication and durable admission before legacy metadata cleanup.
-    /// Native queue ownership is captured here; Rust owns flush and active-writer eligibility.
-    public func prepareCaptureMetadataCleanup() async -> Bool {
-        let barrier = onBleQueue { captureRecorder.musicMetadataCleanupBarrier() }
-        return await Task.detached(priority: .userInitiated) { barrier() }.value
-    }
-
     func captureFrame(
         direction: String,
         characteristic: CBUUID,

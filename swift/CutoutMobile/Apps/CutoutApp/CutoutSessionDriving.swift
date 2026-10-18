@@ -42,7 +42,6 @@ protocol CutoutSessionDriving: AnyObject {
         generation: CaptureGeneration, requests: [MobileCaptureResearchReadbackRequestDto]
     ) async throws -> [MobileCaptureResearchReadbackDto]
     func annotateCapture(key: String, value: String) -> Bool
-    func prepareCaptureMetadataCleanup() async -> Bool
     func flushCapture() async -> Bool
     func finishCapture() async -> Bool
     func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws
@@ -73,7 +72,6 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
-    func prepareCaptureMetadataCleanup() async -> Bool { true }
 
     func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws {
         let state = rideSessionStateHandle

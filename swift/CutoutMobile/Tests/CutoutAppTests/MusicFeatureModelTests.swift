@@ -127,47 +127,6 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(state.currentMusicHistory()?.events.count, 0)
     }
 
-    func testSpotifyCommandsAreUnavailableDuringDisconnect() async throws {
-        let suite = try makeDefaults()
-        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
-        let state = MobileRideMapState()
-        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
-        defer {
-            _ = try? state.stop(atMs: 500)
-            _ = try? state.discard()
-        }
-        let providerStore = MusicProviderSelectionStore(defaults: suite.defaults)
-        providerStore.set(.spotify)
-        let cleanupStarted = expectation(description: "disconnect cleanup suspended")
-        var releaseCleanup: CheckedContinuation<Bool, Never>?
-        var dispatchedCommands = 0
-        let model = makeModel(
-            state: state,
-            defaults: suite.defaults,
-            providerSelectionStore: providerStore,
-            providerCommandHandler: { _, _ in
-                dispatchedCommands += 1
-                return .accepted
-            },
-            prepareCaptureMetadataCleanup: {
-                await withCheckedContinuation { continuation in
-                    releaseCleanup = continuation
-                    cleanupStarted.fulfill()
-                }
-            }
-        )
-
-        let disconnect = Task { await model.disconnectSpotify() }
-        await fulfillment(of: [cleanupStarted], timeout: 2)
-        let outcome = await model.handleCommand(.play)
-        releaseCleanup?.resume(returning: true)
-        let disconnected = await disconnect.value
-
-        XCTAssertTrue(disconnected)
-        XCTAssertEqual(outcome, .unavailable)
-        XCTAssertEqual(dispatchedCommands, 0)
-    }
-
     func testSpotifyCommandFinishingAfterDisconnectIsUnavailable() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -1733,19 +1692,10 @@ final class MusicFeatureModelTests: XCTestCase {
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
         providerCommandHandler: MusicProviderCommandHandler? = nil,
-        prepareCaptureMetadataCleanup: @escaping @MainActor () async -> Bool = { true },
         spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil,
         historySnapshotReader: MusicHistorySnapshotReader? = nil,
         correlationRideIDReader: (@MainActor () async -> String?)? = nil
     ) -> MusicFeatureModel {
-        let captureDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "cutout-music-tests-\(UUID().uuidString)", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
-        } catch {
-            XCTFail("Cannot create isolated capture directory: \(error)")
-        }
-        addTeardownBlock { try? FileManager.default.removeItem(at: captureDirectory) }
         return MusicFeatureModel(
             providerSelectionStore: providerSelectionStore ?? MusicProviderSelectionStore(defaults: defaults),
             historyPolicyStore: historyPolicyStore ?? MusicHistoryPolicyStore(defaults: defaults),
@@ -1755,8 +1705,6 @@ final class MusicFeatureModelTests: XCTestCase {
             invalidateHistoryForDeletion: invalidateHistory,
             selectedHistoryRideID: selectedRideID,
             clearSelectedHistoryMusic: clearSelectedHistoryMusic,
-            prepareCaptureMetadataCleanup: prepareCaptureMetadataCleanup,
-            captureDirectories: [captureDirectory.path],
             setRideHistoryError: setRideHistoryError,
             appleMonitor: appleMonitor,
             monitorPollWaiter: monitorPollWaiter,

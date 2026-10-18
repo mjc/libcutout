@@ -1256,7 +1256,6 @@ public enum MusicIntegrationIngestError: Error {
 }
 
 public struct MusicObservationCompletion {
-    public let settledCaptureTarget: MobileMusicCaptureTarget
     public let effectivePolicy: MobileMusicHistoryPolicyDto?
     public let previousRideHistoryFailure: MobileMusicHistoryTerminalFailure?
     public let outcome: MobileMusicTimelineOutcomeDto?
@@ -1324,13 +1323,12 @@ public final class MusicIntegrationCoordinator {
         lifecycle.beginMusicObservation()
     }
 
-    /// The caller retains this request through capture publication and history readback.
+    /// The caller retains this request through ride-history settlement and readback.
     public func completeObservation(
         submission: MobileMusicObservationRequest,
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        captureTarget: MobileMusicCaptureTarget = .unavailable
+        clockUncertaintyMs: UInt64
     ) async throws -> MusicObservationCompletion {
         if let observationBindingError {
             throw MusicIntegrationIngestError.history(observationBindingError)
@@ -1343,7 +1341,6 @@ public final class MusicIntegrationCoordinator {
             -> MusicObservationCompletion
         {
             MusicObservationCompletion(
-                settledCaptureTarget: transition?.captureTarget ?? .unavailable,
                 effectivePolicy: effectivePolicy,
                 previousRideHistoryFailure: previousRideHistoryFailure,
                 outcome: outcome, settledTransition: transition,
@@ -1391,7 +1388,7 @@ public final class MusicIntegrationCoordinator {
         do {
             guard
                 let accepted = try lifecycle.observeAdmittedMusic(
-                    lease: lease, recording: recording, captureTarget: captureTarget,
+                    lease: lease, recording: recording,
                     snapshot: observation.snapshot, wallClockAtMs: wallClockAtMs,
                     clockUncertaintyMs: clockUncertaintyMs)
             else { return completion() }
@@ -1436,7 +1433,7 @@ public final class MusicIntegrationCoordinator {
             wallClockAtMs: wallClockAtMs, clockUncertaintyMs: clockUncertaintyMs
         )
         if completion.outcome != .full {
-            try submission.settle(capture: nil)
+            try submission.settle()
         }
         return completion.outcome
     }

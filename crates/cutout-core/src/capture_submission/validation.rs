@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     CaptureSettingsObservationError, PevcapBinaryError, PevcapEncoding, PevcapEvent,
-    PevcapJsonlError, PevcapReader, PevcapStreamError,
+    PevcapJsonlError, PevcapReader, PevcapRecordError, PevcapStreamError,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -167,7 +167,7 @@ impl<R: Read> Read for CountedReader<R> {
 
 fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissionValidationError {
     use CaptureSubmissionValidationError::{
-        InvalidPevcap, ReadFailure, TooLarge, TooManyEvents, UnsupportedFormat,
+        InvalidPevcap, MusicPresent, ReadFailure, TooLarge, TooManyEvents, UnsupportedFormat,
     };
     if counter.too_large {
         return TooLarge;
@@ -184,6 +184,13 @@ fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissi
         | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
             CaptureSettingsObservationError::TooLarge,
         )) => TooManyEvents,
+        PevcapStreamError::Jsonl(PevcapJsonlError::Record {
+            source: PevcapRecordError::UnexpectedMusic,
+            ..
+        })
+        | PevcapStreamError::Binary(PevcapBinaryError::Record(
+            PevcapRecordError::UnexpectedMusic,
+        )) => MusicPresent,
         PevcapStreamError::Jsonl(PevcapJsonlError::UnsupportedVersion { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::UnsupportedVersion { .. }) => {
             UnsupportedFormat
@@ -263,7 +270,7 @@ pub fn validate_capture_submission<R: Read>(
                 return Err(CaptureSubmissionValidationError::TooManyEvents);
             }
         }
-        let timestamp = inspect_event(event, &mut categories)?;
+        let timestamp = inspect_event(event, &mut categories);
         events.observe(timestamp)?;
     }
     let counter = counter.borrow();
@@ -276,32 +283,25 @@ pub fn validate_capture_submission<R: Read>(
     })
 }
 
-fn inspect_event(
-    event: PevcapEvent,
-    categories: &mut CaptureSubmissionCategories,
-) -> Result<u64, CaptureSubmissionValidationError> {
+fn inspect_event(event: PevcapEvent, categories: &mut CaptureSubmissionCategories) -> u64 {
     match event {
         PevcapEvent::SettingsObservation(observation) => {
             categories.notes |= observation.note.is_some()
                 || observation.values.iter().any(|value| value.note.is_some());
             categories.settings_observations = true;
-            Ok(observation.recorded_at_ms)
+            observation.recorded_at_ms
         }
-        PevcapEvent::Music(_) => Err(CaptureSubmissionValidationError::MusicPresent),
         PevcapEvent::Record(record) => {
-            if record.music.is_some() {
-                return Err(CaptureSubmissionValidationError::MusicPresent);
-            }
             categories.location |= record.phone_location.is_some();
-            Ok(record.monotonic_ms.get())
+            record.monotonic_ms.get()
         }
         PevcapEvent::Location(sample) => {
             categories.location = true;
-            Ok(sample.receipt_monotonic_ms.get())
+            sample.receipt_monotonic_ms.get()
         }
         PevcapEvent::LocationRejected(rejection) => {
             categories.location = true;
-            Ok(rejection.observation.receipt_monotonic_ms.get())
+            rejection.observation.receipt_monotonic_ms.get()
         }
     }
 }

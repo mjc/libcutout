@@ -402,9 +402,7 @@ mod tests {
         }
     }
 
-    fn live_reader_fixture(
-        include_legacy_music: bool,
-    ) -> (tempfile::TempDir, RideDatabase, LiveCaptureId) {
+    fn live_reader_fixture() -> (tempfile::TempDir, RideDatabase, LiveCaptureId) {
         let directory = tempfile::tempdir().unwrap();
         let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
         let header = PevcapCapture::decode(&binary_capture(), PevcapEncoding::Binary)
@@ -416,27 +414,7 @@ mod tests {
                 1_700_000_000_000,
             )
             .unwrap();
-        if include_legacy_music {
-            let music = cutout_core::PevcapMusicEvent::new(
-                cutout_core::MusicProvider::AppleMusic,
-                "legacy-item",
-                cutout_core::MonotonicTimestamp::new(0),
-                WallClockUnixTimestamp::new(1_700_000_000_000),
-                1,
-                None,
-            )
-            .unwrap();
-            database
-                .append_live_capture_event(
-                    id,
-                    super::super::LiveCaptureEventKind::Music,
-                    0,
-                    None,
-                    Some(1_700_000_000_000),
-                    music.to_jsonl_line().unwrap().into_bytes(),
-                )
-                .unwrap();
-        }
+
         for at in 0..40 {
             append_reader_record(&database, id, at);
         }
@@ -461,17 +439,29 @@ mod tests {
 
     #[test]
     fn live_reader_rejects_sequence_shrink_before_exposing_reindexed_tail() {
-        let (_directory, database, id) = live_reader_fixture(true);
+        let (directory, database, id) = live_reader_fixture();
         database.finish_live_capture(id, 1_700_000_001_000).unwrap();
         let mut reader = LiveCaptureReader::new(database.clone(), id).unwrap();
         read_cached_first_page(&mut reader);
-        assert_eq!(reader.next_sequence, 41);
-        database.purge_capture_music_metadata(&[]).unwrap();
+        assert_eq!(reader.next_sequence, 40);
+        let inspector = rusqlite::Connection::open(directory.path().join("ride.sqlite")).unwrap();
+        inspector
+            .execute(
+                "DELETE FROM live_capture_events WHERE capture_id=?1 AND sequence=39",
+                [id.as_string()],
+            )
+            .unwrap();
+        inspector
+            .execute(
+                "UPDATE live_capture_sessions SET next_sequence=39 WHERE capture_id=?1",
+                [id.as_string()],
+            )
+            .unwrap();
         let page = database
             .live_capture_page(id, Some(31), QueryLimit::new(32).unwrap())
             .unwrap();
-        assert_eq!(page.next_sequence, 40);
-        assert_eq!(page.events.len(), 8);
+        assert_eq!(page.next_sequence, 39);
+        assert_eq!(page.events.len(), 7);
         let error = reader
             .read(&mut [0; 1])
             .expect_err("a reindexed tail must be rejected before emitting another byte");
@@ -483,7 +473,7 @@ mod tests {
     #[test]
     fn live_reader_accepts_unchanged_or_growing_sequences_without_extending_prefix() {
         for grow in [false, true] {
-            let (_directory, database, id) = live_reader_fixture(false);
+            let (_directory, database, id) = live_reader_fixture();
             let mut reader = LiveCaptureReader::new(database.clone(), id).unwrap();
             let mut bytes = read_cached_first_page(&mut reader);
             if grow {
@@ -499,10 +489,7 @@ mod tests {
                 .map(|record| record.monotonic_ms.get())
                 .collect::<Vec<_>>();
             assert_eq!(times, (0..40).collect::<Vec<_>>());
-            assert_eq!(
-                capture.music_events,
-                Vec::<cutout_core::PevcapMusicEvent>::new()
-            );
+
             drop(reader);
             database.finish_live_capture(id, 1_700_000_001_000).unwrap();
             database.shutdown().unwrap();

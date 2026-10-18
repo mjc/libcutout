@@ -64,8 +64,6 @@ pub enum LiveCaptureEventKind {
     Notification,
     /// Core Location observation.
     Location,
-    /// Music observation.
-    Music,
     /// Capture metadata update.
     Metadata,
 }
@@ -78,7 +76,6 @@ impl LiveCaptureEventKind {
             Self::Write => "write",
             Self::Notification => "notification",
             Self::Location => "location",
-            Self::Music => "music",
             Self::Metadata => "metadata",
         }
     }
@@ -90,7 +87,6 @@ impl LiveCaptureEventKind {
             "write" => Ok(Self::Write),
             "notification" => Ok(Self::Notification),
             "location" => Ok(Self::Location),
-            "music" => Ok(Self::Music),
             "metadata" => Ok(Self::Metadata),
             _ => Err(StorageError::InvalidStoredValue {
                 field: "live capture event kind",
@@ -368,7 +364,7 @@ pub(super) const SCHEMA: &str = "
         capture_id TEXT NOT NULL REFERENCES live_capture_sessions(capture_id) ON DELETE CASCADE,
         sequence INTEGER NOT NULL CHECK (sequence >= 0),
         event_kind TEXT NOT NULL CHECK (event_kind IN
-            ('link_up', 'link_down', 'write', 'notification', 'location', 'music', 'metadata')),
+            ('link_up', 'link_down', 'write', 'notification', 'location', 'metadata')),
         receipt_monotonic_ms INTEGER NOT NULL CHECK (receipt_monotonic_ms >= 0),
         source_monotonic_offset_ms INTEGER,
         source_wall_clock_unix_ms INTEGER CHECK

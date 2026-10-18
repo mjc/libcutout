@@ -493,9 +493,10 @@ final class CaptureExportModel {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let ext = source.pathExtension == "pevcap" ? "pevcap" : "jsonl"
             let destination = directory.appendingPathComponent("capture-\(UUID().uuidString).\(ext)")
-            return try exportCaptureFileWithoutMusic(sourcePath: source.path, path: destination.path)
+            try FileManager.default.copyItem(at: source, to: destination)
+            return destination
         }.value
-        return URL(fileURLWithPath: result.path)
+        return result
     }
 
     private static func exportDatabaseCapture(_ id: String) async throws -> URL {

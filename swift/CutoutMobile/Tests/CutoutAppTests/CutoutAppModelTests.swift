@@ -3845,7 +3845,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         }
         return captureLabelState.active()
     }
-    func prepareCaptureMetadataCleanup() async -> Bool { true }
+
     func checkpointRideMap() async throws {
         checkpointCount += 1
         try await checkpointOperation?()
