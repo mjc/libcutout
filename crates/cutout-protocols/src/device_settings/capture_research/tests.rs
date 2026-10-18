@@ -407,7 +407,7 @@ fn equal_timestamp_link_boundaries_follow_storage_order() {
 }
 
 #[test]
-fn delayed_boundary_expires_old_only_fields_while_preserving_new_epoch_fields() {
+fn delayed_boundary_invalidates_values_when_decoder_input_spans_epochs() {
     for boundary in [
         PevcapRecord::link_down(MonotonicTimestamp::new(20)),
         PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
@@ -428,19 +428,12 @@ fn delayed_boundary_expires_old_only_fields_while_preserving_new_epoch_fields() 
                 .find(|entry| entry.setting_id == "display_brightness"),
             None
         );
-        assert_eq!(
-            decoded(&readback, "lateral_tilt_limit"),
-            &CaptureResearchDecodedValue {
-                setting_id: "lateral_tilt_limit",
-                value: Some(DeviceSettingValue::Number(40)),
-                observed_at_ms: 30,
-            }
-        );
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     }
 }
 
 #[test]
-fn delayed_boundary_still_blocks_packets_older_than_its_epoch_floor() {
+fn delayed_boundary_reset_keeps_pre_boundary_packets_unavailable() {
     for boundary in [
         PevcapRecord::link_down(MonotonicTimestamp::new(20)),
         PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
@@ -466,14 +459,7 @@ fn delayed_boundary_still_blocks_packets_older_than_its_epoch_floor() {
                 .find(|entry| entry.setting_id == "display_brightness"),
             None
         );
-        assert_eq!(
-            decoded(&readback, "lateral_tilt_limit"),
-            &CaptureResearchDecodedValue {
-                setting_id: "lateral_tilt_limit",
-                value: Some(DeviceSettingValue::Number(40)),
-                observed_at_ms: 30,
-            }
-        );
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
     }
 }
 
@@ -852,5 +838,104 @@ fn unrelated_settings_remain_outside_available_capture_research_profiles() {
     for profile in ["vesc", "refloat"] {
         assert_eq!(capture_research_catalog(profile), None);
         assert!(CaptureResearchReadback::new(profile, 100).is_none());
+    }
+}
+
+#[test]
+fn delayed_boundary_invalidates_aero_value_completed_from_both_connections() {
+    let bytes = aero_brightness(40);
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &bytes[..30]));
+        readback.observe(&inbound(30, crate::VETERAN_DATA_CHANNEL, &bytes[30..]));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 30);
+        assert_eq!(
+            decoded(&readback, "display_brightness").value,
+            Some(DeviceSettingValue::Number(40))
+        );
+        readback.observe(&boundary);
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(50, crate::VETERAN_DATA_CHANNEL, &bytes));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 50);
+        assert_eq!(
+            decoded(&readback, "display_brightness").value,
+            Some(DeviceSettingValue::Number(40))
+        );
+    }
+}
+
+#[test]
+fn delayed_boundary_discards_aero_partial_frame_with_pre_boundary_input() {
+    let bytes = aero_brightness(40);
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &bytes[..30]));
+        readback.observe(&inbound(30, crate::VETERAN_DATA_CHANNEL, &bytes[30..50]));
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&boundary);
+        readback.observe(&inbound(40, crate::VETERAN_DATA_CHANNEL, &bytes[50..]));
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(50, crate::VETERAN_DATA_CHANNEL, &bytes));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 50);
+    }
+}
+
+#[test]
+fn delayed_boundary_invalidates_falcon_settings_from_a_cross_connection_frame() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("begode_falcon", 100).unwrap();
+        readback.observe(&inbound(
+            10,
+            crate::BEGODE_DATA_CHANNEL,
+            &FALCON_LIVE_B[..12],
+        ));
+        readback.observe(&inbound(
+            30,
+            crate::BEGODE_DATA_CHANNEL,
+            &FALCON_LIVE_B[12..],
+        ));
+        assert_eq!(decoded(&readback, "maximum_speed").observed_at_ms, 30);
+        assert_eq!(
+            decoded(&readback, "maximum_speed").value,
+            Some(DeviceSettingValue::Number(500))
+        );
+        readback.observe(&boundary);
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(50, crate::BEGODE_DATA_CHANNEL, &FALCON_LIVE_B));
+        assert_eq!(decoded(&readback, "maximum_speed").observed_at_ms, 50);
+    }
+}
+
+#[test]
+fn delayed_boundary_uses_oldest_input_time_even_when_it_arrived_later() {
+    for boundary in [
+        PevcapRecord::link_down(MonotonicTimestamp::new(20)),
+        PevcapRecord::link_up(MonotonicTimestamp::new(20), None),
+    ] {
+        let mut readback = CaptureResearchReadback::new("nosfet_aero", 100).unwrap();
+        readback.observe(&inbound(
+            30,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(40),
+        ));
+        readback.observe(&inbound(10, crate::VETERAN_DATA_CHANNEL, &AERO_SETTINGS));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 30);
+        readback.observe(&boundary);
+        assert_eq!(readback.values(), &[] as &[CaptureResearchDecodedValue]);
+        readback.observe(&inbound(
+            50,
+            crate::VETERAN_DATA_CHANNEL,
+            &aero_brightness(50),
+        ));
+        assert_eq!(decoded(&readback, "display_brightness").observed_at_ms, 50);
     }
 }
