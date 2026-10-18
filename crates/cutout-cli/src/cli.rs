@@ -647,6 +647,18 @@ pub(crate) struct PevcapReplayArgs {
     /// Emit read-only response DTOs as JSONL records after the replay summary.
     #[arg(long = "read-only-jsonl")]
     pub(crate) read_only_jsonl: bool,
+    /// Offline geometry override; preserves original captured profiles and has no live effect.
+    #[arg(long, value_name = "DIAMETER_MM/POLE_PAIRS/REDUCTION", value_parser = parse_vesc_replay_drivetrain)]
+    pub(crate) vesc_drivetrain: Option<cutout_core::VescDrivetrain>,
+}
+
+fn parse_vesc_replay_drivetrain(raw: &str) -> Result<cutout_core::VescDrivetrain, String> {
+    let parts: Vec<_> = raw.split('/').collect();
+    match parts.as_slice() {
+        [diameter, pairs, ratio] => cutout_core::VescDrivetrain::parse(diameter, pairs, ratio)
+            .map_err(|error| error.to_string()),
+        _ => Err("expected DIAMETER_MM/POLE_PAIRS/REDUCTION".to_owned()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -1656,6 +1668,7 @@ mod tests {
                     profile: PevcapReplayProfile::Falcon,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
+                    vesc_drivetrain: None,
                 })
             })
         );
@@ -1683,6 +1696,7 @@ mod tests {
                     profile: PevcapReplayProfile::Auto,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
+                    vesc_drivetrain: None,
                 })
             })
         );
@@ -1712,9 +1726,50 @@ mod tests {
                     profile: PevcapReplayProfile::Vesc,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
+                    vesc_drivetrain: None,
                 })
             })
         );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_checked_fractional_geometry() {
+        let base = [
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "ride.pevcap",
+            "--input-format",
+            "binary",
+            "--profile",
+            "vesc",
+            "--vesc-drivetrain",
+        ];
+        let cli = Cli::try_parse_from(base.into_iter().chain(["90/7/2.5"])).unwrap();
+        let Command::Pevcap(PevcapArgs {
+            command: PevcapCommand::Replay(args),
+        }) = cli.command
+        else {
+            panic!("replay expected")
+        };
+        assert_eq!(
+            args.vesc_drivetrain,
+            Some(cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap())
+        );
+        for value in [
+            "0/7/2.5",
+            "90/0/2.5",
+            "90/7/0",
+            "90/7",
+            "90/7/2.5/3",
+            "90/7/2.5001",
+        ] {
+            assert!(
+                Cli::try_parse_from(base.into_iter().chain([value])).is_err(),
+                "accepted {value}"
+            );
+        }
     }
 
     #[test]
@@ -1740,6 +1795,7 @@ mod tests {
                     profile: PevcapReplayProfile::Auto,
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
+                    vesc_drivetrain: None,
                 })
             })
         );
@@ -1768,6 +1824,7 @@ mod tests {
                     profile: PevcapReplayProfile::Auto,
                     diagnostics_jsonl: false,
                     read_only_jsonl: true,
+                    vesc_drivetrain: None,
                 })
             })
         );
