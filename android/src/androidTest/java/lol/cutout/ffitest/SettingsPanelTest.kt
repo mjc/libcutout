@@ -23,6 +23,7 @@ import uniffi.cutout_mobile_ffi.MobileSettingValueDto
 import org.junit.Test
 
 open class SettingsPanelTest {
+    private val ownerLifetimeId = "settings-panel-test-owner"
 
     @Test
     fun emptyReadbackAndSettingControlsExposeContextualAccessibilityState() {
@@ -42,7 +43,7 @@ open class SettingsPanelTest {
         )
         try {
             instrumentation.runOnMainSync {
-                val panel = SettingsPanel(activity) { _, _, _, _ -> }
+                val panel = SettingsPanel(activity, ownerLifetimeId) { _, _, _, _ -> }
                 val labels = CutoutUi(activity)
                 activity.setContentView(panel)
                 val unavailable = labels.label("settings.readback.unavailable")
@@ -129,10 +130,25 @@ open class SettingsPanelTest {
                     "Replay numeric descriptor exposes no draft value distinct from readback"
                 }
                 val editor = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
+                val unavailable = initial.copy(connection = initial.connection.copy(
+                    readiness = uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto.PENDING,
+                    transport = uniffi.cutout_mobile_ffi.MobileConnectionTransportStateDto.CONNECTING,
+                ))
+                panel.render(unavailable)
+                check(!editor.isEnabled) { "Numeric editor remained editable before connection verification" }
+                val readOnly = initial.copy(settingDescriptors = initial.settingDescriptors.map {
+                    if (it.id == numericDescriptor.id) it.copy(access = MobileSettingAccessDto.READ_ONLY) else it
+                })
+                panel.render(readOnly)
+                val readOnlyEditor = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
+                check(!readOnlyEditor.isEnabled) { "Read-only numeric setting exposed an editable value" }
+                panel.render(currentReported)
+                val editable = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
+                check(editable.isEnabled) { "Writable editor stayed disabled on verified attempt" }
+                editable.setText(BigDecimal.valueOf(raw.toLong(), numeric.precision.toInt()).toPlainString())
                 val apply = tagged<Button>(panel, "settings.apply.${numericDescriptor.id}")
-                editor.setText(BigDecimal.valueOf(raw.toLong(), numeric.precision.toInt()).toPlainString())
                 val numericName = labels.label(numericDescriptor.labelKey)
-                check(editor.contentDescription.toString().startsWith("$numericName:")) {
+                check(editable.contentDescription.toString().startsWith("$numericName:")) {
                     "Numeric editor has no setting-specific accessibility label/value"
                 }
                 check(apply.contentDescription.toString().startsWith(
@@ -211,7 +227,7 @@ open class SettingsPanelTest {
         try {
             var submissions = 0
             instrumentation.runOnMainSync {
-                val panel = SettingsPanel(activity) { _, _, _, _ -> submissions++ }
+                val panel = SettingsPanel(activity, ownerLifetimeId) { _, _, _, _ -> submissions++ }
                 activity.setContentView(panel)
                 panel.render(presentation)
                 val editor = tagged<EditText>(panel, "settings.editor.${descriptor.id}")
@@ -267,7 +283,7 @@ open class SettingsPanelTest {
             val attempts = mutableListOf<MobileSettingValueDto>()
             lateinit var savedUiState: android.os.Bundle
             instrumentation.runOnMainSync {
-                val firstPanel = SettingsPanel(activity) { _, _, submitted, _ -> attempts += submitted }
+                val firstPanel = SettingsPanel(activity, ownerLifetimeId) { _, _, submitted, _ -> attempts += submitted }
                 activity.setContentView(firstPanel)
                 firstPanel.render(initial) // Rust's request state remains IDLE and requestId remains null.
                 tagged<EditText>(firstPanel, "settings.editor.${descriptor.id}").setText(text)
@@ -275,7 +291,7 @@ open class SettingsPanelTest {
                 check(attempts == listOf(value))
                 savedUiState = firstPanel.saveUiState()
 
-                val restoredPanel = SettingsPanel(activity) { _, _, submitted, _ -> attempts += submitted }
+                val restoredPanel = SettingsPanel(activity, ownerLifetimeId) { _, _, submitted, _ -> attempts += submitted }
                 activity.setContentView(restoredPanel)
                 restoredPanel.restoreUiState(savedUiState)
                 restoredPanel.render(initial)
@@ -284,6 +300,15 @@ open class SettingsPanelTest {
                 check(restoredApply.isEnabled) { "Locally submitted draft was stranded by an IDLE Rust snapshot" }
                 check(restoredApply.performClick())
                 check(attempts == listOf(value, value)) { "Explicit retry after restoration was not submitted" }
+
+                val differentOwnerPanel = SettingsPanel(activity, "new-rust-owner") { _, _, submitted, _ -> attempts += submitted }
+                activity.setContentView(differentOwnerPanel)
+                differentOwnerPanel.restoreUiState(savedUiState)
+                differentOwnerPanel.render(initial) // Same token fields, but a different Rust-handle owner.
+                check(attempts.size == 2) { "A different owner submitted restored UI state" }
+                check(!tagged<Button>(differentOwnerPanel, "settings.apply.${descriptor.id}").isEnabled) {
+                    "A same-looking token from a new Rust owner restored a stale draft"
+                }
 
                 val requestState = initial.settings.firstOrNull { it.id == descriptor.id }
                     ?: error("Writable descriptor has no setting snapshot")
@@ -298,7 +323,7 @@ open class SettingsPanelTest {
                             status = status,
                         ) else it
                     })
-                    val activePanel = SettingsPanel(activity) { _, _, submitted, _ -> attempts += submitted }
+                    val activePanel = SettingsPanel(activity, ownerLifetimeId) { _, _, submitted, _ -> attempts += submitted }
                     activity.setContentView(activePanel)
                     activePanel.restoreUiState(savedUiState)
                     activePanel.render(rustActive)
@@ -349,7 +374,7 @@ open class SettingsPanelTest {
             val attempts = mutableListOf<Pair<uniffi.cutout_mobile_ffi.MobileConnectionAttemptTokenDto, MobileSettingValueDto>>()
             val refusals = mutableListOf<() -> Unit>()
             instrumentation.runOnMainSync {
-                panel = SettingsPanel(activity) { token, id, submitted, refused ->
+                panel = SettingsPanel(activity, ownerLifetimeId) { token, id, submitted, refused ->
                     check(id == descriptor.id)
                     attempts += token to submitted
                     refusals += refused
@@ -393,7 +418,7 @@ open class SettingsPanelTest {
                 // Refuse the retry, then retain its old editor and Apply view across a new token.
                 refusals.last().invoke()
                 val savedUiState = panel.saveUiState()
-                val restoredPanel = SettingsPanel(activity) { token, id, submitted, refused ->
+                val restoredPanel = SettingsPanel(activity, ownerLifetimeId) { token, id, submitted, refused ->
                     check(id == descriptor.id)
                     attempts += token to submitted
                     refusals += refused
@@ -431,7 +456,7 @@ open class SettingsPanelTest {
                 restoredApply.performClick()
                 check(attempts.size == attemptCount) { "Detached editor submitted with a replacement token" }
 
-                val replacedPanel = SettingsPanel(activity) { token, id, submitted, refused ->
+                val replacedPanel = SettingsPanel(activity, ownerLifetimeId) { token, id, submitted, refused ->
                     check(id == descriptor.id)
                     attempts += token to submitted
                     refusals += refused

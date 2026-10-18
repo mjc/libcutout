@@ -53,7 +53,7 @@ class MainActivity : Activity() {
             onOpenConfiguration = { showPage(R.string.configuration) }, onConnect = {
                 client.connect(it); showPage(R.string.ride)
             })
-        settings = SettingsPanel(this) { token, id, value, refused -> client.submit(token, id, value, refused) }
+        settings = SettingsPanel(this, client.settingsDraftOwnerId) { token, id, value, refused -> client.submit(token, id, value, refused) }
         settings.restoreUiState(savedInstanceState?.getBundle("settings-ui"))
         for ((id, panel) in listOf(R.string.ride to ride, R.string.devices to picker, R.string.configuration to settings)) {
             panel.tag = id

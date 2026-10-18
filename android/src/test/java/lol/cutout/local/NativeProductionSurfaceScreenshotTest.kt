@@ -75,7 +75,7 @@ class NativeProductionSurfaceScreenshotTest {
             ride.render(replay)
             NativeSurfaceCapture.save(ride, "ride-${mode(dark)}")
 
-            val configuration = SettingsPanel(context) { _, _, _, _ -> }
+            val configuration = SettingsPanel(context, "surface-fixture-owner") { _, _, _, _ -> }
             configuration.render(settings)
             NativeSurfaceCapture.save(configuration, "settings-${mode(dark)}")
         }

@@ -40,6 +40,7 @@ import java.math.RoundingMode
 /** Android presentation of the Rust-owned settings catalog, matching DeviceControlsForm. */
 class SettingsPanel(
     context: Context,
+    private val ownerLifetimeId: String,
     private val submit: (MobileConnectionAttemptTokenDto, MobileSettingIdDto, MobileSettingValueDto, () -> Unit) -> Unit,
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
@@ -105,12 +106,15 @@ class SettingsPanel(
         val token = renderedToken ?: return@apply
         putString("attempt.generation", token.generation.toString())
         putString("attempt.platform", token.platformIdentifier)
+        putString("attempt.owner", ownerLifetimeId)
         rows.forEach { (id, row) -> row.saveUiState()?.let { putBundle("row.${id.name}", it) } }
     }
 
     /** Restore local drafts only after the matching attempt snapshot has arrived. */
     fun restoreUiState(saved: Bundle?) {
-        pendingUiState = saved?.takeIf { it.containsKey("attempt.generation") && it.containsKey("attempt.platform") }
+        pendingUiState = saved?.takeIf {
+            it.containsKey("attempt.generation") && it.containsKey("attempt.platform") && it.containsKey("attempt.owner")
+        }
         val token = renderedToken ?: return
         restorePendingState(token)
     }
@@ -118,7 +122,8 @@ class SettingsPanel(
     private fun restorePendingState(token: MobileConnectionAttemptTokenDto?) {
         val saved = pendingUiState ?: return
         if (token == null) return
-        val matches = saved.getString("attempt.generation") == token.generation.toString() &&
+        val matches = saved.getString("attempt.owner") == ownerLifetimeId &&
+            saved.getString("attempt.generation") == token.generation.toString() &&
             saved.getString("attempt.platform") == token.platformIdentifier
         pendingUiState = null
         if (matches) rows.forEach { (id, row) -> row.restoreUiState(saved.getBundle("row.${id.name}")) }
@@ -249,6 +254,17 @@ class SettingsPanel(
                 pendingLocalSubmission = false
             }
             interactable = enabled && attempt == boundAttempt && descriptor.access == MobileSettingAccessDto.WRITABLE
+            if (descriptor.access != MobileSettingAccessDto.WRITABLE) {
+                draft = null
+                submitted = null
+                invalidNumericInput = false
+            }
+            numericEdit?.let { editor ->
+                editor.isEnabled = interactable
+                editor.isFocusable = interactable
+                editor.isFocusableInTouchMode = interactable
+                if (!interactable) editor.clearFocus()
+            }
             setChildrenEnabled(controls, interactable)
             booleanButtons.forEach { it.isEnabled = interactable }
             choiceButton?.isEnabled = interactable &&

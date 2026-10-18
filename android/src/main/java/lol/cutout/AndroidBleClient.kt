@@ -39,6 +39,8 @@ class AndroidBleClient(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val state by lazy { CutoutSessionStateHandle() }
+    // Saved editor drafts belong to this native owner, not merely a reusable attempt number.
+    val settingsDraftOwnerId: String = UUID.randomUUID().toString()
     private val found = linkedMapOf<String, Pair<BluetoothDevice, NearbyPev>>()
     private var connection: Connection? = null
     private var scanCallback: ScanCallback? = null
