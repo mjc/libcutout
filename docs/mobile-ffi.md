@@ -284,6 +284,149 @@ devenv tasks run test:kotlin-bindings-smoke
 
 The task uses the JNA jar pinned by the devenv environment.
 
+### Kotlin session usage
+
+`tests/mobile-ffi/shared/EucReplaySmoke.kt` is an executable usage example for
+the current generic `CutoutSessionStateHandle`. It runs in both the host smoke
+and Android instrumentation. Rust selects the decoder from observed evidence;
+Kotlin uses `step.session.identity.vehicleKind` for the product-category screen
+and the independently reported `model` for its label. A model name or a generic
+VESC transport must not select the physical vehicle category in Kotlin.
+
+Use one ordered background owner for the handle and native connection events.
+The example uses a single-thread executor and returns an owned snapshot after
+closing the handle. Android's future BluetoothGatt adapter should enqueue
+callbacks onto that owner, copying callback buffers before enqueueing, and
+publish owned snapshots to its UI dispatcher. Rust's internal locks protect
+individual calls; they do not order independently launched Kotlin coroutines.
+
+Retain the token returned by `beginConnectionAttempt` with that native connection.
+Pass the captured token through identification, notifications, timers and
+transport receipts. Reconnecting to the same peripheral creates a new token.
+Late callbacks must retain their original token; replacing it with the latest
+token would admit old bytes into the new session. During shutdown, stop accepting
+callbacks, invalidate the Rust attempt before native cancellation, reject queued
+stale work, then close the handle on its owner.
+
+`ingestDeviceSession` returns this input's ordered `result.outputs`, current
+telemetry, diagnostics and `captureNotificationEvidence` together. Consume each
+output once; this path has no additional output-drain call. A missing step
+means the attempt was not admitted. Keep typed `result.error` and parser ingest
+outcomes distinct. The transport adapter executes subscribe/write/disconnect
+requests and reports actual completion to the existing Rust receipt APIs.
+Capture hooks preserve the original timestamp/channel/bytes and the Rust
+admission evidence; Kotlin must not infer stationary state or deduplication.
+
+The replay uses the existing public hardware-tested
+`crates/cutout-cli/fixtures/pevcap/aero-veteran-live.jsonl`. The runner converts
+its link/notification records into ignored Kotlin fixture source, preserving
+timestamps and chunk boundaries without another runtime JSON dependency or
+copied wire data. Recorded outbound writes are excluded. Identification and
+decoding use separate replay passes; the capture's model label is not an input
+to detection. Tests check fragmented parsing, semantic outputs, retention of all
+fragmented capture bytes, owned snapshot lifetime and stale-token refusal. The receipt
+includes the source capture's hash. This exercises Kotlin consumption of the
+existing session API. The production Android adapter below supplies scanning,
+permissions, GATT queues and transport receipt delivery for LIBCU-34.
+
+### Android app and physical tests
+
+The production Gradle project is `android/`, application ID `lol.cutout`, for
+ARM64 Android 13/API33 or newer. It reuses the original test project's SDK,
+generator, native staging and Gradle cache. Its native launcher provides Devices,
+Ride and descriptor-driven Configuration. `PevSession` consumes the shared Rust
+owner; `AndroidBleClient` supplies permission-aware scanning, GATT inventory,
+subscriptions, serialized writes, MTU limits and attempt-scoped callbacks.
+The main Ride view is fixed; device and configuration lists can scroll.
+
+The existing shared assertions now belong to the production app's instrumentation
+target rather than its main sources. Only generated FFI and production adapters
+ship in the app. Settings labels reuse the checked-in shared string catalogs;
+Android presentation strings live in `android/src/main/res/values/strings.xml`.
+
+The host JVM and Android instrumentation use the same assertions in
+`tests/mobile-ffi/shared/MobileFfiSmoke.kt`. The Android wrapper supplies an
+isolated app-private temporary directory. It exercises generated Kotlin/JNA
+calls into the actual ARM64 Rust library: session identity, settings snapshots,
+owned frame buffers, camera command outcomes, typed refusals, SQLite writes and
+reopen, and explicit handle shutdown. Inputs include synthetic cases and the
+public EUC capture replay; no wheel or camera connection is made.
+
+```console
+devenv tasks run test:mobile-ffi-runner
+devenv tasks run test:kotlin-bindings-smoke
+devenv tasks run build:android-tests
+CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 devenv tasks run test:android-device
+CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 CUTOUT_ANDROID_SERIAL=ZY22K6J64X devenv tasks run run:android-app
+```
+
+The address above is an example. Use `devenv shell -- adb devices -l` to select
+the current USB serial or wireless endpoint explicitly. With multiple transports,
+the runner refuses to guess. It checks the physical phone's serial, model, API
+and ABI before building, before installing, and before testing. It will not fall
+back to another device if the selected phone is unauthorized, offline or absent.
+Set `CUTOUT_ANDROID_SERIAL` to the known hardware serial to also reject an IP
+address that has been reassigned to another phone before the run begins.
+For a previously authorized TCP connection, reconnect with
+`devenv shell -- adb connect ADDRESS:5555`. Rebooting the phone can require
+re-enabling TCP debugging over USB.
+
+The production app and instrumentation packages are `lol.cutout` and
+`lol.cutout.test`. Installation updates only those packages, preserves
+their app data. Each storage test removes its own temporary storage after closing
+native handles. Uninstall the instrumentation package explicitly with ADB when
+no longer needed. The earlier test-only
+package is not used or modified by the production runner.
+
+The native GATT queue is bounded and checks the original attempt before every
+submission. Subscription failure, rejected operations, overflow or missing
+callbacks retire that GATT connection; an untagged late callback cannot advance
+another request after timeout. A native API submission is distinct from device
+readback. Queued cancellation, partial ATT submission and full submission retain
+different receipts. ATT chunks preserve the original payload and respect the
+negotiated limit, capped at 512 bytes. The Rust-owned next-wakeup deadline drives
+session polling; there is no Kotlin polling interval or model-specific protocol
+loop. Permission revocation and explicit disconnect retire the native connection
+and invalidate its Rust attempt. Configuration submissions retain the attempt
+that opened the editor.
+
+The first Android app slice does not claim reliable locked/background riding
+(LIBCU-35) or live recording/export (LIBCU-36). Production-adapter replay and
+runtime smoke are not live PEV acceptance: record the exact wheel/profile/firmware
+when hardware becomes available. Android framework contracts are documented in
+the [GATT API](https://developer.android.com/reference/android/bluetooth/BluetoothGatt)
+and [permission guide](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions).
+
+Devenv provisions API 35, Build Tools 35.0.0 and the existing NDK, accepting the
+SDK licenses for this composition. Its `CUTOUT_ANDROID_API`,
+`CUTOUT_ANDROID_BUILD_TOOLS` and `CUTOUT_JNA_VERSION` feed the Gradle build;
+`devenv.lock` owns the JDK, Gradle, Kotlin host compiler and SDK package pin.
+Android Gradle and Kotlin plugins are pinned in the Android build file. The
+JNA Android AAR supplies its native dispatcher; ABI filtering packages only
+`arm64-v8a`. No emulator or system image is provisioned.
+
+The runner serializes its own invocations, uses one Cargo compiler job and at
+most two Gradle workers, runs Kotlin compilation within the capped Gradle JVM,
+and disables persistent Gradle daemons. Rust uses the existing `target`;
+Android intermediates and native-library symlinks live in `target/android-tests`.
+Generated bindings remain under ignored `target/uniffi-smoke`, and Gradle uses
+its normal shared dependency cache. Do not run this concurrently with another
+Cutout native build or Simulator window.
+
+Each run retains logs and `receipt.json` in
+`target/test-logs/mobile-ffi-MODE-TIMESTAMP`. Device runs also produce JUnit XML,
+raw instrumentation output and at most 200 logcat lines per reported test PID.
+Receipts distinguish build, install and test outcomes and include the source
+revision/diff, tool versions, device identity, APK hashes and packaged native
+library hashes. An ADB exit code of zero alone does not pass instrumentation:
+all advertised tests must finish with explicit outcomes.
+
+The Android FFI CI workflow runs host smoke and ARM64 APK builds serially on an
+ARM64 Mac runner. Physical-device tests remain opt-in. Android cross-builds
+remain outside `project:quality-gate` under LIBCU-860. Remove obsolete run logs
+or `target/android-tests` only when no runner owns its lock; retain the relevant
+receipts and reuse the shared Cargo/Gradle caches rather than creating new ones.
+
 These checks exercise typed Aero, Falcon, and VESC sessions, captured
 notification bytes, telemetry snapshots, parser diagnostics, command refusal,
 and PEVCAP behavior through the generated boundary.

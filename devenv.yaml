@@ -23,4 +23,11 @@ nixpkgs:
     - android-sdk-ndk
     - platform-tools
     - android-sdk-platform-tools
+    - android-sdk-cmdline-tools
+    - android-sdk-build-tools
+    - android-sdk-platforms
+    - androidsdk
+    - build-tools
+    - cmdline-tools
+    - platforms
     - ndk
