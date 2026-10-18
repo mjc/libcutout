@@ -156,7 +156,7 @@ class Run:
             for source in (ROOT / "swift/CutoutMobile/Sources/CutoutMobile/Localizable.xcstrings",
                            ROOT / "swift/CutoutMobile/Apps/CutoutApp/Localizable.xcstrings"):
                 for key, entry in json.loads(source.read_text())["strings"].items():
-                    if key.startswith(("settings.", "actions.")):
+                    if key.startswith(("settings.", "actions.", "controls.")):
                         for language, value in entry.get("localizations", {}).items():
                             text = value.get("stringUnit", {}).get("value")
                             if text is not None:
