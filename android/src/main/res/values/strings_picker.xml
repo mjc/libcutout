@@ -24,7 +24,7 @@
     <string name="picker_try_again">Try again</string>
     <string name="picker_scan_again">Scan again</string>
     <string name="picker_connect">Connect</string>
-    <string name="picker_probe">Probe device</string>
+    <string name="picker_connect_device">Connect to %1$s</string>
     <string name="picker_details">Device details</string>
     <string name="picker_details_for_device">Details for %1$s</string>
     <string name="picker_device_identifier">Device identifier</string>

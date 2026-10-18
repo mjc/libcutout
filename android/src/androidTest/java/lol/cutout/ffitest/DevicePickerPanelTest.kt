@@ -4,6 +4,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ProgressBar
+import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.UUID
 import lol.cutout.BlePresentation
@@ -62,6 +63,34 @@ open class DevicePickerPanelTest {
             check(tagged<View>(panel, "picker_row:nordic-device") === nordicRow) { "RSSI update replaced the Nordic row" }
             check(tagged<View>(panel, "picker_row:ffe0-device") === ffe0Row) { "RSSI update replaced the FFE0 row" }
             check(findTag(panel, "picker_row:noise-device") == null) { "RSSI update exposed unrelated Bluetooth noise" }
+        }
+    }
+
+    @Test
+    fun pickerCardShowsOnlySwiftSummaryAndAction() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val candidate = candidate("device-internal-id", "VESC", "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+        val nearby = nearby(candidate, -54)
+        lateinit var panel: DevicePickerPanel
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            panel = DevicePickerPanel(context, {}, {}, {}, {})
+            panel.render(BlePresentation(devices = listOf(nearby)), permitted = true, enabled = true, hasScanned = true)
+
+            val card = tagged<View>(panel, "picker_row:device-internal-id")
+            val text = children(card).filterIsInstance<TextView>().map { it.text.toString() }.toList()
+            check(text.contains(candidate.displayName))
+            check(!text.contains(nearby.id)) { "Platform identifier leaked into the primary picker card" }
+            check(!text.contains(candidate.productCategory) && !text.contains(candidate.evidence) &&
+                !text.contains(candidate.detail)) { "Detection diagnostics appeared outside the details action" }
+            val connect = children(card).filterIsInstance<Button>().single()
+            check(connect.text == context.getString(lol.cutout.R.string.picker_connect))
+            check(connect.contentDescription == context.getString(lol.cutout.R.string.picker_connect_device, candidate.displayName))
+
+            val advertised = nearby.copy(advertisedName = "Advertised VESC board")
+            panel.render(BlePresentation(devices = listOf(advertised)), permitted = true, enabled = true, hasScanned = true)
+            check(tagged<TextView>(card, "picker_identity:device-internal-id").text == "Advertised VESC board") {
+                "A meaningful advertised identity should remain visible as secondary text"
+            }
         }
     }
 
