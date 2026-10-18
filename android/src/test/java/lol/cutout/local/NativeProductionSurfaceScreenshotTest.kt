@@ -146,6 +146,10 @@ private object NativeSurfaceCapture {
         append(" measured=${view.measuredWidth}x${view.measuredHeight} visibility=${view.visibility} alpha=${view.alpha}")
         if (view is android.widget.TextView) {
             append(" text=${view.text} size=${view.textSize} color=${view.currentTextColor} gravity=${view.gravity}")
+            append(" paintWidth=${view.paint.measureText(view.text.toString())}")
+            view.layout?.takeIf { it.lineCount > 0 }?.let {
+                append(" line=${it.getLineLeft(0)},${it.getLineWidth(0)},${it.getLineRight(0)} layoutWidth=${it.width}")
+            }
         }
         appendLine()
         if (view is android.view.ViewGroup) {
