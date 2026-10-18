@@ -180,6 +180,25 @@ open class RideDashboardProjectionTest {
     }
 
     @Test
+    fun speedAutoSizeFitsTextWithinConstrainedRideWidth() = withActivity { activity ->
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+        ride.render(productionReplayPresentation())
+        val width = (320 * activity.resources.displayMetrics.density).toInt()
+        val height = (760 * activity.resources.displayMetrics.density).toInt()
+        layout(ride, width, height)
+        ride.viewTreeObserver.dispatchOnPreDraw()
+
+        val speed = tagged<TextView>(ride, "ride.hero.speed")
+        val line = checkNotNull(speed.layout) { "Speed has no measured text layout after pre-draw" }
+        val availableWidth = speed.width - speed.compoundPaddingLeft - speed.compoundPaddingRight
+        check(line.lineCount == 1) { "Speed should stay on a single line at constrained phone width" }
+        check(line.getLineWidth(0) <= availableWidth + 1f) {
+            "Autosized speed text width ${line.getLineWidth(0)} exceeds its available width $availableWidth"
+        }
+    }
+
+    @Test
     fun largeTextUsesScrollableSingleColumnReadingsAndKeepsRustValuesAfterResize() = withActivity { activity ->
         val configuration = Configuration(activity.resources.configuration).apply { fontScale = 2f }
         val accessibleContext = activity.createConfigurationContext(configuration)

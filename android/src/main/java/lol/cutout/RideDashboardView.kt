@@ -420,6 +420,7 @@ class RideDashboardView(
         val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
             setSingleLine(true); maxLines = 1; maxWidth = maxSpeedWidth.coerceAtLeast(ui.dp(80))
+            setHorizontallyScrolling(false)
             setAutoSizeTextTypeUniformWithConfiguration(28, 170, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
@@ -437,6 +438,7 @@ class RideDashboardView(
             gravity = Gravity.CENTER; maxLines = 1; setSingleLine(true)
             minimumHeight = ui.dp(32)
             tag = "euc.ride.headroom.label"
+            setHorizontallyScrolling(false)
             setAutoSizeTextTypeUniformWithConfiguration(14, 24, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }.also { column.addView(it, LinearLayout.LayoutParams(-1, -2)) }
         column.addView(ui.space(12))
@@ -519,6 +521,7 @@ class RideDashboardView(
         val valueRow = ui.row().apply { isBaselineAligned = true; gravity = alignment or Gravity.TOP }
         val value = ui.text(initial, size, true).apply {
             setSingleLine(true); maxLines = 1
+            setHorizontallyScrolling(false)
             setAutoSizeTextTypeUniformWithConfiguration(16, size.toInt().coerceAtLeast(16), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         readingValues[key] = value
