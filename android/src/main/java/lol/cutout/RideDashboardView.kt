@@ -622,7 +622,7 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
             ((availableHeight - ui.dp(22)).coerceAtLeast(0)) * 2,
         )
         val arcHeight = (width / 2 - ui.dp(6)).coerceAtLeast(0)
-        val desiredHeight = arcHeight + ui.dp(28)
+        val desiredHeight = arcHeight + ui.dp(33)
         setMeasuredDimension(
             resolveSize(width, widthMeasureSpec),
             resolveSize(desiredHeight, heightMeasureSpec),
@@ -649,10 +649,11 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
         // This view contributes the arc frame, its 12pt gap, and endpoint row.
         val arcWidth = (minOf(ui.dp(360), width, ((height - ui.dp(22)) * 2).coerceAtLeast(0)) - ui.dp(12))
             .coerceAtLeast(0).toFloat()
-        val arcHeight = (height - ui.dp(28)).coerceAtLeast(0).toFloat()
+        val arcHeight = (height - ui.dp(33)).coerceAtLeast(0).toFloat()
         val diameter = arcWidth
         if (diameter <= line * 2) return
-        val centerY = arcHeight
+        // Keep the full 10dp stroke inside the view at the top of the semicircle.
+        val centerY = arcHeight + line / 2
         val rect = RectF((width - diameter) / 2f, centerY - diameter / 2f, (width + diameter) / 2f, centerY + diameter / 2f)
         track.strokeWidth = line; accent.strokeWidth = line
         canvas.drawArc(rect, 180f, 180f, false, track)
