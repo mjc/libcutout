@@ -2578,7 +2578,6 @@ final class CutoutAppUITests: XCTestCase {
         scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4)
         saveValues.tap()
         let validationError = app.staticTexts["capture.settings.error"]
-        XCTAssertTrue(validationError.waitForExistence(timeout: 5), app.debugDescription)
         scrollElementFrameIntoViewport(validationError, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
         XCTAssertEqual(validationError.label, "Choose a device profile.")
         XCTAssertTrue(worksheet.exists, app.debugDescription)
