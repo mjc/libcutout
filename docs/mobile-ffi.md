@@ -284,6 +284,68 @@ devenv tasks run test:kotlin-bindings-smoke
 
 The task uses the JNA jar pinned by the devenv environment.
 
+### Physical Android tests
+
+The host JVM and Android instrumentation use the same assertions in
+`tests/mobile-ffi/shared/MobileFfiSmoke.kt`. The Android wrapper supplies an
+isolated app-private temporary directory. It exercises generated Kotlin/JNA
+calls into the actual ARM64 Rust library: session identity, settings snapshots,
+owned frame buffers, camera command outcomes, typed refusals, SQLite writes and
+reopen, and explicit handle shutdown. Inputs are synthetic; no wheel or camera
+connection is made.
+
+```console
+devenv tasks run test:mobile-ffi-runner
+devenv tasks run test:kotlin-bindings-smoke
+devenv tasks run build:android-tests
+CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 devenv tasks run test:android-device
+```
+
+The address above is an example. Use `devenv shell -- adb devices -l` to select
+the current USB serial or wireless endpoint explicitly. With multiple transports,
+the runner refuses to guess. It checks the physical phone's serial, model, API
+and ABI before building, before installing, and before testing. It will not fall
+back to another device if the selected phone is unauthorized, offline or absent.
+For a previously authorized TCP connection, reconnect with
+`devenv shell -- adb connect ADDRESS:5555`. Rebooting the phone can require
+re-enabling TCP debugging over USB.
+
+The minimal app and instrumentation packages are `lol.cutout.ffitest` and
+`lol.cutout.ffitest.test`. Installation updates only those packages, preserves
+their app data, and never clears production Cutout data. Each test removes its
+own temporary storage after closing native handles. Uninstall these test
+packages explicitly with ADB when no longer needed.
+
+Devenv provisions API 35, Build Tools 35.0.0 and the existing NDK, accepting the
+SDK licenses for this composition. Its `CUTOUT_ANDROID_API`,
+`CUTOUT_ANDROID_BUILD_TOOLS` and `CUTOUT_JNA_VERSION` feed the Gradle build;
+`devenv.lock` owns the JDK, Gradle, Kotlin host compiler and SDK package pin.
+Android Gradle and Kotlin plugins are pinned in the Android build file. The
+JNA Android AAR supplies its native dispatcher; ABI filtering packages only
+`arm64-v8a`. No emulator or system image is provisioned.
+
+The runner serializes its own invocations, uses one Cargo compiler job and at
+most two Gradle workers, runs Kotlin compilation within the capped Gradle JVM,
+and disables persistent Gradle daemons. Rust uses the existing `target`;
+Android intermediates and native-library symlinks live in `target/android-tests`.
+Generated bindings remain under ignored `target/uniffi-smoke`, and Gradle uses
+its normal shared dependency cache. Do not run this concurrently with another
+Cutout native build or Simulator window.
+
+Each run retains logs and `receipt.json` in
+`target/test-logs/mobile-ffi-MODE-TIMESTAMP`. Device runs also produce JUnit XML,
+raw instrumentation output and at most 200 logcat lines per reported test PID.
+Receipts distinguish build, install and test outcomes and include the source
+revision/diff, tool versions, device identity, APK hashes and packaged native
+library hashes. An ADB exit code of zero alone does not pass instrumentation:
+all advertised tests must finish with explicit outcomes.
+
+The Android FFI CI workflow runs host smoke and ARM64 APK builds serially on an
+ARM64 Mac runner. Physical-device tests remain opt-in. Android cross-builds
+remain outside `project:quality-gate` under LIBCU-860. Remove obsolete run logs
+or `target/android-tests` only when no runner owns its lock; retain the relevant
+receipts and reuse the shared Cargo/Gradle caches rather than creating new ones.
+
 These checks exercise typed Aero, Falcon, and VESC sessions, captured
 notification bytes, telemetry snapshots, parser diagnostics, command refusal,
 and PEVCAP behavior through the generated boundary.
