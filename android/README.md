@@ -26,8 +26,16 @@ Keep one native build active. Reuse the existing Cargo/Gradle caches; the shared
 runner caps Cargo at one job and Gradle at two workers/1536 MiB. `build:android-app`
 is an alias for the existing APK build task, not a separate native pipeline.
 
-The app's Devices, Ride and Configuration screens use the production Bluetooth
-adapter and Rust-owned session/settings projections. Scanning requests Nearby
+The app opens on Devices. Ride becomes available with a Rust connection attempt;
+Settings renders the shared ordinary-configuration catalog. The panels follow
+the current SwiftUI picker, ride instruments and grouped settings, with native
+Android controls and system appearance. They use the production Bluetooth
+adapter and Rust-owned projections. Scanning requests Nearby
 Devices permission. Background ride survival and live capture/export are separate
 work under LIBCU-35/36. Exact-wheel live acceptance is still required for LIBCU-34.
 See [the mobile boundary contract](../docs/mobile-ffi.md#android-app-and-physical-tests).
+
+Instrumentation renders the existing public EUC capture through `PevSession` to
+exercise the actual Ride view. Picker tests consume Rust discovery candidates;
+settings tests inject only the native submission callback, so they cannot send
+commands to a wheel. Presentation fixtures are excluded from the production APK.
