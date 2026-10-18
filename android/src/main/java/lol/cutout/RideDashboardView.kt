@@ -456,7 +456,7 @@ class RideDashboardView(
             contentDescription = context.getString(R.string.pwm_headroom)
             tag = "euc.ride.headroom"
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        }.also { column.addView(it, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        }.also { column.addView(it, LinearLayout.LayoutParams(-1, -2)) }
         return column
     }
 
@@ -609,6 +609,26 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
     private val unit = Paint(primary)
     private val endpoint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ui.muted; textAlign = Paint.Align.CENTER; typeface = android.graphics.Typeface.create("sans-serif-medium", 0) }
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (barOnly) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            return
+        }
+        val availableWidth = MeasureSpec.getSize(widthMeasureSpec)
+        val availableHeight = MeasureSpec.getSize(heightMeasureSpec)
+        val width = minOf(
+            ui.dp(360),
+            availableWidth,
+            ((availableHeight - ui.dp(22)).coerceAtLeast(0)) * 2,
+        )
+        val arcHeight = (width / 2 - ui.dp(6)).coerceAtLeast(0)
+        val desiredHeight = arcHeight + ui.dp(28)
+        setMeasuredDimension(
+            resolveSize(width, widthMeasureSpec),
+            resolveSize(desiredHeight, heightMeasureSpec),
+        )
+    }
+
     fun update(value: MobileRiderHeadroomValueDto?, percentage: Int?, display: String) {
         this.value = value; this.percentage = percentage; this.display = display
         contentDescription = "${context.getString(R.string.pwm_headroom)} $display"
@@ -625,13 +645,14 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
         }
         // Match Swift's 0..100 semicircle while fitting the fixed area at large font scales.
         val line = ui.dp(10).toFloat()
-        // Swift sizes the arc at min(360pt, availableWidth - 12pt,
-        // 2 * (gaugeHeight - 28pt)); its surrounding title and endpoint row
-        // consume the remaining 60pt in the parent gauge geometry.
-        val diameter = (minOf(ui.dp(360).toFloat(), width.toFloat(), (height - ui.dp(28)) * 2f) - ui.dp(12))
-            .coerceAtLeast(0f)
+        // The title and 12pt spacing are siblings in the centered parent column.
+        // This view contributes the arc frame, its 12pt gap, and endpoint row.
+        val arcWidth = (minOf(ui.dp(360), width, ((height - ui.dp(22)) * 2).coerceAtLeast(0)) - ui.dp(12))
+            .coerceAtLeast(0).toFloat()
+        val arcHeight = (height - ui.dp(28)).coerceAtLeast(0).toFloat()
+        val diameter = arcWidth
         if (diameter <= line * 2) return
-        val centerY = height - ui.dp(24).toFloat()
+        val centerY = arcHeight
         val rect = RectF((width - diameter) / 2f, centerY - diameter / 2f, (width + diameter) / 2f, centerY + diameter / 2f)
         track.strokeWidth = line; accent.strokeWidth = line
         canvas.drawArc(rect, 180f, 180f, false, track)
@@ -652,8 +673,10 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
             canvas.drawText(number, left + numberWidth / 2f, baseline, primary)
             canvas.drawText("%", left + numberWidth + gap + unitWidth / 2f, baseline, unit)
         }
-        val endBaseline = centerY + ui.dp(16).toFloat()
+        val endBaseline = centerY + ui.dp(24).toFloat()
+        endpoint.textAlign = Paint.Align.LEFT
         canvas.drawText("0", rect.left, endBaseline, endpoint)
+        endpoint.textAlign = Paint.Align.RIGHT
         canvas.drawText("100", rect.right, endBaseline, endpoint)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
     }
