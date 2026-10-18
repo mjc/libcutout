@@ -9,8 +9,8 @@ use crate::storage::{
 use cutout_core::{
     CaptureLabelState, CaptureSettingsObservation, CaptureSettingsObservationError, GattChannel,
     GattFingerprint, MAX_CAPTURE_SETTINGS_OBSERVATIONS, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
-    PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapRecord, PevcapResolvedIdentity,
-    TransportWriteLimit, WallClockUnixTimestamp,
+    PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapReader, PevcapRecord,
+    PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -1781,7 +1781,11 @@ fn export_database_capture_from_pages(
     let mut created = false;
     let result = (|| {
         let file = sync_parent_directory_after(path, || {
-            let file = OpenOptions::new().create_new(true).write(true).open(path)?;
+            let file = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(path)?;
             created = true;
             Ok(file)
         })?;
@@ -1825,9 +1829,20 @@ fn export_database_capture_from_pages(
         }
 
         output.flush().map_err(|error| error.to_string())?;
-        let file = output
+        let mut file = output
             .into_inner()
             .map_err(|error| error.into_error().to_string())?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| error.to_string())?;
+        let mut reader =
+            PevcapReader::new(&mut file, cutout_core::PevcapEncoding::Jsonl).map_err(|error| {
+                format!("stored capture is not valid current-format PEVCAP: {error}")
+            })?;
+        while reader
+            .next_event()
+            .map_err(|error| format!("stored capture is not valid current-format PEVCAP: {error}"))?
+            .is_some()
+        {}
         file.sync_all().map_err(|error| error.to_string())?;
         state
             .physical_bytes_written

@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn database_export_rejects_current_record_with_embedded_music_and_removes_destination() {
+    for music in [
+        serde_json::Value::Null,
+        serde_json::json!({"title": "private"}),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let header = capture_header(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+        )
+        .unwrap();
+        let id = database
+            .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 0)
+            .unwrap();
+        let record = tests::stationary_record(1);
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&record.to_jsonl_line().unwrap()).unwrap();
+        payload["record"]["music"] = music;
+        database
+            .append_live_capture_record(id, record, serde_json::to_vec(&payload).unwrap())
+            .unwrap();
+        database.finish_live_capture(id, 2).unwrap();
+
+        let destination = directory.path().join("export.jsonl");
+        assert!(database.export_live_capture(id, &destination).is_err());
+        assert!(!destination.exists());
+        database.shutdown().unwrap();
+    }
+}
+
+#[test]
 fn database_export_preserves_exact_multipage_digest_data_and_closed_labels() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
