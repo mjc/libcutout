@@ -5638,6 +5638,10 @@ pub struct MobileTelemetrySnapshotDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vesc_drivetrain_context: Option<MobileVescDrivetrainContextDto>,
 
+    /// Immutable user configurations for explicit controller targets, not effective CAN telemetry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub configured_vesc_drivetrains: Vec<MobileVescDrivetrainContextDto>,
+
     /// Conservative operating state inferred from currently available telemetry.
     pub operating_state: RideOperatingState,
 
@@ -18956,6 +18960,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             // Bare telemetry has no persisted profile or connection identity. The
             // connection-aware step/snapshot owners attach their canonical context.
             vesc_drivetrain_context: None,
+            configured_vesc_drivetrains: Vec::new(),
             operating_state,
             vesc_operating_mode: snapshot.operating_mode.map(Into::into),
             vesc_warning: snapshot.ride_warning.map(Into::into),
@@ -26426,6 +26431,7 @@ mod tests {
         MobileTelemetrySnapshotDto {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             vesc_drivetrain_context: None,
+            configured_vesc_drivetrains: Vec::new(),
             speed_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             battery_current_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             voltage_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),

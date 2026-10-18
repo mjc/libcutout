@@ -1,4 +1,4 @@
-//! Checked local VESC drivetrain configuration, independent of controller writes.
+//! Checked controller-scoped VESC geometry, independent of controller writes.
 
 use crate::Distance;
 
@@ -264,9 +264,52 @@ pub enum VescDrivetrainSource {
     UserConfigured,
 }
 
-/// A checked local drivetrain together with its committed revision.
+/// Geometry key scoped by the enclosing installed device, routing target and association.
+///
+/// A key supplied by a consumer is configuration, not proof of controller identity.
+/// CAN consumers must establish the matching association before using it for live metrics.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VescDrivetrainTarget {
+    request: crate::RequestTarget,
+    controller_uuid: Option<[u8; 12]>,
+}
+impl VescDrivetrainTarget {
+    /// Existing device-local configuration, including devices without a hardware UUID.
+    pub const LOCAL: Self = Self {
+        request: crate::RequestTarget::Local,
+        controller_uuid: None,
+    };
+
+    /// Checks a CAN address and its explicit controller association.
+    ///
+    /// The VESC firmware-version reply carries a twelve-byte UUID. A missing/zero UUID
+    /// cannot safely bind saved secondary geometry. Broadcast address 255 is not a controller.
+    #[must_use]
+    pub fn can(controller_id: crate::VescControllerId, controller_uuid: [u8; 12]) -> Option<Self> {
+        if controller_id.get() == 255 || controller_uuid == [0; 12] {
+            return None;
+        }
+        Some(Self {
+            request: crate::RequestTarget::VescCanController { controller_id },
+            controller_uuid: Some(controller_uuid),
+        })
+    }
+    /// Existing routing identity; this alone is not stable hardware identity.
+    #[must_use]
+    pub const fn request_target(self) -> crate::RequestTarget {
+        self.request
+    }
+    /// Association retained with CAN geometry; absent for legacy local profiles.
+    #[must_use]
+    pub const fn controller_uuid(self) -> Option<[u8; 12]> {
+        self.controller_uuid
+    }
+}
+
+/// A checked controller drivetrain together with its committed target-scoped revision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescDrivetrainProfile {
+    target: VescDrivetrainTarget,
     value: VescDrivetrain,
     revision: VescDrivetrainRevision,
 }
@@ -274,7 +317,25 @@ impl VescDrivetrainProfile {
     /// Retains the durable owner's revision without promoting user input to device proof.
     #[must_use]
     pub const fn user_configured(value: VescDrivetrain, revision: VescDrivetrainRevision) -> Self {
-        Self { value, revision }
+        Self::for_target(VescDrivetrainTarget::LOCAL, value, revision)
+    }
+    /// Retains a controller association without promoting configuration to hardware proof.
+    #[must_use]
+    pub const fn for_target(
+        target: VescDrivetrainTarget,
+        value: VescDrivetrain,
+        revision: VescDrivetrainRevision,
+    ) -> Self {
+        Self {
+            target,
+            value,
+            revision,
+        }
+    }
+    /// Target to which both geometry and revision belong.
+    #[must_use]
+    pub const fn target(self) -> VescDrivetrainTarget {
+        self.target
     }
     /// Canonical geometry and original editable diameter.
     #[must_use]
@@ -329,6 +390,24 @@ fn format_thousandths(value: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controller_drivetrain_targets_reject_broadcast_and_missing_association() {
+        assert!(VescDrivetrainTarget::can(crate::VescControllerId::new(255), [1; 12]).is_none());
+        assert!(VescDrivetrainTarget::can(crate::VescControllerId::new(7), [0; 12]).is_none());
+        let first = VescDrivetrainTarget::can(crate::VescControllerId::new(7), [1; 12]).unwrap();
+        let replaced = VescDrivetrainTarget::can(crate::VescControllerId::new(7), [2; 12]).unwrap();
+        let value = VescDrivetrain::parse("250", "15", "2.5").unwrap();
+        let profile = VescDrivetrainProfile::for_target(
+            first,
+            value,
+            VescDrivetrainRevision::new(1).unwrap(),
+        );
+        assert_ne!(first, replaced);
+        assert_ne!(first, VescDrivetrainTarget::LOCAL);
+        assert_eq!(profile.target(), first);
+        assert_eq!(profile.source(), VescDrivetrainSource::UserConfigured);
+    }
 
     #[test]
     fn user_drivetrain_revision_is_nonzero_and_never_wraps() {

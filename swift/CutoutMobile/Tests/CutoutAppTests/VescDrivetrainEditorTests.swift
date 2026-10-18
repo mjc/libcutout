@@ -150,6 +150,7 @@ final class VescDrivetrainEditorTests: XCTestCase {
     func testUnsupportedAndStorageFailuresRemainGeneralErrors() async throws {
         for (error, key) in [
             (MobileVescDrivetrainError.UnsupportedDevice, "vesc.drivetrain.error.unsupported"),
+            (.InvalidControllerTarget, "vesc.drivetrain.error.unsupported"),
             (.PersistenceUnavailable, "vesc.drivetrain.error.persistence"),
         ] {
             let editor = VescDrivetrainEditor(

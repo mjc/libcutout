@@ -174,6 +174,40 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.telemetry?.at, MonotonicMilliseconds(5_000))
     }
 
+    func testControllerGeometryBridgeKeepsCanConfigurationSeparateFromLocalTelemetry() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(9_000) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let identifier = "scooter-geometry-\(UUID().uuidString)"
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        _ = try await core.selectVehicleKind(.scooter, token: token)
+        let local = MobileVescDrivetrainDraft(wheelDiameterMm: "250", motorPolePairs: "15", motorToWheelRatio: "1")
+        let can = MobileVescDrivetrainTargetDto.can(controllerId: 7, controllerUuid: Data(repeating: 1, count: 12))
+        let secondary = MobileVescDrivetrainDraft(wheelDiameterMm: "200", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try state.saveConnectionVescDrivetrain(token: token, draft: local, updatedAtMs: 1)
+        let original = try XCTUnwrap(state.connectionTelemetrySnapshot(token: token))
+        _ = try state.saveConnectionVescControllerDrivetrain(
+            token: token, target: can, draft: secondary, updatedAtMs: 2)
+        let configured = try XCTUnwrap(state.connectionTelemetrySnapshot(token: token))
+        XCTAssertEqual(configured.vescDrivetrainContext, original.vescDrivetrainContext)
+        XCTAssertEqual(configured.speed, original.speed)
+        XCTAssertEqual(configured.speedObservedAtMs, original.speedObservedAtMs)
+        XCTAssertEqual(configured.configuredVescDrivetrains.count, 2)
+        XCTAssertEqual(configured.configuredVescDrivetrains[1].target, can)
+        XCTAssertEqual(configured.configuredVescDrivetrains[1].motorToWheelRatioMilli, 2_500)
+        let next = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        let replaced = MobileVescDrivetrainTargetDto.can(controllerId: 7, controllerUuid: Data(repeating: 2, count: 12))
+        XCTAssertNil(try state.restoreConnectionVescControllerDrivetrain(token: next, target: replaced))
+        XCTAssertEqual(try state.restoreConnectionVescControllerDrivetrain(token: next, target: can), secondary)
+        XCTAssertEqual(try state.restoreConnectionVescDrivetrain(token: next), local)
+    }
+
     func testVescDrivetrainLoadSurfacesMissingDatabaseInsteadOfUnknownGeometry() async throws {
         let core = CutoutSessionCore(
             clock: MonotonicClock { MonotonicMilliseconds(1) },

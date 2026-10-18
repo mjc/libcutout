@@ -34,6 +34,50 @@ impl From<cutout_core::VescDrivetrainProfile> for MobileVescDrivetrainDraft {
     }
 }
 
+/// Explicit geometry association. It does not attest to an observed CAN controller.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileVescDrivetrainTargetDto {
+    /// The connected device's existing local profile.
+    Local,
+    /// A controller address plus its separately established hardware association.
+    Can {
+        /// Unicast CAN controller address.
+        controller_id: u8,
+        /// Twelve-byte VESC firmware-version UUID; never inferred from the address.
+        controller_uuid: Vec<u8>,
+    },
+}
+impl TryFrom<MobileVescDrivetrainTargetDto> for cutout_core::VescDrivetrainTarget {
+    type Error = MobileVescDrivetrainError;
+    fn try_from(value: MobileVescDrivetrainTargetDto) -> Result<Self, Self::Error> {
+        match value {
+            MobileVescDrivetrainTargetDto::Local => Ok(Self::LOCAL),
+            MobileVescDrivetrainTargetDto::Can {
+                controller_id,
+                controller_uuid,
+            } => {
+                let uuid = controller_uuid
+                    .try_into()
+                    .map_err(|_| MobileVescDrivetrainError::InvalidControllerTarget)?;
+                Self::can(cutout_core::VescControllerId::new(controller_id), uuid)
+                    .ok_or(MobileVescDrivetrainError::InvalidControllerTarget)
+            }
+        }
+    }
+}
+impl From<cutout_core::VescDrivetrainTarget> for MobileVescDrivetrainTargetDto {
+    fn from(value: cutout_core::VescDrivetrainTarget) -> Self {
+        match value.request_target() {
+            cutout_core::RequestTarget::Local => Self::Local,
+            cutout_core::RequestTarget::VescCanController { controller_id } => Self::Can {
+                controller_id: controller_id.get(),
+                controller_uuid: value.controller_uuid().map(Vec::from).unwrap_or_default(),
+            },
+        }
+    }
+}
+
 /// Origin of a local calculation profile, independent of hardware verification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,12 +86,14 @@ pub enum MobileVescDrivetrainSourceDto {
     UserConfigured,
 }
 
-/// Immutable effective geometry associated with one connection's telemetry.
+/// Immutable geometry configuration associated with one connection step.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileVescDrivetrainContextDto {
-    /// Attempt that produced this context; revisions are scoped to its device.
+    /// Explicit target association; does not establish a live CAN telemetry source.
+    pub target: MobileVescDrivetrainTargetDto,
+    /// Attempt that produced this context; association is scoped to its installed device.
     pub connection_attempt: MobileConnectionAttemptTokenDto,
-    /// Committed, nonzero per-device profile revision.
+    /// Committed, nonzero revision for this device and controller target.
     pub revision: u64,
     /// User input is not a controller readback or a capability grant.
     pub source: MobileVescDrivetrainSourceDto,
@@ -70,6 +116,7 @@ impl MobileVescDrivetrainContextDto {
         let geometry = value.geometry();
         Self {
             connection_attempt: token.into(),
+            target: profile.target().into(),
             revision: profile.revision().get(),
             source: match profile.source() {
                 cutout_core::VescDrivetrainSource::UserConfigured => {
@@ -86,6 +133,9 @@ impl MobileVescDrivetrainContextDto {
 /// Failure of a local geometry operation; no controller write is performed.
 #[derive(Debug, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileVescDrivetrainError {
+    /// Broadcast, missing/zero hardware association or wrong UUID length.
+    #[error("invalid or unassociated controller target")]
+    InvalidControllerTarget,
     /// Invalid diameter text or representability.
     #[error("invalid wheel diameter")]
     InvalidWheelDiameter,
@@ -460,6 +510,19 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
             .map(|(profile, token)| MobileVescDrivetrainContextDto::from_profile(profile, token));
         let mut telemetry: MobileTelemetrySnapshotDto = value.telemetry.into();
         telemetry.vesc_drivetrain_context = context;
+        telemetry.configured_vesc_drivetrains = value
+            .session
+            .connection
+            .token
+            .as_ref()
+            .map(|token| {
+                value
+                    .configured_vesc_drivetrains
+                    .iter()
+                    .map(|profile| MobileVescDrivetrainContextDto::from_profile(*profile, token))
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             session: value.session.into(),
             result: cutout_protocols::ConcreteSessionStepResultDto::from(value.result).into(),
@@ -581,18 +644,39 @@ impl CutoutSessionStateHandle {
         draft: MobileVescDrivetrainDraft,
         updated_at_ms: u64,
     ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
+        self.save_connection_vesc_controller_drivetrain(
+            token,
+            MobileVescDrivetrainTargetDto::Local,
+            draft,
+            updated_at_ms,
+        )
+    }
+
+    /// Saves one controller's geometry; association is configuration, not live identity proof.
+    ///
+    /// # Errors
+    /// Returns target/field validation, stale attempt or durable storage failure.
+    pub fn save_connection_vesc_controller_drivetrain(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        target: MobileVescDrivetrainTargetDto,
+        draft: MobileVescDrivetrainDraft,
+        updated_at_ms: u64,
+    ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
+        let target = target.try_into()?;
         let value = cutout_core::VescDrivetrain::parse(
             &draft.wheel_diameter_mm,
             &draft.motor_pole_pairs,
             &draft.motor_to_wheel_ratio,
         )
         .map_err(MobileVescDrivetrainError::from)?;
-        self.save_drivetrain_with_persistence(token, value, |selection| {
+        self.save_controller_drivetrain_with_persistence(token, target, value, |selection| {
             self.diagnostic_database
                 .as_ref()
                 .ok_or(MobileVescDrivetrainError::PersistenceUnavailable)?
-                .save_user_vesc_drivetrain(
+                .save_user_vesc_controller_drivetrain(
                     selection.platform_identifier(),
+                    selection.target(),
                     selection.drivetrain(),
                     updated_at_ms,
                 )
@@ -614,6 +698,11 @@ impl CutoutSessionStateHandle {
             return None;
         }
         let mut snapshot: MobileTelemetrySnapshotDto = inner.telemetry_snapshot()?.into();
+        snapshot.configured_vesc_drivetrains = inner
+            .configured_vesc_drivetrains(&token)
+            .iter()
+            .map(|profile| MobileVescDrivetrainContextDto::from_profile(*profile, &token))
+            .collect();
         snapshot.vesc_drivetrain_context = inner
             .vesc_drivetrain_context(&token)
             .map(|profile| MobileVescDrivetrainContextDto::from_profile(profile, &token));
@@ -639,11 +728,27 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
     ) -> Result<Option<MobileVescDrivetrainDraft>, MobileVescDrivetrainError> {
-        self.restore_drivetrain_with_load(token, |identifier| {
+        self.restore_connection_vesc_controller_drivetrain(
+            token,
+            MobileVescDrivetrainTargetDto::Local,
+        )
+    }
+
+    /// Explicitly restores only the requested association; never guesses a secondary from CAN ID.
+    ///
+    /// # Errors
+    /// Returns unassociated target, stale attempt, unsupported device or storage failure.
+    pub fn restore_connection_vesc_controller_drivetrain(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        target: MobileVescDrivetrainTargetDto,
+    ) -> Result<Option<MobileVescDrivetrainDraft>, MobileVescDrivetrainError> {
+        let target = target.try_into()?;
+        self.restore_controller_drivetrain_with_load(token, target, |identifier| {
             self.diagnostic_database
                 .as_ref()
                 .ok_or(MobileVescDrivetrainError::PersistenceUnavailable)?
-                .user_vesc_drivetrain(identifier)
+                .user_vesc_controller_drivetrain(identifier, target)
                 .map_err(|error| MobileVescDrivetrainError::Persistence {
                     error: crate::map_ride_database_error(error),
                 })
@@ -782,9 +887,44 @@ impl CutoutSessionStateHandle {
 }
 
 impl CutoutSessionStateHandle {
+    #[cfg(test)]
     fn save_drivetrain_with_persistence(
         &self,
         token: MobileConnectionAttemptTokenDto,
+        value: cutout_core::VescDrivetrain,
+        persist: impl FnOnce(
+            &cutout_protocols::VescDrivetrainSelection,
+        )
+            -> Result<cutout_core::VescDrivetrainProfile, MobileVescDrivetrainError>,
+    ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
+        self.save_controller_drivetrain_with_persistence(
+            token,
+            cutout_core::VescDrivetrainTarget::LOCAL,
+            value,
+            persist,
+        )
+    }
+    #[cfg(test)]
+    fn restore_drivetrain_with_load(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        load: impl FnOnce(
+            &str,
+        ) -> Result<
+            Option<cutout_core::VescDrivetrainProfile>,
+            MobileVescDrivetrainError,
+        >,
+    ) -> Result<Option<MobileVescDrivetrainDraft>, MobileVescDrivetrainError> {
+        self.restore_controller_drivetrain_with_load(
+            token,
+            cutout_core::VescDrivetrainTarget::LOCAL,
+            load,
+        )
+    }
+    fn save_controller_drivetrain_with_persistence(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        target: cutout_core::VescDrivetrainTarget,
         value: cutout_core::VescDrivetrain,
         persist: impl FnOnce(
             &cutout_protocols::VescDrivetrainSelection,
@@ -803,7 +943,7 @@ impl CutoutSessionStateHandle {
                 return Err(MobileVescDrivetrainError::ConnectionUnavailable);
             }
             inner
-                .prepare_vesc_drivetrain_selection(&token, value)
+                .prepare_vesc_controller_drivetrain_selection(&token, target, value)
                 .ok_or(MobileVescDrivetrainError::UnsupportedDevice)?
         };
         let profile = persist(&selection)?;
@@ -816,9 +956,10 @@ impl CutoutSessionStateHandle {
         Ok(value.into())
     }
 
-    fn restore_drivetrain_with_load(
+    fn restore_controller_drivetrain_with_load(
         &self,
         token: MobileConnectionAttemptTokenDto,
+        target: cutout_core::VescDrivetrainTarget,
         load: impl FnOnce(
             &str,
         ) -> Result<
@@ -832,7 +973,7 @@ impl CutoutSessionStateHandle {
             if inner.snapshot().connection.token.as_ref() != Some(&token) {
                 return Err(MobileVescDrivetrainError::ConnectionUnavailable);
             }
-            if let Some(value) = inner.user_vesc_drivetrain(&token) {
+            if let Some(value) = inner.user_vesc_controller_drivetrain(&token, target) {
                 return Ok(Some(value.into()));
             }
         }
@@ -841,13 +982,20 @@ impl CutoutSessionStateHandle {
         if inner.snapshot().connection.token.as_ref() != Some(&token) {
             return Err(MobileVescDrivetrainError::ConnectionUnavailable);
         }
+        if loaded.is_some_and(|profile| profile.target() != target) {
+            return Err(MobileVescDrivetrainError::InvalidControllerTarget);
+        }
         if let Some(value) = loaded
-            && !inner.restore_vesc_drivetrain(&token, value)
-            && inner.user_vesc_drivetrain(&token).is_none()
+            && !inner.restore_vesc_controller_drivetrain(&token, value)
+            && inner
+                .user_vesc_controller_drivetrain(&token, target)
+                .is_none()
         {
             return Err(MobileVescDrivetrainError::UnsupportedDevice);
         }
-        Ok(inner.user_vesc_drivetrain(&token).map(Into::into))
+        Ok(inner
+            .user_vesc_controller_drivetrain(&token, target)
+            .map(Into::into))
     }
 
     fn select_vehicle_kind_with_persistence(
@@ -1244,6 +1392,176 @@ mod tests {
             }
         }
         let _ = std::fs::remove_file(capture_path);
+    }
+
+    #[test]
+    fn controller_drivetrain_ffi_keeps_targets_revisions_and_original_step_context() {
+        let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-controller-drivetrain-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let handle = CutoutSessionStateHandle::with_database(database.clone());
+        let token = absent_vesc_application(&handle, "scooter");
+        let can = MobileVescDrivetrainTargetDto::Can {
+            controller_id: 7,
+            controller_uuid: vec![1; 12],
+        };
+        let replacement = MobileVescDrivetrainTargetDto::Can {
+            controller_id: 7,
+            controller_uuid: vec![2; 12],
+        };
+        handle
+            .save_connection_vesc_drivetrain(token.clone(), drivetrain_draft(), 1)
+            .unwrap();
+        let measured = drivetrain_erpm(&handle, token.clone(), false, 3_001);
+        let secondary = MobileVescDrivetrainDraft {
+            wheel_diameter_mm: "250".into(),
+            motor_pole_pairs: "15".into(),
+            motor_to_wheel_ratio: "1.5".into(),
+        };
+        handle
+            .save_connection_vesc_controller_drivetrain(
+                token.clone(),
+                can.clone(),
+                secondary.clone(),
+                2,
+            )
+            .unwrap();
+        let before = handle.connection_telemetry_snapshot(token.clone()).unwrap();
+        assert_eq!(before.speed, measured.telemetry.speed);
+        assert_eq!(
+            before.speed_observed_at_ms,
+            measured.telemetry.speed_observed_at_ms
+        );
+        assert_eq!(before.configured_vesc_drivetrains.len(), 2);
+        assert_eq!(
+            before.vesc_drivetrain_context.as_ref().unwrap().target,
+            MobileVescDrivetrainTargetDto::Local
+        );
+        assert_eq!(before.configured_vesc_drivetrains[1].target, can);
+        assert_eq!(before.configured_vesc_drivetrains[1].revision, 1);
+        assert_eq!(before.configured_vesc_drivetrains[1].motor_pole_pairs, 15);
+        assert_eq!(
+            before.configured_vesc_drivetrains[1].motor_to_wheel_ratio_milli,
+            1500
+        );
+        assert!(before.trip_distance.is_none());
+        let original_json = serde_json::to_value(&before).unwrap();
+        handle
+            .save_connection_vesc_controller_drivetrain(token.clone(), can.clone(), secondary, 3)
+            .unwrap();
+        assert_eq!(
+            handle.connection_telemetry_snapshot(token.clone()).unwrap(),
+            before
+        );
+        handle
+            .save_connection_vesc_controller_drivetrain(
+                token.clone(),
+                can.clone(),
+                drivetrain_draft(),
+                4,
+            )
+            .unwrap();
+        let after = handle.connection_telemetry_snapshot(token.clone()).unwrap();
+        assert_eq!(after.configured_vesc_drivetrains[1].revision, 2);
+        assert_eq!(after.speed, before.speed);
+        assert_eq!(serde_json::to_value(&before).unwrap(), original_json);
+        assert_eq!(
+            original_json["configured_vesc_drivetrains"][1]["target"]["can"]["controller_id"],
+            7
+        );
+        assert_eq!(
+            original_json["configured_vesc_drivetrains"][1]["source"],
+            "user_configured"
+        );
+        assert_controller_drivetrain_reconnect(&handle, token, can, replacement);
+        database.shutdown().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn assert_controller_drivetrain_reconnect(
+        handle: &CutoutSessionStateHandle,
+        token: MobileConnectionAttemptTokenDto,
+        can: MobileVescDrivetrainTargetDto,
+        replacement: MobileVescDrivetrainTargetDto,
+    ) {
+        let next = handle
+            .begin_connection_attempt("scooter".into(), 0)
+            .token
+            .unwrap();
+        assert_eq!(
+            handle
+                .restore_connection_vesc_controller_drivetrain(next.clone(), replacement)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            handle
+                .restore_connection_vesc_controller_drivetrain(next.clone(), can)
+                .unwrap(),
+            Some(drivetrain_draft())
+        );
+        assert_eq!(
+            handle.restore_connection_vesc_drivetrain(next).unwrap(),
+            Some(drivetrain_draft())
+        );
+        assert_eq!(
+            handle.save_connection_vesc_controller_drivetrain(
+                token,
+                MobileVescDrivetrainTargetDto::Local,
+                drivetrain_draft(),
+                5
+            ),
+            Err(MobileVescDrivetrainError::ConnectionUnavailable)
+        );
+    }
+
+    #[test]
+    fn controller_drivetrain_ffi_rejects_unassociated_targets_before_storage() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "scooter");
+        for (id, bytes) in [
+            (255, vec![1; 12]),
+            (7, vec![0; 12]),
+            (7, vec![1; 11]),
+            (7, Vec::new()),
+        ] {
+            let target = MobileVescDrivetrainTargetDto::Can {
+                controller_id: id,
+                controller_uuid: bytes,
+            };
+            assert_eq!(
+                handle.save_connection_vesc_controller_drivetrain(
+                    token.clone(),
+                    target,
+                    drivetrain_draft(),
+                    1
+                ),
+                Err(MobileVescDrivetrainError::InvalidControllerTarget)
+            );
+        }
+    }
+
+    #[test]
+    fn controller_drivetrain_restore_rejects_foreign_durable_receipt() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "scooter");
+        let target =
+            cutout_core::VescDrivetrainTarget::can(cutout_core::VescControllerId::new(7), [1; 12])
+                .unwrap();
+        assert_eq!(
+            handle.restore_controller_drivetrain_with_load(token, target, |_| Ok(Some(
+                saved_drivetrain(
+                    cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap(),
+                    1
+                )
+            ))),
+            Err(MobileVescDrivetrainError::InvalidControllerTarget)
+        );
     }
 
     #[test]

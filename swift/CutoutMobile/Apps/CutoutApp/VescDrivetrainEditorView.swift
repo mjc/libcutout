@@ -149,7 +149,7 @@ final class VescDrivetrainEditor: Identifiable {
         case .InvalidMotorPolePairs: return .field(.motorPolePairs)
         case .InvalidReduction: return .field(.reduction)
         case .ConnectionUnavailable: return .connection
-        case .UnsupportedDevice: return .unsupported
+        case .UnsupportedDevice, .InvalidControllerTarget: return .unsupported
         case .PersistenceUnavailable, .Persistence: return fallback == .load ? .load : .persistence
         }
     }

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 52;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 53;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -75,6 +75,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         49 => migrate_v49_to_v50(connection)?,
         50 => migrate_v50_to_v51(connection)?,
         51 => migrate_v51_to_v52(connection)?,
+        52 => migrate_v52_to_v53(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -129,6 +130,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 51 {
             migrate_v51_to_v52(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 52 {
+            migrate_v52_to_v53(connection)?;
         }
     }
     Ok(())
@@ -1394,8 +1398,30 @@ fn migrate_v51_to_v52(connection: &mut Connection) -> Result<(), StorageError> {
     if !table_has_column(&transaction, "device_vesc_drivetrains", "revision")? {
         transaction.execute_batch("ALTER TABLE device_vesc_drivetrains ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0);")?;
     }
+    if table_has_column(&transaction, "device_vesc_drivetrains", "target_key")? {
+        super::device_drivetrain::verify_schema(&transaction)?;
+    } else {
+        super::device_drivetrain::verify_v52_schema(&transaction)?;
+    }
+    transaction.execute_batch(&schema_pragmas(52))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v52_to_v53(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if !table_has_column(&transaction, "device_vesc_drivetrains", "target_key")? {
+        super::device_drivetrain::verify_v52_schema(&transaction)?;
+        transaction.execute_batch(
+            "ALTER TABLE device_vesc_drivetrains RENAME TO device_vesc_drivetrains_v52;",
+        )?;
+        transaction.execute_batch(super::device_drivetrain::SCHEMA)?;
+        transaction.execute_batch("INSERT INTO device_vesc_drivetrains (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision,target_key)
+            SELECT platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision,'local' FROM device_vesc_drivetrains_v52;
+            DROP TABLE device_vesc_drivetrains_v52;")?;
+    }
     super::device_drivetrain::verify_schema(&transaction)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&schema_pragmas(53))?;
     transaction.commit()?;
     Ok(())
 }
