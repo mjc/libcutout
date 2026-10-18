@@ -877,8 +877,6 @@ extension LiveActivityRideSnapshot {
     }
 
     static func durationString(from duration: MonotonicMilliseconds) -> String {
-        let seconds = duration.rawValue / 1_000
-        let minutes = seconds / 60
-        return String(format: "%llu:%02llu", minutes, seconds % 60)
+        RideUnits.durationText(milliseconds: duration.rawValue)
     }
 }

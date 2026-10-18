@@ -53,6 +53,9 @@ protocol CutoutSessionDriving: AnyObject {
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
         -> MobileDeviceSessionSnapshotDto
+    func loadVescDrivetrain(token: ConnectionAttemptToken) async throws -> MobileVescDrivetrainDraft?
+    func saveVescDrivetrain(_ draft: MobileVescDrivetrainDraft, token: ConnectionAttemptToken) async throws
+        -> MobileVescDrivetrainDraft
     func now() -> MonotonicMilliseconds
     @discardableResult
     func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool
@@ -116,6 +119,14 @@ extension CutoutSessionDriving {
         -> MobileDeviceSessionSnapshotDto
     {
         throw DeviceVehicleSelectionError.connectionUnavailable
+    }
+
+    func loadVescDrivetrain(token: ConnectionAttemptToken) async throws -> MobileVescDrivetrainDraft? { nil }
+
+    func saveVescDrivetrain(_ draft: MobileVescDrivetrainDraft, token: ConnectionAttemptToken) async throws
+        -> MobileVescDrivetrainDraft
+    {
+        throw MobileVescDrivetrainError.ConnectionUnavailable
     }
 
     var rideMapStateHandle: MobileRideMapState? { nil }

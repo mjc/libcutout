@@ -12,7 +12,9 @@ struct VescRideScreenView: View {
     let captureStatusText: String?
     let connectionStatusText: String?
     var disconnect: (() -> Void)? = nil
+    var makeDrivetrainEditor: (() -> VescDrivetrainEditor?)? = nil
     @State private var showsStandardReadings = false
+    @State private var drivetrainEditor: VescDrivetrainEditor?
 
     private var presentation: VescRideScreenPresentation {
         VescRideScreenPresentation(
@@ -44,6 +46,9 @@ struct VescRideScreenView: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .sheet(item: $drivetrainEditor) { editor in
+            VescDrivetrainEditorView(editor: editor)
+        }
         .onChange(of: liveSnapshot?.warning) { _, warning in
             if let announcement = warning?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
@@ -124,7 +129,7 @@ struct VescRideScreenView: View {
     }
 
     private var standardInstruments: some View {
-        PevRideInstrumentLayout {
+        PevRideInstrumentLayout(spacing: 16) {
             HStack(spacing: 8) {
                 PevRideStatusHeader(
                     title: presentation.title, subtitle: presentation.subtitle,
@@ -145,17 +150,28 @@ struct VescRideScreenView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.top.navigation")
-        } primary: { _ in
-            GeometryReader { geometry in
-                PevRideSpeedReading(
-                    speed: presentation.speedReadout,
-                    caption: localizedAppText("vesc.speed.caption"),
-                    pointSize: min(170, geometry.size.width * 0.44, geometry.size.height * 0.70)
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } primary: { landscape in
+            PevRidePrimaryInstruments(
+                speed: presentation.speedReadout,
+                caption: localizedAppText("vesc.speed.caption"), landscape: landscape,
+                speedAccessory: {
+                    if phase == .live, !presentation.speedReadout.isAvailable, let makeDrivetrainEditor {
+                        Button(localizedAppText("vesc.drivetrain.set")) {
+                            drivetrainEditor = makeDrivetrainEditor()
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(PevColors.cardFill, in: Capsule())
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("vesc.drivetrain.open")
+                    }
+                }
+            ) { size in
+                standardEnergyReading(pointSize: min(76, size.width * 0.23, size.height * 0.45))
             }
         } summary: {
-            standardEnergyReading
+            standardSummaryReadings
         } secondary: {
             // At accessibility sizes the scrollable Readings sheet retains every secondary
             // measurement while the fixed Ride surface keeps room for speed and energy.
@@ -168,24 +184,22 @@ struct VescRideScreenView: View {
         }
     }
 
-    private var standardEnergyReading: some View {
+    private func standardEnergyReading(pointSize: CGFloat) -> some View {
         let tile = presentation.standardEnergyTile
         return Button {
             showsStandardReadings = true
         } label: {
             PevInstrumentReading(
                 label: tile.label, value: tile.metricValue, unit: tile.unit,
-                pointSize: 52, identifier: "vesc.ride.energy", showsDisclosure: true,
+                pointSize: pointSize, identifier: "vesc.ride.energy", alignment: .center,
                 detail: tile.detail
             )
             .visualContent
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .top) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(tile.label)
@@ -194,15 +208,35 @@ struct VescRideScreenView: View {
         .accessibilityIdentifier("ride.readings.open")
     }
 
-    private var standardSecondaryReadings: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ForEach(presentation.standardSecondaryTiles) { tile in
+    private var standardSummaryReadings: some View {
+        HStack(alignment: .top, spacing: 24) {
+            ForEach(Array(presentation.standardSummaryTiles.enumerated()), id: \.element.kind) { index, tile in
                 PevInstrumentReading(
                     label: tile.label, value: tile.metricValue, unit: tile.unit,
-                    pointSize: 23, identifier: "vesc.ride.\(tile.kind)", detail: tile.detail
+                    pointSize: 52, identifier: "vesc.ride.\(tile.kind)",
+                    alignment: index == 0 ? .leading : .trailing, detail: tile.detail
                 )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : .trailing)
             }
         }
+        .padding(.vertical, 18)
+        .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? nil : 138)
+        .overlay(alignment: .top) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
+    }
+
+    private var standardSecondaryReadings: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(Array(presentation.standardSecondaryTiles.enumerated()), id: \.element.kind) { index, tile in
+                PevInstrumentReading(
+                    label: tile.label, value: tile.metricValue, unit: tile.unit,
+                    pointSize: 23, identifier: "vesc.ride.\(tile.kind)",
+                    alignment: index == 0 ? .leading : index == 1 ? .center : .trailing,
+                    detail: tile.detail
+                )
+                .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : index == 1 ? .center : .trailing)
+            }
+        }
+        .frame(minHeight: 64, alignment: .top)
     }
 }

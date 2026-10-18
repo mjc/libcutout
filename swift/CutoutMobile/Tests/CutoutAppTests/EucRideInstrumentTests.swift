@@ -113,6 +113,10 @@ final class EucRideInstrumentTests: XCTestCase {
 
     func testEskateFixtureRequiresUserClassificationAndLeavesUnsupportedReadingsUnavailable() async throws {
         let fixture = CutoutUITestSessionFixture.eskate
+        XCTAssertNil(fixture.testScript.telemetry, "Measured values must enter through the real protocol owner")
+        XCTAssertTrue(fixture.testScript.appliesProtocolNotificationSteps)
+        XCTAssertEqual(fixture.testScript.protocolDetectionNotifications?.count, 1)
+        XCTAssertEqual(fixture.testScript.protocolNotificationIntervalMilliseconds, 500)
         let suiteName = "EucRideInstrumentTests-eskate-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -143,11 +147,16 @@ final class EucRideInstrumentTests: XCTestCase {
         XCTAssertTrue(fixture.makeLiveActivityManager() is CutoutUITestLiveActivityManager)
         let ride = try XCTUnwrap(model.vescRideSnapshot)
         XCTAssertEqual(ride.batteryVoltage, Voltage(value: 49_800))
+        XCTAssertEqual(ride.batteryCurrent, BatteryCurrent.currentOut(milliamps: 12_400))
+        XCTAssertEqual(ride.powerFlow, .discharge)
         XCTAssertEqual(ride.motorCurrent, PhaseCurrent(value: 21_000))
+        XCTAssertEqual(ride.controllerTemperature, Temperature(value: 44_000))
+        XCTAssertEqual(ride.motorTemperature, Temperature(value: 39_000))
         XCTAssertNil(ride.boardSpeed)
         XCTAssertNil(ride.batteryLevelReported)
         XCTAssertNil(ride.batteryLevelEstimated)
         XCTAssertNil(ride.footpad)
+        XCTAssertNil(ride.dutyCycle)
         XCTAssertNil(ride.dutyHeadroom)
         XCTAssertNil(ride.boardAngle)
     }

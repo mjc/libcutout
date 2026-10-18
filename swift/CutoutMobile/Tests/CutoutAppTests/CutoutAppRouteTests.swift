@@ -34,6 +34,20 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testStandardVescVehicleClassKeepsApprovedAccentAcrossSharedRoutes() {
+        for route in [CutoutAppRoute.vescRide, .rideMap, .tune, .more] {
+            XCTAssertEqual(
+                ContentView.accentKind(selectedConnectionRoute: .vesc, route: route, vehicleKind: .eskate),
+                .yellow
+            )
+            XCTAssertEqual(
+                ContentView.accentKind(selectedConnectionRoute: .vesc, route: route, vehicleKind: .onewheel),
+                .purple
+            )
+        }
+    }
+
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("lighting.power"), "Power")

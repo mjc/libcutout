@@ -3289,6 +3289,82 @@
       "comment" : "VESC motor-current tile detail when phase current is unavailable.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "current unavailable" } } }
     },
+    "vesc.drivetrain.title" : {
+      "comment" : "Local drivetrain setup sheet title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Drivetrain" } } }
+    },
+    "vesc.drivetrain.description" : {
+      "comment" : "Explains how local drivetrain setup makes road speed available without claiming controller writes or distance telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use your wheel size, motor pole pairs, and reduction to calculate road speed for this device." } } }
+    },
+    "vesc.drivetrain.set" : {
+      "comment" : "Standard VESC speed setup action when drivetrain geometry is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Set drivetrain" } } }
+    },
+    "vesc.drivetrain.wheel_diameter" : {
+      "comment" : "Local drivetrain wheel diameter field; unit is millimetres.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel diameter · mm" } } }
+    },
+    "vesc.drivetrain.motor_pole_pairs" : {
+      "comment" : "Local drivetrain motor pole-pair count field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Motor pole pairs" } } }
+    },
+    "vesc.drivetrain.reduction" : {
+      "comment" : "Local drivetrain motor revolutions per wheel revolution field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Motor : wheel reduction" } } }
+    },
+    "vesc.drivetrain.save" : {
+      "comment" : "Save the local drivetrain configuration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save drivetrain" } } }
+    },
+    "vesc.drivetrain.done" : {
+      "comment" : "Dismiss the local drivetrain setup sheet.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
+    },
+    "vesc.drivetrain.loading" : {
+      "comment" : "Saved local drivetrain configuration is loading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading drivetrain…" } } }
+    },
+    "vesc.drivetrain.saving" : {
+      "comment" : "Local drivetrain persistence is pending; not a success receipt.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saving drivetrain…" } } }
+    },
+    "vesc.drivetrain.saved" : {
+      "comment" : "Shown only after the local drivetrain save is accepted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Drivetrain saved." } } }
+    },
+    "vesc.drivetrain.error.wheel_diameter" : {
+      "comment" : "Rust wheel-diameter validation failure; circumference must round to a nonzero millimetre value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a wheel diameter in millimetres, with up to three decimal places." } } }
+    },
+    "vesc.drivetrain.error.motor_pole_pairs" : {
+      "comment" : "Rust motor pole-pair validation failure.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a whole number from 1 to 255." } } }
+    },
+    "vesc.drivetrain.error.reduction" : {
+      "comment" : "Rust motor-to-wheel reduction validation failure.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a positive motor-to-wheel reduction, with up to three decimal places." } } }
+    },
+    "vesc.drivetrain.error.connection" : {
+      "comment" : "Local drivetrain save was refused because its connection attempt is no longer current.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The connection changed. Reconnect and try again." } } }
+    },
+    "vesc.drivetrain.error.unsupported" : {
+      "comment" : "Local drivetrain setup is unsupported for the current controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Drivetrain setup is unavailable for this controller." } } }
+    },
+    "vesc.drivetrain.error.persistence" : {
+      "comment" : "Local drivetrain persistence failed; do not imply a successful save.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t save the drivetrain. Try again." } } }
+    },
+    "vesc.drivetrain.error.load" : {
+      "comment" : "Saved local drivetrain configuration could not be loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t load the saved drivetrain. Try again." } } }
+    },
+    "vesc.drivetrain.retry_load" : {
+      "comment" : "Retry reading saved local drivetrain geometry after a storage failure.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try loading again" } } }
+    },
     "vesc.duty_headroom.detail" : {
       "comment" : "VESC duty-headroom card explanation.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nose authority is the ride-critical value here." } } }
@@ -3320,6 +3396,26 @@
     "vesc.metric.controller" : {
       "comment" : "VESC dashboard tile label for controller temperature.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "controller" } } }
+    },
+    "vesc.metric.controller_temperature" : {
+      "comment" : "Standard VESC Ride label for measured controller temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller" } } }
+    },
+    "vesc.metric.pack_voltage" : {
+      "comment" : "Standard VESC primary reading when no battery percentage is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
+    },
+    "vesc.metric.motor_temperature" : {
+      "comment" : "Standard VESC Ride label for measured motor temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Motor" } } }
+    },
+    "vesc.metric.ride_time" : {
+      "comment" : "Current logical ride recording duration, excluding pauses and interruptions.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride time" } } }
+    },
+    "vesc.metric.trip" : {
+      "comment" : "Current logical ride route distance, unavailable until a route is observed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip" } } }
     },
     "vesc.metric.motor_current" : {
       "comment" : "VESC dashboard tile label for motor phase current.",

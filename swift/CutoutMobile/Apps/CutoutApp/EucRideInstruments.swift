@@ -8,8 +8,10 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
     let primary: (Bool) -> Primary
     let summary: Summary
     let secondary: Secondary
+    let spacing: CGFloat
 
     init(
+        spacing: CGFloat = 12,
         @ViewBuilder header: () -> Header,
         @ViewBuilder primary: @escaping (Bool) -> Primary,
         @ViewBuilder summary: () -> Summary,
@@ -19,6 +21,7 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
         self.primary = primary
         self.summary = summary()
         self.secondary = secondary()
+        self.spacing = spacing
     }
 
     var body: some View {
@@ -28,7 +31,7 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
             let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
             let height = max(0, bottom - frame.minY)
             let landscape = geometry.size.width > height
-            VStack(spacing: 12) {
+            VStack(spacing: spacing) {
                 header
                 if landscape {
                     HStack(spacing: 24) {
@@ -52,6 +55,64 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
             .foregroundStyle(PevColors.primaryText)
         }
         .background(PevColors.pageBackground)
+    }
+}
+
+/// The approved Ride face keeps speed above its main instrument in portrait,
+/// and places them alongside one another when the available space is wide.
+struct PevRidePrimaryInstruments<Accessory: View, Instrument: View>: View {
+    let speed: RideHeroReadout
+    let caption: String
+    let landscape: Bool
+    let speedAccessory: Accessory
+    let instrument: (CGSize) -> Instrument
+
+    init(
+        speed: RideHeroReadout, caption: String, landscape: Bool,
+        @ViewBuilder speedAccessory: () -> Accessory,
+        @ViewBuilder instrument: @escaping (CGSize) -> Instrument
+    ) {
+        self.speed = speed
+        self.caption = caption
+        self.landscape = landscape
+        self.speedAccessory = speedAccessory()
+        self.instrument = instrument
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let speedHeight = geometry.size.height * (landscape ? 1 : 0.42)
+            let speedWidth = geometry.size.width * (landscape ? 0.22 : 0.44)
+            let instrumentSize = CGSize(
+                width: geometry.size.width * (landscape ? 0.5 : 1),
+                height: landscape ? geometry.size.height : max(0, geometry.size.height - speedHeight - 4)
+            )
+            let layout = landscape ? AnyLayout(HStackLayout(spacing: 24)) : AnyLayout(VStackLayout(spacing: 4))
+            layout {
+                VStack(spacing: 0) {
+                    PevRideSpeedReading(
+                        speed: speed, caption: caption,
+                        pointSize: min(170, speedWidth, speedHeight * 0.88)
+                    )
+                    speedAccessory
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(height: landscape ? nil : speedHeight)
+                instrument(instrumentSize)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+}
+
+extension PevRidePrimaryInstruments where Accessory == EmptyView {
+    init(
+        speed: RideHeroReadout, caption: String, landscape: Bool,
+        @ViewBuilder instrument: @escaping (CGSize) -> Instrument
+    ) {
+        self.init(
+            speed: speed, caption: caption, landscape: landscape, speedAccessory: { EmptyView() },
+            instrument: instrument)
     }
 }
 
@@ -109,23 +170,11 @@ struct EucRideInstruments: View {
     }
 
     private func primaryInstruments(landscape: Bool) -> some View {
-        GeometryReader { geometry in
-            let speedHeight = geometry.size.height * (landscape ? 1 : 0.42)
-            let speedWidth = geometry.size.width * (landscape ? 0.22 : 0.44)
-            let layout = landscape ? AnyLayout(HStackLayout(spacing: 24)) : AnyLayout(VStackLayout(spacing: 4))
-            layout {
-                speedReading(pointSize: min(170, speedWidth, speedHeight * 0.88))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(height: landscape ? nil : speedHeight)
-                EucHeadroomGauge(headroom: headroom, percentage: headroomNumber)
-            }
+        PevRidePrimaryInstruments(
+            speed: speed, caption: localizedAppText("euc.speed.caption"), landscape: landscape
+        ) { _ in
+            EucHeadroomGauge(headroom: headroom, percentage: headroomNumber)
         }
-    }
-
-    private func speedReading(pointSize: CGFloat) -> some View {
-        PevRideSpeedReading(
-            speed: speed, caption: localizedAppText("euc.speed.caption"), pointSize: pointSize
-        )
     }
 
     private var energyReadings: some View {
@@ -247,7 +296,7 @@ struct PevInstrumentReading: View {
     }
 
     var visualContent: some View {
-        VStack(alignment: alignment, spacing: 5) {
+        VStack(alignment: alignment, spacing: pointSize > 60 ? 18 : 5) {
             HStack(spacing: 6) {
                 Text(label)
                 if showsDisclosure {
@@ -255,8 +304,12 @@ struct PevInstrumentReading: View {
                         .font(.caption2.weight(.semibold))
                 }
             }
-            .font(pointSize > 30 ? .subheadline.weight(.medium) : .caption.weight(.medium))
-            .foregroundStyle(PevColors.muted)
+            .font(
+                pointSize > 60
+                    ? .title3.weight(.semibold)
+                    : pointSize > 30 ? .subheadline.weight(.medium) : .caption.weight(.medium)
+            )
+            .foregroundStyle(pointSize > 60 ? PevColors.primaryText : PevColors.muted)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -264,9 +317,15 @@ struct PevInstrumentReading: View {
                     .font(.system(size: pointSize, weight: .semibold))
                     .monospacedDigit()
                     .tracking(-pointSize * 0.035)
-                Text(unit)
-                    .font(pointSize > 30 ? .title3 : .caption)
-                    .foregroundStyle(PevColors.muted)
+                if value != .unavailable {
+                    Text(unit)
+                        .font(
+                            pointSize > 60
+                                ? .system(size: pointSize * 0.4, weight: .semibold)
+                                : pointSize > 30 ? .title3 : .caption
+                        )
+                        .foregroundStyle(PevColors.muted)
+                }
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)

@@ -591,7 +591,10 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-            switch Self.accentKind(selectedConnectionRoute: model.device.selectedConnectionRoute, route: route) {
+            switch Self.accentKind(
+                selectedConnectionRoute: model.device.selectedConnectionRoute, route: route,
+                vehicleKind: model.device.deviceSessionSnapshot?.identity?.vehicleKind
+            ) {
             case .purple:
                 Color(uiColor: TabAccentColors.purple)
             case .yellow:
@@ -606,9 +609,15 @@ struct ContentView: View {
 
     static func accentKind(
         selectedConnectionRoute: DevicePickerConnectionRoute?,
-        route: CutoutAppRoute
+        route: CutoutAppRoute,
+        vehicleKind: VehicleKind? = nil
     ) -> PevAccent {
-        switch selectedConnectionRoute {
+        switch vehicleKind {
+        case .onewheel?: return .purple
+        case .electricUnicycle?, .scooter?, .eskate?, .ebike?, .emoto?: return .yellow
+        case .unknown?, nil: break
+        }
+        return switch selectedConnectionRoute {
         case .vesc:
             .purple
         case .electricUnicycle:

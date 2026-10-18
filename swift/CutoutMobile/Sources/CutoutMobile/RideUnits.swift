@@ -49,6 +49,11 @@ public enum RideUnits {
         "\(permille / 10)"
     }
 
+    public static func durationText(milliseconds: UInt64) -> String {
+        let seconds = milliseconds / 1_000
+        return String(format: "%llu:%02llu", seconds / 60, seconds % 60)
+    }
+
     public static func distanceUnit(forSpeedUnit speedUnit: String) -> String {
         switch speedUnit.lowercased().replacingOccurrences(of: " ", with: "") {
         case "km/h", "kmh", "kph":

@@ -166,7 +166,7 @@ import Foundation
             case .eskate:
                 DevicePickerDiscoveryCandidate(
                     platformIdentifier: "ui-test-standard-vesc-eskate",
-                    displayName: "Everyday board",
+                    displayName: "Workshop board",
                     productCategory: "VESC controller",
                     evidence: "UI test fixture",
                     detail: "Standard VESC telemetry; physical type requires a user choice",
@@ -339,6 +339,17 @@ import Foundation
                         [36, 101, 0, 2, 0] + Array("No app".utf8) + Array(repeating: 0, count: 14)
                             + [0, 0, 0] + Array(repeating: 0, count: 33)
                     ),
+                    // Ordinary COMM_GET_VALUES_SELECTIVE (50), mask 0x0000018f:
+                    // TEMP_MOSFET, TEMP_MOTOR, AVG_CURRENT_MOTOR, AVG_CURRENT_INPUT,
+                    // RPM, VOLTAGE_IN. Field order/scales follow vesc_codec::decode_values.
+                    // 44 °C, 39 °C, 21 A motor, 12.4 A input, 10000 eRPM, 49.8 V.
+                    // No duty, geometry, charge estimate, or balance-app fields are sent.
+                    Self.vescFixtureFrame([
+                        50, 0, 0, 1, 143,
+                        1, 184, 1, 134,
+                        0, 0, 8, 52, 0, 0, 4, 216,
+                        0, 0, 39, 16, 1, 242,
+                    ]),
                 ]
             }
             let firmware = Data([
@@ -385,12 +396,13 @@ import Foundation
             let notifications = protocolNotifications
             return CutoutSessionTestScript(
                 candidate: candidate,
-                telemetry: emitsPendingTelemetry ? nil : telemetry,
+                telemetry: emitsPendingTelemetry || self == .eskate ? nil : telemetry,
                 protocolNotifications: notifications,
                 // Application proof belongs to the live protocol owner, after LinkUp submits INFO.
-                protocolDetectionNotifications: isRefloatVesc ? Array(notifications.prefix(1)) : nil,
-                protocolNotificationIntervalMilliseconds: isEuc
-                    && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS") ? 500 : nil,
+                protocolDetectionNotifications: isRefloatVesc || self == .eskate ? Array(notifications.prefix(1)) : nil,
+                appliesProtocolNotificationSteps: self == .eskate,
+                protocolNotificationIntervalMilliseconds: self == .eskate
+                    || (isEuc && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS")) ? 500 : nil,
                 telemetryUpdate: telemetryUpdate,
                 telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
                 bmsSnapshot: testBmsSnapshot,
@@ -424,19 +436,6 @@ import Foundation
         }
 
         private var telemetry: TelemetrySnapshot {
-            if self == .eskate {
-                // Presentation samples only. No configured drivetrain means no road speed;
-                // voltage does not establish charge percentage, range, or control authority.
-                return TelemetrySnapshot(
-                    operatingState: .unknown, vescWarning: VescRideWarning.none,
-                    voltage: Voltage(value: 49_800),
-                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
-                    motorCurrent: PhaseCurrent(value: 21_000),
-                    powerFlow: .discharge,
-                    controllerTemperature: Temperature(value: 44_000),
-                    motorTemperature: Temperature(value: 39_000)
-                )
-            }
             if isEuc {
                 #if os(iOS) && targetEnvironment(simulator)
                     if CutoutWebsiteScreenshotFixture.screen == .tune {

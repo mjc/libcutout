@@ -123,6 +123,123 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testEditingVescGeometryPublishesClearedSpeedWithoutFabricatingAnObservation() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(9_000) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(
+            state.beginConnectionAttempt(
+                platformIdentifier: "geometry-refresh-\(UUID().uuidString)", nowMs: 0
+            ).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        let original = MobileVescDrivetrainDraft(wheelDiameterMm: "90", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try await core.saveVescDrivetrain(original, token: token)
+        let values = Data([
+            2, 23, 50, 0, 0, 1, 143, 1, 184, 1, 134, 0, 0, 8, 52, 0, 0, 4, 216,
+            0, 0, 39, 16, 1, 242, 169, 202, 3,
+        ])
+        func observe(at: UInt64) {
+            _ = state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: .notification, monotonicMs: MobileMonotonicMillisDto(milliseconds: at),
+                    maxWriteLen: nil, channel: BluetoothUuid.vescNordicUartNotify.bytes, bytes: values
+                ))
+        }
+        observe(at: 4_000)
+        _ = try await core.loadVescDrivetrain(token: token)
+        let before = core.displayState
+        XCTAssertNotNil(before.speed.millimetersPerSecond)
+        XCTAssertEqual(before.telemetry?.voltage?.value, 49_800)
+        let edited = MobileVescDrivetrainDraft(wheelDiameterMm: "100", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try await core.saveVescDrivetrain(edited, token: token)
+        let cleared = core.displayState
+        XCTAssertNil(cleared.speed.millimetersPerSecond)
+        XCTAssertNil(cleared.telemetry?.speed)
+        XCTAssertEqual(cleared.telemetry?.at, before.telemetry?.at)
+        XCTAssertEqual(cleared.telemetry?.voltage, before.telemetry?.voltage)
+        XCTAssertEqual(cleared.telemetry?.voltageObservedAt, before.telemetry?.voltageObservedAt)
+        XCTAssertEqual(cleared.telemetry?.motorCurrent, before.telemetry?.motorCurrent)
+        XCTAssertEqual(cleared.notificationCount, before.notificationCount)
+        XCTAssertEqual(cleared.lastUpdate, before.lastUpdate)
+        observe(at: 5_000)
+        _ = try await core.loadVescDrivetrain(token: token)
+        XCTAssertNotNil(core.displayState.speed.millimetersPerSecond)
+        XCTAssertNotEqual(core.displayState.speed.millimetersPerSecond, before.speed.millimetersPerSecond)
+        XCTAssertEqual(core.displayState.telemetry?.at, MonotonicMilliseconds(5_000))
+    }
+
+    func testVescDrivetrainLoadSurfacesMissingDatabaseInsteadOfUnknownGeometry() async throws {
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil)
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "no-database", nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        do {
+            _ = try await core.loadVescDrivetrain(token: token)
+            XCTFail("A failed saved-geometry read cannot become a successful blank editor")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .PersistenceUnavailable = error else {
+                return XCTFail("Expected the actual Rust storage refusal, got \(error)")
+            }
+        }
+    }
+
+    func testVescDrivetrainBridgeKeepsTheCapturedAttemptAndRestoresSavedGeometry() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let identifier = "drivetrain-controller-\(UUID().uuidString)"
+        let first = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: first)
+        let unknown = try await core.loadVescDrivetrain(token: first)
+        XCTAssertNil(unknown)
+        let draft = MobileVescDrivetrainDraft(wheelDiameterMm: "90", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        let saved = try await core.saveVescDrivetrain(draft, token: first)
+        XCTAssertEqual(saved, draft)
+        let loaded = try await core.loadVescDrivetrain(token: first)
+        XCTAssertEqual(loaded, draft)
+        let replacement = try XCTUnwrap(
+            state.beginConnectionAttempt(
+                platformIdentifier: "replacement-\(UUID().uuidString)", nowMs: 0
+            ).token)
+        do {
+            _ = try await core.saveVescDrivetrain(draft, token: first)
+            XCTFail("An open editor cannot redirect its save to another connection")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .ConnectionUnavailable = error else {
+                return XCTFail("Expected a captured-attempt refusal, got \(error)")
+            }
+        }
+        do {
+            _ = try await core.loadVescDrivetrain(token: first)
+            XCTFail("An open editor cannot load another connection's geometry")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .ConnectionUnavailable = error else {
+                return XCTFail("Expected a captured-attempt refusal, got \(error)")
+            }
+        }
+        XCTAssertEqual(state.connectionAttemptSnapshot().token, replacement)
+        let reconnected = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: reconnected)
+        _ = try await core.selectVehicleKind(.eskate, token: reconnected)
+        let restored = try await core.loadVescDrivetrain(token: reconnected)
+        XCTAssertEqual(restored, draft)
+    }
+
     @MainActor
     func testApplicationTimeoutPublishesDeviceChoiceToMainWithoutTelemetry() async throws {
         let identifier = "timeout-controller-\(UUID().uuidString)"
@@ -3456,6 +3573,36 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
+    func testVescRideSnapshotUsesOnlyCanonicalRecordingStatisticsForTripAndTime() throws {
+        func snapshot(points: UInt64, statistics: MobileRideMapLiveActivityStatisticsDto?) throws -> VescRideSnapshot {
+            let display = RideDisplayState(
+                // A wheel's lifetime odometer is never the current ride's trip distance.
+                telemetry: TelemetrySnapshot(voltage: voltageValue(49_800), distance: Distance(value: 9_000_000)),
+                logicalRide: MobileRideMapSnapshotDto(
+                    rideID: "current-ride", state: statistics == nil ? .stopped : .active,
+                    summary: MobileRideMapSummaryDto(
+                        pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                )
+            )
+            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: nil))
+        }
+        let statistics = MobileRideMapLiveActivityStatisticsDto(
+            durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
+        let recorded = try snapshot(points: 2, statistics: statistics)
+        XCTAssertNil(recorded.boardSpeed)
+        XCTAssertEqual(recorded.tripDistance, Distance(value: 1_609_344))
+        XCTAssertEqual(recorded.rideDuration, MonotonicMilliseconds(522_000))
+
+        let withoutRoute = try snapshot(points: 0, statistics: statistics)
+        XCTAssertNil(withoutRoute.tripDistance)
+        XCTAssertEqual(withoutRoute.rideDuration, MonotonicMilliseconds(522_000))
+
+        let stopped = try snapshot(points: 2, statistics: nil)
+        XCTAssertNil(stopped.tripDistance)
+        XCTAssertNil(stopped.rideDuration)
     }
 
     func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {

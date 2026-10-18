@@ -135,36 +135,64 @@ struct VescRideScreenPresentation {
             ?? standardDashboardTiles[0]
     }
 
+    var standardSummaryTiles: [PevDashboardTile] {
+        let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit)
+        let distance = snapshot?.tripDistance.map {
+            RideUnits.distanceText(millimetres: $0.value, unit: distanceUnit)
+        }
+        let duration = snapshot?.rideDuration.map {
+            RideUnits.durationText(milliseconds: $0.rawValue)
+        }
+        return [
+            PevDashboardTile(
+                kind: .tripDistance, label: localizedAppText("vesc.metric.trip"),
+                metricValue: distance.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
+                unit: distanceUnit, detail: "", accent: .cyan
+            ),
+            PevDashboardTile(
+                kind: .rideDuration, label: localizedAppText("vesc.metric.ride_time"),
+                metricValue: duration.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
+                unit: "", detail: "", accent: .cyan
+            ),
+        ]
+    }
+
     var standardSecondaryTiles: [PevDashboardTile] {
         standardDashboardTiles.filter {
-            $0.kind == .batteryCurrent || $0.kind == .motorCurrent || $0.kind == .controller
+            $0.kind == .batteryCurrent || $0.kind == .controller || $0.kind == .motorTemperature
         }
     }
 
     private var standardDashboardTiles: [PevDashboardTile] {
-        var tiles = [
-            PevDashboardTile(
-                kind: .batteryVoltage, label: localizedAppText("vesc.metric.battery_voltage"),
-                metricValue: snapshot?.batteryVoltageMetricValue ?? .unavailable,
-                unit: RideUnits.voltageUnit, detail: "", accent: .yellow
-            ),
-            PevDashboardTile(
-                kind: .batteryCurrent, label: localizedAppText("vesc.metric.battery_current"),
-                // BatteryCurrent's presentation already contains its unit and direction.
-                metricValue: snapshot?.batteryCurrentMetricValue ?? .unavailable,
-                unit: "", detail: "", accent: .cyan
-            ),
-            PevDashboardTile(
-                kind: .motorCurrent, label: localizedAppText("vesc.metric.motor_current"),
-                metricValue: snapshot?.motorCurrentMetricValue ?? .unavailable,
-                unit: RideUnits.currentUnit, detail: motorCurrentDetail, accent: .orange
-            ),
-            PevDashboardTile(
-                kind: .controller, label: localizedAppText("vesc.metric.controller"),
-                metricValue: snapshot?.controllerTemperatureMetricValue ?? .unavailable,
-                unit: RideUnits.temperatureUnit, detail: controllerTemperatureDetail, accent: .green
-            ),
-        ]
+        var tiles =
+            [
+                PevDashboardTile(
+                    kind: .batteryVoltage, label: localizedAppText("vesc.metric.pack_voltage"),
+                    metricValue: snapshot?.batteryVoltageMetricValue ?? .unavailable,
+                    unit: RideUnits.voltageUnit, detail: "", accent: .yellow
+                ),
+                PevDashboardTile(
+                    kind: .batteryCurrent, label: localizedAppText("vesc.metric.battery_current"),
+                    // BatteryCurrent's presentation already contains its unit and direction.
+                    metricValue: snapshot?.batteryCurrentMetricValue ?? .unavailable,
+                    unit: "", detail: "", accent: .cyan
+                ),
+                PevDashboardTile(
+                    kind: .motorCurrent, label: localizedAppText("vesc.metric.motor_current"),
+                    metricValue: snapshot?.motorCurrentMetricValue ?? .unavailable,
+                    unit: RideUnits.currentUnit, detail: motorCurrentDetail, accent: .orange
+                ),
+                PevDashboardTile(
+                    kind: .controller, label: localizedAppText("vesc.metric.controller_temperature"),
+                    metricValue: snapshot?.controllerTemperatureMetricValue ?? .unavailable,
+                    unit: RideUnits.temperatureUnit, detail: "", accent: .green
+                ),
+                PevDashboardTile(
+                    kind: .motorTemperature, label: localizedAppText("vesc.metric.motor_temperature"),
+                    metricValue: snapshot?.motorTemperatureMetricValue ?? .unavailable,
+                    unit: RideUnits.temperatureUnit, detail: "", accent: .green
+                ),
+            ] + standardSummaryTiles
         if let level = snapshot?.batteryLevelReported ?? snapshot?.batteryLevelEstimated {
             let text = RideUnits.percentText(level.value)
             tiles.insert(

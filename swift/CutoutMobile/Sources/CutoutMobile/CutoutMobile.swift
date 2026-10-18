@@ -1906,6 +1906,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let warning: VescRideWarning
     public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
+    /// Current logical ride route distance, not the controller odometer.
+    public let tripDistance: Distance?
+    /// Rust-owned recording duration, excluding pauses and interruptions.
+    public let rideDuration: MonotonicMilliseconds?
     public let dutyCycle: DutyCycle?
     public let dutyHeadroom: BatteryLevel?
     public let dutyHeadroomApplicability: EucRideMetricApplicability
@@ -1932,6 +1936,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         warning: VescRideWarning = .unknown,
         stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
+        tripDistance: Distance? = nil,
+        rideDuration: MonotonicMilliseconds? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
         dutyHeadroomApplicability: EucRideMetricApplicability = .unavailable,
@@ -1957,6 +1963,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.warning = warning
         self.stopReason = stopReason
         self.boardSpeed = boardSpeed
+        self.tripDistance = tripDistance
+        self.rideDuration = rideDuration
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
         self.dutyHeadroomApplicability = dutyHeadroom == nil ? dutyHeadroomApplicability : .available
@@ -1977,6 +1985,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public init?(displayState: RideDisplayState, title: String?, identity: MobileDeviceIdentityDto? = nil) {
         let telemetry = displayState.telemetry ?? TelemetrySnapshot()
         guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
+        let recording = displayState.logicalRide
+        let statistics = recording?.liveActivityStatistics
         self.init(
             title: title ?? Self.defaultTitle,
             vehicleKind: identity?.vehicleKind ?? .unknown,
@@ -1987,6 +1997,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             warning: telemetry.vescWarning ?? .unknown,
             stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,
+            // A recording without route points has no observed trip-distance source.
+            tripDistance: (recording?.summary.pointCount ?? 0) > 0
+                ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil,
+            rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
             dutyHeadroomApplicability: telemetry.pwmHeadroomApplicability,

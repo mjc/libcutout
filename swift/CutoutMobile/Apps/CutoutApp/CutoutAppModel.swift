@@ -286,6 +286,20 @@ final class CutoutAppModel {
         device.deviceSessionSnapshot = core.rideSessionStateHandle.deviceSessionSnapshot()
     }
 
+    func makeVescDrivetrainEditor() -> VescDrivetrainEditor? {
+        guard let snapshot = device.deviceSessionSnapshot,
+            snapshot.identity?.protocol == .vesc,
+            snapshot.identity?.vescApplication == .absent,
+            let token = snapshot.connection.token
+        else { return nil }
+        let driver = core
+        return VescDrivetrainEditor(
+            token: token,
+            load: { token in try await driver.loadVescDrivetrain(token: token) },
+            save: { token, draft in try await driver.saveVescDrivetrain(draft, token: token) }
+        )
+    }
+
     func annotateCapture(key: String, value: String) {
         _ = core.annotateCapture(key: key, value: value)
     }

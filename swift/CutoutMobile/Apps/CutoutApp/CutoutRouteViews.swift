@@ -456,7 +456,8 @@ struct VescRideRouteView: View {
                         now: model.currentMonotonicTime,
                         captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
                         connectionStatusText: model.device.connectionStatusText,
-                        disconnect: disconnect
+                        disconnect: disconnect,
+                        makeDrivetrainEditor: model.makeVescDrivetrainEditor
                     )
                 }
             }
@@ -1257,7 +1258,7 @@ extension MelkLightingPeripheralState {
             guard try core.setBrightness(percentage: percentage) else { return false }
             core.flushWrites(canSend: true)
             for action in core.drainActions() {
-                guard case let .write(identifier, write) = action, identifier == Self.identifier else { continue }
+                guard case .write(let identifier, let write) = action, identifier == Self.identifier else { continue }
                 writtenBrightness = percentage
                 lastBrightnessWrite = write
                 brightnessWriteCount += 1

@@ -1080,7 +1080,8 @@ final class PevScreenThemeTests: XCTestCase {
             batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
             powerFlow: .discharge,
             motorCurrent: PhaseCurrent(value: 21_000),
-            controllerTemperature: Temperature(value: 44_000)
+            controllerTemperature: Temperature(value: 44_000),
+            motorTemperature: Temperature(value: 39_000)
         )
         let presentation = VescRideScreenPresentation(
             snapshot: snapshot, phase: .live, now: MonotonicMilliseconds(1_000),
@@ -1092,20 +1093,47 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertFalse(presentation.speedReadout.isAvailable)
         XCTAssertEqual(
             presentation.dashboardTiles.map(\.kind),
-            [.batteryVoltage, .batteryCurrent, .motorCurrent, .controller]
+            [
+                .batteryVoltage, .batteryCurrent, .motorCurrent, .controller, .motorTemperature, .tripDistance,
+                .rideDuration,
+            ]
         )
         XCTAssertEqual(presentation.standardEnergyTile.kind, .batteryVoltage)
         XCTAssertEqual(presentation.standardEnergyTile.metricValue, snapshot.batteryVoltageMetricValue)
         XCTAssertEqual(
             presentation.standardSecondaryTiles.map(\.metricValue),
             [
-                snapshot.batteryCurrentMetricValue, snapshot.motorCurrentMetricValue,
-                snapshot.controllerTemperatureMetricValue,
+                snapshot.batteryCurrentMetricValue, snapshot.controllerTemperatureMetricValue,
+                snapshot.motorTemperatureMetricValue,
             ]
         )
+        XCTAssertEqual(presentation.standardSummaryTiles.map(\.kind), [.tripDistance, .rideDuration])
+        XCTAssertEqual(presentation.standardSummaryTiles.map(\.metricValue), [.unavailable, .unavailable])
+        XCTAssertEqual(
+            presentation.standardSecondaryTiles.map(\.kind), [.batteryCurrent, .controller, .motorTemperature])
+        XCTAssertTrue(presentation.dashboardTiles.contains { $0.kind == .motorCurrent })
         // BatteryCurrent already renders units and the physical in/out direction.
         XCTAssertEqual(presentation.standardSecondaryTiles[0].unit, "")
         XCTAssertEqual(presentation.standardSecondaryTiles[0].metricValue.accessibilityText, "12.4 A out")
+    }
+
+    func testStandardVescSummaryUsesRecordedTripAndDurationWithoutRequiringControllerGeometry() {
+        let snapshot = VescRideSnapshot(
+            title: "Everyday board", vehicleKind: .eskate, application: .absent,
+            controllerState: .unknown, tripDistance: Distance(value: 1_609_344),
+            rideDuration: MonotonicMilliseconds(522_999)
+        )
+        let presentation = VescRideScreenPresentation(
+            snapshot: snapshot, phase: .live, now: MonotonicMilliseconds(1_000),
+            connectionStatusText: nil
+        )
+
+        XCTAssertFalse(presentation.speedReadout.isAvailable)
+        XCTAssertEqual(presentation.standardSummaryTiles[0].unit, "mi")
+        XCTAssertEqual(presentation.standardSummaryTiles[0].value, "1.0")
+        XCTAssertEqual(presentation.standardSummaryTiles[1].value, "8:42")
+        XCTAssertEqual(presentation.standardSummaryTiles[1].unit, "")
+        XCTAssertEqual(presentation.standardEnergyTile.metricValue, .unavailable)
     }
 
     func testStandardVescRidePromotesTypedChargeAndRetainsVoltageInReadings() {
@@ -1172,7 +1200,7 @@ final class PevScreenThemeTests: XCTestCase {
 
         XCTAssertEqual(
             view.dashboardTiles.map(\.metricValue),
-            [.unavailable, .unavailable, .unavailable, .unavailable]
+            Array(repeating: .unavailable, count: 7)
         )
     }
 

@@ -522,6 +522,7 @@ public final class CutoutSessionCore: NSObject {
     private let databaseForCapturePublication: RideDatabaseHandle?
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var vehicleKindRestoreTask: Task<Void, Never>?
+    private var vescDrivetrainRestore: (token: ConnectionAttemptToken, task: Task<Void, Never>)?
     private var publishedDeviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
     private let injectedNotificationEffects: CutoutSessionNotificationEffects?
     private let injectedLocationEffects: CutoutSessionLocationEffects?
@@ -772,6 +773,7 @@ public final class CutoutSessionCore: NSObject {
 
     deinit {
         vehicleKindRestoreTask?.cancel()
+        vescDrivetrainRestore?.task.cancel()
         #if DEBUG
             testProtocolNotificationTimer?.cancel()
         #endif
@@ -1317,21 +1319,70 @@ public final class CutoutSessionCore: NSObject {
         let snapshot = try await Task.detached(priority: .userInitiated) {
             try state.selectConnectionVehicleKind(token: token, kind: kind, updatedAtMs: updatedAt)
         }.value
-        await withCheckedContinuation { continuation in
+        await publishDeviceStateAfterStorage(token: token)
+        return snapshot
+    }
+
+    /// Loads the captured connection's geometry after its automatic restore effect has settled.
+    public func loadVescDrivetrain(token: ConnectionAttemptToken) async throws -> MobileVescDrivetrainDraft? {
+        let restore = onBleQueue { vescDrivetrainRestore?.token == token ? vescDrivetrainRestore?.task : nil }
+        await restore?.value
+        try Task<Never, Never>.checkCancellation()
+        let state = rustSessionState
+        let restored = try await Task.detached(priority: .utility) {
+            try state.restoreConnectionVescDrivetrain(token: token)
+        }.value
+        await publishDeviceStateAfterStorage(token: token)
+        return restored
+    }
+
+    /// Rust validates and persists the draft; new geometry applies to future real measurements.
+    public func saveVescDrivetrain(
+        _ draft: MobileVescDrivetrainDraft, token: ConnectionAttemptToken
+    ) async throws -> MobileVescDrivetrainDraft {
+        guard let updatedAt = unixMilliseconds(for: wallClock()) else {
+            throw DeviceVehicleSelectionError.invalidTimestamp
+        }
+        let state = rustSessionState
+        let saved = try await Task.detached(priority: .userInitiated) {
+            try state.saveConnectionVescDrivetrain(token: token, draft: draft, updatedAtMs: updatedAt)
+        }.value
+        await publishDeviceStateAfterStorage(token: token)
+        return saved
+    }
+
+    private func publishDeviceStateAfterStorage(token: ConnectionAttemptToken) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let work = DispatchWorkItem { [self] in
                 if rustSessionState.connectionAttemptIsCurrent(token: token) {
                     publishConnectionSnapshot()
+                    refreshCanonicalDeviceTelemetry(token: token)
                     publishDisplayState()
                 }
-                continuation.resume()
+                continuation.resume(returning: ())
             }
             bleQueue.async(execute: work)
         }
-        return snapshot
+    }
+
+    /// Replaces the presentation from Rust facts without recording a new observation.
+    private func refreshCanonicalDeviceTelemetry(token: ConnectionAttemptToken) {
+        assertOnBleQueue()
+        guard let canonical = rustSessionState.connectionTelemetrySnapshot(token: token) else { return }
+        let snapshot = TelemetrySnapshot(canonical, chargeEstimate: displayState.telemetry?.chargeEstimate)
+        displayState = RideDisplayState(
+            speed: SpeedReadout(snapshot: snapshot),
+            telemetry: snapshot,
+            notificationCount: displayState.notificationCount,
+            lastUpdate: displayState.lastUpdate,
+            logicalRide: displayState.logicalRide
+        )
     }
 
     private func restoreUserVehicleKind(for token: ConnectionAttemptToken) {
         assertOnBleQueue()
+        vescDrivetrainRestore?.task.cancel()
+        vescDrivetrainRestore = nil
         vehicleKindRestoreTask?.cancel()
         let store = selectedDeviceStore
         let queue = bleQueue
@@ -1380,6 +1431,60 @@ public final class CutoutSessionCore: NSObject {
     func waitForVehicleKindRestoration() async {
         let restore = onBleQueue { vehicleKindRestoreTask }
         await restore?.value
+    }
+
+    private func restoreVescDrivetrainIfNeeded(_ snapshot: MobileDeviceSessionSnapshotDto) {
+        guard snapshot.identity?.protocol == .vesc,
+            snapshot.identity?.vescApplication == .absent,
+            let token = snapshot.connection.token,
+            vescDrivetrainRestore?.token != token
+        else { return }
+        vescDrivetrainRestore?.task.cancel()
+        let state = rustSessionState
+        let queue = bleQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        let task = Task<Void, Never> {
+            await Self.restoreVescDrivetrain(state: state, token: token, queue: queue, reference: reference)
+        }
+        vescDrivetrainRestore = (token, task)
+    }
+
+    private static func restoreVescDrivetrain(
+        state: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
+        queue: DispatchQueue,
+        reference: WeakCutoutSessionCoreReference
+    ) async {
+        do {
+            try Task<Never, Never>.checkCancellation()
+            let restored: MobileVescDrivetrainDraft? = try await Task.detached(priority: .utility) {
+                try state.restoreConnectionVescDrivetrain(token: token)
+            }.value
+            try Task<Never, Never>.checkCancellation()
+            guard restored != nil else { return }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let work = DispatchWorkItem {
+                    defer { continuation.resume(returning: ()) }
+                    guard let core = reference.value,
+                        core.rustSessionState.connectionAttemptIsCurrent(token: token)
+                    else { return }
+                    core.publishConnectionSnapshot()
+                    core.refreshCanonicalDeviceTelemetry(token: token)
+                    core.publishDisplayState()
+                }
+                queue.async(execute: work)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            let work = DispatchWorkItem {
+                guard let core = reference.value,
+                    core.rustSessionState.connectionAttemptIsCurrent(token: token)
+                else { return }
+                core.record("vesc_drivetrain_restore_failed=not_applied")
+            }
+            queue.async(execute: work)
+        }
     }
 
     #if DEBUG
@@ -1522,12 +1627,8 @@ public final class CutoutSessionCore: NSObject {
                         return channel
                     }
                     if let channel = channels.first {
-                        let replayStartedAt = clock.now()
-                        let replayInterval = testScript.protocolNotificationIntervalMilliseconds ?? 1
-                        for (index, bytes) in testScript.protocolNotifications.enumerated() {
-                            let receivedAt = MonotonicMilliseconds(
-                                replayStartedAt.rawValue + UInt64(index) * replayInterval
-                            )
+                        for bytes in testScript.protocolNotifications {
+                            let receivedAt = clock.now()
                             let step = try ingestAcceptedLiveNotification(
                                 AcceptedLiveNotificationIngress(
                                     channel: channel,
@@ -1728,6 +1829,8 @@ public final class CutoutSessionCore: NSObject {
     #endif
 
     private func disconnectAndScanOnBleQueue() {
+        vescDrivetrainRestore?.task.cancel()
+        vescDrivetrainRestore = nil
         vehicleKindRestoreTask?.cancel()
         vehicleKindRestoreTask = nil
         liveOwner?.invalidate()
@@ -2015,9 +2118,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishDeviceSessionSnapshot(_ snapshot: MobileDeviceSessionSnapshotDto) {
-        guard snapshot == rustSessionState.deviceSessionSnapshot(),
-            snapshot != publishedDeviceSessionSnapshot
-        else { return }
+        guard snapshot == rustSessionState.deviceSessionSnapshot() else { return }
+        restoreVescDrivetrainIfNeeded(snapshot)
+        guard snapshot != publishedDeviceSessionSnapshot else { return }
         publishedDeviceSessionSnapshot = snapshot
         publishOnMain { [weak self] in
             guard let self, self.rustSessionState.deviceSessionSnapshot() == snapshot else { return }

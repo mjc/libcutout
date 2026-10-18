@@ -91,6 +91,9 @@ public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
     case pedalMode
     case batteryCurrent
     case motorCurrent
+    case motorTemperature
+    case tripDistance
+    case rideDuration
     case boardAngle
     case controller
     case dutyCycle
