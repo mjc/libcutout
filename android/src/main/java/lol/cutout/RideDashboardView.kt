@@ -32,6 +32,8 @@ class RideDashboardView(
     private val ui = CutoutUi(context)
     private var surfaceKey: String? = null
     private var latestPresentation: BlePresentation? = null
+    private var geometryWidth = 0
+    private var geometryHeight = 0
     private var identityTitle = ""
     private var statusText = ""
     private var active = false
@@ -131,7 +133,7 @@ class RideDashboardView(
             } }
         }
         val showInstruments = snapshot != null || displayKind != DisplayKind.UNKNOWN
-        val landscape = width > height && width > 0
+        val landscape = geometryWidth > geometryHeight && geometryWidth > 0
         val key = surfaceKey(showInstruments, landscape)
         if (key != surfaceKey) {
             surfaceKey = key
@@ -141,12 +143,13 @@ class RideDashboardView(
             vescVoltageText, motorCurrentText, boardAngleText, vescTemperatureText, footpadText)
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        val instrumentsPresent = surfaceKey?.split(':')?.getOrNull(1) == "true"
-        val desiredLandscape = w > h && w > 0
-        val key = surfaceKey(instrumentsPresent, desiredLandscape)
-        if (key != surfaceKey) latestPresentation?.let(::render)
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        geometryWidth = MeasureSpec.getSize(widthMeasureSpec)
+        geometryHeight = MeasureSpec.getSize(heightMeasureSpec)
+        // Rebuild before measuring children. Replacing the hierarchy from onSizeChanged
+        // leaves the new children unmeasured and can produce a blank first frame.
+        latestPresentation?.let(::render)
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -156,8 +159,8 @@ class RideDashboardView(
 
     private fun surfaceKey(showInstruments: Boolean, landscape: Boolean): String {
         val density = resources.displayMetrics.density.coerceAtLeast(1f)
-        val widthDp = width / density
-        val heightDp = height / density
+        val widthDp = geometryWidth / density
+        val heightDp = geometryHeight / density
         val sizeClass = when {
             widthDp < 320f || heightDp < 440f -> "compact"
             widthDp >= 600f -> "wide"
@@ -408,7 +411,7 @@ class RideDashboardView(
         val readout = ui.row().apply { gravity = Gravity.CENTER; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
             setSingleLine(true); maxLines = 1; maxWidth = ui.dp(220)
-            setAutoSizeTextTypeUniformWithConfiguration(28, 120, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            setAutoSizeTextTypeUniformWithConfiguration(28, 170, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
         speed.tag = "ride.hero.speed"
@@ -435,13 +438,13 @@ class RideDashboardView(
 
     private fun addEnergyRow(parent: LinearLayout) {
         val row = ui.row().apply { setPadding(0, ui.dp(12), 0, ui.dp(12)) }
-        addInstrument(row, "range", context.getString(R.string.range), "—", context.getString(R.string.distance_unit), 42f, 1f)
+        addInstrument(row, "range", context.getString(R.string.range), "—", context.getString(R.string.distance_unit), 52f, 1f)
         val batteryCell = ui.column().apply {
             gravity = Gravity.END; isClickable = true; isFocusable = true; contentDescription = context.getString(R.string.battery)
             tag = "ride.readings.open"
             setOnClickListener { showDetails() }
         }
-        addInstrument(batteryCell, "battery", context.getString(R.string.battery) + "  ›", "—", "%", 42f, 0f, Gravity.END)
+        addInstrument(batteryCell, "battery", context.getString(R.string.battery) + "  ›", "—", "%", 52f, 0f, Gravity.END)
         batteryProgress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; progressTintList = android.content.res.ColorStateList.valueOf(ui.foreground)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(ui.stroke)
@@ -602,7 +605,7 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
         track.strokeWidth = line; accent.strokeWidth = line
         canvas.drawArc(rect, 180f, 180f, false, track)
         percentage?.let { canvas.drawArc(rect, 180f, 180f * (it / 1000f).coerceIn(0f, 1f), false, accent) }
-        val size = minOf(ui.dp(56).toFloat(), width * 0.23f, height * 0.42f).coerceAtLeast(ui.dp(22).toFloat())
+        val size = minOf(ui.dp(84).toFloat(), width * 0.23f, height * 0.42f).coerceAtLeast(ui.dp(22).toFloat())
         primary.textSize = minOf(size * resources.displayMetrics.scaledDensity / resources.displayMetrics.density,
             width * 0.30f)
         endpoint.textSize = 12f * resources.displayMetrics.scaledDensity

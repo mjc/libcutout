@@ -167,11 +167,13 @@ open class RideDashboardProjectionTest {
         layout(ride, width, height)
         val expected = tagged<TextView>(ride, "ride.hero.speed").text.toString()
         check(expected.isNotBlank() && expected != activity.getString(lol.cutout.R.string.unavailable))
+        checkLaidOutInstrumentBounds(ride)
 
         // Force a landscape/size-class transition without waiting for another telemetry event.
         layout(ride, height, width)
         val afterResize = tagged<TextView>(ride, "ride.hero.speed").text.toString()
         check(afterResize == expected) { "Geometry rebuild discarded the most recent Rust speed" }
+        checkLaidOutInstrumentBounds(ride)
         check(tagged<View>(ride, "euc.ride.headroom").contentDescription?.isNotBlank() == true) {
             "Geometry rebuild did not restore the current Rust headroom value"
         }
@@ -241,6 +243,17 @@ open class RideDashboardProjectionTest {
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
         )
         view.layout(0, 0, width, height)
+    }
+
+    private fun checkLaidOutInstrumentBounds(ride: RideDashboardView) {
+        val speed = tagged<TextView>(ride, "ride.hero.speed")
+        val gauge = tagged<View>(ride, "euc.ride.headroom")
+        check(speed.width > 0 && speed.height > 0) {
+            "Speed view had empty bounds on the first measured frame or after resize"
+        }
+        check(gauge.width > 0 && gauge.height > 0) {
+            "Headroom gauge had empty bounds on the first measured frame or after resize"
+        }
     }
 
     private fun withActivity(block: (MainActivity) -> Unit) {

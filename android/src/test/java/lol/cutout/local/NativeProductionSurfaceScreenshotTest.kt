@@ -10,12 +10,16 @@ import lol.cutout.DevicePickerPanel
 import lol.cutout.NearbyPev
 import lol.cutout.RideDashboardView
 import lol.cutout.SettingsPanel
+import lol.cutout.CutoutApplication
+import lol.cutout.MainActivity
+import lol.cutout.R
 import lol.cutout.ffitest.productionReplayPresentation
 import lol.cutout.wireBytes
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Robolectric
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import uniffi.cutout_mobile_ffi.DiscoveryServiceUuid
@@ -27,6 +31,25 @@ import java.util.UUID
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class NativeProductionSurfaceScreenshotTest {
+    @Test
+    @Config(qualifiers = "w393dp-h852dp-xhdpi-night")
+    fun rendersConnectedRideWithProductionNavigation() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        try {
+            (activity.application as CutoutApplication).bluetooth.observe(null)
+            (activity.application as CutoutApplication).bluetooth.stopScan()
+            activity.render(productionReplayPresentation())
+            val navigation = descendants(activity.window.decorView).single {
+                it.isClickable && it.contentDescription?.toString() == activity.getString(R.string.ride)
+            }
+            check(navigation.performClick())
+            NativeSurfaceCapture.save(activity.window.decorView, "app-ride-dark")
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
     @Test
     fun rendersPickerRideAndSettingsInLightAndDark() {
         val app = RuntimeEnvironment.getApplication()
@@ -63,6 +86,13 @@ class NativeProductionSurfaceScreenshotTest {
 
     private fun mode(dark: Boolean) = if (dark) "dark" else "light"
 
+    private fun descendants(view: View): Sequence<View> = sequence {
+        yield(view)
+        if (view is android.view.ViewGroup) {
+            for (index in 0 until view.childCount) yieldAll(descendants(view.getChildAt(index)))
+        }
+    }
+
     private fun device(id: String, name: String, serviceUuid: String): NearbyPev {
         val candidate = mobileDiscoveryCandidateFromAdvertisement(
             id,
@@ -89,6 +119,11 @@ private object NativeSurfaceCapture {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             view.draw(Canvas(bitmap))
+            val background = bitmap.getPixel(0, 0)
+            val visibleSamples = (0 until height step 8).sumOf { y ->
+                (0 until width step 8).count { x -> bitmap.getPixel(x, y) != background }
+            }
+            check(visibleSamples > 32) { "$name rendered a blank surface on its first layout" }
             val output = File(System.getProperty("cutout.ui.artifacts") ?: "build/test-artifacts/ui")
             check(output.isDirectory || output.mkdirs()) { "Could not create UI artifact directory: $output" }
             File(output, "$name.png").outputStream().use { stream ->
