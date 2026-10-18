@@ -65,7 +65,6 @@ fn capture_with_setup(
     );
     assert!(builder.set_database(Arc::clone(&database)));
     assert!(builder.set_capture_start_monotonic_ms(100));
-    assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
     setup(&builder);
     assert!(builder.start_writer(path.to_string_lossy().into_owned()));
     run(&builder);
@@ -121,39 +120,18 @@ fn manual_capture_origin_retains_each_decoded_observation() {
     );
 }
 
-fn music(at: u64) -> MobilePevcapMusicEventDto {
-    MobilePevcapMusicEventDto {
-        provider: MobileMusicProviderDto::Spotify,
-        track_id: "spotify:track:test".into(),
-        monotonic_at_ms: at,
-        wall_clock_unix_ms: 900 + at,
-        clock_uncertainty_ms: 0,
-        ride_sequence: None,
-    }
-}
-
 #[test]
-fn automatic_capture_omits_music_and_preserves_material_baselines_and_link_resets() {
-    for (policy, expected_times) in [
-        (MobileMusicHistoryPolicyDto::Disabled, &[10, 15, 16, 17][..]),
-        (
-            MobileMusicHistoryPolicyDto::HumanReadable,
-            &[10, 13, 15, 16, 17, 20][..],
-        ),
-    ] {
+fn automatic_capture_preserves_material_baselines_and_link_resets() {
+    let expected_times = &[10, 15, 16, 17][..];
+    {
         let capture = capture_with_setup(
             |builder| {
                 assert!(builder.set_recording_origin(MobileCaptureOriginDto::Automatic));
-                assert!(builder.set_music_history_policy(policy));
             },
             |builder| {
                 for at in 110..=111 {
                     decoded_notification(builder, at, stationary_snapshot(at));
                 }
-                assert_eq!(
-                    builder.record_music_event(music(112)),
-                    MobileCaptureWriteOutcomeDto::Accepted
-                );
                 for at in 113..=114 {
                     decoded_notification(builder, at, stationary_snapshot(at));
                 }
@@ -168,22 +146,11 @@ fn automatic_capture_omits_music_and_preserves_material_baselines_and_link_reset
                 for at in 117..=118 {
                     decoded_notification(builder, at, stationary_snapshot(at));
                 }
-                for _ in 0..2 {
-                    assert_eq!(
-                        builder.record_music_event(music(119)),
-                        MobileCaptureWriteOutcomeDto::Accepted
-                    );
-                }
                 for at in 120..=121 {
                     decoded_notification(builder, at, stationary_snapshot(at));
                 }
             },
         );
-        // App startup disables music, so ignored provider observations cannot reset
-        // its telemetry baseline. Explicit legacy music still resets that generic
-        // writer baseline, but no music metadata belongs in either exported capture.
-        assert_eq!(capture.music_events, Vec::<PevcapMusicEvent>::new());
-        assert!(capture.records.iter().all(|record| record.music.is_none()));
         assert_eq!(
             capture
                 .records

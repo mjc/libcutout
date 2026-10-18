@@ -513,17 +513,6 @@ impl DatabaseWorker<'_> {
                     connection,
                 ));
             }
-            Command::PurgeCaptureMusicMetadata {
-                database_path,
-                owned_directories,
-                reply,
-            } => {
-                let _ = reply.send(super::capture_music_privacy::purge(
-                    connection,
-                    &database_path,
-                    &owned_directories,
-                ));
-            }
             Command::MusicEvents { ride_id, reply } => {
                 let _ = reply.send(music_events(connection, ride_id));
             }

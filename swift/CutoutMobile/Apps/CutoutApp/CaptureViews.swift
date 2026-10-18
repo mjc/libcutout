@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import SwiftUI
 
 func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValueRow] {
@@ -54,6 +55,14 @@ struct CaptureRecordingScreen: View {
     let finishCapture: () -> Void
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
+    let researchDraft: CaptureResearchDraft
+    let settingsObservations: [MobileCaptureSettingsObservationDto]
+    let settingsError: String?
+    let refreshSettingsObservations: () -> Void
+    let recordSettingsObservation: (MobileCaptureSettingsDraftDto) async throws -> Void
+    let readSettingsReadback:
+        ([MobileCaptureResearchReadbackRequestDto]) async throws -> [MobileCaptureResearchReadbackDto]
+    @State private var showingWorksheet = false
 
     var body: some View {
         List {
@@ -77,20 +86,42 @@ struct CaptureRecordingScreen: View {
                 .padding(.vertical, 8)
             }
 
-            Section {
+            Section("Observed activity") {
+                CaptureLabelControls(
+                    labels: CaptureQuickLabel.activity,
+                    compact: true,
+                    activeLabels: activeLabels,
+                    startCaptureLabel: startCaptureLabel,
+                    stopCaptureLabel: stopCaptureLabel
+                ).disabled(!canAnnotate)
+            }
+            Section("Settings & actions") {
+                Button("Record settings values") { showingWorksheet = true }
+                    .disabled(!canAnnotate).accessibilityIdentifier("capture.settings.record")
+                if let settingsError {
+                    Text(settingsError).foregroundStyle(PevColors.warningText)
+                        .accessibilityIdentifier("capture.settings.load-error")
+                    Button(localizedAppText("capture.settings.retry_load"), action: refreshSettingsObservations)
+                        .accessibilityIdentifier("capture.settings.retry-load")
+                }
+                if !settingsObservations.isEmpty {
+                    NavigationLink {
+                        CaptureSettingsObservationReview(
+                            observations: settingsObservations, readback: readSettingsReadback)
+                    } label: {
+                        LabeledContent("Settings observations", value: settingsObservations.count.formatted())
+                    }.accessibilityIdentifier("capture.settings.observations")
+                }
                 DisclosureGroup {
                     CaptureLabelControls(
+                        labels: CaptureQuickLabel.actions,
                         activeLabels: activeLabels,
                         startCaptureLabel: startCaptureLabel,
                         stopCaptureLabel: stopCaptureLabel
-                    )
-                    .disabled(!canAnnotate)
+                    ).disabled(!canAnnotate)
                 } label: {
-                    Text(localizedAppText("captures.labels"))
-                        .accessibilityIdentifier("captures.labels")
+                    Text("More action markers").accessibilityIdentifier("captures.labels")
                 }
-            } footer: {
-                Text(localizedAppText("captures.labels_hint"))
             }
 
             if let captureProgress {
@@ -130,6 +161,12 @@ struct CaptureRecordingScreen: View {
             .padding(18)
             .background(PevColors.pageBackground)
         }
+        .sheet(isPresented: $showingWorksheet) {
+            NavigationStack {
+                CaptureSettingsWorksheet(draft: researchDraft, save: recordSettingsObservation)
+            }
+        }
+        .onAppear(perform: refreshSettingsObservations)
         .scrollContentBackground(.hidden)
         .background(PevColors.pageBackground)
         .navigationTitle(localizedAppText("captures.active"))
@@ -169,6 +206,8 @@ enum CaptureActionButtonTone: Equatable, Sendable {
 }
 
 struct CaptureLabelControls: View {
+    var labels: [CaptureQuickLabel] = CaptureQuickLabel.allCases
+    var compact = false
     let activeLabels: Set<CaptureQuickLabel>
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
@@ -178,14 +217,29 @@ struct CaptureLabelControls: View {
     ]
 
     var body: some View {
-        PevDashboardGrid(columns: columns, spacing: 10) {
-            ForEach(CaptureQuickLabel.allCases) { label in
-                CaptureLabelControlRow(
-                    label: label,
-                    isActive: activeLabels.contains(label),
-                    start: { startCaptureLabel(label) },
-                    stop: { stopCaptureLabel(label) }
-                )
+        PevDashboardGrid(columns: compact ? [GridItem(.adaptive(minimum: 140), spacing: 10)] : columns, spacing: 10) {
+            ForEach(labels) { label in
+                if compact {
+                    Button {
+                        if activeLabels.contains(label) { stopCaptureLabel(label) } else { startCaptureLabel(label) }
+                    } label: {
+                        Text(label.title).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(activeLabels.contains(label) ? PevColors.orange : PevColors.yellow)
+                    .accessibilityLabel(label.actionTitle(isActive: activeLabels.contains(label)))
+                    .accessibilityValue(
+                        localizedAppText(activeLabels.contains(label) ? "capture.label.active" : "capture.label.idle")
+                    )
+                    .accessibilityIdentifier("capture.label.\(label.id).action")
+                } else {
+                    CaptureLabelControlRow(
+                        label: label,
+                        isActive: activeLabels.contains(label),
+                        start: { startCaptureLabel(label) },
+                        stop: { stopCaptureLabel(label) }
+                    )
+                }
             }
         }
     }

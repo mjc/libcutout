@@ -90,6 +90,8 @@ pub struct MobileCaptureSubmissionCategoriesDto {
     pub notes: bool,
     /// Accepted annotations or physical-action label boundaries are included.
     pub annotations: bool,
+    /// User-entered settings values and notes are included.
+    pub settings_observations: bool,
 }
 
 impl From<cutout_core::CaptureSubmissionCategories> for MobileCaptureSubmissionCategoriesDto {
@@ -99,6 +101,7 @@ impl From<cutout_core::CaptureSubmissionCategories> for MobileCaptureSubmissionC
             location: categories.location,
             notes: categories.notes,
             annotations: categories.annotations,
+            settings_observations: categories.settings_observations,
         }
     }
 }

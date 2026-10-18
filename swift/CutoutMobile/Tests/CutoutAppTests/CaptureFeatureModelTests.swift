@@ -9,6 +9,47 @@ import XCTest
 final class CaptureFeatureModelTests: XCTestCase {
     private enum ExportFailure: Error { case unavailable }
 
+    func testSettingsReadFailureRetainsRecordingAndSavedValuesAndCanRetry() throws {
+        var shouldFail = true
+        var readCount = 0
+        let saved = MobileCaptureSettingsObservationDto(
+            captureId: UUID().uuidString,
+            profile: MobileCaptureResearchProfileDto(
+                profileId: "nosfet_aero", pevCategory: "euc", model: "NOSFET Aero", firmware: nil, selection: .manual),
+            observedAtMs: 0, recordedAtMs: 0, source: .manufacturerApp,
+            values: [
+                MobileCaptureSettingObservationValueDto(
+                    settingId: "display_brightness", value: .entered(value: "30"), unit: "%", note: nil)
+            ], note: nil
+        )
+        let capture = CaptureFeatureModel(
+            sessionState: CutoutSessionStateHandle(),
+            readSettingsObservations: { _ in
+                readCount += 1
+                if shouldFail { throw ExportFailure.unavailable }
+                return [saved]
+            })
+        capture.deliverCaptureEvent(
+            .started(fileURL: URL(fileURLWithPath: "/tmp/settings-read-error.jsonl")), origin: .manual)
+        let generation = try XCTUnwrap(capture.activeGeneration)
+        capture.refreshSettingsObservations()
+        XCTAssertEqual(capture.settingsError, localizedAppText("capture.settings.load_error"))
+        XCTAssertTrue(capture.settingsObservations.isEmpty)
+        XCTAssertTrue(capture.canAnnotate)
+
+        shouldFail = false
+        capture.refreshSettingsObservations()
+        XCTAssertNil(capture.settingsError)
+        XCTAssertEqual(capture.settingsObservations, [saved])
+        shouldFail = true
+        capture.refreshSettingsObservations()
+        XCTAssertNotNil(capture.settingsError)
+        XCTAssertEqual(capture.settingsObservations, [saved])
+        XCTAssertEqual(capture.activeGeneration, generation)
+        XCTAssertTrue(capture.canAnnotate)
+        XCTAssertEqual(readCount, 3)
+    }
+
     func testConsumedFileCompletionRetainsArtifactIdentitySeparatelyFromThePath() throws {
         let capture = CaptureFeatureModel()
         let artifactID = UUID().uuidString

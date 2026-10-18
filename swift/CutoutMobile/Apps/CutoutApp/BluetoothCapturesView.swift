@@ -219,6 +219,7 @@ struct CaptureArtifactDetailView: View {
                 }
             }
             if let source = artifact.submissionSource {
+                CaptureSavedSettingsSection(source: source)
                 CaptureSubmissionSection(source: source)
                     .id(artifact.id)
             }
@@ -297,6 +298,7 @@ private struct DatabaseCaptureDetailView: View {
             } footer: {
                 Text("The recording is saved on this device. Export creates a shareable file from its retained data.")
             }
+            CaptureSavedSettingsSection(source: .liveCapture(id: capture.liveCaptureId))
             CaptureSubmissionSection(source: .liveCapture(id: capture.liveCaptureId))
                 .id(capture.liveCaptureId)
         }

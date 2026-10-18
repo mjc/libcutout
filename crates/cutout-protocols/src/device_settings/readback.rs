@@ -24,6 +24,14 @@ impl DeviceControlProfile {
     /// Converts decoded protocol fields without granting writes or fabricating evidence.
     #[must_use]
     pub fn normalize_readback(self, readback: SettingsReadback) -> Vec<SettingObservation> {
+        self.normalize_capture_readback(&readback, false)
+    }
+
+    pub(super) fn normalize_capture_readback(
+        self,
+        readback: &SettingsReadback,
+        include_research: bool,
+    ) -> Vec<SettingObservation> {
         let Some(protocol) = self.settings_adapter.protocol() else {
             return Vec::new();
         };
@@ -34,7 +42,7 @@ impl DeviceControlProfile {
         }
         let descriptors = self.descriptors(false);
         observations.retain(|entry| {
-            descriptors.iter().any(|item| item.id == entry.id)
+            (include_research || descriptors.iter().any(|item| item.id == entry.id))
                 && self
                     .settings_adapter
                     .binding(entry.id)

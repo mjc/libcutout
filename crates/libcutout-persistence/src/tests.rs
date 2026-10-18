@@ -1,8 +1,6 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-#[path = "capture_music_privacy_tests.rs"]
-mod capture_music_privacy_tests;
 #[path = "ride_session_marker_tests.rs"]
 mod ride_session_marker_tests;
 
@@ -9994,4 +9992,95 @@ fn battery_current_snapshot_versions_survive_storage_without_relabeling() {
     }
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+fn settings_count_capture(encoding: PevcapEncoding, count: usize) -> Vec<u8> {
+    let observation: cutout_core::CaptureSettingsObservation = serde_json::from_value(serde_json::json!({
+        "capture_id":"776fc772-f8d4-4b15-9100-904222052d0f",
+        "profile":{"profile_id":"manual_unknown_device","pev_category":"euc","model":null,"firmware":null,"selection":"manual"},
+        "observed_at_ms":5,"recorded_at_ms":30,"source":"manufacturer_app",
+        "values":[{"setting_id":"display_brightness","value":{"kind":"entered","value":"125"},"unit":"%","note":"as shown"}],
+        "note":null
+    })).unwrap();
+    let capture = PevcapCapture::new(pevcap_header(), vec![]);
+    let mut bytes = capture.encode(encoding).unwrap();
+    match encoding {
+        PevcapEncoding::Jsonl => {
+            let line = observation.to_jsonl_line().unwrap();
+            for _ in 0..count {
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+        }
+        PevcapEncoding::Binary => {
+            // The current empty envelope ends in its zero settings count. Write the
+            // input section directly without asking the encoder to emit an invalid count.
+            bytes.truncate(bytes.len() - 4);
+            bytes.extend_from_slice(&u32::try_from(count).unwrap().to_le_bytes());
+            let payload = serde_json::to_vec(&observation).unwrap();
+            let length = u32::try_from(payload.len()).unwrap().to_le_bytes();
+            for _ in 0..count {
+                bytes.extend_from_slice(&length);
+                bytes.extend_from_slice(&payload);
+            }
+        }
+    }
+    bytes
+}
+
+#[test]
+fn pevcap_preflight_rejects_excess_settings_before_publication_and_imports_exact_limit() {
+    let _guard = test_guard();
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let limit = cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS;
+        let oversized = directory.path().join("oversized.capture");
+        std::fs::write(&oversized, settings_count_capture(encoding, limit + 1)).unwrap();
+        assert!(matches!(
+            database.preflight_pevcap(&oversized, encoding),
+            Err(StorageError::PevcapImport(_))
+        ));
+        assert_eq!(
+            database
+                .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .captures,
+            []
+        );
+        assert_eq!(
+            database
+                .list_rides(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .rides(),
+            []
+        );
+        let source = directory.path().join("exact-limit.capture");
+        let original = settings_count_capture(encoding, limit);
+        std::fs::write(&source, &original).unwrap();
+        let preview = database.preflight_pevcap(&source, encoding).unwrap();
+        assert_eq!(preview.outcome(), PevcapImportOutcome::CaptureOnly);
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_001_000)
+            .unwrap();
+        assert_eq!(receipt.ride_id, None);
+        assert_eq!(
+            database
+                .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .captures
+                .len(),
+            1
+        );
+        let exported = directory.path().join("exported.capture");
+        database
+            .export_pevcap_capture(&receipt.artifact_digest, &exported)
+            .unwrap();
+        let retained = std::fs::read(exported).unwrap();
+        assert_eq!(retained, original);
+        let decoded = PevcapCapture::decode(&retained, encoding).unwrap();
+        assert_eq!(decoded.settings_observations.len(), limit);
+
+        database.shutdown().unwrap();
+    }
 }

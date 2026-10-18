@@ -40,7 +40,9 @@ use uuid::Uuid;
 
 mod capture_data;
 mod capture_history;
+mod capture_settings;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+pub(crate) use capture_settings::CaptureTransportReadPrefix;
 mod live_capture_history;
 pub use live_capture_history::{
     LiveCaptureHistoryCursor, LiveCaptureHistoryEntry, LiveCaptureHistoryPage,
@@ -52,9 +54,7 @@ pub use live_capture::{
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
     LiveCaptureLocationValidation, LiveCaptureSnapshot, LiveCaptureState,
 };
-mod capture_music_privacy;
 mod music_privacy;
-pub(crate) use capture_music_privacy::sanitize_capture_music;
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
 mod capture_submission;
@@ -3767,22 +3767,6 @@ impl RideDatabase {
         self.request(|reply| Command::DeleteSpotifyMusicHistory { reply })
     }
 
-    /// Removes obsolete music metadata from retained Bluetooth evidence, preserving raw BLE.
-    /// Only recognized app-owned files under supplied directories are rewritten.
-    ///
-    /// # Errors
-    /// Returns an error if legacy capture work is still active or any owned copy cannot be cleaned.
-    pub fn purge_capture_music_metadata(
-        &self,
-        owned_directories: &[PathBuf],
-    ) -> Result<(), StorageError> {
-        self.request(|reply| Command::PurgeCaptureMusicMetadata {
-            database_path: self.path.as_ref().clone(),
-            owned_directories: owned_directories.to_vec(),
-            reply,
-        })
-    }
-
     /// Loads the bounded music timeline for one ride in sequence order.
     ///
     /// # Errors
@@ -5553,11 +5537,6 @@ enum Command {
         reply: Reply<()>,
     },
     DeleteSpotifyMusicHistory {
-        reply: Reply<()>,
-    },
-    PurgeCaptureMusicMetadata {
-        database_path: PathBuf,
-        owned_directories: Vec<PathBuf>,
         reply: Reply<()>,
     },
     #[allow(

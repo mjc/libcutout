@@ -68,10 +68,7 @@ impl MaterialBaseline {
 }
 
 fn material_record(record: &PevcapRecord) -> Option<PreparedMaterialRecord> {
-    if record.direction != PevcapDirection::Inbound
-        || record.music.is_some()
-        || record.phone_location.is_some()
-    {
+    if record.direction != PevcapDirection::Inbound || record.phone_location.is_some() {
         return None;
     }
     let semantic = record.semantic_telemetry.as_ref()?;
@@ -237,24 +234,12 @@ mod tests {
     }
 
     #[test]
-    fn invalid_semantics_and_attached_music_break_the_baseline() {
+    fn invalid_or_missing_semantics_break_the_baseline() {
         let mut invalid = stationary_record(2);
         invalid.semantic_telemetry.as_mut().unwrap().snapshot_json = "[]".into();
         let mut missing = stationary_record(3);
         missing.semantic_telemetry = None;
-        let mut music = stationary_record(4);
-        music.music = Some(
-            cutout_core::PevcapMusicEvent::new(
-                cutout_core::MusicProvider::Spotify,
-                "spotify:track:test",
-                MonotonicTimestamp::new(4),
-                cutout_core::WallClockUnixTimestamp::new(104),
-                0,
-                None,
-            )
-            .unwrap(),
-        );
-        for record in [invalid, missing, music] {
+        for record in [invalid, missing] {
             let mut baseline = committed_baseline();
             assert!(matches!(
                 baseline.prepare(&record, CaptureRecordAdmission::StationaryTelemetry),

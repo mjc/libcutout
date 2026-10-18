@@ -57,8 +57,12 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func publishStarted()
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto]
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool
     @discardableResult func publishProgress() -> CaptureProgress
     func publishFailure()
     func writerStatus() -> MobileCaptureWriterStatusDto?
@@ -91,7 +95,18 @@ protocol CutoutSessionCaptureRecording: AnyObject {
 }
 
 extension CutoutSessionCaptureRecording {
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool { { true } }
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    {
+        throw MobileCaptureResearchError.NotRecording
+    }
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] { [] }
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
+    {
+        throw MobileCaptureResearchError.NotRecording
+    }
+
 }
 
 /// Owns PEVCAP writer state and capture-local timing; Rust/Core retain lifecycle and failure policy.
@@ -157,13 +172,12 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
                     reason: reason,
                     evidence: evidence,
                     annotations: annotations,
-                    origin: origin,
-                    musicHistoryPolicy: .disabled
+                    origin: origin
                 ),
                 database: database
             )
             let startedAt = clock.now()
-            let admitted = try prepared.start(monotonicMs: startedAt.rawValue, musicContext: nil)
+            let admitted = try prepared.start(monotonicMs: startedAt.rawValue)
             let builder = admitted.builder
             let url = URL(fileURLWithPath: admitted.path)
 
@@ -210,19 +224,27 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         return try builder.changeLabel(action: action)
     }
 
-    func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }
-
-    /// Snapshot native writer ownership on the BLE queue; wait only on a background executor.
-    func musicMetadataCleanupBarrier() -> @Sendable () -> Bool {
-        let active = builder
-        let completions = writerCompletionGroup
-        return {
-            completions.wait()
-            guard active?.prepareMusicMetadataCleanup() ?? true else { return false }
-            completions.wait()
-            return true
-        }
+    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+        MobileCaptureSettingsObservationDto
+    {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        let recordedAt = clock.now().rawValue
+        return { draft in try builder.recordSettingsObservation(draft: draft, monotonicMs: recordedAt) }
     }
+
+    func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        return try builder.settingsObservations()
+    }
+
+    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+        [MobileCaptureResearchReadbackDto]
+    {
+        guard let builder else { throw MobileCaptureResearchError.NotRecording }
+        return { requests in try builder.captureResearchReadbackBatch(requests: requests) }
+    }
+
+    func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }
 
     @discardableResult
     func publishProgress() -> CaptureProgress {

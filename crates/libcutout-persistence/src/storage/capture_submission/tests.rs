@@ -434,25 +434,6 @@ fn capture_submission_preserves_automatic_origin_as_provenance() {
 }
 
 #[test]
-fn capture_submission_freezes_payload_before_later_source_cleanup() {
-    let directory = tempfile::tempdir().unwrap();
-    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
-    let (id, receipt) = finished(recording(&database, directory.path()));
-    retain(&database, &receipt, CaptureOrigin::Manual);
-    let source = CaptureSubmissionSource::LiveCapture(id);
-    let prepared = database.prepare_capture_submission(source).unwrap();
-    database.purge_capture_music_metadata(&[]).unwrap();
-    assert_eq!(
-        database.capture_submission(source).unwrap(),
-        Some(prepared.clone())
-    );
-    assert_eq!(
-        database.prepare_capture_submission(source).unwrap(),
-        prepared
-    );
-}
-
-#[test]
 fn capture_submission_explicit_send_retains_raw_bytes_and_validates_receipt() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
@@ -479,10 +460,7 @@ fn capture_submission_explicit_send_retains_raw_bytes_and_validates_receipt() {
     let payload = &uploads[0].1;
     let capture = cutout_core::PevcapCapture::decode(payload, PevcapEncoding::Jsonl).unwrap();
     assert_eq!(capture.records[0].bytes, vec![0xff, 0x00, 0xa5]);
-    assert_eq!(
-        capture.music_events,
-        [] as [cutout_core::PevcapMusicEvent; 0]
-    );
+
     assert!(String::from_utf8_lossy(payload).contains("capture_label=ride_stop"));
     assert_eq!(
         sent.receipt.as_ref().unwrap().sha256,
@@ -732,8 +710,8 @@ fn capture_submission_preserves_finished_loss_and_rejects_corrupt_snapshot() {
 }
 
 #[test]
-fn capture_submission_file_snapshot_preserves_original_and_records_music_derivative() {
-    for legacy_music in [false, true] {
+fn capture_submission_file_snapshot_preserves_original_and_exact_bytes() {
+    {
         let directory = tempfile::tempdir().unwrap();
         let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
         let original_path = directory.path().join("original.jsonl");
@@ -750,25 +728,13 @@ fn capture_submission_file_snapshot_preserves_original_and_records_music_derivat
             },
         )
         .unwrap();
-        let mut record = PevcapRecord::inbound_notification(
+        let record = PevcapRecord::inbound_notification(
             MonotonicTimestamp::new(1),
             GattChannel::from_bytes([0x11; 16]),
             GattChannel::from_bytes([0x22; 16]),
             vec![0xff, 0x00, 0xa5],
         );
-        if legacy_music {
-            let music = cutout_core::PevcapMusicEvent::new(
-                cutout_core::MusicProvider::Spotify,
-                "spotify:track:private",
-                MonotonicTimestamp::new(1),
-                WallClockUnixTimestamp::new(1_700_000_000_001),
-                1,
-                None,
-            )
-            .unwrap();
-            record.music = Some(music.clone());
-            assert_eq!(writer.record_music(music), CaptureWriteOutcome::Accepted);
-        }
+
         assert_eq!(
             writer.try_send_record(record),
             CaptureWriteOutcome::Accepted
@@ -795,11 +761,7 @@ fn capture_submission_file_snapshot_preserves_original_and_records_music_derivat
         assert_eq!(prepared.metadata.provenance.live_capture_id, None);
         assert_eq!(
             prepared.metadata.provenance.transformation,
-            if legacy_music {
-                CaptureSubmissionTransformation::MusicRemoved
-            } else {
-                CaptureSubmissionTransformation::Unmodified
-            }
+            CaptureSubmissionTransformation::Unmodified
         );
         assert_eq!(std::fs::read(&original_path).unwrap(), original);
         let transport = Transport::default();
@@ -812,18 +774,10 @@ fn capture_submission_file_snapshot_preserves_original_and_records_music_derivat
         .unwrap();
         assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
         let uploads = transport.uploads.lock().unwrap();
-        if legacy_music {
-            assert_ne!(uploads[0].1, original);
-        } else {
-            assert_eq!(uploads[0].1, original);
-        }
+        assert_eq!(uploads[0].1, original);
         let decoded =
             cutout_core::PevcapCapture::decode(&uploads[0].1, PevcapEncoding::Jsonl).unwrap();
-        assert_eq!(
-            decoded.music_events,
-            [] as [cutout_core::PevcapMusicEvent; 0]
-        );
-        assert!(decoded.records.iter().all(|record| record.music.is_none()));
+
         assert_eq!(decoded.records[0].bytes, vec![0xff, 0x00, 0xa5]);
         drop(uploads);
         database.shutdown().unwrap();
@@ -966,4 +920,58 @@ fn capture_submission_account_deletion_retires_late_receipt_and_preserves_origin
         history.captures[0].recording.as_ref().unwrap().artifact_id,
         receipt.artifact_id()
     );
+}
+
+#[test]
+fn capture_submission_freezes_and_sends_reported_settings_after_relaunch() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let writer = recording(&database, directory.path());
+    let first = crate::capture_writer::settings_observation_tests::observation(
+        writer.capture_identity(),
+        100,
+    );
+    let mut second = first.clone();
+    second.observed_at_ms = 180;
+    second.recorded_at_ms = 200;
+    second.values[0].value = cutout_core::CaptureObservedValue::Entered("125.00".into());
+    for value in [&first, &second] {
+        assert_eq!(
+            writer.try_send_settings_observation(value.clone()).unwrap(),
+            CaptureWriteOutcome::Accepted
+        );
+    }
+    let (id, receipt) = finished(writer);
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert!(prepared.categories.annotations);
+    let original_snapshot = directory.path().join("snapshot.jsonl");
+    database
+        .export_pevcap_capture(&prepared.metadata.sha256, &original_snapshot)
+        .unwrap();
+    let original_bytes = std::fs::read(original_snapshot).unwrap();
+    drop(database);
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    assert_eq!(
+        reopened.prepare_capture_submission(source).unwrap(),
+        prepared
+    );
+    let transport = Transport::default();
+    let sent = ready(reopened.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    let uploads = transport.uploads.lock().unwrap();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].1, original_bytes);
+    let capture = cutout_core::PevcapCapture::decode(&uploads[0].1, PevcapEncoding::Jsonl).unwrap();
+    assert_eq!(capture.settings_observations, vec![first, second]);
+
+    assert_eq!(sent.metadata, prepared.metadata);
 }
