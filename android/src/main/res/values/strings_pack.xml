@@ -1,0 +1,34 @@
+<resources>
+    <string name="pack_controller_readings">Controller readings</string>
+    <string name="pack_no_readback">No live pack readback</string>
+    <string name="pack_no_readback_detail">Connect and verify a device to view its reported pack data.</string>
+    <string name="pack_unsupported">Pack data is not supported</string>
+    <string name="pack_unsupported_detail">The verified device profile does not report pack data.</string>
+    <string name="pack_unavailable">Pack data is unavailable</string>
+    <string name="pack_unavailable_detail">This device supports pack data, but no current readback is available.</string>
+    <string name="pack_unknown_topology">Pack layout is unknown</string>
+    <string name="pack_unknown_topology_detail">Observed groups are not mapped to a verified series layout. Review the reported readings without treating them as physical cells.</string>
+    <string name="pack_unverified_topology">%1$d reported groups · layout unverified</string>
+    <string name="pack_current_1">Pack current 1</string>
+    <string name="pack_current_2">Pack current 2</string>
+    <string name="pack_difference">Lowest to highest difference</string>
+    <string name="pack_chart">Group voltage comparison</string>
+    <string name="pack_lowest">Lowest</string>
+    <string name="pack_highest">Highest</string>
+    <string name="pack_readings">%1$d reported readings</string>
+    <string name="pack_warning">Review %1$s</string>
+    <string name="pack_temperatures">Temperatures</string>
+    <string name="pack_sensor">Sensor %1$d</string>
+    <string name="pack_find_reading">Find a reading</string>
+    <string name="pack_number">Pack %1$d</string>
+    <string name="pack_group_accessibility">%1$s, %2$s</string>
+    <string name="pack_cell_warning">This reading has an alert.</string>
+    <string name="pack_recent_history">Recent voltage history</string>
+    <string name="pack_recent_history_accessibility">Recent voltage history, %1$d observations</string>
+    <string name="pack_recent_range">Recent range</string>
+    <string name="pack_latest_raw">Latest raw</string>
+    <string name="pack_stabilized_explanation">The displayed voltage may be stabilized; latest raw is shown separately when it differs.</string>
+    <string name="pack_resistance">Resistance</string>
+    <string name="pack_previous">Previous</string>
+    <string name="pack_next">Next</string>
+</resources>
