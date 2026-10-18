@@ -2,7 +2,7 @@
     <string name="app_name">CutOut</string>
     <string name="ride">Ride</string>
     <string name="devices">Devices</string>
-    <string name="configuration">Configuration</string>
+    <string name="configuration">Settings</string>
     <string name="nearby_devices">Nearby devices</string>
     <string name="find_pev">Find your PEV</string>
     <string name="find_pev_detail">Turn on your PEV, then scan for nearby devices.</string>
