@@ -90,6 +90,9 @@ class NativeTextRenderingTest {
         view.viewTreeObserver.dispatchOnPreDraw()
         val save = canvas.save()
         canvas.translate(left.toFloat(), top.toFloat())
+        canvas.clipRect(0, 0, width, height)
+        // Parent drawChild normally applies the child scroll; this is a direct root draw.
+        canvas.translate(-view.scrollX.toFloat(), -view.scrollY.toFloat())
         view.draw(canvas)
         canvas.restoreToCount(save)
     }

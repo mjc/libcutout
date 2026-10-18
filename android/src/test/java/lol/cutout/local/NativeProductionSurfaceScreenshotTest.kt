@@ -143,7 +143,9 @@ private object NativeSurfaceCapture {
         check(settled) { "$name did not settle after four native layout/pre-draw traversals" }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
-            view.draw(Canvas(bitmap))
+            val canvas = Canvas(bitmap)
+            canvas.translate(-view.scrollX.toFloat(), -view.scrollY.toFloat())
+            view.draw(canvas)
             val background = bitmap.getPixel(0, 0)
             val visibleSamples = (0 until height step 8).sumOf { y ->
                 (0 until width step 8).count { x -> bitmap.getPixel(x, y) != background }
@@ -163,7 +165,7 @@ private object NativeSurfaceCapture {
     private fun layoutDescription(view: View, depth: Int = 0): String = buildString {
         append("  ".repeat(depth))
         append("${view.javaClass.simpleName} tag=${view.tag} bounds=${view.left},${view.top},${view.right},${view.bottom}")
-        append(" measured=${view.measuredWidth}x${view.measuredHeight} visibility=${view.visibility} alpha=${view.alpha}")
+        append(" measured=${view.measuredWidth}x${view.measuredHeight} scroll=${view.scrollX},${view.scrollY} visibility=${view.visibility} alpha=${view.alpha}")
         if (view is android.widget.TextView) {
             append(" text=${view.text} size=${view.textSize} color=${view.currentTextColor} gravity=${view.gravity}")
             append(" paintWidth=${view.paint.measureText(view.text.toString())}")
