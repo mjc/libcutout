@@ -500,7 +500,19 @@ class SettingsPanel(
             }
             val offset = current.value.toLong() - lower
             val last = (shape.maximum.toLong() - lower) / step
-            val index = if (increasing) Math.floorDiv(offset + editor + step - 1, step) else Math.floorDiv(offset - editor, step)
+            val representable = offset >= 0 && offset % step == 0L
+            val index = when {
+                !representable && increasing -> if (offset < 0) 0 else Math.floorDiv(offset + step - 1, step)
+                !representable -> if (offset <= 0) 0 else Math.floorDiv(offset - 1, step)
+                increasing -> {
+                    val target = offset + editor
+                    if (target <= 0) 0 else Math.floorDiv(target + step - 1, step)
+                }
+                else -> {
+                    val target = offset - editor
+                    if (target < 0) 0 else Math.floorDiv(target, step)
+                }
+            }
             val next = (lower + index.coerceIn(0, last) * step).toInt()
             edit(MobileSettingValueDto.Number(next))
             setNumericText(formatFixed(next, precision), force = true)

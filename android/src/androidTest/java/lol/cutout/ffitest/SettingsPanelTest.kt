@@ -161,6 +161,84 @@ open class SettingsPanelTest {
         }
     }
 
+
+    @Test
+    fun numericStepperSnapsOffLatticeReadbackToSwiftWireStepsWithoutSubmitting() {
+        val initial = checkNotNull(productionReplayPresentation().settings) {
+            "Production replay did not publish settings"
+        }
+        val descriptor = initial.settingDescriptors.firstOrNull {
+            it.access == MobileSettingAccessDto.WRITABLE && it.control is MobileSettingControlDto.Number &&
+                it.group != MobileSettingGroupDto.DIAGNOSTICS
+        } ?: error("Production replay has no writable numeric setting descriptor")
+        val shape = (descriptor.control as MobileSettingControlDto.Number).copy(
+            minimum = 0,
+            maximum = 100,
+            step = 10,
+            editorStep = 3,
+            precision = 1u.toUByte(),
+        )
+        val state = initial.settings.firstOrNull { it.id == descriptor.id }?.copy(
+            current = MobileSettingValueDto.Number(11),
+            currentSource = MobileSettingValueSourceDto.CAPTURE_REPLAY,
+            requested = null,
+            requestId = null,
+            status = MobileSettingStatusDto.IDLE,
+            transport = null,
+        ) ?: MobileSettingSnapshotDto(
+            id = descriptor.id,
+            current = MobileSettingValueDto.Number(11),
+            currentSource = MobileSettingValueSourceDto.CAPTURE_REPLAY,
+            evidence = null,
+            requested = null,
+            requestId = null,
+            status = MobileSettingStatusDto.IDLE,
+            transport = null,
+            ageMs = null,
+            refusal = null,
+        )
+        val presentation = initial.copy(
+            settingDescriptors = initial.settingDescriptors.map {
+                if (it.id == descriptor.id) it.copy(control = shape) else it
+            },
+            settings = initial.settings.filterNot { it.id == descriptor.id } + state,
+        )
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        try {
+            var submissions = 0
+            instrumentation.runOnMainSync {
+                val panel = SettingsPanel(activity) { _, _, _, _ -> submissions++ }
+                activity.setContentView(panel)
+                panel.render(presentation)
+                val editor = tagged<EditText>(panel, "settings.editor.${descriptor.id}")
+                val row = descendants(panel).first { it.tag == descriptor.id }
+                val decrement = descendants(row).filterIsInstance<TextView>()
+                    .first { it.text.toString() == "−" }
+                val increment = descendants(row).filterIsInstance<TextView>()
+                    .first { it.text.toString() == "+" }
+
+                editor.setText("1.1")
+                decrement.performClick()
+                check(editor.text.toString() == "1.0") {
+                    "Decrement from an off-lattice value should snap to the prior wire step"
+                }
+                check(tagged<Button>(panel, "settings.apply.${descriptor.id}").isEnabled)
+                editor.setText("1.8")
+                increment.performClick()
+                check(editor.text.toString() == "2.0") {
+                    "Increment from an off-lattice value should snap to the next wire step"
+                }
+                check(submissions == 0) { "Stepper edits submitted without explicit Apply" }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test
     fun restoredSubmissionComesFromRustSnapshotRatherThanLocalAdmission() {
         val initial = checkNotNull(productionReplayPresentation().settings) {
@@ -363,7 +441,14 @@ open class SettingsPanelTest {
                 replacedPanel.render(replacement)
                 val replacedEditor = tagged<EditText>(replacedPanel, "settings.editor.${descriptor.id}")
                 val replacedApply = tagged<Button>(replacedPanel, "settings.apply.${descriptor.id}")
-                check(replacedEditor.text.isEmpty()) { "A different token restored the old attempt's draft" }
+                val replacementNumber = replacement.settings.firstOrNull { it.id == descriptor.id }?.current
+                    as? MobileSettingValueDto.Number
+                val replacementText = replacementNumber?.let {
+                    BigDecimal.valueOf(it.value.toLong(), number.precision.toInt()).toPlainString()
+                }.orEmpty()
+                check(replacedEditor.text.toString() == replacementText) {
+                    "A different token restored the old attempt's draft instead of its current readback"
+                }
                 check(!replacedApply.isEnabled) { "A different token restored the old attempt's Apply state" }
             }
         } finally {

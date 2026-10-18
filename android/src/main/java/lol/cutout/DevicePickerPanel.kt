@@ -193,19 +193,19 @@ class DevicePickerPanel(
         settingsAction.visibility = if (permissionNeeded) View.VISIBLE else View.GONE
     }
 
-    private inner class DeviceRow(private val id: String) : LinearLayout(appContext) {
+    private inner class DeviceRow(private val platformId: String) : LinearLayout(appContext) {
         private val name = ui.text("", 20f).apply {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            tag = "picker_name:$id"
+            tag = "picker_name:$platformId"
         }
-        private val identity = ui.text("", 15f, false, ui.muted).apply { tag = "picker_identity:$id" }
+        private val identity = ui.text("", 15f, false, ui.muted).apply { tag = "picker_identity:$platformId" }
         private val info = FrameLayout(context)
         private val connect = ui.action(appContext.getString(R.string.picker_connect), primary = true) { }
         private var latest: NearbyPev? = null
         private val glyph = PickerGlyph(appContext)
 
         init {
-            tag = "picker_row:$id"
+            tag = "picker_row:$platformId"
             orientation = VERTICAL
             setPadding(ui.dp(18), ui.dp(18), ui.dp(18), ui.dp(18))
             background = ui.rounded(24)
@@ -217,7 +217,7 @@ class DevicePickerPanel(
             labels.addView(identity, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
             summary.addView(labels, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(14); rightMargin = ui.dp(14) })
             info.apply {
-                tag = "picker_details:$id"
+                tag = "picker_details:$platformId"
                 isClickable = true; isFocusable = true; minimumWidth = ui.dp(48); minimumHeight = ui.dp(48)
                 this.contentDescription = appContext.getString(R.string.picker_details)
                 addView(ui.icon(CutoutSymbol.INFO, ui.muted, 21), FrameLayout.LayoutParams(ui.dp(21), ui.dp(21), Gravity.CENTER))
