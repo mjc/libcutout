@@ -329,7 +329,8 @@ impl MobileRgbLightingAccessoryRecord {
             .map_err(Into::into)
     }
 
-    /// Returns a canonical Bluetooth UUID, preserving legacy non-UUID identities.
+    /// Returns the platform-scoped identity, canonicalizing Bluetooth UUIDs and preserving other
+    /// opaque platform identifiers exactly.
     pub fn platform_identifier(&self) -> String {
         let record = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let identifier = record.platform_identifier();

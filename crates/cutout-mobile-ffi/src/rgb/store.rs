@@ -11,6 +11,8 @@ use super::{
 };
 
 fn same_platform_identifier(left: &str, right: &str) -> bool {
+    // UUIDs are case-insensitive. Other platform identifiers, such as Android
+    // BLE addresses, are opaque and compare byte-for-byte.
     left == right
         || Uuid::parse_str(left)
             .ok()
@@ -21,7 +23,7 @@ fn same_platform_identifier(left: &str, right: &str) -> bool {
 /// An opted-in request for one compatible accessory; it is not device-state evidence.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRgbLightingRestoreCandidate {
-    /// Canonical platform identity that must match the connected accessory.
+    /// Stored platform-scoped identity that must match the connected accessory.
     pub platform_identifier: String,
     /// Last saved user intent to replay.
     pub requested_state: MobileMelkLightingRestoreStateDto,
@@ -69,10 +71,9 @@ struct Store {
 
 impl Store {
     fn entry(&self, identifier: &str) -> Option<&Entry> {
-        let identifier = Uuid::parse_str(identifier).ok()?;
-        self.entries.iter().find(|entry| {
-            Uuid::parse_str(&entry.record.platform_identifier()).ok() == Some(identifier)
-        })
+        self.entries
+            .iter()
+            .find(|entry| same_platform_identifier(&entry.record.platform_identifier(), identifier))
     }
 }
 
@@ -284,11 +285,7 @@ impl MobileRgbLightingAccessoryStore {
             return None;
         }
         Some(MobileRgbLightingRestoreCandidate {
-            platform_identifier: Uuid::parse_str(&entry.record.platform_identifier())
-                .ok()?
-                .hyphenated()
-                .to_string()
-                .to_uppercase(),
+            platform_identifier: entry.record.platform_identifier(),
             requested_state: entry.record.restore_request()?,
         })
     }
@@ -399,6 +396,102 @@ mod tests {
     }
 
     #[test]
+    fn opaque_platform_ids_restore_by_exact_identity_after_restart() {
+        use super::super::MobileMelkLightingRestoreStateDto;
+
+        let fingerprint = super::super::mobile_melk_lighting_capabilities_fingerprint();
+        let state = MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 12,
+            green: 34,
+            blue: 56,
+            brightness: 78,
+            playback: None,
+        };
+
+        for identifier in ["AA:BB:CC:DD:EE:FF", "android-local-device-7"] {
+            let store = MobileRgbLightingAccessoryStore::new();
+            let record = store
+                .pair(identifier.into(), None, fingerprint.clone())
+                .unwrap();
+            record.set_requested_state(Some(state)).unwrap();
+            record.set_restore_enabled(true);
+
+            let reopened =
+                MobileRgbLightingAccessoryStore::decode(store.encode().unwrap()).unwrap();
+            assert!(reopened.is_compatible_with_current_profile(identifier.into()));
+            let candidate = reopened.restore_candidate(identifier.into()).unwrap();
+            assert_eq!(candidate.platform_identifier, identifier);
+            assert_eq!(candidate.requested_state, state);
+            if identifier != identifier.to_lowercase() {
+                assert!(
+                    reopened
+                        .restore_candidate(identifier.to_lowercase())
+                        .is_none()
+                );
+            }
+
+            reopened.forget(identifier.into());
+            assert!(!reopened.is_compatible_with_current_profile(identifier.into()));
+            assert!(reopened.restore_candidate(identifier.into()).is_none());
+        }
+    }
+
+    #[test]
+    fn duplicate_opaque_ids_are_exact_while_uuid_ids_remain_case_insensitive() {
+        let exact_duplicate = ["AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF"]
+            .map(str::to_owned)
+            .into_iter()
+            .map(|id| WireEntry {
+                record: MobileRgbLightingAccessoryRecord::new(
+                    id,
+                    MobileRgbLightingProfileKindDto::MelkOc21,
+                    1,
+                )
+                .unwrap()
+                .encode()
+                .unwrap(),
+                fingerprint: None,
+                retired: false,
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&WireStore {
+            version: 1,
+            entries: exact_duplicate,
+            adopt_legacy: false,
+        })
+        .unwrap();
+        assert!(matches!(
+            MobileRgbLightingAccessoryStore::decode(bytes),
+            Err(MobileRgbLightingRecordError::InvalidEncoding)
+        ));
+
+        let case_variants = ["AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff"]
+            .map(str::to_owned)
+            .into_iter()
+            .map(|id| WireEntry {
+                record: MobileRgbLightingAccessoryRecord::new(
+                    id,
+                    MobileRgbLightingProfileKindDto::MelkOc21,
+                    1,
+                )
+                .unwrap()
+                .encode()
+                .unwrap(),
+                fingerprint: None,
+                retired: false,
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&WireStore {
+            version: 1,
+            entries: case_variants,
+            adopt_legacy: false,
+        })
+        .unwrap();
+        assert!(MobileRgbLightingAccessoryStore::decode(bytes).is_ok());
+    }
+
+    #[test]
     fn restore_requires_valid_same_profile_identity_and_preserves_evidence() {
         use super::super::{
             MobileMelkLightingRestoreStateDto, MobileRgbLightingConfirmationStateDto,
@@ -443,25 +536,25 @@ mod tests {
         missing.import_legacy(record, None);
         assert!(missing.restore_candidate(A.into()).is_none());
 
-        let invalid = MobileRgbLightingAccessoryStore::new();
-        let invalid_record = MobileRgbLightingAccessoryRecord::new(
+        let opaque = MobileRgbLightingAccessoryStore::new();
+        let opaque_record = MobileRgbLightingAccessoryRecord::new(
             "not-a-bluetooth-id".into(),
             MobileRgbLightingProfileKindDto::MelkOc21,
             1,
         )
         .unwrap();
-        invalid_record.set_restore_enabled(true);
-        invalid_record.set_requested_state(Some(requested)).unwrap();
-        invalid.import_legacy(
-            invalid_record,
+        opaque_record.set_restore_enabled(true);
+        opaque_record.set_requested_state(Some(requested)).unwrap();
+        opaque.import_legacy(
+            opaque_record,
             Some(super::super::mobile_melk_lighting_capabilities_fingerprint()),
         );
+        assert!(opaque.is_compatible_with_current_profile("not-a-bluetooth-id".into()));
         assert!(
-            invalid
+            opaque
                 .restore_candidate("not-a-bluetooth-id".into())
-                .is_none()
+                .is_some()
         );
-        assert!(!invalid.is_compatible_with_current_profile("not-a-bluetooth-id".into()));
     }
 
     #[test]
