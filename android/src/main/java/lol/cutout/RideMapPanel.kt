@@ -1,11 +1,17 @@
 package lol.cutout
 
 import android.content.Context
+import android.app.AlertDialog
 import android.graphics.Color
+import android.view.MotionEvent
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.ImageButton
+import uniffi.cutout_mobile_ffi.*
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -33,6 +39,11 @@ interface RideMapSurface {
     var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)?
     var onChargingSpotSelected: ((String) -> Unit)?
     fun show(projection: MobileRideMapRouteProjectionDto)
+    fun showRoute(projection: MobileRideMapRouteProjectionDto, fitCamera: Boolean) = show(projection)
+    fun followLatestPoint() = recenter()
+    var onCameraGesture: (() -> Unit)?
+        get() = null
+        set(value) {}
     fun showCurrentLocation(latitude: Double, longitude: Double)
     fun clearRoute()
     fun currentMapCenter(): LatLng?
@@ -78,6 +89,9 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
     private var chargingSpots: List<MobileChargingSpotDto> = emptyList()
     private var selectedChargingSpotId: String? = null
     private var pendingCameraPosition: CameraPosition? = null
+    override var onCameraGesture: (() -> Unit)? = null
+    private var pendingFollow = false
+    private var pendingFit = false
     private val retry = ui.action(context.getString(R.string.ride_map_retry)) { retryStyle() }.apply {
         tag = "ride_map_retry"
         visibility = View.GONE
@@ -105,8 +119,8 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
                 failure.visibility = View.GONE
                 retry.visibility = View.GONE
                 installRouteLayer()
-                latestProjection?.let(::show)
-                focusActualLocationIfAvailable()
+                latestProjection?.let { showRoute(it, pendingFit) }
+                if (pendingFollow) followLatestPoint() else if (latestProjection == null) focusActualLocationIfAvailable()
                 pendingCameraPosition?.let { readyMap.cameraPosition = it }
                 pendingCameraPosition = null
             }
@@ -134,8 +148,19 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         failure.setOnClickListener { retryStyle() }
     }
 
-    override fun show(projection: MobileRideMapRouteProjectionDto) {
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_MOVE) {
+            pendingFollow = false
+            onCameraGesture?.invoke()
+        }
+        return super.onInterceptTouchEvent(event)
+    }
+
+    override fun show(projection: MobileRideMapRouteProjectionDto) = showRoute(projection, true)
+
+    override fun showRoute(projection: MobileRideMapRouteProjectionDto, fitCamera: Boolean) {
         latestProjection = projection
+        pendingFit = fitCamera
         val activeMap = map ?: return
         if (!styleLoaded) return
         val json = routeFeatureCollection(projection.points)
@@ -157,7 +182,7 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
             ))
         } else source.setGeoJson(json)
         style.getSourceAs<GeoJsonSource>(ENDPOINT_SOURCE)?.setGeoJson(endpointFeatureCollection(projection.points))
-        fit(projection.cameraRegion)
+        if (fitCamera) fit(projection.cameraRegion)
     }
 
     override fun showCurrentLocation(latitude: Double, longitude: Double) {
@@ -196,7 +221,19 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
     }
 
     override fun recenter() {
+        pendingFollow = false
+        pendingFit = true
         latestProjection?.let { fit(it.cameraRegion) } ?: focusActualLocationIfAvailable()
+    }
+
+    override fun followLatestPoint() {
+        pendingFollow = true
+        val point = latestProjection?.points?.lastOrNull() ?: return
+        val activeMap = map ?: return
+        // Preserve the user's zoom when following; the first local view uses a street-scale camera.
+        activeMap.cameraPosition = CameraPosition.Builder(activeMap.cameraPosition)
+            .target(LatLng(point.latitudeDegrees, point.longitudeDegrees))
+            .zoom(activeMap.cameraPosition.zoom.coerceAtLeast(14.0)).build()
     }
 
     override fun setActive(value: Boolean) { active = value; updateLifecycle() }
@@ -277,13 +314,15 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
 
     private fun retryStyle() {
         val activeMap = map ?: return
+        val cameraBeforeRetry = activeMap.cameraPosition
         styleLoaded = false
         failure.visibility = View.GONE
         retry.visibility = View.GONE
         activeMap.setStyle(if (ui.dark) DARK_STYLE else LIGHT_STYLE) {
             styleLoaded = true
             installRouteLayer()
-            latestProjection?.let(::show)
+            latestProjection?.let { showRoute(it, false) }
+            if (pendingFollow) followLatestPoint() else activeMap.cameraPosition = cameraBeforeRetry
         }
     }
 
@@ -361,6 +400,8 @@ class RideMapPanel(
     private val historyPolicyForNewRide: () -> uniffi.cutout_mobile_ffi.MobileMusicHistoryPolicyDto = {
         uniffi.cutout_mobile_ffi.MobileMusicHistoryPolicyDto.DISABLED
     },
+    private val resolveVehicleName: (String) -> String? = { null },
+    private val onOpenLocationSettings: () -> Unit = onRequestLocation,
     mapSurfaceFactory: (Context) -> RideMapSurface = { RideRouteMapView(it) },
 ) : LinearLayout(context) {
     private val ui = CutoutUi(context)
@@ -369,10 +410,38 @@ class RideMapPanel(
     private val content = ui.column()
     private val modes = ui.row()
     private val livePage = ui.column()
+    private val liveScroll = ScrollView(context).apply { isFillViewport = false }
     private val historyPage = RideHistoryPanel(context, history, mapView, onExport)
     private val liveStatus = ui.text(context.getString(R.string.ride_map_idle), 15f, false, ui.muted)
     private val liveActions = ui.row()
-    private val liveSummary = ui.text("", 13f, false, ui.muted)
+    private val liveSummary = ui.column().apply {
+        background = ui.rounded(24)
+        setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14))
+    }
+    private val liveMetrics = ui.row()
+    private val liveMetricValues = mutableListOf<TextView>()
+    private val liveMetricLabels = mutableListOf<TextView>()
+    private val liveVehicle = ui.text("", 12f, true, ui.muted)
+    private val liveWarning = ui.text("", 13f, false, ui.muted)
+    private val locationAction = ui.action(context.getString(R.string.ride_map_request_location)) {
+        val recovery = lastPresentation.locationAcquisition?.recoveryAction ?: lastPresentation.snapshot?.locationAcquisition?.recoveryAction
+        if (recovery == MobileRideMapLocationRecoveryActionDto.OPEN_SETTINGS) onOpenLocationSettings() else onRequestLocation()
+    }
+    private var followsLatestPoint = true
+    private var liveRideId: String? = null
+    private var latestLiveProjection: MobileRideMapRouteProjectionDto? = null
+    private val recenter = ImageButton(context).apply {
+        tag = "ride_map_recenter"
+        setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+        background = ui.rounded(14)
+        setOnClickListener {
+            if (mode == Mode.LIVE && supportsFollow()) {
+                followsLatestPoint = true
+                mapView.followLatestPoint()
+            } else mapView.recenter()
+            updateCameraControl()
+        }
+    }
     private lateinit var mapSlot: FrameLayout
     private enum class Mode { LIVE, HISTORY, CHARGING }
     private var mode = Mode.LIVE
@@ -402,26 +471,43 @@ class RideMapPanel(
         content.addView(modes, LayoutParams(-1, -2).apply { topMargin = ui.dp(12) })
         mapSlot = FrameLayout(context).apply { tag = "ride_map_surface_slot" }
         mapSlot.addView(mapView.view, FrameLayout.LayoutParams(-1, -1))
-        val recenter = ui.action(context.getString(R.string.ride_map_recenter)) { mapView.recenter() }.apply {
-            tag = "ride_map_recenter"
-            contentDescription = context.getString(R.string.ride_map_recenter)
-        }
-        mapSlot.addView(recenter, FrameLayout.LayoutParams(-2, ui.dp(48), Gravity.BOTTOM or Gravity.END).apply {
-            setMargins(0, 0, ui.dp(10), ui.dp(10))
+        mapSlot.addView(recenter, FrameLayout.LayoutParams(ui.dp(48), ui.dp(48), Gravity.TOP or Gravity.END).apply {
+            setMargins(0, ui.dp(10), ui.dp(10), 0)
         })
+        mapView.onCameraGesture = { followsLatestPoint = false; updateCameraControl() }
         // Swift's live/history route map occupies 46% of the measured presentation viewport,
         // clamped to 160–360dp. Charging mode places its controls before the map instead.
         content.addView(mapSlot, LayoutParams(-1, 0).apply { topMargin = ui.dp(10) })
-        content.addView(livePage, LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(10) })
+        liveScroll.addView(livePage, FrameLayout.LayoutParams(-1, -2))
+        content.addView(liveScroll, LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(10) })
         content.addView(historyPage, LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(10) })
         content.addView(chargingPage, LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(10) })
         livePage.addView(liveStatus, LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         livePage.addView(liveSummary, LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        val labels = listOf(R.string.live_map_distance, R.string.live_map_elapsed, R.string.live_map_moving, R.string.speed)
+        labels.forEach { label ->
+            val metric = ui.column()
+            val value = ui.text("—", 21f, true).apply { tag = "live_map_metric_$label" }
+            liveMetricValues += value
+            metric.addView(value)
+            metric.addView(ui.text(context.getString(label), 12f, false, ui.muted).also { liveMetricLabels += it })
+            liveMetrics.addView(metric, LayoutParams(0, -2, 1f))
+        }
+        liveSummary.addView(liveMetrics, LayoutParams(-1, -2))
+        if (resources.configuration.fontScale >= 1.3f) {
+            liveMetrics.orientation = VERTICAL
+            for (index in 0 until liveMetrics.childCount) liveMetrics.getChildAt(index).layoutParams = LayoutParams(-1, -2).apply {
+                if (index > 0) topMargin = ui.dp(10)
+            }
+        }
+        liveSummary.addView(liveVehicle, LayoutParams(-1, -2).apply { topMargin = ui.dp(12) })
+        livePage.addView(liveWarning, LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        livePage.addView(locationAction, LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
         livePage.addView(liveActions, LayoutParams(-1, -2).apply { topMargin = ui.dp(8); bottomMargin = ui.dp(10) })
         historyPage.visibility = View.GONE
         chargingPage.visibility = View.GONE
         chargingPage.onLayoutModeChanged = ::updatePresentationOrder
-        history.onChanged = { historyPage.render() }
+        history.onChanged = { historyPage.render(); updateMapVisibility() }
         updatePresentationOrder()
         refreshModeButtons()
         closeObserver = runtime.observe(::render)
@@ -438,6 +524,7 @@ class RideMapPanel(
         chargingPage.dispose()
         mapView.onViewportChanged = null
         mapView.onChargingSpotSelected = null
+        mapView.onCameraGesture = null
         mapView.onHostDestroy()
     }
     fun onHostLowMemory() = mapView.onHostLowMemory()
@@ -468,14 +555,13 @@ class RideMapPanel(
             Mode.LIVE -> { lastProjectionRevision = null; render(lastPresentation) }
             Mode.HISTORY -> {
                 mapView.clearRoute()
-                if (historyLoaded) historyPage.render() else {
-                    historyLoaded = true
-                    history.refresh()
-                }
+                historyLoaded = true
+                history.refresh(preserveSelection = true)
             }
             Mode.CHARGING -> { mapView.clearRoute(); chargingPage.activate() }
         }
         mapView.restoreCameraPosition(cameraPositions[value])
+        updateCameraControl()
         refreshModeButtons()
     }
 
@@ -492,7 +578,7 @@ class RideMapPanel(
             // and remeasure once so the first rendered frame uses the Swift viewport formula.
             val viewportHeightPx = getMeasuredHeight()
             val params = mapSlot.layoutParams as? LayoutParams
-            val desired = RideMapViewportSizing.mapHeightPx(viewportHeightPx, resources.displayMetrics.density)
+            val desired = if (mapSlot.visibility == View.GONE) 0 else RideMapViewportSizing.mapHeightPx(viewportHeightPx, resources.displayMetrics.density)
             if (params != null && (params.height != desired || params.weight != 0f)) {
                 params.height = desired
                 params.weight = 0f
@@ -504,7 +590,7 @@ class RideMapPanel(
 
     private fun updateMapHeight(availableHeightPx: Int) {
         val params = mapSlot.layoutParams as? LayoutParams ?: return
-        val desired = RideMapViewportSizing.mapHeightPx(availableHeightPx, resources.displayMetrics.density)
+        val desired = if (mapSlot.visibility == View.GONE) 0 else RideMapViewportSizing.mapHeightPx(availableHeightPx, resources.displayMetrics.density)
         if (params.height == desired && params.weight == 0f) return
         params.height = desired
         params.weight = 0f
@@ -515,7 +601,7 @@ class RideMapPanel(
         if (!::mapSlot.isInitialized || content.childCount < 2) return
         content.removeViews(2, content.childCount - 2)
         val pageSpacing = ui.dp(10)
-        val mapIsVisible = mode != Mode.CHARGING || chargingPage.isMapMode
+        val mapIsVisible = shouldShowMap()
         val mapLayout = when (mode) {
             Mode.CHARGING -> if (mapIsVisible) LayoutParams(-1, 0, 1f) else LayoutParams(-1, 0)
             else -> LayoutParams(-1, RideMapViewportSizing.mapHeightPx(height, resources.displayMetrics.density))
@@ -526,32 +612,46 @@ class RideMapPanel(
         when (mode) {
             Mode.LIVE -> {
                 content.addView(mapSlot, mapLayout)
-                livePage.visibility = View.VISIBLE
+                liveScroll.visibility = View.VISIBLE
                 historyPage.visibility = View.GONE
                 chargingPage.visibility = View.GONE
-                content.addView(livePage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
+                content.addView(liveScroll, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
                 content.addView(historyPage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
                 content.addView(chargingPage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
             }
             Mode.HISTORY -> {
                 content.addView(mapSlot, mapLayout)
-                livePage.visibility = View.GONE
+                liveScroll.visibility = View.GONE
                 historyPage.visibility = View.VISIBLE
                 chargingPage.visibility = View.GONE
-                content.addView(livePage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
+                content.addView(liveScroll, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
                 content.addView(historyPage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
                 content.addView(chargingPage, LayoutParams(-1, 0, 1f).apply { topMargin = pageSpacing })
             }
             Mode.CHARGING -> {
-                livePage.visibility = View.GONE
+                liveScroll.visibility = View.GONE
                 historyPage.visibility = View.GONE
                 chargingPage.visibility = View.VISIBLE
                 val chargingHeight = if (mapIsVisible) LayoutParams(-1, -2) else LayoutParams(-1, 0, 1f)
                 content.addView(chargingPage, chargingHeight.apply { topMargin = pageSpacing })
                 content.addView(mapSlot, mapLayout)
-                content.addView(livePage, LayoutParams(-1, 0, 1f))
+                content.addView(liveScroll, LayoutParams(-1, 0, 1f))
                 content.addView(historyPage, LayoutParams(-1, 0, 1f))
             }
+        }
+    }
+
+    private fun shouldShowMap(): Boolean = when (mode) {
+        Mode.LIVE -> latestLiveProjection?.points?.isNotEmpty() == true
+        Mode.HISTORY -> history.state.rides.isNotEmpty()
+        Mode.CHARGING -> chargingPage.isMapMode
+    }
+
+    private fun updateMapVisibility() {
+        val desired = if (shouldShowMap()) View.VISIBLE else View.GONE
+        if (mapSlot.visibility != desired) {
+            mapSlot.visibility = desired
+            if (mode != Mode.CHARGING) updateMapHeight(height)
         }
     }
 
@@ -577,31 +677,126 @@ class RideMapPanel(
         val snapshot = value.snapshot
         liveStatus.text = when {
             value.error != null -> value.error
+            !value.ready -> context.getString(R.string.ride_map_loading)
             snapshot == null -> context.getString(R.string.ride_map_idle)
-            else -> snapshot.state.name.lowercase().replaceFirstChar(Char::uppercase)
+            else -> context.getString(when (snapshot.state) {
+                MobileRideLifecycleStateDto.ACTIVE -> R.string.live_map_recording
+                MobileRideLifecycleStateDto.PAUSED -> R.string.live_map_paused
+                MobileRideLifecycleStateDto.STOPPED -> R.string.live_map_stopped
+                MobileRideLifecycleStateDto.SAVED -> R.string.live_map_saved
+                MobileRideLifecycleStateDto.INTERRUPTED -> R.string.live_map_interrupted
+                MobileRideLifecycleStateDto.IMPORTED -> R.string.live_map_imported
+                else -> R.string.ride_map_idle
+            })
         }
-        liveSummary.text = snapshot?.let {
-            "${context.getString(R.string.ride_map_recorded_points, it.summary.pointCount.coerceAtMost(Int.MAX_VALUE.toULong()).toInt())} · " +
-                context.getString(R.string.ride_map_segments, it.segmentCount.coerceAtMost(Int.MAX_VALUE.toULong()).toInt())
-        }.orEmpty()
-        renderActions(snapshot?.allowedActions.orEmpty())
+        renderSummary(snapshot)
+        // Rust still admits every operation. With no ride, Swift offers Start once storage is ready.
+        renderActions(snapshot?.allowedActions ?: if (value.ready && value.error == null)
+            listOf(MobileRideEventDto.START) else emptyList())
+        val recovery = value.locationAcquisition?.recoveryAction ?: snapshot?.locationAcquisition?.recoveryAction
+        locationAction.visibility = if (recovery != null && recovery != MobileRideMapLocationRecoveryActionDto.NONE) View.VISIBLE else View.GONE
+        locationAction.text = context.getString(if (recovery == MobileRideMapLocationRecoveryActionDto.OPEN_SETTINGS)
+            R.string.live_map_location_settings else R.string.ride_map_request_location)
+        if (liveRideId != snapshot?.rideId) {
+            liveRideId = snapshot?.rideId
+            followsLatestPoint = true
+            latestLiveProjection = null
+            lastProjectionRevision = null
+            if (mode == Mode.LIVE) {
+                mapView.clearRoute()
+                liveWarning.visibility = View.GONE
+                updateMapVisibility()
+            }
+        }
+        updateCameraControl()
         val revision = snapshot?.revision
         if (mode == Mode.LIVE && snapshot != null && revision != lastProjectionRevision) {
             lastProjectionRevision = revision
+            val requestedRideId = snapshot.rideId
             val budget = mobileRideMapLimits().liveTailPointLimit
             runtime.withCore({ core ->
-                core.projectPoints(uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionOptionsDto(
+                val current = core.currentSnapshot(android.os.SystemClock.elapsedRealtime().toULong())
+                if (current == null || current.rideId != requestedRideId || current.revision != revision) null else
+                    core.projectPoints(uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionOptionsDto(
                     null, budget, uniffi.cutout_mobile_ffi.MobileRideMapRoutePrivacyPolicyDto.Precise,
                 ))
             }) { result ->
-                if (lastProjectionRevision == revision && mode == Mode.LIVE) {
-                    result.onSuccess {
-                        mapView.show(it)
-                        mapView.restoreCameraPosition(cameraPositions[Mode.LIVE])
+                if (liveRideId == requestedRideId && lastProjectionRevision == revision && mode == Mode.LIVE) {
+                    result.onSuccess { projection ->
+                        val it = projection ?: return@onSuccess
+                        latestLiveProjection = it
+                        updateMapVisibility()
+                        mapView.showRoute(it, !supportsFollow() && cameraPositions[Mode.LIVE] == null)
+                        if (supportsFollow() && followsLatestPoint) mapView.followLatestPoint()
+                        renderRouteWarnings(it)
+                        updateCameraControl()
                     }
                 }
             }
         }
+        if (snapshot == null && mode == Mode.LIVE) {
+            latestLiveProjection = null
+            mapView.clearRoute()
+            liveWarning.visibility = View.GONE
+            updateMapVisibility()
+        }
+    }
+
+    private fun renderSummary(snapshot: MobileRideMapCoreSnapshotDto?) {
+        liveSummary.visibility = if (snapshot == null) View.GONE else View.VISIBLE
+        if (snapshot == null) return
+        val summary = snapshot.summary
+        liveMetricValues[0].text = RideMetricFormatting.distance(context, summary.distanceMeters)
+        liveMetricValues[1].text = when (val elapsed = summary.elapsedTime) {
+            is MobileRideElapsedTimeDto.Complete -> duration(elapsed.durationMilliseconds)
+            is MobileRideElapsedTimeDto.Partial -> "≥ ${duration(elapsed.durationMilliseconds)}"
+            MobileRideElapsedTimeDto.Unavailable -> "—"
+        }
+        liveMetricValues[2].text = when (val moving = summary.movingTime) {
+            is MobileRideMovingTimeDto.Complete -> duration(moving.movingMilliseconds)
+            is MobileRideMovingTimeDto.Partial -> "≥ ${duration(moving.movingMilliseconds)}"
+            MobileRideMovingTimeDto.Unavailable -> "—"
+        }
+        val speed = snapshot.liveSpeed
+        liveMetricLabels[3].text = if (speed.source == MobileRideMapSpeedSourceDto.PHONE_GPS) ui.label("euc.metric.gps_speed") else context.getString(R.string.speed)
+        liveMetricValues[3].text = if (speed.source == MobileRideMapSpeedSourceDto.UNAVAILABLE) "—" else
+            String.format(java.util.Locale.getDefault(), "%.1f mph", speed.millimetresPerSecond * 0.0022369362920544)
+        liveVehicle.text = snapshot.associatedVehicle?.let { resolveVehicleName(it)?.takeIf(String::isNotBlank)
+            ?: context.getString(R.string.ride_map_vehicle_name_unavailable) } ?: context.getString(R.string.ride_map_gps_only)
+        liveVehicle.setTextColor(when (snapshot.telemetryState) {
+            MobileRideMapCoreTelemetryStateDto.ASSOCIATED_FRESH -> ui.green
+            MobileRideMapCoreTelemetryStateDto.ASSOCIATED_NO_TELEMETRY, MobileRideMapCoreTelemetryStateDto.ASSOCIATED_STALE -> ui.yellow
+            else -> ui.muted
+        })
+        val telemetryDescription = when (snapshot.telemetryState) {
+            MobileRideMapCoreTelemetryStateDto.ASSOCIATED_FRESH -> context.getString(R.string.live_map_receiving_vehicle)
+            MobileRideMapCoreTelemetryStateDto.ASSOCIATED_NO_TELEMETRY -> context.getString(R.string.live_map_waiting_vehicle)
+            MobileRideMapCoreTelemetryStateDto.ASSOCIATED_STALE -> context.getString(R.string.live_map_vehicle_unavailable)
+            else -> ""
+        }
+        liveVehicle.contentDescription = listOf(liveVehicle.text, telemetryDescription).filter { it.isNotEmpty() }.joinToString(", ")
+    }
+
+    private fun duration(milliseconds: ULong): String = RideMetricFormatting.duration(milliseconds)
+
+    private fun renderRouteWarnings(projection: MobileRideMapRouteProjectionDto) {
+        val warnings = buildList {
+            if (projection.backgroundGapCount > 0u) add(context.getString(R.string.live_map_route_interrupted))
+            if (projection.sourcePointCount > projection.points.size.toULong()) add(context.getString(R.string.ride_map_points_truncated))
+            if (projection.sourceSegmentCount > projection.displayedSegmentCount) add(context.getString(R.string.ride_map_segments_omitted))
+        }
+        liveWarning.text = warnings.joinToString("\n")
+        liveWarning.visibility = if (warnings.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun supportsFollow(): Boolean = lastPresentation.snapshot?.state in listOf(MobileRideLifecycleStateDto.ACTIVE, MobileRideLifecycleStateDto.PAUSED)
+
+    private fun updateCameraControl() {
+        val title = if (mode == Mode.LIVE && !supportsFollow()) R.string.live_map_show_full_ride else R.string.ride_map_recenter
+        recenter.contentDescription = context.getString(title)
+        recenter.isSelected = mode == Mode.LIVE && supportsFollow() && followsLatestPoint
+        recenter.setImageDrawable(CutoutIcon(if (mode == Mode.LIVE && !supportsFollow()) CutoutSymbol.FIT_ROUTE else CutoutSymbol.POSITION, ui.brand))
+        recenter.isEnabled = mode != Mode.LIVE || latestLiveProjection?.points?.isNotEmpty() == true
     }
 
     private fun renderActions(actions: List<uniffi.cutout_mobile_ffi.MobileRideEventDto>) {
@@ -618,6 +813,8 @@ class RideMapPanel(
         if (liveActions.tag == key) return
         liveActions.tag = key
         liveActions.removeAllViews()
+        val stacked = resources.configuration.fontScale >= 1.3f || (resources.configuration.screenWidthDp < 360 && desired.size > 2)
+        liveActions.orientation = if (stacked) VERTICAL else HORIZONTAL
         desired.forEachIndexed { index, (event, title) ->
             val action = ui.action(context.getString(title), event == uniffi.cutout_mobile_ffi.MobileRideEventDto.START) {
                 if (event == uniffi.cutout_mobile_ffi.MobileRideEventDto.START) onRequestLocation()
@@ -632,12 +829,25 @@ class RideMapPanel(
                     uniffi.cutout_mobile_ffi.MobileRideEventDto.RESUME -> runtime.resume(completion)
                     uniffi.cutout_mobile_ffi.MobileRideEventDto.STOP -> runtime.stop(completion)
                     uniffi.cutout_mobile_ffi.MobileRideEventDto.SAVE -> runtime.save(completion)
-                    uniffi.cutout_mobile_ffi.MobileRideEventDto.DISCARD -> runtime.discard(completion)
+                    uniffi.cutout_mobile_ffi.MobileRideEventDto.DISCARD -> AlertDialog.Builder(context)
+                        .setTitle(R.string.live_map_discard_confirm)
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.ride_map_discard) { _, _ -> runtime.discard(completion) }.show()
                     else -> Unit
                 }
             }.apply { tag = "ride_map_action_${event.name.lowercase()}" }
-            liveActions.addView(action, LayoutParams(0, ui.dp(48), 1f).apply {
-                if (index > 0) leftMargin = ui.dp(6)
+            when (event) {
+                MobileRideEventDto.PAUSE, MobileRideEventDto.RESUME, MobileRideEventDto.SAVE -> {
+                    action.background = ui.rounded(14, ui.yellow, false); action.setTextColor(Color.BLACK)
+                }
+                MobileRideEventDto.STOP -> {
+                    action.background = ui.rounded(14, ui.red, false); action.setTextColor(Color.WHITE)
+                }
+                MobileRideEventDto.DISCARD -> action.setTextColor(ui.red)
+                else -> Unit
+            }
+            liveActions.addView(action, (if (stacked) LayoutParams(-1, -2) else LayoutParams(0, -2, 1f)).apply {
+                if (index > 0) { if (stacked) topMargin = ui.dp(8) else leftMargin = ui.dp(8) }
             })
         }
     }

@@ -9,6 +9,8 @@ import uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionDto
 import uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionOptionsDto
 import uniffi.cutout_mobile_ffi.MobileRideMapLimitsDto
 import uniffi.cutout_mobile_ffi.MobileRideRecordDto
+import uniffi.cutout_mobile_ffi.MobileMusicHistoryDto
+import uniffi.cutout_mobile_ffi.MobileMusicHistoryStateDto
 import uniffi.cutout_mobile_ffi.mobileRideMapLimits
 
 data class RideHistoryState(
@@ -17,10 +19,21 @@ data class RideHistoryState(
     val nextCursor: MobileRideCursorDto? = null,
     val selected: MobileRideRecordDto? = null,
     val route: MobileRideMapRouteProjectionDto? = null,
+    val musicHistory: MobileMusicHistoryDto? = null,
+    val musicHistoryState: MobileMusicHistoryStateDto? = null,
+    val musicError: String? = null,
     val loading: Boolean = false,
     val loadingMore: Boolean = false,
     val error: String? = null,
 )
+
+internal fun <T> restoreRideSelection(
+    previousIdentity: ByteArray?,
+    rows: List<T>,
+    identity: (T) -> ByteArray,
+): T? = previousIdentity?.let { selected ->
+    rows.firstOrNull { identity(it).contentEquals(selected) }
+}
 
 /** Rust-backed bounded ride-history queries. Stale asynchronous page and detail results are ignored. */
 class RideHistoryController(private val runtime: RideMapRuntime, private val now: () -> Long = System::currentTimeMillis) {
@@ -39,22 +52,41 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
 
     var onChanged: (() -> Unit)? = null
 
-    fun refresh() {
+    fun refresh(preserveSelection: Boolean = false) {
         val generation = ++queryGeneration
         detailGeneration++
-        state = state.copy(loading = true, loadingMore = false, error = null, selected = null, route = null)
+        val selected = state.selected.takeIf { preserveSelection }
+        val retainedCount = if (preserveSelection) state.rides.size else 0
+        state = state.copy(loading = true, loadingMore = false, error = null, selected = selected,
+            route = null, musicHistory = null, musicHistoryState = null, musicError = null)
         notifyChanged()
         val currentFilter = filter()
         runtime.withDatabase({ db ->
-            val page = db.listRidesFiltered(null, currentFilter, mobileRideMapLimits().historyPageLimit)
+            val pageLimit = mobileRideMapLimits().historyPageLimit
+            val rides = mutableListOf<MobileRideRecordDto>()
+            var cursor: MobileRideCursorDto? = null
+            var page = db.listRidesFiltered(cursor, currentFilter, pageLimit)
+            rides.addAll(page.rides)
+            while (page.nextCursor != null && (
+                rides.size < retainedCount ||
+                    (selected != null && rides.none { it.id.bytes.contentEquals(selected.id.bytes) } &&
+                        rides.size < retainedCount + pageLimit.toInt())
+            )) {
+                cursor = page.nextCursor
+                page = db.listRidesFiltered(cursor, currentFilter, pageLimit)
+                rides.addAll(page.rides)
+            }
             val vehicles = db.listRideHistoryVehicleOptions()
-            page to vehicles
+            Triple(rides, page.nextCursor, vehicles)
         }) { result ->
             if (generation != queryGeneration) return@withDatabase
             result.fold(
-                onSuccess = { (page, vehicles) ->
-                    state = state.copy(rides = page.rides, nextCursor = page.nextCursor, vehicles = vehicles,
+                onSuccess = { (rides, nextCursor, vehicles) ->
+                    state = state.copy(rides = rides, nextCursor = nextCursor, vehicles = vehicles,
                         loading = false, error = null)
+                    val retained = restoreRideSelection(selected?.id?.bytes, rides) { it.id.bytes }
+                    if (retained != null) select(retained)
+                    else if (selected != null) state = state.copy(selected = null)
                 },
                 onFailure = { error -> state = state.copy(loading = false, error = error.message ?: "") },
             )
@@ -92,16 +124,48 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         notifyChanged()
         runtime.withDatabase({ db ->
             val budget = mobileRideMapLimits().historyPreviewPointLimit
-            db.projectRoutePoints(ride.id, MobileRideMapRouteProjectionOptionsDto(
+            val route = db.projectRoutePoints(ride.id, MobileRideMapRouteProjectionOptionsDto(
                 null, budget, MobileRideMapRoutePrivacyPolicyDto.Precise,
             ))
+            val music = runCatching { db.musicHistory(ride.id) }
+            val musicState = runCatching { db.musicHistoryState(ride.id) }
+            Triple(route, music, musicState)
         }) { result ->
             if (generation != detailGeneration) return@withDatabase
             result.fold(
-                onSuccess = { route -> state = state.copy(route = route, loading = false) },
+                onSuccess = { (route, music, musicState) ->
+                    state = state.copy(route = route, loading = false,
+                        musicHistory = music.getOrNull(),
+                        musicHistoryState = musicState.getOrNull(),
+                        musicError = music.exceptionOrNull()?.message ?: musicState.exceptionOrNull()?.message)
+                },
                 onFailure = { error -> state = state.copy(loading = false, error = error.message ?: "") },
             )
             notifyChanged()
+        }
+    }
+
+    fun forgetMusicHistory(ride: MobileRideRecordDto, completed: (Result<Unit>) -> Unit) {
+        val generation = detailGeneration
+        runtime.withDatabase({ db ->
+            db.deleteMusicHistory(ride.id)
+            val history = db.musicHistory(ride.id)
+            val status = db.musicHistoryState(ride.id)
+            history to status
+        }) { result ->
+            if (generation != detailGeneration) return@withDatabase
+            result.fold(
+                onSuccess = { (history, status) ->
+                    state = state.copy(musicHistory = history, musicHistoryState = status, musicError = null)
+                    notifyChanged()
+                    completed(Result.success(Unit))
+                },
+                onFailure = { error ->
+                    state = state.copy(musicError = error.message ?: "")
+                    notifyChanged()
+                    completed(Result.failure(error))
+                },
+            )
         }
     }
 

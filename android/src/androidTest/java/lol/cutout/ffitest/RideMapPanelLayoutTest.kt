@@ -63,12 +63,8 @@ open class RideMapPanelLayoutTest {
                 }
                 layout()
                 val surface = checkNotNull(root.findViewWithTag<View>("ride_map_surface_slot"))
-                val density = context.resources.displayMetrics.density
-                val availableDp = height / density
-                val expectedHeight = (minOf(availableDp, minOf(maxOf(availableDp * 0.46f, 160f), 360f)) * density)
-                    .roundToInt()
-                check(surface.height == expectedHeight) {
-                    "Expected initial map surface height $expectedHeight px from $height px viewport at $density density, got ${surface.height} px"
+                check(surface.visibility == View.GONE) {
+                    "Idle Live must not reserve an empty map above the recording controls"
                 }
                 root.findViewWithTag<Button>("ride_map_mode_charging").performClick()
                 layout()

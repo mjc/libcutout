@@ -1,9 +1,11 @@
 package lol.cutout
 
-import android.content.Context
+import android.app.AlertDialog
 import android.icu.text.MeasureFormat
 import android.icu.util.Measure
 import android.icu.util.MeasureUnit
+import android.content.Context
+import android.content.Intent
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -24,6 +26,11 @@ import uniffi.cutout_mobile_ffi.MobileRideHistoryVehicleOptionDto
 import uniffi.cutout_mobile_ffi.MobileRideMapRoutePresenceDto
 import uniffi.cutout_mobile_ffi.MobileRideMovingTimeDto
 import uniffi.cutout_mobile_ffi.MobileRideRecordDto
+import uniffi.cutout_mobile_ffi.MobileMusicHistoryStatusDto
+import uniffi.cutout_mobile_ffi.MobileMusicHistoryStateDto
+import uniffi.cutout_mobile_ffi.MobileMusicRideEventKindDto
+import uniffi.cutout_mobile_ffi.MobileMusicProviderDto
+import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
 
 /** Rust-backed ride history list and selected ride detail. */
 class RideHistoryPanel(
@@ -61,6 +68,7 @@ class RideHistoryPanel(
     private val message = ui.text("", 14f, false, ui.muted)
     private var searchRunnable: Runnable? = null
     private var exportError: String? = null
+    private var musicForgetError: String? = null
 
     init {
         isFillViewport = true
@@ -165,12 +173,32 @@ class RideHistoryPanel(
             contentDescription = "${recordedAt(ride.createdAtMilliseconds)}. ${vehicleLabel(ride)}. " +
                 "${distance(ride)}. ${elapsed(ride)}. ${moving(ride)}"
         }
-        card.addView(ui.text(recordedAt(ride.createdAtMilliseconds), 17f, true))
-        card.addView(ui.text(vehicleLabel(ride), 14f, false, ui.muted),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(5) })
-        card.addView(ui.text("${distance(ride)} · ${context.getString(R.string.ride_map_elapsed_time, elapsed(ride))} · " +
-            context.getString(R.string.ride_map_moving_time, moving(ride)), 13f, false, ui.muted),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(7) })
+        val identity = ui.column().apply {
+            addView(ui.text(recordedAt(ride.createdAtMilliseconds), 17f, true))
+            addView(ui.text(vehicleLabel(ride), 14f, false, ui.muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+        }
+        val measurements = ui.column().apply {
+            addView(ui.text(distance(ride), 14f, true))
+            addView(ui.text(context.getString(R.string.ride_map_elapsed_time, elapsed(ride)), 12f, color = ui.muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+            addView(ui.text(context.getString(R.string.ride_map_moving_time, moving(ride)), 12f, color = ui.muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+        }
+        if (resources.configuration.fontScale >= 1.3f) {
+            card.addView(identity)
+            card.addView(measurements, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
+        } else {
+            card.orientation = LinearLayout.HORIZONTAL
+            card.gravity = Gravity.CENTER_VERTICAL
+            card.addView(identity, LinearLayout.LayoutParams(0, -2, 1f))
+            for (index in 0 until measurements.childCount) (measurements.getChildAt(index) as TextView).gravity = Gravity.END
+            card.addView(measurements, LinearLayout.LayoutParams(-2, -2).apply { marginStart = ui.dp(12) })
+        }
+        card.addView(android.widget.ImageView(context).apply {
+            setImageDrawable(CutoutIcon(CutoutSymbol.CHEVRON, ui.muted))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(ui.dp(16), ui.dp(20)).apply { marginStart = ui.dp(12) })
         return card
     }
 
@@ -187,20 +215,49 @@ class RideHistoryPanel(
         rows.addView(ui.text("${distance(ride)} · ${context.getString(R.string.ride_map_elapsed_time, elapsed(ride))} · " +
             context.getString(R.string.ride_map_moving_time, moving(ride)), 14f, false, ui.muted),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        rows.addView(ui.text("${context.getString(R.string.ride_map_average_speed)} · ${averageSpeed(ride)}", 14f, false, ui.muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         state.route?.let { route ->
             val routeText = when (route.routePresence) {
-                MobileRideMapRoutePresenceDto.VISIBLE -> context.getString(R.string.ride_map_recorded_points,
-                    route.points.size)
+                MobileRideMapRoutePresenceDto.VISIBLE -> context.getString(R.string.ride_map_recorded_points_detail,
+                    ride.summary.pointCount.toInt())
                 MobileRideMapRoutePresenceDto.EMPTY_VIEWPORT -> context.getString(R.string.ride_map_no_route)
                 MobileRideMapRoutePresenceDto.EMPTY_RIDE -> context.getString(R.string.ride_map_no_route)
             }
             rows.addView(ui.text(routeText, 14f, false, ui.muted),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
+            if (route.routePresence == MobileRideMapRoutePresenceDto.VISIBLE) {
+                rows.addView(ui.text(context.getString(R.string.ride_map_projected_points, route.points.size), 13f, false, ui.muted), spaced())
+                if (route.sourcePointCount > route.points.size.toULong()) {
+                    rows.addView(ui.text(context.getString(R.string.ride_map_points_truncated), 13f, false, ui.muted), spaced())
+                    rows.addView(ui.action(context.getString(R.string.ride_map_route_preview)) {
+                        controller.select(ride)
+                    }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(6) })
+                }
+                rows.addView(ui.text(context.getString(R.string.ride_map_segments_detail, route.sourceSegmentCount.toInt()), 13f, false, ui.muted), spaced())
+                if (route.candidateSegmentCount > route.displayedSegmentCount) {
+                    rows.addView(ui.text(context.getString(R.string.ride_map_segments_omitted), 13f, false, ui.muted), spaced())
+                }
+                route.segments.forEachIndexed { index, segment ->
+                    rows.addView(ui.text(context.getString(R.string.ride_map_segment_points,
+                        index + 1, segment.visiblePointCount.toInt()) + " · " + segmentReason(segment.startReason),
+                        13f, false, ui.muted), spaced())
+                }
+                if (route.backgroundGapCount > 0uL) rows.addView(ui.text(
+                    context.getString(R.string.ride_map_background_gaps, route.backgroundGapCount.toInt()),
+                    13f, false, ui.muted), spaced())
+            }
             mapView.show(route)
         } ?: mapView.clearRoute()
+        renderMusic(ride, state)
         state.error?.let {
             rows.addView(ui.text(it, 14f, false, ui.red),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
+            if (state.route == null && !state.loading) {
+                rows.addView(ui.action(context.getString(R.string.ride_map_retry_detail)) {
+                    controller.select(ride)
+                }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
+            }
         }
         exportError?.let {
             rows.addView(ui.text(it, 14f, false, ui.red),
@@ -208,9 +265,102 @@ class RideHistoryPanel(
         }
         if (state.loading) rows.addView(ui.text(context.getString(R.string.ride_map_loading), 14f, false, ui.muted),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-        rows.addView(ui.action(context.getString(R.string.ride_map_share)) { export(ride) },
+        rows.addView(ui.action(context.getString(R.string.ride_map_export_json)) { export(ride) },
             LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(12) })
+        rows.addView(ui.action(context.getString(R.string.ride_map_share)) { shareSummary(ride) },
+            LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
     }
+
+    private fun shareSummary(ride: MobileRideRecordDto) {
+        val summary = context.getString(R.string.ride_map_detail) + "\n" + distance(ride) + " · " +
+            context.getString(R.string.ride_map_elapsed_time, elapsed(ride)) + " · " +
+            context.getString(R.string.ride_map_moving_time, moving(ride))
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, summary)
+        }, context.getString(R.string.ride_map_share)))
+    }
+
+    private fun renderMusic(ride: MobileRideRecordDto, state: RideHistoryState) {
+        val history = state.musicHistory
+        val retainedState = state.musicHistoryState
+        val events = history?.events.orEmpty().filterNot {
+            it.kind == MobileMusicRideEventKindDto.PROVIDER_DISCONNECTED ||
+                (it.kind == MobileMusicRideEventKindDto.STOPPED && it.itemIdentifier == null && it.title == null)
+        }
+        val canForget = events.isNotEmpty() || retainedState == MobileMusicHistoryStateDto.REDACTED ||
+            retainedState == MobileMusicHistoryStateDto.HUMAN_READABLE
+        if (events.isEmpty() && !canForget && state.musicError == null && history?.status != MobileMusicHistoryStatusDto.UNAVAILABLE) return
+        rows.addView(ui.text(context.getString(R.string.ride_map_music_timeline), 18f, true), spaced())
+        when {
+            state.musicError != null || history?.status == MobileMusicHistoryStatusDto.UNAVAILABLE ->
+                rows.addView(ui.text(context.getString(R.string.ride_map_music_unavailable), 14f, false, ui.muted), spaced())
+            events.isEmpty() -> rows.addView(ui.text(context.getString(musicStateString(retainedState)), 14f, false, ui.muted), spaced())
+            else -> events.forEach { event ->
+                val item = event.title?.takeIf(String::isNotBlank) ?: context.getString(R.string.ride_map_music_event_no_title)
+                val artist = event.artist?.takeIf(String::isNotBlank)
+                val provider = context.getString(musicProviderString(event.provider))
+                val kind = context.getString(musicKindString(event.kind))
+                val time = DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()).format(Date(event.wallClockAtMs.toLong()))
+                rows.addView(ui.text(context.getString(R.string.ride_map_music_event,
+                    time, provider, listOfNotNull(item, artist, kind).joinToString(" · ")), 14f, false), spaced())
+            }
+        }
+        musicForgetError?.let { rows.addView(ui.text(context.getString(R.string.ride_map_music_forget_failed), 14f, false, ui.red), spaced()) }
+        if (canForget) rows.addView(ui.action(context.getString(R.string.ride_map_music_forget)) {
+            AlertDialog.Builder(context).setMessage(R.string.ride_map_music_forget_confirm)
+                .setNegativeButton(R.string.charging_cancel, null)
+                .setPositiveButton(R.string.ride_map_music_forget) { _, _ ->
+                    musicForgetError = null
+                    controller.forgetMusicHistory(ride) { result ->
+                        result.onFailure { musicForgetError = it.message }
+                        render()
+                    }
+                }.show()
+        }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
+    }
+
+    private fun musicStateString(value: MobileMusicHistoryStateDto?): Int = when (value) {
+        MobileMusicHistoryStateDto.MISSING, null -> R.string.ride_map_music_state_missing
+        MobileMusicHistoryStateDto.DISABLED -> R.string.ride_map_music_state_disabled
+        MobileMusicHistoryStateDto.REDACTED -> R.string.ride_map_music_state_redacted
+        MobileMusicHistoryStateDto.HUMAN_READABLE -> R.string.ride_map_music_state_human
+        MobileMusicHistoryStateDto.DELETED -> R.string.ride_map_music_state_deleted
+    }
+
+    private fun musicProviderString(value: MobileMusicProviderDto): Int = when (value) {
+        MobileMusicProviderDto.APPLE_MUSIC -> R.string.ride_map_music_provider_apple
+        MobileMusicProviderDto.SPOTIFY -> R.string.ride_map_music_provider_spotify
+        MobileMusicProviderDto.SOUND_CLOUD -> R.string.ride_map_music_provider_soundcloud
+    }
+
+    private fun musicKindString(value: MobileMusicRideEventKindDto): Int = when (value) {
+        MobileMusicRideEventKindDto.PLAY -> R.string.ride_map_music_kind_play
+        MobileMusicRideEventKindDto.PAUSE -> R.string.ride_map_music_kind_pause
+        MobileMusicRideEventKindDto.SKIP -> R.string.ride_map_music_kind_skip
+        MobileMusicRideEventKindDto.ITEM_CHANGED -> R.string.ride_map_music_kind_changed
+        MobileMusicRideEventKindDto.STOPPED -> R.string.ride_map_music_kind_stopped
+        MobileMusicRideEventKindDto.PROVIDER_DISCONNECTED -> R.string.ride_map_music_kind_stopped
+    }
+
+    private fun segmentReason(value: MobileRideSegmentStartReasonDto): String = context.getString(when (value) {
+        MobileRideSegmentStartReasonDto.INITIAL -> R.string.ride_map_segment_reason_initial
+        MobileRideSegmentStartReasonDto.RESUME -> R.string.ride_map_segment_reason_resume
+        MobileRideSegmentStartReasonDto.BACKGROUND_GAP -> R.string.ride_map_segment_reason_gap
+        MobileRideSegmentStartReasonDto.IMPORT_BOUNDARY -> R.string.ride_map_segment_reason_import
+        MobileRideSegmentStartReasonDto.STATIONARY -> R.string.ride_map_segment_reason_stationary
+    })
+
+    private fun averageSpeed(ride: MobileRideRecordDto): String {
+        val metresPerSecond = ride.summary.averageSpeedMillimetresPerSecond?.toDouble()?.div(1000.0) ?: return "--"
+        val country = Locale.getDefault().country
+        val imperial = country in setOf("US", "LR", "MM")
+        val amount = if (imperial) metresPerSecond * 2.2369362921 else metresPerSecond * 3.6
+        val unit = if (imperial) MeasureUnit.MILE_PER_HOUR else MeasureUnit.KILOMETER_PER_HOUR
+        return MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.SHORT).format(Measure(amount, unit))
+    }
+
+    private fun spaced() = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) }
 
     private fun export(ride: MobileRideRecordDto) {
         exportError = null
@@ -268,11 +418,8 @@ class RideHistoryPanel(
         else DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.getDefault())
             .format(Date(milliseconds.toLong()))
 
-    private fun distance(ride: MobileRideRecordDto): String {
-        val meters = ride.summary.distanceMillimetres.toDouble() / 1000.0
-        return MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.SHORT)
-            .format(Measure(meters, MeasureUnit.METER))
-    }
+    private fun distance(ride: MobileRideRecordDto): String =
+        RideMetricFormatting.distance(context, ride.summary.distanceMillimetres.toDouble() / 1000.0)
 
     private fun elapsed(ride: MobileRideRecordDto): String = when (val value = ride.summary.elapsedTime) {
         is MobileRideElapsedTimeDto.Complete -> duration(value.durationMilliseconds)
@@ -286,13 +433,6 @@ class RideHistoryPanel(
         MobileRideMovingTimeDto.Unavailable -> "--"
     }
 
-    private fun duration(milliseconds: ULong): String {
-        val seconds = (milliseconds / 1000u).toLong()
-        val hours = seconds / 3600
-        val minutes = seconds % 3600 / 60
-        val remaining = seconds % 60
-        return if (hours > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, remaining)
-        else String.format(Locale.getDefault(), "%d:%02d", minutes, remaining)
-    }
+    private fun duration(milliseconds: ULong): String = RideMetricFormatting.duration(milliseconds)
 
 }

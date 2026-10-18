@@ -86,6 +86,13 @@ class RideForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_cutout).setContentTitle(getString(R.string.app_name))
             .setContentText(stateText).setContentIntent(open).setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE).setOnlyAlertOnce(true)
+        snapshot?.liveActivityStatistics?.let { statistics ->
+            val metrics = getString(R.string.ride_notification_metrics,
+                RideMetricFormatting.distance(this, statistics.distanceMillimetres.toDouble() / 1000.0),
+                RideMetricFormatting.duration(statistics.durationMilliseconds))
+            builder.setContentTitle(stateText).setContentText(metrics)
+                .setStyle(Notification.BigTextStyle().bigText(metrics))
+        }
         val actions = snapshot?.allowedActions.orEmpty()
         if (MobileRideEventDto.PAUSE in actions) builder.addAction(Notification.Action.Builder(
             null, getString(R.string.ride_map_pause), command(PAUSE)).build())

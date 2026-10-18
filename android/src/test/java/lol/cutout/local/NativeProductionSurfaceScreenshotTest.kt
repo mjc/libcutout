@@ -150,7 +150,7 @@ class NativeProductionSurfaceScreenshotTest {
     }
 }
 
-private object NativeSurfaceCapture {
+internal object NativeSurfaceCapture {
     private const val WIDTH_DP = 393
     private const val HEIGHT_DP = 852
 

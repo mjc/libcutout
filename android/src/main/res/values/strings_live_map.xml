@@ -1,0 +1,19 @@
+<resources>
+    <string name="live_map_distance">Distance</string>
+    <string name="live_map_elapsed">Elapsed</string>
+    <string name="live_map_moving">Moving</string>
+    <string name="live_map_recording">Recording ride</string>
+    <string name="live_map_paused">Ride paused</string>
+    <string name="live_map_stopped">Ride stopped</string>
+    <string name="live_map_saved">Ride saved</string>
+    <string name="live_map_interrupted">Ride interrupted</string>
+    <string name="live_map_imported">Imported ride</string>
+    <string name="live_map_associated_vehicle">PEV ride</string>
+    <string name="live_map_receiving_vehicle">Receiving wheel data</string>
+    <string name="live_map_waiting_vehicle">Waiting for wheel data</string>
+    <string name="live_map_vehicle_unavailable">Wheel data unavailable</string>
+    <string name="live_map_show_full_ride">Show full ride</string>
+    <string name="live_map_location_settings">Location settings</string>
+    <string name="live_map_route_interrupted">The route has gaps where location was unavailable.</string>
+    <string name="live_map_discard_confirm">Discard this ride?</string>
+</resources>
