@@ -103,8 +103,8 @@ final class CaptureResearchDraft {
         case profile, time
         var errorDescription: String? {
             switch self {
-            case .profile: "Choose a device profile."
-            case .time: "Enter the observation time in seconds from capture start."
+            case .profile: localizedAppText("capture.settings.profile_required")
+            case .time: localizedAppText("capture.settings.invalid_time")
             }
         }
     }
@@ -115,16 +115,16 @@ enum CaptureResearchPresentation {
         guard let error = error as? MobileCaptureResearchError else { return error.localizedDescription }
         switch error {
         case .InvalidObservation(let message): return message
-        case .NotRecording: return "This capture is no longer recording."
-        case .AdmissionLost: return "Values were not saved. Try again."
-        case .WriterFailed: return "Could not confirm saved values."
+        case .NotRecording: return localizedAppText("capture.settings.not_recording")
+        case .AdmissionLost: return localizedAppText("capture.settings.not_saved")
+        case .WriterFailed: return localizedAppText("capture.settings.save_unconfirmed")
         }
     }
     static func source(_ source: MobileCaptureObservationSourceDto) -> String {
         switch source {
-        case .manufacturerApp: "Manufacturer app"
-        case .wheelDisplay: "Wheel display"
-        case .other: "Other"
+        case .manufacturerApp: localizedAppText("capture.settings.source.manufacturer_app")
+        case .wheelDisplay: localizedAppText("capture.settings.source.wheel_display")
+        case .other: localizedAppText("capture.settings.source.other")
         }
     }
     static func time(_ milliseconds: UInt64) -> String {
@@ -133,11 +133,11 @@ enum CaptureResearchPresentation {
     }
     static func group(_ group: MobileSettingGroupDto) -> String {
         switch group {
-        case .limits: "Limits & alarms"
-        case .riding: "Ride feel"
-        case .interface: "Lights & display"
-        case .modes: "Modes"
-        case .diagnostics: "Other observations"
+        case .limits: localizedAppText("controls.group.limits")
+        case .riding: localizedAppText("controls.group.riding")
+        case .interface: localizedAppText("controls.group.interface")
+        case .modes: localizedAppText("capture.settings.group.modes")
+        case .diagnostics: localizedAppText("capture.settings.group.other_observations")
         case .haptics: localizedAppText("controls.group.haptics")
         case .lighting: localizedAppText("controls.group.lighting")
         case .hardware: localizedAppText("controls.group.hardware")
@@ -175,9 +175,9 @@ enum CaptureResearchPresentation {
     {
         let text: String
         switch value.value {
-        case .unobserved: text = "Not observed"
-        case .off: text = "Off"
-        case .boolean(let enabled): text = enabled ? "On" : "Off"
+        case .unobserved: text = localizedAppText("capture.settings.not_observed")
+        case .off: text = localizedAppText("settings.choice.off")
+        case .boolean(let enabled): text = localizedAppText(enabled ? "controls.on" : "settings.choice.off")
         case .entered(let entered):
             if let field, case let .choices(choices) = field.control,
                 let choice = choices.first(where: { String($0.id) == entered })
@@ -192,8 +192,8 @@ enum CaptureResearchPresentation {
     }
     static func decoded(_ value: MobileSettingValueDto, field: MobileCaptureResearchFieldDto?) -> String {
         switch value {
-        case .disabled: return "Off"
-        case .boolean(let enabled): return enabled ? "On" : "Off"
+        case .disabled: return localizedAppText("settings.choice.off")
+        case .boolean(let enabled): return localizedAppText(enabled ? "controls.on" : "settings.choice.off")
         case .choice(let id):
             if let field, case let .choices(choices) = field.control,
                 let choice = choices.first(where: { $0.id == id })
@@ -249,7 +249,7 @@ struct CaptureSettingsWorksheet: View {
                         Text("s from start").foregroundStyle(.secondary)
                     }
                 } else {
-                    LabeledContent("Observed at", value: "Now")
+                    LabeledContent("Observed at", value: localizedAppText("capture.settings.now"))
                 }
             }
             if let catalog = draft.catalog {
@@ -406,8 +406,14 @@ struct CaptureSettingsObservationReview: View {
         List {
             if observations.isEmpty { Text("No settings values recorded.").foregroundStyle(.secondary) }
             ForEach(Array(observations.enumerated()), id: \.offset) { index, observation in
+                let title =
+                    index == 0
+                    ? localizedAppText("capture.settings.baseline")
+                    : localizedAppText("capture.settings.observation_number", index + 1)
                 Section(
-                    "\(index == 0 ? "Baseline" : "Observation \(index + 1)") · \(CaptureResearchPresentation.time(observation.observedAtMs))"
+                    localizedAppText(
+                        "capture.settings.observation_title", title,
+                        CaptureResearchPresentation.time(observation.observedAtMs))
                 ) {
                     CaptureSettingsObservationRows(
                         observation: observation,
@@ -437,7 +443,7 @@ struct CaptureSettingsObservationReview: View {
             decoded = result
         } catch {
             guard loadID == requestID, !Task.isCancelled else { return }
-            self.error = "Could not read captured settings."
+            self.error = localizedAppText("capture.settings.read_error")
         }
     }
 }
@@ -479,12 +485,13 @@ private struct CaptureSettingsObservationRows: View {
                             Text("Values differ.").font(.caption).foregroundStyle(PevColors.warningText)
                         }
                     } else {
-                        LabeledContent("CutOut decoded", value: "Unknown")
+                        LabeledContent("CutOut decoded", value: localizedAppText("settings.empty"))
                     }
                     Text("Packet · \(CaptureResearchPresentation.time(decodedValue.observedAtMs))")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    LabeledContent("CutOut decoded", value: "Not available").foregroundStyle(.secondary)
+                    LabeledContent("CutOut decoded", value: localizedAppText("capture.settings.not_available"))
+                        .foregroundStyle(.secondary)
                 }
                 if unusual.contains(value.settingId) {
                     Text("Outside the usual range.").font(.caption).foregroundStyle(PevColors.warningText)
@@ -525,7 +532,7 @@ struct CaptureSavedSettingsSection: View {
                     try database.captureSettingsObservations(source: selectedSource)
                 }.value
                 error = nil
-            } catch { self.error = "Could not load settings values." }
+            } catch { self.error = localizedAppText("capture.settings.load_error") }
         }
     }
 }
