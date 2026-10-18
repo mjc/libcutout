@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env,
     fmt::Write as _,
     fs,
@@ -6,6 +7,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 struct RegisteredModelSource {
@@ -15,6 +17,7 @@ struct RegisteredModelSource {
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo manifest dir"));
+    emit_replay_decoder_fingerprint(&manifest_dir);
     let source_path = manifest_dir.join("registry/models.json");
     println!("cargo:rerun-if-changed={}", source_path.display());
 
@@ -25,6 +28,96 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("cargo out dir"));
     let output_path = out_dir.join("registry_models.rs");
     fs::write(&output_path, generated).expect("write generated registry models");
+}
+
+/// Fingerprints the interpreter source, rather than a Git ref or the original capture library.
+///
+/// Scope: workspace Cargo.toml and Cargo.lock; core/protocol Cargo.toml files; this build.rs;
+/// all Rust files recursively under both crates' src directories; and all files recursively
+/// under the protocol registry directory. Generated output, host paths, environment values,
+/// timestamps, enabled features, and compiler identity are not part of this source fingerprint.
+///
+/// SHA256 input starts with the versioned domain below, followed by inputs sorted by their
+/// slash-separated workspace-relative names. Each input is framed as an eight-byte big-endian
+/// name length, name bytes, an eight-byte big-endian content length, and exact file bytes.
+fn emit_replay_decoder_fingerprint(manifest_dir: &Path) {
+    let workspace = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("protocol crate must be under workspace crates directory");
+    let mut inputs = BTreeSet::from([
+        "Cargo.toml".to_owned(),
+        "Cargo.lock".to_owned(),
+        "crates/cutout-core/Cargo.toml".to_owned(),
+        "crates/cutout-protocols/Cargo.toml".to_owned(),
+        "crates/cutout-protocols/build.rs".to_owned(),
+    ]);
+    for (directory, rust_only) in [
+        ("crates/cutout-core/src", true),
+        ("crates/cutout-protocols/src", true),
+        ("crates/cutout-protocols/registry", false),
+    ] {
+        collect_replay_decoder_inputs(workspace, directory, rust_only, &mut inputs);
+    }
+
+    let mut digest = Sha256::new();
+    digest.update(b"cutout-replay-decoder-source-v1\0");
+    for relative in inputs {
+        // Cargo resolves these paths relative to this crate, independently of the host checkout.
+        println!("cargo:rerun-if-changed=../../{relative}");
+        let bytes = fs::read(workspace.join(&relative))
+            .unwrap_or_else(|error| panic!("read decoder fingerprint input {relative}: {error}"));
+        digest.update(
+            u64::try_from(relative.len())
+                .expect("fingerprint input name length fits u64")
+                .to_be_bytes(),
+        );
+        digest.update(relative.as_bytes());
+        digest.update(
+            u64::try_from(bytes.len())
+                .expect("fingerprint input content length fits u64")
+                .to_be_bytes(),
+        );
+        digest.update(&bytes);
+    }
+    println!(
+        "cargo:rustc-env=CUTOUT_REPLAY_DECODER_SOURCE_SHA256={:x}",
+        digest.finalize()
+    );
+}
+
+fn collect_replay_decoder_inputs(
+    workspace: &Path,
+    directory: &str,
+    rust_only: bool,
+    inputs: &mut BTreeSet<String>,
+) {
+    // Watching each directory detects additions/removals, including new nested source trees.
+    println!("cargo:rerun-if-changed=../../{directory}");
+    let entries = fs::read_dir(workspace.join(directory))
+        .unwrap_or_else(|error| panic!("read decoder fingerprint directory {directory}: {error}"));
+    for entry in entries {
+        let entry = entry.expect("read decoder fingerprint directory entry");
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .expect("decoder fingerprint input names must be UTF-8");
+        let relative = format!("{directory}/{name}");
+        if entry
+            .file_type()
+            .expect("read decoder fingerprint input type")
+            .is_dir()
+        {
+            collect_replay_decoder_inputs(workspace, &relative, rust_only, inputs);
+        } else if !rust_only
+            || entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+        {
+            inputs.insert(relative);
+        }
+    }
 }
 
 fn load_sources(path: &Path) -> Vec<RegisteredModelSource> {
@@ -43,7 +136,7 @@ fn validate_sources(sources: &[RegisteredModelSource], path: &Path) {
         path.display()
     );
 
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for source in sources {
         assert!(
             !source.module.trim().is_empty(),

@@ -829,6 +829,13 @@ impl RefloatDiscovery {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VescUserDrivetrain {
+    Live(cutout_core::VescDrivetrain),
+    #[cfg(feature = "capture-replay")]
+    Replay(cutout_core::VescDrivetrain),
+}
+
 /// Generic VESC notification decoder for read-only UART replies.
 #[allow(
     clippy::struct_excessive_bools,
@@ -839,7 +846,7 @@ pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
     configured_board_profile: Option<VescBoardProfile>,
-    user_drivetrain: Option<cutout_core::VescDrivetrain>,
+    user_drivetrain: Option<VescUserDrivetrain>,
     learned_board_profile: Option<VescBoardProfile>,
     last_poll_ms: Option<u64>,
     now_ms: u64,
@@ -871,7 +878,16 @@ impl VescNotificationDecoder {
     fn board_profile(&self) -> Option<VescBoardProfile> {
         let reported = self.configured_board_profile.or(self.learned_board_profile);
         match (self.refloat_discovery.application(), self.user_drivetrain) {
-            (VescApplicationDiscovery::Absent, Some(value)) => Some(
+            (VescApplicationDiscovery::Absent, Some(VescUserDrivetrain::Live(value))) => Some(
+                reported
+                    .unwrap_or_else(VescBoardProfile::without_geometry)
+                    .with_speed_geometry(value.geometry()),
+            ),
+            #[cfg(feature = "capture-replay")]
+            (
+                VescApplicationDiscovery::Pending | VescApplicationDiscovery::Absent,
+                Some(VescUserDrivetrain::Replay(value)),
+            ) => Some(
                 reported
                     .unwrap_or_else(VescBoardProfile::without_geometry)
                     .with_speed_geometry(value.geometry()),
@@ -2788,7 +2804,33 @@ impl ReadOnlySession<VescGenericModel> {
     }
 
     pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
-        self.decoder.user_drivetrain = Some(value);
+        self.decoder.user_drivetrain = Some(VescUserDrivetrain::Live(value));
+    }
+
+    #[cfg(feature = "capture-replay")]
+    pub(crate) fn configure_replay_drivetrain(
+        &mut self,
+        value: Option<cutout_core::VescDrivetrain>,
+    ) {
+        self.decoder.user_drivetrain = value.map(VescUserDrivetrain::Replay);
+    }
+
+    #[cfg(feature = "capture-replay")]
+    pub(crate) fn replay_is_connected(&self) -> bool {
+        self.connected
+    }
+
+    #[cfg(feature = "capture-replay")]
+    pub(crate) fn replay_device_geometry(&self) -> Option<cutout_core::VescSpeedGeometry> {
+        let profile = self.decoder.learned_board_profile?;
+        if !profile.calculates_speed {
+            return None;
+        }
+        cutout_core::VescSpeedGeometry::new(
+            profile.motor_pole_pairs,
+            profile.gear_ratio_denominator,
+            profile.wheel_circumference,
+        )
     }
 
     /// Current connection's query progress, separate from passive application evidence.
@@ -5818,7 +5860,7 @@ mod tests {
         .with_vesc_battery_type(crate::VescBatteryType::LiIon, SeriesCount::new(12));
         let mut decoder = VescNotificationDecoder::with_board_profile(reported);
         let user = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
-        decoder.user_drivetrain = Some(user);
+        decoder.user_drivetrain = Some(VescUserDrivetrain::Live(user));
         decoder.refloat_discovery.observed = Some(VescApplicationDiscovery::Refloat);
         assert_eq!(decoder.board_profile(), Some(reported));
         decoder.refloat_discovery.observed = Some(VescApplicationDiscovery::Absent);

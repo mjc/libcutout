@@ -15,6 +15,10 @@
 
 mod gatt;
 pub use gatt::*;
+#[cfg(feature = "capture-replay")]
+mod vesc_capture_replay;
+#[cfg(feature = "capture-replay")]
+pub use vesc_capture_replay::*;
 mod begode_frame;
 pub use begode_frame::{
     BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameParseResult, BegodeFrameReassembler,
