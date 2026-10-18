@@ -1377,6 +1377,35 @@ mod tests {
     }
 
     #[test]
+    fn user_drivetrain_newer_save_supersedes_an_older_restore_during_persistence() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let older = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let edited = cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap();
+        let result = handle.save_drivetrain_with_persistence(token.clone(), edited, |_| {
+            assert_eq!(
+                handle.restore_drivetrain_with_load(token.clone(), |_| Ok(Some(
+                    saved_drivetrain(older, 1)
+                )))?,
+                Some(older.into())
+            );
+            Ok(saved_drivetrain(edited, 2))
+        });
+        assert_eq!(result, Ok(edited.into()));
+        let observed = drivetrain_erpm(&handle, token.clone(), false, 3_001);
+        assert_eq!(observed.telemetry.speed.unwrap().value.value, 1_794);
+        assert_eq!(
+            handle
+                .connection_telemetry_snapshot(token)
+                .unwrap()
+                .vesc_drivetrain_context
+                .unwrap()
+                .revision,
+            2
+        );
+    }
+
+    #[test]
     fn user_drivetrain_edit_invalidates_existing_speed_until_a_new_measurement() {
         let handle = CutoutSessionStateHandle::new();
         let token = absent_vesc_application(&handle, "controller-a");

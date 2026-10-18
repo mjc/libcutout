@@ -475,7 +475,10 @@ impl DeviceConnectionSession {
         if self.user_vesc_drivetrain == Some(profile) {
             return true;
         }
-        if self.user_vesc_drivetrain != selection.previous_profile
+        // An older restore can populate an initially empty local slot during persistence.
+        // Keep the prepared-profile fence for edits of an already configured slot.
+        if (selection.previous_profile.is_some()
+            && self.user_vesc_drivetrain != selection.previous_profile)
             || self
                 .user_vesc_drivetrain
                 .is_some_and(|current| profile.revision() <= current.revision())
