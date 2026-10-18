@@ -2561,9 +2561,14 @@ final class CutoutAppUITests: XCTestCase {
 
         func openWorksheet() {
             let record = app.buttons["capture.settings.record"]
-            scrollElementFrameIntoViewport(record, in: recording, maxScrolls: 8)
+            scrollElementFrameIntoViewport(
+                record, in: recording, maxScrolls: 8, occludedBy: app.buttons["capture.stop"]
+            )
             record.tap()
-            XCTAssertTrue(app.descendants(matching: .any)["capture.settings.worksheet"].waitForExistence(timeout: 5))
+            XCTAssertTrue(
+                app.descendants(matching: .any)["capture.settings.worksheet"].waitForExistence(timeout: 5),
+                app.debugDescription
+            )
         }
         openWorksheet()
         let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
