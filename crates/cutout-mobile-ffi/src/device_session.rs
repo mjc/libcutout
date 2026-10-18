@@ -16,12 +16,257 @@ pub enum MobileVehicleKindDto {
     Unknown,
     /// Electric unicycle.
     ElectricUnicycle,
-    /// Self-balancing board.
-    Board,
+    /// Single-wheel self-balancing board.
+    Onewheel,
     /// Scooter.
     Scooter,
-    /// Bicycle.
-    Bike,
+    /// Electric skateboard.
+    Eskate,
+    /// Electric bicycle.
+    Ebike,
+    /// Electric motorcycle.
+    Emoto,
+}
+
+impl From<VehicleKind> for MobileVehicleKindDto {
+    fn from(value: VehicleKind) -> Self {
+        match value {
+            VehicleKind::Unknown => Self::Unknown,
+            VehicleKind::ElectricUnicycle => Self::ElectricUnicycle,
+            VehicleKind::Onewheel => Self::Onewheel,
+            VehicleKind::Scooter => Self::Scooter,
+            VehicleKind::Eskate => Self::Eskate,
+            VehicleKind::Ebike => Self::Ebike,
+            VehicleKind::Emoto => Self::Emoto,
+        }
+    }
+}
+
+impl From<MobileVehicleKindDto> for VehicleKind {
+    fn from(value: MobileVehicleKindDto) -> Self {
+        match value {
+            MobileVehicleKindDto::Unknown => Self::Unknown,
+            MobileVehicleKindDto::ElectricUnicycle => Self::ElectricUnicycle,
+            MobileVehicleKindDto::Onewheel => Self::Onewheel,
+            MobileVehicleKindDto::Scooter => Self::Scooter,
+            MobileVehicleKindDto::Eskate => Self::Eskate,
+            MobileVehicleKindDto::Ebike => Self::Ebike,
+            MobileVehicleKindDto::Emoto => Self::Emoto,
+        }
+    }
+}
+
+/// Evidence behind the device's physical type; this does not identify its model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVehicleClassificationProvenanceDto {
+    /// Physical type is unknown.
+    Unknown,
+    /// Validated protocol semantics establish the type.
+    Protocol,
+    /// User selection saved for this device.
+    UserProvided,
+}
+
+/// Rust-owned physical-type admission for the native Ride presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVehicleClassificationRequirementDto {
+    /// Application discovery is in progress.
+    Pending,
+    /// This device requires a user choice before showing Ride.
+    UserSelectionRequired,
+    /// The physical vehicle presentation is resolved.
+    Resolved,
+}
+
+/// Result of the bounded VESC application discovery, independent from vehicle type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescApplicationDiscoveryDto {
+    /// The bounded application query is still in progress.
+    Pending,
+    /// A validated Refloat response established the application.
+    Refloat,
+    /// Non-Refloat INFO or no response within a fully submitted query's response interval.
+    Absent,
+}
+
+/// Typed native submission admission carried with one application query write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileApplicationQueryWriteDto {
+    /// Query identity scoped by the containing connection attempt.
+    pub query_id: u64,
+    /// Exclusive deadline for actual native submission.
+    pub submit_before_ms: u64,
+}
+
+impl From<cutout_core::ApplicationQueryWrite> for MobileApplicationQueryWriteDto {
+    fn from(value: cutout_core::ApplicationQueryWrite) -> Self {
+        Self {
+            query_id: value.id.get(),
+            submit_before_ms: value.submit_before.get(),
+        }
+    }
+}
+
+/// Native effect receipt for an indexed application-query fragment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileApplicationQueryTransportStatusDto {
+    /// Queued without native submission.
+    Queued,
+    /// Submitted to the native peripheral API.
+    Submitted,
+    /// Rejected before native submission.
+    Rejected,
+    /// Cancelled before native submission.
+    Cancelled,
+}
+
+impl From<MobileApplicationQueryTransportStatusDto>
+    for cutout_core::ApplicationQueryTransportStatus
+{
+    fn from(value: MobileApplicationQueryTransportStatusDto) -> Self {
+        match value {
+            MobileApplicationQueryTransportStatusDto::Queued => Self::Queued,
+            MobileApplicationQueryTransportStatusDto::Submitted => Self::Submitted,
+            MobileApplicationQueryTransportStatusDto::Rejected => Self::Rejected,
+            MobileApplicationQueryTransportStatusDto::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+/// Query delivery evidence independent from installed-application evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescApplicationQueryStateDto {
+    /// No query has been emitted.
+    NotRequested,
+    /// Waiting for native submission within a finite admission interval.
+    Queued {
+        /// Attempt-local query identity.
+        query_id: u64,
+        /// Exclusive native submission deadline.
+        submit_before_ms: u64,
+    },
+    /// All fragments submitted; waiting for a validated response.
+    AwaitingResponse {
+        /// Attempt-local query identity.
+        query_id: u64,
+        /// Native submission time of the final fragment.
+        submitted_at_ms: u64,
+        /// Response expiration boundary.
+        response_deadline_ms: u64,
+    },
+    /// No bytes were submitted; reconnect is required to restart discovery.
+    KnownUnsent {
+        /// Retired query identity.
+        query_id: u64,
+    },
+    /// Some bytes may have reached the controller; reconnect is required.
+    PartialUncertain {
+        /// Retired query identity.
+        query_id: u64,
+    },
+    /// A fully submitted query's response interval elapsed; its tombstone is retained.
+    ResponseExpired {
+        /// Submitted query identity retained until link reset.
+        query_id: u64,
+    },
+    /// A validated response settled the current fully submitted query.
+    Resolved,
+}
+
+impl From<cutout_protocols::VescApplicationQueryState> for MobileVescApplicationQueryStateDto {
+    fn from(value: cutout_protocols::VescApplicationQueryState) -> Self {
+        use cutout_protocols::VescApplicationQueryState;
+        match value {
+            VescApplicationQueryState::NotRequested => Self::NotRequested,
+            VescApplicationQueryState::Queued {
+                query_id,
+                submit_before_ms,
+            } => Self::Queued {
+                query_id,
+                submit_before_ms,
+            },
+            VescApplicationQueryState::AwaitingResponse {
+                query_id,
+                submitted_at_ms,
+                response_deadline_ms,
+            } => Self::AwaitingResponse {
+                query_id,
+                submitted_at_ms,
+                response_deadline_ms,
+            },
+            VescApplicationQueryState::KnownUnsent { query_id } => Self::KnownUnsent { query_id },
+            VescApplicationQueryState::PartialUncertain { query_id } => {
+                Self::PartialUncertain { query_id }
+            }
+            VescApplicationQueryState::ResponseExpired { query_id } => {
+                Self::ResponseExpired { query_id }
+            }
+            VescApplicationQueryState::Resolved => Self::Resolved,
+        }
+    }
+}
+
+/// Failure to durably attach a physical type to the intended VESC connection.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileVehicleSelectionError {
+    /// The attempt, physical type or application-discovery state does not permit a choice.
+    #[error("connection does not permit vehicle type selection")]
+    ConnectionUnavailable,
+    /// This session has no existing database owner.
+    #[error("device persistence is unavailable")]
+    PersistenceUnavailable,
+    /// The existing database rejected the update; classification remains unchanged.
+    #[error("vehicle type persistence failed: {error}")]
+    Persistence {
+        /// Typed database failure.
+        error: crate::MobileRideDatabaseError,
+    },
+}
+
+impl From<cutout_protocols::VescApplicationDiscovery> for MobileVescApplicationDiscoveryDto {
+    fn from(value: cutout_protocols::VescApplicationDiscovery) -> Self {
+        match value {
+            cutout_protocols::VescApplicationDiscovery::Pending => Self::Pending,
+            cutout_protocols::VescApplicationDiscovery::Refloat => Self::Refloat,
+            cutout_protocols::VescApplicationDiscovery::Absent => Self::Absent,
+        }
+    }
+}
+
+impl From<cutout_core::VehicleClassificationProvenance>
+    for MobileVehicleClassificationProvenanceDto
+{
+    fn from(value: cutout_core::VehicleClassificationProvenance) -> Self {
+        use cutout_core::VehicleClassificationProvenance;
+        match value {
+            VehicleClassificationProvenance::Unknown => Self::Unknown,
+            VehicleClassificationProvenance::Protocol => Self::Protocol,
+            VehicleClassificationProvenance::UserProvided => Self::UserProvided,
+        }
+    }
+}
+
+impl From<cutout_core::VehicleClassificationRequirement>
+    for MobileVehicleClassificationRequirementDto
+{
+    fn from(value: cutout_core::VehicleClassificationRequirement) -> Self {
+        use cutout_core::VehicleClassificationRequirement;
+        match value {
+            VehicleClassificationRequirement::Pending => Self::Pending,
+            VehicleClassificationRequirement::UserSelectionRequired => Self::UserSelectionRequired,
+            VehicleClassificationRequirement::Resolved => Self::Resolved,
+        }
+    }
+}
+
+/// Canonical physical types that may be selected for a specific device.
+#[uniffi::export]
+#[must_use]
+pub fn user_selectable_vehicle_kinds() -> Vec<MobileVehicleKindDto> {
+    VehicleKind::USER_SELECTABLE
+        .into_iter()
+        .map(Into::into)
+        .collect()
 }
 
 /// Verified protocol and independently known model/kind.
@@ -31,6 +276,14 @@ pub struct MobileDeviceIdentityDto {
     pub protocol: MobileProtocolFamilyDto,
     /// Native presentation template.
     pub vehicle_kind: MobileVehicleKindDto,
+    /// Evidence behind the physical type.
+    pub classification_provenance: MobileVehicleClassificationProvenanceDto,
+    /// Whether application discovery or a per-device user choice remains outstanding.
+    pub classification_requirement: MobileVehicleClassificationRequirementDto,
+    /// Application proof kept separate from the physical type and model.
+    pub vesc_application: Option<MobileVescApplicationDiscoveryDto>,
+    /// Native query progress, deadlines and failures for snapshot equality/publication.
+    pub vesc_application_query: Option<MobileVescApplicationQueryStateDto>,
     /// Exact model label, absent when only the protocol is verified.
     pub model: Option<String>,
 }
@@ -75,13 +328,11 @@ impl From<DeviceConnectionSnapshot> for MobileDeviceSessionSnapshotDto {
             connection: (&value.connection).into(),
             identity: value.identity.map(|identity| MobileDeviceIdentityDto {
                 protocol: cutout_core::ProtocolFamilyDto::from(identity.protocol).into(),
-                vehicle_kind: match identity.vehicle_kind {
-                    VehicleKind::Unknown => MobileVehicleKindDto::Unknown,
-                    VehicleKind::ElectricUnicycle => MobileVehicleKindDto::ElectricUnicycle,
-                    VehicleKind::Board => MobileVehicleKindDto::Board,
-                    VehicleKind::Scooter => MobileVehicleKindDto::Scooter,
-                    VehicleKind::Bike => MobileVehicleKindDto::Bike,
-                },
+                vehicle_kind: identity.vehicle_kind().into(),
+                classification_provenance: identity.classification.provenance().into(),
+                classification_requirement: identity.classification_requirement.into(),
+                vesc_application: identity.vesc_application.map(Into::into),
+                vesc_application_query: identity.vesc_application_query.map(Into::into),
                 model: identity.model.map(|model| model.model.to_string()),
             }),
         }
@@ -104,6 +355,52 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
 #[allow(clippy::needless_pass_by_value)]
 impl CutoutSessionStateHandle {
     /// Observes bytes only for the attempt that owned the native callback.
+    /// Revalidates an application-query fragment immediately before native submission.
+    pub fn application_query_transport_is_current(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        query_id: u64,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().application_query_transport_is_current(
+            &token.into(),
+            query_id,
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
+    /// Records a native fragment receipt; only final complete submission starts response time.
+    pub fn mark_application_query_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        query_id: u64,
+        fragment_index: u16,
+        fragment_count: u16,
+        status: MobileApplicationQueryTransportStatusDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().mark_application_query_transport(
+            &token.into(),
+            query_id,
+            fragment_index,
+            fragment_count,
+            status.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
+    /// Advances discovery deadlines without producing native writes under backpressure.
+    pub fn tick_application_query_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().tick_application_query_transport(
+            &token.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI exports own byte buffers."
@@ -157,6 +454,53 @@ impl CutoutSessionStateHandle {
     ) -> bool {
         self.lock_inner()
             .configure_vesc_board_profile(&token.into(), profile.into())
+    }
+
+    /// Associates a physical type with this attempt without asserting a model or authorizing writes.
+    pub fn configure_connection_vehicle_kind(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        kind: MobileVehicleKindDto,
+    ) -> bool {
+        self.lock_inner()
+            .configure_vehicle_kind(&token.into(), kind.into())
+    }
+
+    /// Applies a delayed saved association only if this attempt has no newer choice.
+    pub fn restore_connection_vehicle_kind(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        kind: MobileVehicleKindDto,
+    ) -> bool {
+        self.lock_inner()
+            .restore_vehicle_kind(&token.into(), kind.into())
+    }
+
+    /// Persists and applies a user choice for the captured connection attempt.
+    ///
+    /// # Errors
+    /// Returns a typed refusal or persistence failure without changing classification.
+    pub fn select_connection_vehicle_kind(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        kind: MobileVehicleKindDto,
+        updated_at_ms: u64,
+    ) -> Result<MobileDeviceSessionSnapshotDto, MobileVehicleSelectionError> {
+        self.select_vehicle_kind_with_persistence(token, kind, |selection| {
+            let database = self
+                .diagnostic_database
+                .as_ref()
+                .ok_or(MobileVehicleSelectionError::PersistenceUnavailable)?;
+            database
+                .save_user_vehicle_kind(
+                    selection.platform_identifier(),
+                    selection.kind(),
+                    updated_at_ms,
+                )
+                .map_err(|error| MobileVehicleSelectionError::Persistence {
+                    error: crate::map_ride_database_error(error),
+                })
+        })
     }
 
     /// Returns the protocol-selected session without exposing a model constructor.
@@ -234,6 +578,31 @@ impl CutoutSessionStateHandle {
 }
 
 impl CutoutSessionStateHandle {
+    fn select_vehicle_kind_with_persistence(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        kind: MobileVehicleKindDto,
+        persist: impl FnOnce(
+            &cutout_protocols::VehicleKindSelection,
+        ) -> Result<(), MobileVehicleSelectionError>,
+    ) -> Result<MobileDeviceSessionSnapshotDto, MobileVehicleSelectionError> {
+        // Serialize durable selections without blocking telemetry or snapshot readers on storage.
+        let _selection = self
+            .vehicle_selection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let selection = self
+            .lock_inner()
+            .prepare_vehicle_kind_selection(&token.into(), kind.into())
+            .ok_or(MobileVehicleSelectionError::ConnectionUnavailable)?;
+        persist(&selection)?;
+        let mut inner = self.lock_inner();
+        if !inner.apply_vehicle_kind_selection(selection) {
+            return Err(MobileVehicleSelectionError::ConnectionUnavailable);
+        }
+        Ok(inner.snapshot().into())
+    }
+
     fn observe_connection_event(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -335,6 +704,250 @@ mod tests {
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
         38, 208, 3,
     ];
+
+    fn absent_vesc_application(
+        handle: &CutoutSessionStateHandle,
+        identifier: &str,
+    ) -> MobileConnectionAttemptTokenDto {
+        let token = handle
+            .begin_connection_attempt(identifier.to_owned(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.observe_connection_notification(token.clone(), VESC_REPLY.to_vec());
+        handle.resolve_device_session(token.clone(), false, 1);
+        for (kind, milliseconds) in [
+            (crate::MobileSessionInputKindDto::LinkUp, 1),
+            (crate::MobileSessionInputKindDto::Tick, 3_000),
+        ] {
+            let step = handle
+                .ingest_device_session(
+                    token.clone(),
+                    MobileSessionInputDto {
+                        kind,
+                        monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds },
+                        max_write_len: None,
+                        channel: Vec::new(),
+                        bytes: Vec::new(),
+                    },
+                )
+                .unwrap();
+            if kind == crate::MobileSessionInputKindDto::LinkUp {
+                let query = step
+                    .result
+                    .outputs
+                    .into_iter()
+                    .find_map(|output| output.application_query)
+                    .expect("startup owns the bounded application query");
+                assert!(handle.mark_application_query_transport(
+                    token.clone(),
+                    query.query_id,
+                    0,
+                    1,
+                    MobileApplicationQueryTransportStatusDto::Submitted,
+                    milliseconds
+                ));
+            }
+        }
+        assert_eq!(
+            handle
+                .device_session_snapshot()
+                .identity
+                .unwrap()
+                .classification_requirement,
+            MobileVehicleClassificationRequirementDto::UserSelectionRequired
+        );
+        token
+    }
+
+    #[test]
+    fn vehicle_selection_storage_wait_keeps_session_available_and_rejects_stale_completion() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let (entered, waiting) = std::sync::mpsc::sync_channel(0);
+        let (release, resume) = std::sync::mpsc::sync_channel(0);
+        let worker_handle = handle.clone();
+        let worker = std::thread::spawn(move || {
+            worker_handle.select_vehicle_kind_with_persistence(
+                token,
+                MobileVehicleKindDto::Eskate,
+                |selection| {
+                    assert_eq!(selection.platform_identifier(), "controller-a");
+                    assert_eq!(selection.kind(), VehicleKind::Eskate);
+                    entered.send(()).unwrap();
+                    resume.recv().unwrap();
+                    Ok(())
+                },
+            )
+        });
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let session_available = handle.inner.try_lock().is_ok();
+        if session_available {
+            handle.begin_connection_attempt("controller-b".to_owned(), 4_000);
+        }
+        release.send(()).unwrap();
+        let result = worker.join().unwrap();
+        assert!(
+            session_available,
+            "storage latency must not hold the session mutex used by synchronous snapshot readers"
+        );
+        assert_eq!(
+            result,
+            Err(MobileVehicleSelectionError::ConnectionUnavailable)
+        );
+        let current = handle.device_session_snapshot();
+        assert_eq!(
+            current.connection.token.unwrap().platform_identifier,
+            "controller-b"
+        );
+        assert_eq!(current.identity, None);
+    }
+
+    #[test]
+    fn concurrent_vehicle_selections_keep_durable_and_active_choices_in_order() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let durable = std::sync::Arc::new(std::sync::Mutex::new(VehicleKind::Unknown));
+        let (entered, waiting) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let first_handle = handle.clone();
+        let first_token = token.clone();
+        let first_durable = durable.clone();
+        let first = std::thread::spawn(move || {
+            first_handle.select_vehicle_kind_with_persistence(
+                first_token,
+                MobileVehicleKindDto::Eskate,
+                |selection| {
+                    *first_durable.lock().unwrap() = selection.kind();
+                    entered.send(()).unwrap();
+                    resume.recv().unwrap();
+                    Ok(())
+                },
+            )
+        });
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let (started, start) = std::sync::mpsc::channel();
+        let (completed, completion) = std::sync::mpsc::channel();
+        let second_handle = handle.clone();
+        let second_durable = durable.clone();
+        let second = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = second_handle.select_vehicle_kind_with_persistence(
+                token,
+                MobileVehicleKindDto::Scooter,
+                |selection| {
+                    *second_durable.lock().unwrap() = selection.kind();
+                    Ok(())
+                },
+            );
+            completed.send(()).unwrap();
+            result
+        });
+        start
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        // An unserialized second save can finish before the first operation applies its older choice.
+        let _ = completion.recv_timeout(std::time::Duration::from_millis(100));
+        release.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+        let active = handle
+            .device_session_snapshot()
+            .identity
+            .unwrap()
+            .vehicle_kind;
+        assert_eq!(active, MobileVehicleKindDto::Scooter);
+        assert_eq!(VehicleKind::from(active), *durable.lock().unwrap());
+    }
+
+    #[test]
+    fn vehicle_selection_without_persistence_leaves_classification_required() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = absent_vesc_application(&handle, "controller-a");
+        let before = handle.device_session_snapshot();
+        assert_eq!(
+            handle.select_connection_vehicle_kind(token, MobileVehicleKindDto::Eskate, 1),
+            Err(MobileVehicleSelectionError::PersistenceUnavailable)
+        );
+        assert_eq!(handle.device_session_snapshot(), before);
+    }
+
+    #[test]
+    fn vehicle_selection_commits_before_admission_and_rejects_stale_or_unknown_choices() {
+        let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-vehicle-choice-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let handle = CutoutSessionStateHandle::with_database(database.clone());
+        let token = absent_vesc_application(&handle, "controller-a");
+        let before = handle.device_session_snapshot();
+        assert!(matches!(
+            handle.select_connection_vehicle_kind(
+                token.clone(),
+                MobileVehicleKindDto::Eskate,
+                u64::MAX
+            ),
+            Err(MobileVehicleSelectionError::Persistence { .. })
+        ));
+        assert_eq!(handle.device_session_snapshot(), before);
+        assert_eq!(
+            database
+                .user_vehicle_kind("controller-a".to_owned())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            handle.select_connection_vehicle_kind(token.clone(), MobileVehicleKindDto::Unknown, 1),
+            Err(MobileVehicleSelectionError::ConnectionUnavailable)
+        );
+        let selected = handle
+            .select_connection_vehicle_kind(token.clone(), MobileVehicleKindDto::Eskate, 1)
+            .unwrap();
+        let identity = selected.identity.unwrap();
+        assert_eq!(identity.vehicle_kind, MobileVehicleKindDto::Eskate);
+        assert_eq!(
+            identity.classification_requirement,
+            MobileVehicleClassificationRequirementDto::Resolved
+        );
+        assert_eq!(
+            identity.classification_provenance,
+            MobileVehicleClassificationProvenanceDto::UserProvided
+        );
+        assert_eq!(identity.model, None);
+        assert_eq!(
+            database
+                .user_vehicle_kind("controller-a".to_owned())
+                .unwrap(),
+            Some(MobileVehicleKindDto::Eskate)
+        );
+        handle.begin_connection_attempt("controller-b".to_owned(), 4_000);
+        assert_eq!(
+            handle.select_connection_vehicle_kind(token, MobileVehicleKindDto::Emoto, 2),
+            Err(MobileVehicleSelectionError::ConnectionUnavailable)
+        );
+        assert_eq!(
+            database
+                .user_vehicle_kind("controller-a".to_owned())
+                .unwrap(),
+            Some(MobileVehicleKindDto::Eskate)
+        );
+        assert_eq!(
+            database
+                .user_vehicle_kind("controller-b".to_owned())
+                .unwrap(),
+            None
+        );
+        database.shutdown().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
 
     fn veteran_frame_with_model_id(model_id: u16) -> Vec<u8> {
         let mut frame = vec![0_u8; 42];

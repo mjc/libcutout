@@ -381,6 +381,43 @@ pub struct VescReadOnlySession {
 }
 
 impl VescReadOnlySession {
+    pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
+        self.host.protocol_session().application_query_state()
+    }
+    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        self.host.protocol_session().application_query_deadline()
+    }
+    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        self.host
+            .protocol_session_mut()
+            .advance_application_query_deadlines(at);
+    }
+    pub(crate) fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.host
+            .protocol_session()
+            .application_query_is_current(id, at)
+    }
+    pub(crate) fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.host
+            .protocol_session_mut()
+            .record_application_query_transport(id, index, count, status, at)
+    }
+
+    pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
+        self.host.protocol_session().application_discovery()
+    }
+
     pub(crate) fn settings_evidence(&self) -> crate::vesc_settings_session::VescSettingsEvidence {
         self.host.protocol_session().settings_evidence()
     }

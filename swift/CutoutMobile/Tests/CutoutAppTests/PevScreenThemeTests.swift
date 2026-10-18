@@ -38,8 +38,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescRideSnapshotUsesTypedDashboardMetricValues() {
         let unavailable = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
         XCTAssertEqual(unavailable.batteryVoltageMetricValue, .unavailable)
@@ -47,8 +47,8 @@ final class PevScreenThemeTests: XCTestCase {
         let voltage = Voltage(value: 81_600)
         let available = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             batteryVoltage: voltage
         )
@@ -69,8 +69,8 @@ final class PevScreenThemeTests: XCTestCase {
         let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: 875)
         let metrics = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             dutyCycle: dutyCycle,
             dutyHeadroom: headroom,
@@ -143,8 +143,8 @@ final class PevScreenThemeTests: XCTestCase {
 
         let detailed = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             batteryLevelReported: reportedBattery,
             batteryLevelEstimated: estimatedBattery,
@@ -157,8 +157,8 @@ final class PevScreenThemeTests: XCTestCase {
         )
         let missing = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
 
@@ -178,8 +178,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescRideSnapshotOwnsTheStrictStaleTelemetryBoundary() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             lastUpdate: MonotonicMilliseconds(1_000)
         )
@@ -208,8 +208,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescRideSnapshotOwnsDashboardSupportPriority() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             dutyHeadroom: BatteryLevel(value: 75),
             lastUpdate: MonotonicMilliseconds(1_000)
@@ -373,8 +373,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescDebugUsesTypedUnavailableMetricValues() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
 
@@ -397,8 +397,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescDebugTilesForwardSnapshotMetricValues() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             dutyCycle: DutyCycle(permille: 450),
             dutyHeadroom: BatteryLevel(value: 55),
@@ -422,8 +422,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescDebugRowsUseTypedUnavailableMetricValues() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
 
@@ -703,12 +703,12 @@ final class PevScreenThemeTests: XCTestCase {
     }
 
     func testVescDebugEnumValuesUseTheAppCatalog() {
-        XCTAssertEqual(vescDebugProtocolText(.generic), "VESC")
+        XCTAssertEqual(vescDebugProtocolText(.absent), "VESC")
 
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             operatingState: .riding
         )
@@ -718,8 +718,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescRideSubtitleUsesTheSharedLocalizedOperatingState() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown,
             operatingState: .charging
         )
@@ -735,8 +735,8 @@ final class PevScreenThemeTests: XCTestCase {
                 vescRideSubtitle(
                     VescRideSnapshot(
                         title: "VESC",
-                        vehicleKind: .float,
-                        subProtocol: .refloat,
+                        vehicleKind: .onewheel,
+                        application: .refloat,
                         controllerState: .unknown,
                         operatingState: .riding,
                         operatingMode: mode
@@ -747,10 +747,10 @@ final class PevScreenThemeTests: XCTestCase {
     }
 
     func testVescUnknownStateSubtitleUsesTheAppCatalog() {
-        let vehicleKinds: [(VescVehicleKind, String)] = [
-            (.float, "Float"),
-            (.bike, "Bike"),
-            (.skateboard, "Skateboard"),
+        let vehicleKinds: [(VehicleKind, String)] = [
+            (.onewheel, "Float"),
+            (.ebike, "Bike"),
+            (.eskate, "Skateboard"),
             (.electricUnicycle, "EUC"),
             (.unknown, "VESC"),
         ]
@@ -760,8 +760,8 @@ final class PevScreenThemeTests: XCTestCase {
 
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
 
@@ -825,8 +825,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testRideHeroReadoutDerivesVescFreshnessAndSeverityFromSnapshot() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             warning: .dutyPushback,
             boardSpeed: Speed(value: 19_000),
@@ -932,8 +932,8 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescDashboardPresentationUsesTheAppCatalog() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             batteryVoltage: Voltage(value: 54_300),
             batteryLevelReported: BatteryLevel(value: 71),
@@ -1003,8 +1003,8 @@ final class PevScreenThemeTests: XCTestCase {
         let activeWarning = VescRideScreenPresentation(
             snapshot: VescRideSnapshot(
                 title: "VESC",
-                vehicleKind: .float,
-                subProtocol: .refloat,
+                vehicleKind: .onewheel,
+                application: .refloat,
                 controllerState: .unknown,
                 warning: .lowVoltage,
                 stopReason: .pitch
@@ -1024,8 +1024,8 @@ final class PevScreenThemeTests: XCTestCase {
         let stopped = VescRideScreenPresentation(
             snapshot: VescRideSnapshot(
                 title: "VESC",
-                vehicleKind: .float,
-                subProtocol: .refloat,
+                vehicleKind: .onewheel,
+                application: .refloat,
                 controllerState: .unknown,
                 warning: .none,
                 stopReason: .pitch
@@ -1043,11 +1043,123 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testStandardVescHeaderOwnershipPreservesDiscoverySetupAndRefloatShells() {
+        for requirement in [
+            MobileVehicleClassificationRequirementDto.pending, .userSelectionRequired,
+        ] {
+            XCTAssertFalse(
+                VescRideScreenPresentation.usesOwnHeader(
+                    application: .absent, classificationRequirement: requirement
+                ))
+        }
+        XCTAssertTrue(
+            VescRideScreenPresentation.usesOwnHeader(
+                application: .absent, classificationRequirement: .resolved
+            ))
+        XCTAssertTrue(
+            VescRideScreenPresentation.usesOwnHeader(
+                application: .absent, classificationRequirement: nil
+            ))
+        for application in [VescApplication.pending, .refloat] {
+            XCTAssertFalse(
+                VescRideScreenPresentation.usesOwnHeader(
+                    application: application, classificationRequirement: .resolved
+                ))
+        }
+        XCTAssertFalse(
+            VescRideScreenPresentation.usesOwnHeader(
+                application: nil, classificationRequirement: nil
+            ))
+    }
+
+    func testStandardVescRideShowsMeasuredInstrumentsWithoutBalanceSemantics() {
+        let snapshot = VescRideSnapshot(
+            title: "Everyday board", vehicleKind: .eskate, application: .absent,
+            controllerState: .unknown,
+            batteryVoltage: Voltage(value: 49_800),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
+            powerFlow: .discharge,
+            motorCurrent: PhaseCurrent(value: 21_000),
+            controllerTemperature: Temperature(value: 44_000)
+        )
+        let presentation = VescRideScreenPresentation(
+            snapshot: snapshot, phase: .live, now: MonotonicMilliseconds(1_000),
+            connectionStatusText: nil
+        )
+
+        XCTAssertTrue(presentation.usesStandardInstruments)
+        // Without qualified geometry the snapshot carries no road speed.
+        XCTAssertFalse(presentation.speedReadout.isAvailable)
+        XCTAssertEqual(
+            presentation.dashboardTiles.map(\.kind),
+            [.batteryVoltage, .batteryCurrent, .motorCurrent, .controller]
+        )
+        XCTAssertEqual(presentation.standardEnergyTile.kind, .batteryVoltage)
+        XCTAssertEqual(presentation.standardEnergyTile.metricValue, snapshot.batteryVoltageMetricValue)
+        XCTAssertEqual(
+            presentation.standardSecondaryTiles.map(\.metricValue),
+            [
+                snapshot.batteryCurrentMetricValue, snapshot.motorCurrentMetricValue,
+                snapshot.controllerTemperatureMetricValue,
+            ]
+        )
+        // BatteryCurrent already renders units and the physical in/out direction.
+        XCTAssertEqual(presentation.standardSecondaryTiles[0].unit, "")
+        XCTAssertEqual(presentation.standardSecondaryTiles[0].metricValue.accessibilityText, "12.4 A out")
+    }
+
+    func testStandardVescRidePromotesTypedChargeAndRetainsVoltageInReadings() {
+        for reported in [true, false] {
+            let snapshot = VescRideSnapshot(
+                title: "VESC", vehicleKind: .unknown, application: .absent,
+                controllerState: .unknown,
+                boardSpeed: Speed(value: 10_000),
+                batteryVoltage: Voltage(value: 49_800),
+                batteryLevelReported: reported ? BatteryLevel(value: 68) : nil,
+                batteryLevelEstimated: reported ? nil : BatteryLevel(value: 68)
+            )
+            let presentation = VescRideScreenPresentation(
+                snapshot: snapshot, phase: .live, now: MonotonicMilliseconds(1_000),
+                connectionStatusText: nil
+            )
+
+            XCTAssertTrue(presentation.speedReadout.isAvailable)
+            XCTAssertEqual(presentation.standardEnergyTile.kind, .batteryLevel)
+            XCTAssertEqual(presentation.standardEnergyTile.unit, RideUnits.percentUnit)
+            XCTAssertEqual(presentation.standardEnergyTile.value, "68")
+            XCTAssertEqual(
+                presentation.standardEnergyTile.detail,
+                reported ? "" : localizedAppText("ride.detail.estimated")
+            )
+            XCTAssertEqual(
+                presentation.dashboardTiles.first { $0.kind == .batteryVoltage }?.metricValue,
+                snapshot.batteryVoltageMetricValue
+            )
+        }
+    }
+
+    func testVehicleChoiceDoesNotEnableStandardInstrumentsBeforeApplicationDiscovery() {
+        for application in [VescApplication.pending, .refloat] {
+            let presentation = VescRideScreenPresentation(
+                snapshot: VescRideSnapshot(
+                    title: "VESC", vehicleKind: .eskate, application: application,
+                    controllerState: .unknown
+                ),
+                phase: .live, now: MonotonicMilliseconds(1_000), connectionStatusText: nil
+            )
+            XCTAssertFalse(presentation.usesStandardInstruments)
+            XCTAssertEqual(
+                presentation.dashboardTiles.map(\.kind),
+                [.batteryVoltage, .motorCurrent, .boardAngle, .controller]
+            )
+        }
+    }
+
     func testVescDashboardUsesTypedUnavailableMetricValues() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: .onewheel,
+            application: .absent,
             controllerState: .unknown
         )
         let view = VescRideScreenView(

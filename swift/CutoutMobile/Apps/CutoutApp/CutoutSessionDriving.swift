@@ -3,6 +3,7 @@ import CutoutMobileFFI
 
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? { get set }
     var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { get set }
     var rideSessionStateHandle: CutoutSessionStateHandle { get }
     /// The Rust-backed map adapter is optional while persistence is unavailable.
@@ -50,6 +51,8 @@ protocol CutoutSessionDriving: AnyObject {
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
+    func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
+        -> MobileDeviceSessionSnapshotDto
     func now() -> MonotonicMilliseconds
     @discardableResult
     func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool
@@ -72,6 +75,10 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? {
+        get { nil }
+        set {}
+    }
 
     func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws {
         let state = rideSessionStateHandle
@@ -103,6 +110,12 @@ extension CutoutSessionDriving {
 
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
         throw DeviceSettingSubmissionError.ConnectionUnavailable
+    }
+
+    func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
+        -> MobileDeviceSessionSnapshotDto
+    {
+        throw DeviceVehicleSelectionError.connectionUnavailable
     }
 
     var rideMapStateHandle: MobileRideMapState? { nil }

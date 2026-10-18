@@ -645,6 +645,166 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
     }
 }
 
+/// Application discovery independent of VESC protocol and physical vehicle type.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VescApplicationDiscovery {
+    /// A bounded Refloat query has not completed.
+    #[default]
+    Pending,
+    /// A validated Refloat INFO response identified the installed application.
+    Refloat,
+    /// Valid non-Refloat INFO, or no response after a fully submitted query's response interval.
+    Absent,
+}
+
+const REFLOAT_DISCOVERY_TIMEOUT_MS: u64 = 2_000;
+const REFLOAT_QUERY_ADMISSION_TIMEOUT_MS: u64 = 5_000;
+const MAX_APPLICATION_QUERY_FRAGMENTS: usize = 32;
+
+/// Transport evidence retained independently from installed-application evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VescApplicationQueryState {
+    /// No application query has been emitted for this protocol owner.
+    NotRequested,
+    /// Native submission is still permitted before the exclusive deadline.
+    Queued {
+        /// Attempt-local query identity.
+        query_id: u64,
+        /// Exclusive native submission deadline.
+        submit_before_ms: u64,
+    },
+    /// All fragments were submitted; the response interval starts at the final receipt.
+    AwaitingResponse {
+        /// Attempt-local query identity.
+        query_id: u64,
+        /// Actual native submission time of the final fragment.
+        submitted_at_ms: u64,
+        /// Inclusive response expiration boundary.
+        response_deadline_ms: u64,
+    },
+    /// No fragment was submitted before cancellation, rejection, or admission expiry.
+    KnownUnsent {
+        /// Retired query identity.
+        query_id: u64,
+    },
+    /// Some bytes may have reached the controller; reconnect is required for recovery.
+    PartialUncertain {
+        /// Retired query identity.
+        query_id: u64,
+    },
+    /// A fully submitted query received no response before its deadline; the tombstone remains.
+    ResponseExpired {
+        /// Submitted query identity retained until link reset.
+        query_id: u64,
+    },
+    /// A validated response settled the current fully submitted query.
+    Resolved,
+}
+
+#[derive(Clone, Debug)]
+struct QueuedApplicationQuery {
+    write: cutout_core::ApplicationQueryWrite,
+    emitted_at_ms: u64,
+    fragment_count: Option<usize>,
+    submitted: [bool; MAX_APPLICATION_QUERY_FRAGMENTS],
+}
+
+impl QueuedApplicationQuery {
+    fn has_submission(&self) -> bool {
+        self.submitted.iter().any(|submitted| *submitted)
+    }
+
+    fn failed_state(&self) -> ApplicationQueryProgress {
+        if self.has_submission() {
+            ApplicationQueryProgress::PartialUncertain {
+                query_id: self.write.id.get(),
+            }
+        } else {
+            ApplicationQueryProgress::KnownUnsent {
+                query_id: self.write.id.get(),
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+enum ApplicationQueryProgress {
+    #[default]
+    NotRequested,
+    Queued(QueuedApplicationQuery),
+    Awaiting {
+        query_id: u64,
+        submitted_at_ms: u64,
+        deadline_ms: u64,
+    },
+    ResponseExpired {
+        query_id: u64,
+    },
+    Resolved {
+        query_id: u64,
+    },
+    KnownUnsent {
+        query_id: u64,
+    },
+    PartialUncertain {
+        query_id: u64,
+    },
+}
+
+/// Passive application observations and native query lifecycle are independent facts.
+#[derive(Clone, Debug, Default)]
+struct RefloatDiscovery {
+    observed: Option<VescApplicationDiscovery>,
+    query: ApplicationQueryProgress,
+}
+
+impl RefloatDiscovery {
+    const fn application(&self) -> VescApplicationDiscovery {
+        if let Some(observed) = self.observed {
+            return observed;
+        }
+        match self.query {
+            ApplicationQueryProgress::ResponseExpired { .. } => VescApplicationDiscovery::Absent,
+            _ => VescApplicationDiscovery::Pending,
+        }
+    }
+
+    const fn query_state(&self) -> VescApplicationQueryState {
+        match &self.query {
+            ApplicationQueryProgress::NotRequested => VescApplicationQueryState::NotRequested,
+            ApplicationQueryProgress::Queued(query) => VescApplicationQueryState::Queued {
+                query_id: query.write.id.get(),
+                submit_before_ms: query.write.submit_before.get(),
+            },
+            ApplicationQueryProgress::Awaiting {
+                query_id,
+                submitted_at_ms,
+                deadline_ms,
+            } => VescApplicationQueryState::AwaitingResponse {
+                query_id: *query_id,
+                submitted_at_ms: *submitted_at_ms,
+                response_deadline_ms: *deadline_ms,
+            },
+            ApplicationQueryProgress::ResponseExpired { query_id } => {
+                VescApplicationQueryState::ResponseExpired {
+                    query_id: *query_id,
+                }
+            }
+            ApplicationQueryProgress::KnownUnsent { query_id } => {
+                VescApplicationQueryState::KnownUnsent {
+                    query_id: *query_id,
+                }
+            }
+            ApplicationQueryProgress::PartialUncertain { query_id } => {
+                VescApplicationQueryState::PartialUncertain {
+                    query_id: *query_id,
+                }
+            }
+            ApplicationQueryProgress::Resolved { .. } => VescApplicationQueryState::Resolved,
+        }
+    }
+}
+
 /// Generic VESC notification decoder for read-only UART replies.
 #[allow(
     clippy::struct_excessive_bools,
@@ -660,7 +820,8 @@ pub struct VescNotificationDecoder {
     now_ms: u64,
     polling: bool,
     motor_config_received: bool,
-    refloat_info_received: bool,
+    refloat_discovery: RefloatDiscovery,
+    last_application_query_id: u64,
     refloat_package: Option<crate::RefloatInfo>,
     refloat_config: Option<(crate::refloat_settings::RefloatSettings, MonotonicTimestamp)>,
     refloat_config_generation: u64,
@@ -698,7 +859,8 @@ impl VescNotificationDecoder {
             now_ms: 0,
             polling: false,
             motor_config_received: false,
-            refloat_info_received: false,
+            refloat_discovery: RefloatDiscovery::default(),
+            last_application_query_id: 0,
             refloat_package: None,
             refloat_config: None,
             refloat_config_generation: 0,
@@ -733,7 +895,22 @@ impl VescNotificationDecoder {
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
         });
         if let Some(package) = package {
-            self.refloat_info_received = true;
+            self.advance_application_query_deadlines(monotonic_ms);
+            self.refloat_discovery.observed =
+                Some(if package.package_name.eq_ignore_ascii_case("Refloat") {
+                    VescApplicationDiscovery::Refloat
+                } else {
+                    VescApplicationDiscovery::Absent
+                });
+            if let ApplicationQueryProgress::Awaiting {
+                query_id,
+                submitted_at_ms,
+                ..
+            } = self.refloat_discovery.query
+                && monotonic_ms.get() >= submitted_at_ms
+            {
+                self.refloat_discovery.query = ApplicationQueryProgress::Resolved { query_id };
+            }
             if self.refloat_package.as_ref() != Some(&package) {
                 self.refloat_config = None;
             }
@@ -804,7 +981,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.now_ms = 0;
         self.polling = false;
         self.motor_config_received = false;
-        self.refloat_info_received = false;
+        self.refloat_discovery = RefloatDiscovery::default();
         self.refloat_package = None;
         self.refloat_config = None;
         self.refloat_config_generation = 0;
@@ -821,6 +998,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
         self.now_ms = monotonic_ms.as_milliseconds();
+        self.advance_application_query_deadlines(monotonic_ms);
         if self.polling {
             self.poll_if_due(output);
         }
@@ -1005,6 +1183,132 @@ impl VescNotificationDecoder {
 }
 
 impl VescNotificationDecoder {
+    fn application_query_state(&self) -> VescApplicationQueryState {
+        self.refloat_discovery.query_state()
+    }
+
+    fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        match &self.refloat_discovery.query {
+            ApplicationQueryProgress::Queued(query) => Some(query.write.submit_before),
+            ApplicationQueryProgress::Awaiting { deadline_ms, .. } => {
+                Some(MonotonicTimestamp::new(*deadline_ms))
+            }
+            _ => None,
+        }
+    }
+
+    fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        match &self.refloat_discovery.query {
+            ApplicationQueryProgress::Queued(query)
+                if at.get() >= query.write.submit_before.get() =>
+            {
+                self.refloat_discovery.query = query.failed_state();
+            }
+            ApplicationQueryProgress::Awaiting {
+                query_id,
+                deadline_ms,
+                ..
+            } if at.get() >= *deadline_ms => {
+                self.refloat_discovery.query = ApplicationQueryProgress::ResponseExpired {
+                    query_id: *query_id,
+                };
+            }
+            _ => {}
+        }
+    }
+
+    fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        match &self.refloat_discovery.query {
+            ApplicationQueryProgress::Queued(query) => {
+                query.write.id == id
+                    && at.get() >= query.emitted_at_ms
+                    && at.get() < query.write.submit_before.get()
+            }
+            _ => false,
+        }
+    }
+
+    fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        fragment_index: u16,
+        fragment_count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        use cutout_core::ApplicationQueryTransportStatus;
+        if let ApplicationQueryProgress::KnownUnsent { query_id } = self.refloat_discovery.query
+            && query_id == id.get()
+            && status == ApplicationQueryTransportStatus::Submitted
+        {
+            // A native receipt is evidence even when submission authorization already expired.
+            // Retain uncertainty without reopening either submission or response admission.
+            self.refloat_discovery.query = ApplicationQueryProgress::PartialUncertain { query_id };
+            return true;
+        }
+        let ApplicationQueryProgress::Queued(query) = &mut self.refloat_discovery.query else {
+            return false;
+        };
+        if query.write.id != id || at.get() < query.emitted_at_ms {
+            return false;
+        }
+        let index = usize::from(fragment_index);
+        let count = usize::from(fragment_count);
+        if count == 0
+            || count > MAX_APPLICATION_QUERY_FRAGMENTS
+            || index >= count
+            || query
+                .fragment_count
+                .is_some_and(|expected| expected != count)
+        {
+            self.refloat_discovery.query =
+                if status == ApplicationQueryTransportStatus::Submitted || query.has_submission() {
+                    ApplicationQueryProgress::PartialUncertain { query_id: id.get() }
+                } else {
+                    ApplicationQueryProgress::KnownUnsent { query_id: id.get() }
+                };
+            return false;
+        }
+        query.fragment_count = Some(count);
+        if query.submitted.get(index).copied().unwrap_or(false) {
+            return false;
+        }
+        if status == ApplicationQueryTransportStatus::Submitted
+            && let Some(fragment) = query.submitted.get_mut(index)
+        {
+            *fragment = true;
+        }
+        if at.get() >= query.write.submit_before.get() {
+            self.refloat_discovery.query = query.failed_state();
+            return false;
+        }
+        match status {
+            ApplicationQueryTransportStatus::Queued => {}
+            ApplicationQueryTransportStatus::Submitted => {
+                if query
+                    .submitted
+                    .get(..count)
+                    .is_some_and(|fragments| fragments.iter().all(|submitted| *submitted))
+                {
+                    self.refloat_discovery.query = ApplicationQueryProgress::Awaiting {
+                        query_id: id.get(),
+                        submitted_at_ms: at.get(),
+                        deadline_ms: at.get().saturating_add(REFLOAT_DISCOVERY_TIMEOUT_MS),
+                    };
+                }
+            }
+            ApplicationQueryTransportStatus::Rejected
+            | ApplicationQueryTransportStatus::Cancelled => {
+                self.refloat_discovery.query = query.failed_state();
+            }
+        }
+        true
+    }
+
     fn poll_if_due(&mut self, output: &mut Vec<SessionOutput>) {
         if self
             .last_poll_ms
@@ -1013,16 +1317,48 @@ impl VescNotificationDecoder {
             return;
         }
         self.last_poll_ms = Some(self.now_ms);
-        let package_request = if !self.refloat_info_received {
-            RefloatReadOnlyRequest::Info
-        } else if self.refloat_stream.field_ids().is_some() {
-            RefloatReadOnlyRequest::RealtimeData
-        } else {
-            RefloatReadOnlyRequest::RealtimeDataIds
-        };
-        push_vesc_read_request(VescReadOnlyRequest::Refloat(package_request), output);
-        if !self.motor_config_received {
-            push_vesc_read_request(VescReadOnlyRequest::MotorConfig, output);
+        self.advance_application_query_deadlines(MonotonicTimestamp::new(self.now_ms));
+        if self.refloat_discovery.application() == VescApplicationDiscovery::Refloat {
+            let request = if self.refloat_stream.field_ids().is_some() {
+                RefloatReadOnlyRequest::RealtimeData
+            } else {
+                RefloatReadOnlyRequest::RealtimeDataIds
+            };
+            push_vesc_read_request(VescReadOnlyRequest::Refloat(request), output);
+            if !self.motor_config_received {
+                push_vesc_read_request(VescReadOnlyRequest::MotorConfig, output);
+            }
+        } else if self.refloat_discovery.observed.is_none()
+            && let ApplicationQueryProgress::NotRequested = self.refloat_discovery.query
+        {
+            let Some(id) = self.last_application_query_id.checked_add(1) else {
+                return;
+            };
+            self.last_application_query_id = id;
+            let query = cutout_core::ApplicationQueryWrite {
+                id: cutout_core::ApplicationQueryId::new(id),
+                submit_before: MonotonicTimestamp::new(
+                    self.now_ms
+                        .saturating_add(REFLOAT_QUERY_ADMISSION_TIMEOUT_MS),
+                ),
+            };
+            self.refloat_discovery.query =
+                ApplicationQueryProgress::Queued(QueuedApplicationQuery {
+                    write: query,
+                    emitted_at_ms: self.now_ms,
+                    fragment_count: None,
+                    submitted: [false; MAX_APPLICATION_QUERY_FRAGMENTS],
+                });
+            let start = output.len();
+            push_vesc_read_request(
+                VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
+                output,
+            );
+            if let Some(SessionOutput::Transport(TransportAction::Write { bytes, .. })) =
+                output.get_mut(start)
+            {
+                bytes.set_application_query(query);
+            }
         }
         push_vesc_read_request(VescReadOnlyRequest::Values, output);
     }
@@ -1238,6 +1574,28 @@ impl VescNotificationDecoder {
         push_parser_error(ParserError::MalformedFrame, output);
     }
 
+    fn retire_application_query_for_identity_replacement(&mut self) {
+        self.refloat_stream = RefloatStreamDecoder::new();
+        self.refloat_stream_pending = false;
+        self.refloat_discovery.observed = None;
+        self.refloat_discovery.query = match &self.refloat_discovery.query {
+            ApplicationQueryProgress::PartialUncertain { query_id }
+            | ApplicationQueryProgress::Awaiting { query_id, .. }
+            | ApplicationQueryProgress::ResponseExpired { query_id }
+            | ApplicationQueryProgress::Resolved { query_id } => {
+                ApplicationQueryProgress::PartialUncertain {
+                    query_id: *query_id,
+                }
+            }
+            ApplicationQueryProgress::Queued(query) if query.has_submission() => {
+                ApplicationQueryProgress::PartialUncertain {
+                    query_id: query.write.id.get(),
+                }
+            }
+            _ => ApplicationQueryProgress::NotRequested,
+        };
+    }
+
     fn observe_vesc_reply(&mut self, reply: &VescReadOnlyReply, monotonic_ms: MonotonicTimestamp) {
         match reply {
             VescReadOnlyReply::MotorConfig(config) => {
@@ -1269,7 +1627,7 @@ impl VescNotificationDecoder {
                     self.refloat_config = None;
                     self.motor_settings = None;
                     self.app_settings = None;
-                    self.refloat_info_received = false;
+                    self.retire_application_query_for_identity_replacement();
                 }
                 self.firmware_version = Some((*major, *minor));
             }
@@ -1286,7 +1644,7 @@ impl VescNotificationDecoder {
                         self.app_settings = None;
                         self.learned_board_profile = None;
                         self.motor_config_received = false;
-                        self.refloat_info_received = false;
+                        self.retire_application_query_for_identity_replacement();
                     }
                     self.controller_id = Some(id);
                 }
@@ -2340,6 +2698,39 @@ impl<M: ReadOnlyModelSpec> ProtocolSession for ReadOnlySession<M> {
 }
 
 impl ReadOnlySession<VescGenericModel> {
+    pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
+        self.decoder.application_query_state()
+    }
+    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        self.decoder.application_query_deadline()
+    }
+    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        self.decoder.advance_application_query_deadlines(at);
+    }
+    pub(crate) fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.decoder.application_query_is_current(id, at)
+    }
+    pub(crate) fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.decoder
+            .record_application_query_transport(id, index, count, status, at)
+    }
+
+    /// Current application evidence from this connection, independent of its model.
+    pub(crate) fn application_discovery(&self) -> VescApplicationDiscovery {
+        self.decoder.refloat_discovery.application()
+    }
+
     pub(crate) fn settings_evidence(&self) -> crate::vesc_settings_session::VescSettingsEvidence {
         crate::vesc_settings_session::VescSettingsEvidence {
             package: self.decoder.refloat_package.clone(),
@@ -3272,6 +3663,17 @@ mod tests {
         ]
     }
 
+    fn refloat_info_frame() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = [0_u8; 60];
+        payload[..4].copy_from_slice(&[101, 0, 2, 0]);
+        payload[4..11].copy_from_slice(b"Refloat");
+        payload[24..27].copy_from_slice(&[1, 3, 0]);
+        payload[51..55].copy_from_slice(&1_000_u32.to_be_bytes());
+        let mut frame = ArrayVec::new();
+        crate::refloat_codec::encode_custom_app_frame(&payload, &mut frame).unwrap();
+        frame
+    }
+
     fn refloat_realtime_ids_frame() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
         let mut payload = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
         payload
@@ -4038,8 +4440,445 @@ mod tests {
         );
     }
 
+    fn queued_application_query() -> (VescNotificationDecoder, cutout_core::ApplicationQueryWrite) {
+        let mut decoder = VescNotificationDecoder::default();
+        let mut output = Vec::new();
+        decoder.on_read_command(CommandKind::RequestTelemetry, &mut output);
+        let query = output
+            .iter()
+            .find_map(|output| match output {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    bytes.application_query()
+                }
+                _ => None,
+            })
+            .expect("one typed application query");
+        (decoder, query)
+    }
+
     #[test]
-    fn generic_vesc_session_writes_refloat_ids_motor_config_and_values_for_telemetry() {
+    fn application_query_response_window_starts_at_final_native_fragment() {
+        let (mut decoder, query) = queued_application_query();
+        decoder.advance_application_query_deadlines(ms(3_000));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Pending
+        );
+        assert!(decoder.application_query_is_current(query.id, ms(3_000)));
+        assert!(decoder.record_application_query_transport(
+            query.id,
+            0,
+            2,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(3_000)
+        ));
+        decoder.advance_application_query_deadlines(ms(4_000));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Pending
+        );
+        assert!(decoder.record_application_query_transport(
+            query.id,
+            1,
+            2,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(4_000)
+        ));
+        decoder.advance_application_query_deadlines(ms(5_999));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Pending
+        );
+        decoder.advance_application_query_deadlines(ms(6_000));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Absent
+        );
+    }
+
+    #[test]
+    fn application_query_known_unsent_and_partial_expiry_never_become_absent() {
+        for submitted in [false, true] {
+            let (mut decoder, query) = queued_application_query();
+            if submitted {
+                assert!(decoder.record_application_query_transport(
+                    query.id,
+                    0,
+                    2,
+                    cutout_core::ApplicationQueryTransportStatus::Submitted,
+                    ms(1_000)
+                ));
+            }
+            decoder.advance_application_query_deadlines(ms(5_000));
+            assert_eq!(
+                decoder.refloat_discovery.application(),
+                VescApplicationDiscovery::Pending
+            );
+            assert_eq!(
+                decoder.application_query_state(),
+                if submitted {
+                    VescApplicationQueryState::PartialUncertain {
+                        query_id: query.id.get(),
+                    }
+                } else {
+                    VescApplicationQueryState::KnownUnsent {
+                        query_id: query.id.get(),
+                    }
+                }
+            );
+            assert!(!decoder.application_query_is_current(query.id, ms(5_000)));
+        }
+    }
+
+    #[test]
+    fn application_query_rejection_retains_partial_submission_evidence() {
+        for submitted in [false, true] {
+            let (mut decoder, query) = queued_application_query();
+            if submitted {
+                decoder.record_application_query_transport(
+                    query.id,
+                    0,
+                    2,
+                    cutout_core::ApplicationQueryTransportStatus::Submitted,
+                    ms(1_000),
+                );
+            }
+            decoder.record_application_query_transport(
+                query.id,
+                1,
+                2,
+                cutout_core::ApplicationQueryTransportStatus::Rejected,
+                ms(1_001),
+            );
+            decoder.advance_application_query_deadlines(ms(20_000));
+            assert_eq!(
+                decoder.refloat_discovery.application(),
+                VescApplicationDiscovery::Pending
+            );
+            assert_eq!(
+                decoder.application_query_state(),
+                if submitted {
+                    VescApplicationQueryState::PartialUncertain {
+                        query_id: query.id.get(),
+                    }
+                } else {
+                    VescApplicationQueryState::KnownUnsent {
+                        query_id: query.id.get(),
+                    }
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn application_query_late_actual_submission_replaces_false_known_unsent_claim() {
+        let (mut decoder, query) = queued_application_query();
+        decoder.advance_application_query_deadlines(ms(5_000));
+        assert_eq!(
+            decoder.application_query_state(),
+            VescApplicationQueryState::KnownUnsent {
+                query_id: query.id.get()
+            }
+        );
+        assert!(decoder.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(5_001)
+        ));
+        assert_eq!(
+            decoder.application_query_state(),
+            VescApplicationQueryState::PartialUncertain {
+                query_id: query.id.get()
+            }
+        );
+        assert!(!decoder.application_query_is_current(query.id, ms(5_001)));
+        assert_eq!(decoder.application_query_deadline(), None);
+        decoder.advance_application_query_deadlines(ms(20_000));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Pending
+        );
+    }
+
+    #[test]
+    fn application_query_partial_identity_replacement_does_not_automatically_retry() {
+        let (mut decoder, query) = queued_application_query();
+        decoder.record_application_query_transport(
+            query.id,
+            0,
+            2,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(1),
+        );
+        decoder.retire_application_query_for_identity_replacement();
+        let mut output = Vec::new();
+        decoder.on_tick(ms(100), &mut output);
+        assert_eq!(
+            decoder.application_query_state(),
+            VescApplicationQueryState::PartialUncertain {
+                query_id: query.id.get()
+            }
+        );
+        assert!(!output.iter().any(|item| match item {
+            SessionOutput::Transport(TransportAction::Write { bytes, .. }) =>
+                bytes.application_query().is_some(),
+            _ => false,
+        }));
+        decoder.reset();
+        decoder.on_read_command(CommandKind::RequestTelemetry, &mut output);
+        assert!(decoder.application_query_is_current(
+            cutout_core::ApplicationQueryId::new(query.id.get() + 1),
+            ms(1)
+        ));
+    }
+
+    #[test]
+    fn application_query_submitted_or_expired_identity_replacement_requires_reconnect() {
+        for expire_first in [false, true] {
+            let (mut decoder, query) = queued_application_query();
+            decoder.record_application_query_transport(
+                query.id,
+                0,
+                1,
+                cutout_core::ApplicationQueryTransportStatus::Submitted,
+                ms(1),
+            );
+            decoder.observe_vesc_reply(
+                &VescReadOnlyReply::FirmwareInfo {
+                    major: 7,
+                    minor: 0,
+                    test_version_number: 0,
+                    commit_hash: arrayvec::ArrayString::new(),
+                    user_commit_hash: arrayvec::ArrayString::new(),
+                },
+                ms(1),
+            );
+            assert_eq!(
+                decoder.application_query_state(),
+                VescApplicationQueryState::AwaitingResponse {
+                    query_id: query.id.get(),
+                    submitted_at_ms: 1,
+                    response_deadline_ms: 2_001,
+                },
+                "initial firmware evidence must not count as replacement"
+            );
+            if expire_first {
+                decoder.advance_application_query_deadlines(ms(2_001));
+                assert_eq!(
+                    decoder.refloat_discovery.application(),
+                    VescApplicationDiscovery::Absent
+                );
+            }
+            decoder.observe_vesc_reply(
+                &VescReadOnlyReply::FirmwareInfo {
+                    major: 7,
+                    minor: 1,
+                    test_version_number: 0,
+                    commit_hash: arrayvec::ArrayString::new(),
+                    user_commit_hash: arrayvec::ArrayString::new(),
+                },
+                ms(2_002),
+            );
+            assert_eq!(
+                decoder.refloat_discovery.application(),
+                VescApplicationDiscovery::Pending
+            );
+            assert_eq!(
+                decoder.application_query_state(),
+                VescApplicationQueryState::PartialUncertain {
+                    query_id: query.id.get()
+                }
+            );
+            let mut output = Vec::new();
+            decoder.on_tick(ms(3_000), &mut output);
+            assert!(!output.iter().any(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) =>
+                    bytes.application_query().is_some(),
+                _ => false,
+            }));
+            decoder.handle_notification(
+                ProtocolFamily::Vesc,
+                VESC_NOTIFY_CHANNEL,
+                refloat_info_frame().as_slice(),
+                ms(3_001),
+                &mut output,
+            );
+            assert_eq!(
+                decoder.refloat_discovery.application(),
+                VescApplicationDiscovery::Refloat,
+                "fresh validated passive evidence can identify Refloat in the current attempt"
+            );
+            assert_eq!(
+                decoder.application_query_state(),
+                VescApplicationQueryState::PartialUncertain {
+                    query_id: query.id.get()
+                },
+                "passive evidence must not reopen or complete the retired query"
+            );
+        }
+    }
+
+    #[test]
+    fn application_query_late_positive_preserves_submitted_timeout_as_a_separate_fact() {
+        let (mut decoder, query) = queued_application_query();
+        decoder.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(1),
+        );
+        decoder.advance_application_query_deadlines(ms(2_001));
+        let timeout = VescApplicationQueryState::ResponseExpired {
+            query_id: query.id.get(),
+        };
+        assert_eq!(decoder.application_query_state(), timeout);
+        let mut output = Vec::new();
+        decoder.handle_notification(
+            ProtocolFamily::Vesc,
+            VESC_NOTIFY_CHANNEL,
+            refloat_info_frame().as_slice(),
+            ms(2_002),
+            &mut output,
+        );
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Refloat
+        );
+        assert_eq!(decoder.application_query_state(), timeout);
+        assert_eq!(decoder.application_query_deadline(), None);
+    }
+
+    #[test]
+    fn application_query_duplicate_receipt_cannot_extend_response_deadline() {
+        let (mut decoder, query) = queued_application_query();
+        assert!(decoder.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(3_000)
+        ));
+        assert!(!decoder.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(4_000)
+        ));
+        decoder.advance_application_query_deadlines(ms(5_000));
+        assert_eq!(
+            decoder.refloat_discovery.application(),
+            VescApplicationDiscovery::Absent
+        );
+    }
+
+    #[test]
+    fn application_query_retired_identity_rejects_old_write_and_receipts() {
+        let (mut decoder, old) = queued_application_query();
+        decoder.reset();
+        let mut output = Vec::new();
+        decoder.on_read_command(CommandKind::RequestTelemetry, &mut output);
+        let current = output
+            .iter()
+            .find_map(|output| match output {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    bytes.application_query()
+                }
+                _ => None,
+            })
+            .expect("new query after replacement");
+        assert_ne!(current.id, old.id);
+        assert!(!decoder.application_query_is_current(old.id, ms(1)));
+        assert!(!decoder.record_application_query_transport(
+            old.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(1)
+        ));
+        assert!(decoder.application_query_is_current(current.id, ms(1)));
+    }
+
+    fn acknowledge_application_query(
+        session: &mut ReadOnlySession<VescGenericModel>,
+        output: &[SessionOutput],
+        at: u64,
+    ) {
+        let query = output
+            .iter()
+            .find_map(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    bytes.application_query()
+                }
+                _ => None,
+            })
+            .expect("application query was emitted");
+        assert!(session.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            ms(at)
+        ));
+    }
+
+    #[test]
+    fn generic_vesc_bounds_refloat_discovery_and_then_polls_only_standard_values() {
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        assert_eq!(
+            output.len(),
+            2,
+            "one bounded Refloat discovery query and standard values"
+        );
+        acknowledge_application_query(&mut session, &output, 0);
+        for at in [100, 1_000, 2_000] {
+            output.clear();
+            session.handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+            assert_eq!(
+                output,
+                vec![
+                    SessionOutput::Transport(TransportAction::Write {
+                        channel: VESC_WRITE_CHANNEL,
+                        bytes: WritePayload::try_from_slice(&[2, 1, 4, 64, 132, 3])
+                            .expect("standard values frame"),
+                        mode: WriteMode::WithoutResponse,
+                    }),
+                    SessionOutput::Event(DeviceEvent::Tick {
+                        monotonic_ms: ms(at)
+                    })
+                ],
+                "no repeated custom-app or implicit config traffic at {at}"
+            );
+        }
+        assert_eq!(
+            session.application_discovery(),
+            VescApplicationDiscovery::Absent
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_starts_bounded_application_discovery_with_standard_values() {
         let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
@@ -4056,19 +4895,18 @@ mod tests {
             &mut output,
         );
 
+        let mut expected_query = WritePayload::try_from_slice(&[2, 5, 36, 101, 0, 2, 0, 2, 71, 3])
+            .expect("Refloat info request fits");
+        expected_query.set_application_query(cutout_core::ApplicationQueryWrite {
+            id: cutout_core::ApplicationQueryId::new(1),
+            submit_before: ms(5_000),
+        });
         assert_eq!(
             output,
             vec![
                 SessionOutput::Transport(TransportAction::Write {
                     channel: VESC_WRITE_CHANNEL,
-                    bytes: WritePayload::try_from_slice(&[2, 5, 36, 101, 0, 2, 0, 2, 71, 3])
-                        .expect("Refloat info request fits"),
-                    mode: WriteMode::WithoutResponse,
-                }),
-                SessionOutput::Transport(TransportAction::Write {
-                    channel: VESC_WRITE_CHANNEL,
-                    bytes: WritePayload::try_from_slice(&[2, 1, 14, 225, 206, 3])
-                        .expect("VESC motor config request fits"),
+                    bytes: expected_query,
                     mode: WriteMode::WithoutResponse,
                 }),
                 SessionOutput::Transport(TransportAction::Write {
@@ -4468,7 +5306,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_vesc_polling_recovers_missing_descriptors_and_paces_overlap() {
+    fn qualified_refloat_polling_recovers_missing_descriptors_and_paces_overlap() {
         let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
@@ -4482,8 +5320,16 @@ mod tests {
             SessionInput::Command(DeviceCommand::RequestTelemetry),
             &mut output,
         );
-        assert_eq!(vesc_request_count(&output), 3);
+        assert_eq!(vesc_request_count(&output), 2);
         output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_info_frame().as_slice(),
+                monotonic_ms: ms(25),
+            },
+            &mut output,
+        );
         session.handle(
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
@@ -4501,7 +5347,7 @@ mod tests {
         assert_eq!(
             vesc_request_count(&output),
             3,
-            "generic values, missing config and missing package descriptors must be retried independently"
+            "validated Refloat polls its missing descriptors and config alongside standard values"
         );
         output.clear();
         session.handle(
@@ -4544,6 +5390,14 @@ mod tests {
             &mut output,
         );
         output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_info_frame().as_slice(),
+                monotonic_ms: ms(25),
+            },
+            &mut output,
+        );
         for at in [50, 75] {
             session.handle(
                 SessionInput::Notification {
@@ -4651,6 +5505,14 @@ mod tests {
         session.handle(
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_info_frame().as_slice(),
+                monotonic_ms: ms(1),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_realtime_ids_frame().as_slice(),
                 monotonic_ms: ms(1),
             },
@@ -4663,14 +5525,24 @@ mod tests {
             },
             &mut output,
         );
-        assert!(output.iter().any(|item| matches!(
-            item,
-            SessionOutput::Transport(TransportAction::Write { .. })
-        )));
+        let mut expected = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeData),
+            &mut expected,
+        )
+        .unwrap();
+        assert!(
+            output.iter().any(|item| matches!(
+                item,
+                SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                    if bytes.as_slice() == expected.as_slice()
+            )),
+            "a missed realtime reply must not stop the qualified Refloat stream"
+        );
     }
 
     #[test]
-    fn generic_vesc_values_after_reconnect_do_not_cancel_refloat_recovery() {
+    fn generic_vesc_values_after_reconnect_preserve_bounded_application_discovery() {
         let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
@@ -4720,6 +5592,7 @@ mod tests {
             SessionInput::Command(DeviceCommand::RequestTelemetry),
             &mut output,
         );
+        acknowledge_application_query(&mut session, &output, 1_000);
         output.clear();
         session.handle(
             SessionInput::Notification {
@@ -4742,19 +5615,24 @@ mod tests {
             },
             &mut output,
         );
-        let mut expected = ArrayVec::new();
-        VescReadOnlyCodec::encode_request(
-            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
-            &mut expected,
-        )
-        .expect("Refloat descriptor request fits");
-        assert!(
-            output.iter().any(|item| matches!(
-                item,
-                SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                    if bytes.as_slice() == expected.as_slice()
-            )),
-            "a generic values reply after reconnect must not stop descriptor recovery"
+        assert_eq!(
+            vesc_request_count(&output),
+            1,
+            "discovery is queried once per connection"
+        );
+        assert_eq!(
+            session.application_discovery(),
+            VescApplicationDiscovery::Pending
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(3_000),
+            },
+            &mut output,
+        );
+        assert_eq!(
+            session.application_discovery(),
+            VescApplicationDiscovery::Absent
         );
     }
 

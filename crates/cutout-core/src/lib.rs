@@ -39,6 +39,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod vehicle;
+pub use vehicle::*;
 mod connection_lifecycle;
 pub use connection_lifecycle::*;
 mod capture_lifecycle;
@@ -7640,11 +7642,59 @@ pub enum SessionInput<'a> {
     Command(DeviceCommand),
 }
 
+/// Identity of one read-only application-discovery query within a connection attempt.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ApplicationQueryId(u64);
+
+impl ApplicationQueryId {
+    /// Creates a query identity allocated by its protocol owner.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+    /// Raw identity for the native receipt boundary.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Native submission admission attached to every fragment of an application query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationQueryWrite {
+    /// Attempt-local query identity; the connection token is carried by the transport owner.
+    pub id: ApplicationQueryId,
+    /// Exclusive monotonic deadline for actual native submission.
+    pub submit_before: MonotonicTimestamp,
+}
+
+/// Native evidence for one indexed fragment of an application query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationQueryTransportStatus {
+    /// Retained by the native transport without submitting bytes.
+    Queued,
+    /// This fragment was submitted to the native peripheral API.
+    Submitted,
+    /// This fragment was rejected before submission.
+    Rejected,
+    /// This fragment was cancelled before submission.
+    Cancelled,
+}
+
 /// Bounded transport write payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WritePayload {
     storage: WritePayloadStorage,
-    operation_id: Option<TransportOperationId>,
+    correlation: WritePayloadCorrelation,
+}
+
+// Most writes are untracked or carry a small settings ID. Only the rare discovery
+// query allocates its admission metadata, preserving the ordinary inline payload size.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WritePayloadCorrelation {
+    Untracked,
+    Operation(TransportOperationId),
+    ApplicationQuery(Box<ApplicationQueryWrite>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7678,7 +7728,7 @@ impl WritePayload {
                         },
                     )?,
                 ),
-                operation_id: None,
+                correlation: WritePayloadCorrelation::Untracked,
             });
         }
 
@@ -7691,7 +7741,7 @@ impl WritePayload {
                     }
                 })?,
             )),
-            operation_id: None,
+            correlation: WritePayloadCorrelation::Untracked,
         })
     }
 
@@ -7728,12 +7778,31 @@ impl WritePayload {
     /// Returns the host correlation identity assigned to this write, if any.
     #[must_use]
     pub const fn operation_id(&self) -> Option<TransportOperationId> {
-        self.operation_id
+        match self.correlation {
+            WritePayloadCorrelation::Operation(id) => Some(id),
+            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::ApplicationQuery(_) => {
+                None
+            }
+        }
+    }
+
+    /// Returns typed application-query submission admission, independent of settings writes.
+    #[must_use]
+    pub fn application_query(&self) -> Option<ApplicationQueryWrite> {
+        match &self.correlation {
+            WritePayloadCorrelation::ApplicationQuery(query) => Some(**query),
+            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::Operation(_) => None,
+        }
+    }
+
+    /// Attaches protocol-owned application-query correlation to this payload.
+    pub fn set_application_query(&mut self, query: ApplicationQueryWrite) {
+        self.correlation = WritePayloadCorrelation::ApplicationQuery(Box::new(query));
     }
 
     /// Associates this payload with one host transport operation.
     pub fn set_operation_id(&mut self, operation_id: TransportOperationId) {
-        self.operation_id = Some(operation_id);
+        self.correlation = WritePayloadCorrelation::Operation(operation_id);
     }
 }
 
@@ -7995,6 +8064,11 @@ where
     #[must_use]
     pub const fn protocol_session(&self) -> &S {
         &self.session
+    }
+
+    /// Returns the protocol owner for correlated native transport receipts.
+    pub fn protocol_session_mut(&mut self) -> &mut S {
+        &mut self.session
     }
 
     fn handle(&mut self, input: SessionInput<'_>) {

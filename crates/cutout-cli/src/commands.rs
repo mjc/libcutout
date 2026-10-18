@@ -235,7 +235,7 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     }) && header
         .annotations
         .iter()
-        .any(|annotation| annotation == "route=vesc_onewheel"));
+        .any(|annotation| annotation == "route=vesc" || annotation == "route=vesc_onewheel"));
     let report = if replay_vesc {
         replay_pevcap_stream_with_session(
             &args.input,
@@ -6367,6 +6367,53 @@ mod tests {
                 .map(|voltage| voltage.value.get()),
             Some(61_500)
         );
+    }
+
+    #[test]
+    fn pevcap_public_auto_replay_accepts_neutral_and_legacy_vesc_route_annotations() {
+        use clap::Parser;
+        let mut capture = PevcapCapture::decode(
+            include_str!("../fixtures/pevcap/vesc-refloat-live.jsonl").as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "cutout-vesc-route-{}-{}.jsonl",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            path.to_str().unwrap(),
+            "--input-format",
+            "jsonl",
+            "--profile",
+            "auto",
+        ])
+        .unwrap();
+        let Command::Pevcap(PevcapArgs {
+            command: PevcapCommand::Replay(args),
+        }) = cli.command
+        else {
+            panic!("expected replay arguments");
+        };
+        for annotation in ["route=vesc", "route=vesc_onewheel"] {
+            capture.header.annotations.clear();
+            capture.header.annotations.push(annotation.to_owned());
+            let bytes = capture.encode(PevcapEncoding::Jsonl).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let result = pevcap_replay(&args);
+            let retained = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            result.unwrap_or_else(|error| panic!("{annotation} must select VESC replay: {error}"));
+            assert_eq!(retained, bytes, "replay must preserve the capture");
+        }
     }
 
     #[test]

@@ -4,6 +4,22 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testLiveActivityGlyphUsesCanonicalPhysicalKindWithoutAnOEMModelGuess() throws {
+        let expected: [(VehicleKind, LiveActivityRideGlyph)] = [
+            (.unknown, .unknown), (.electricUnicycle, .electricUnicycle), (.onewheel, .onewheel),
+            (.scooter, .scooter), (.eskate, .eskate), (.ebike, .ebike), (.emoto, .emoto),
+        ]
+        for (kind, glyph) in expected {
+            let actual = LiveActivityRideGlyph(vehicleKind: kind)
+            XCTAssertEqual(actual, glyph)
+            XCTAssertEqual(
+                try JSONDecoder().decode(LiveActivityRideGlyph.self, from: JSONEncoder().encode(actual)), glyph)
+        }
+        XCTAssertEqual(
+            try JSONDecoder().decode(LiveActivityRideGlyph.self, from: Data("\"floatwheelAtom\"".utf8)), .floatwheelAtom
+        )
+    }
+
     func testMetricGridOmitsMissingOptionalValuesAndFooterOwnedSafetyMetrics() {
         let snapshot = gridSnapshot()
         XCTAssertEqual(snapshot.metricGridValues.map(\.role), [.battery, .packVoltage, .pwm])

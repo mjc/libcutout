@@ -108,6 +108,7 @@ final class DevicePresentationModel {
         await nameRestoreTask?.value
     }
 
+    var deviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
     var displayState = RideDisplayState()
     var phase = SessionConnectionPhase.starting
     var scanState: DevicePickerScanState?
@@ -237,6 +238,7 @@ final class DevicePresentationModel {
         )
         settings = nil
         protocolIdentityCandidate = nil
+        deviceSessionSnapshot = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         phase = .discoveringServices
 
@@ -294,7 +296,8 @@ final class DevicePresentationModel {
         return rideState
     }
     var vescRideSnapshot: VescRideSnapshot? {
-        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+        VescRideSnapshot(
+            displayState: displayState, title: selectedRideTitle, identity: deviceSessionSnapshot?.identity)
     }
     var connectionStatusText: String { connectionState.statusText ?? phase.displayText }
 

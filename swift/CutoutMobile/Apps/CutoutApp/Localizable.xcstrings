@@ -1,6 +1,20 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "device.type.back_to_connect" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Back to Connect"}}}},
+    "device.type.discovery_failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The controller check couldn't finish. Disconnect and reconnect to try again."}}}},
+    "device.type.emoto" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "E-moto"}}}},
+
+    "device.type.scooter" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "E-scooter"}}}},
+
+    "device.type.save_failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Could not save the vehicle type. Keep this device connected and try again."}}}},
+
+    "device.type.choose.explanation" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This VESC controller does not identify the vehicle type. Choose the vehicle it is installed in. CutOut saves your choice for this device."}}}},
+
+    "device.type.choose" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "What type of vehicle is this?"}}}},
+
+    "device.type.discovery_pending" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Checking controller application…"}}}},
+
     "euc.ride.temperature" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } }
@@ -3290,6 +3304,10 @@
     "vesc.footpad.right" : {
       "comment" : "VESC footpad readout label for the right sensor.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "RIGHT / ADC2" } } }
+    },
+    "vesc.metric.battery_current" : {
+      "comment" : "Standard VESC Ride label for measured battery current, including its direction.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery current" } } }
     },
     "vesc.metric.battery_voltage" : {
       "comment" : "VESC dashboard tile label for battery voltage.",

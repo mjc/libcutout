@@ -386,12 +386,26 @@ struct ContentView: View {
         return { disconnectAndReturnToPicker() }
     }
 
+    private var vescRideUsesOwnHeader: Bool {
+        let identity = model.device.deviceSessionSnapshot?.identity
+        var application = identity?.vescApplication ?? model.vescRideSnapshot?.application
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutUITestSecondaryRideFixture.vescRideSnapshot(at: model.currentMonotonicTime) {
+                application = fixture.application
+            }
+        #endif
+        return VescRideScreenPresentation.usesOwnHeader(
+            application: application, classificationRequirement: identity?.classificationRequirement
+        )
+    }
+
     @ViewBuilder
     private func destinationSurface(for destination: CutoutAppRoute) -> some View {
         let back: (() -> Void)? = destination.isMoreDestination ? { closeNestedDestination() } : nil
         Group {
             if destination == .devicePicker || isRideMapDetail(destination)
                 || (destination == .eucRide && !dynamicTypeSize.isAccessibilitySize)
+                || (destination == .vescRide && vescRideUsesOwnHeader)
             {
                 routedContent(for: destination)
             } else {
@@ -486,7 +500,7 @@ struct ContentView: View {
                 submitAction: model.submitDeviceAction
             )
         case .vescRide:
-            VescRideRouteView(model: model)
+            VescRideRouteView(model: model, disconnect: disconnectAction(for: destination))
         case .vescDebug:
             VescDebugRouteView(device: model.device, capture: model.capture)
         case .capture:
@@ -595,7 +609,7 @@ struct ContentView: View {
         route: CutoutAppRoute
     ) -> PevAccent {
         switch selectedConnectionRoute {
-        case .vescOnewheel:
+        case .vesc:
             .purple
         case .electricUnicycle:
             .yellow

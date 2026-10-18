@@ -3092,6 +3092,116 @@ fn schema_v23_migration_repairs_phone_alarm_preferences_gap() {
 }
 
 #[test]
+fn vehicle_classification_migration_preserves_existing_device_metadata() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-device-classification-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("controller-a", Some("My board"), 1)
+        .unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE device_vehicle_classifications; PRAGMA user_version = 49;")
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.selected_device().unwrap().as_deref(),
+        Some("controller-a")
+    );
+    assert_eq!(
+        database.device_name("controller-a").unwrap().as_deref(),
+        Some("My board")
+    );
+    assert_eq!(
+        database
+            .device_vehicle_classification("controller-a")
+            .unwrap(),
+        None
+    );
+    database
+        .save_user_vehicle_kind("controller-a", cutout_core::VehicleKind::Eskate, 2)
+        .unwrap();
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn vehicle_classification_is_per_device_and_survives_reopen_without_a_name() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-device-classification-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .save_user_vehicle_kind("  controller-a  ", cutout_core::VehicleKind::Eskate, 42)
+        .unwrap();
+    database
+        .save_user_vehicle_kind("controller-b", cutout_core::VehicleKind::Scooter, 43)
+        .unwrap();
+    assert!(
+        database
+            .save_user_vehicle_kind("controller-a", cutout_core::VehicleKind::Unknown, 44)
+            .is_err()
+    );
+    assert_eq!(database.device_name("controller-a").unwrap(), None);
+    assert_eq!(database.selected_device().unwrap(), None);
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    let choice = database
+        .device_vehicle_classification("controller-a")
+        .unwrap()
+        .unwrap();
+    assert_eq!(choice.kind(), cutout_core::VehicleKind::Eskate);
+    assert_eq!(
+        choice.provenance(),
+        cutout_core::VehicleClassificationProvenance::UserProvided
+    );
+    assert_eq!(
+        database
+            .device_vehicle_classification("controller-b")
+            .unwrap()
+            .unwrap()
+            .kind(),
+        cutout_core::VehicleKind::Scooter
+    );
+    assert_eq!(
+        database
+            .device_vehicle_classification("controller-c")
+            .unwrap(),
+        None
+    );
+    database
+        .save_device_name("controller-a", "My board", 45)
+        .unwrap();
+    assert_eq!(
+        database
+            .device_vehicle_classification("controller-a")
+            .unwrap(),
+        Some(choice)
+    );
+    database.clear_user_vehicle_kind("controller-a").unwrap();
+    assert_eq!(
+        database
+            .device_vehicle_classification("controller-a")
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        database.device_name("controller-a").unwrap().as_deref(),
+        Some("My board")
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn remember_selected_device_normalizes_identity_and_name_together() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

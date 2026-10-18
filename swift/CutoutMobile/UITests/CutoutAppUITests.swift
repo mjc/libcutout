@@ -4239,6 +4239,61 @@ final class CutoutAppUITests: XCTestCase {
         try beforeDisconnect?(screen)
     }
 
+    func testStandardEskateFixtureKeepsUnknownGeometryAndRestoresUserType() throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("The e-skate presentation fixture is restricted to Simulator")
+        #endif
+        app.terminate()
+        app.launchArguments = [
+            "-CUTOUT_UI_TEST_FIXTURE", "eskate",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+            "-io.cutout.music.monitoring.enabled", "NO", "-CUTOUT_UI_TEST_MUSIC", "silent",
+        ]
+        app.launchEnvironment = [
+            "CUTOUT_UI_TEST_FIXTURE": "eskate",
+            "CUTOUT_UI_TEST_RIDE_DATABASE_ID": UUID().uuidString,
+        ]
+        app.launch()
+        let use = app.buttons["device-picker.use.ui-test-standard-vesc-eskate"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
+        use.tap()
+        let choice = app.buttons["device.type.choice.eskate"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
+        choice.tap()
+        let energy = app.buttons["ride.readings.open"]
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(energy.label, "voltage")
+        XCTAssertTrue((energy.value as? String ?? "").contains("49.8"))
+        XCTAssertEqual(app.buttons.matching(identifier: "dashboard.disconnect").count, 1)
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.exists)
+        XCTAssertTrue((speed.value as? String ?? "").localizedCaseInsensitiveContains("unavailable"))
+        XCTAssertFalse(app.descendants(matching: .any)["euc.ride.headroom"].exists)
+        energy.tap()
+        let detail = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        for label in ["voltage", "battery current", "motor current", "controller"] {
+            XCTAssertTrue(
+                detail.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                    .firstMatch.exists, "Missing measured reading: \(label)")
+        }
+        XCTAssertFalse(detail.staticTexts["board angle"].exists)
+        app.buttons["ride.readings.done"].tap()
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Standard e-skate without drivetrain geometry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["dashboard.disconnect"].tap()
+        app.terminate()
+        // Keep the same fixture database to verify that the Rust-owned user association restores.
+        app.launch()
+        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
+        use.tap()
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(choice.exists)
+        XCTAssertEqual(energy.label, "voltage")
+    }
+
     func testEucAccessibleReadingsPreserveAvailableSecondaryValuesAtAccessibilityDynamicType() throws {
         try assertAvailableSecondaryRideReadings(
             for: .euc,

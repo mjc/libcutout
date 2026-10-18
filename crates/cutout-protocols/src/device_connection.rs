@@ -30,6 +30,29 @@ struct ValidationGrant {
     generation: u64,
 }
 
+/// A current, non-Refloat VESC attempt's validated physical-type choice.
+///
+/// Persistence may consume its device identity before the same owner applies the choice.
+#[derive(Debug)]
+pub struct VehicleKindSelection {
+    token: ConnectionAttemptToken,
+    classification: cutout_core::VehicleClassification,
+}
+
+impl VehicleKindSelection {
+    /// Platform-local device identity bound to this selection.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        self.token.platform_identifier()
+    }
+
+    /// User-provided physical type admitted for this device.
+    #[must_use]
+    pub const fn kind(&self) -> cutout_core::VehicleKind {
+        self.classification.kind()
+    }
+}
+
 impl ValidationGrant {
     fn for_token(token: &ConnectionAttemptToken) -> Self {
         Self {
@@ -80,12 +103,69 @@ pub struct DeviceConnectionSession {
     device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
+    user_vehicle_classification: Option<cutout_core::VehicleClassification>,
     validation_grant: Option<ValidationGrant>,
     setting_operations:
         std::collections::BTreeMap<cutout_core::SettingId, settings::SettingTransportOperation>,
 }
 
 impl DeviceConnectionSession {
+    /// Validates a query fragment immediately before its actual native submission.
+    #[must_use]
+    pub fn application_query_transport_is_current(
+        &self,
+        token: &ConnectionAttemptToken,
+        query_id: u64,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.state.connection.is_verified(token)
+            && self.device.as_ref().is_some_and(|device| {
+                device.application_query_is_current(
+                    cutout_core::ApplicationQueryId::new(query_id),
+                    at,
+                )
+            })
+    }
+
+    /// Records one indexed native fragment receipt for exactly one current attempt.
+    pub fn mark_application_query_transport(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        query_id: u64,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        self.device.as_mut().is_some_and(|device| {
+            device.record_application_query_transport(
+                cutout_core::ApplicationQueryId::new(query_id),
+                index,
+                count,
+                status,
+                at,
+            )
+        })
+    }
+
+    /// Advances only application-query deadlines, without scheduling protocol polling writes.
+    pub fn tick_application_query_transport(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        if let Some(device) = self.device.as_mut() {
+            device.advance_application_query_deadlines(at);
+        }
+        true
+    }
+
     /// Borrows the shared session state without exposing connection internals.
     #[must_use]
     pub fn session_state(&self) -> &CutoutSessionState {
@@ -318,6 +398,7 @@ impl DeviceConnectionSession {
         self.retain_detection();
         self.last_input_at = at;
         self.vesc_board_profile = None;
+        self.user_vehicle_classification = None;
         self.validation_grant = None;
         self.state.reset_device_identity();
         self.state
@@ -341,6 +422,107 @@ impl DeviceConnectionSession {
             return false;
         }
         self.vesc_board_profile = Some(profile);
+        true
+    }
+
+    /// Attaches a saved or newly selected physical type to this exact device attempt.
+    ///
+    /// The choice cannot supply protocol or model proof, authorize commands, or override Refloat.
+    pub fn configure_vehicle_kind(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        kind: cutout_core::VehicleKind,
+    ) -> bool {
+        let Some(classification) = self.validate_vehicle_kind(token, kind) else {
+            return false;
+        };
+        self.apply_vehicle_classification(classification)
+    }
+
+    /// Restores a saved association only before another choice has reached this attempt.
+    ///
+    /// A delayed storage result cannot replace a newer choice or cross a connection generation.
+    pub fn restore_vehicle_kind(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        kind: cutout_core::VehicleKind,
+    ) -> bool {
+        if self.user_vehicle_classification.is_some() {
+            return false;
+        }
+        self.configure_vehicle_kind(token, kind)
+    }
+
+    fn validate_vehicle_kind(
+        &self,
+        token: &ConnectionAttemptToken,
+        kind: cutout_core::VehicleKind,
+    ) -> Option<cutout_core::VehicleClassification> {
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        match self.state.connection.snapshot().readiness {
+            ConnectionReadiness::Pending | ConnectionReadiness::Verified => {}
+            ConnectionReadiness::Disconnected
+            | ConnectionReadiness::RecordOnly
+            | ConnectionReadiness::Failed
+            | ConnectionReadiness::Conflicted => return None,
+        }
+        if self
+            .device
+            .as_ref()
+            .is_some_and(|device| device.identity().protocol != ProtocolFamily::Vesc)
+        {
+            return None;
+        }
+        cutout_core::VehicleClassification::user_provided(kind)
+    }
+
+    /// Validates a user action without changing the current classification.
+    #[must_use]
+    pub fn prepare_vehicle_kind_selection(
+        &self,
+        token: &ConnectionAttemptToken,
+        kind: cutout_core::VehicleKind,
+    ) -> Option<VehicleKindSelection> {
+        let classification = self.validate_vehicle_kind(token, kind)?;
+        let identity = self.device.as_ref()?.identity();
+        if !self.state.connection.is_verified(token)
+            || identity.vesc_application != Some(crate::VescApplicationDiscovery::Absent)
+        {
+            return None;
+        }
+        Some(VehicleKindSelection {
+            token: token.clone(),
+            classification,
+        })
+    }
+
+    /// Applies a persisted choice only while its admitted attempt still owns the connection.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Consume the prepared selection so callers cannot reuse its admission."
+    )]
+    pub fn apply_vehicle_kind_selection(&mut self, selection: VehicleKindSelection) -> bool {
+        if self
+            .prepare_vehicle_kind_selection(&selection.token, selection.kind())
+            .is_none()
+        {
+            return false;
+        }
+        self.apply_vehicle_classification(selection.classification)
+    }
+
+    fn apply_vehicle_classification(
+        &mut self,
+        classification: cutout_core::VehicleClassification,
+    ) -> bool {
+        if let Some(device) = self.device.as_mut()
+            && !device.configure_vehicle_kind(classification.kind())
+        {
+            return false;
+        }
+        self.user_vehicle_classification = Some(classification);
         true
     }
 
@@ -456,9 +638,12 @@ impl DeviceConnectionSession {
         {
             return;
         }
-        if let Some(device) =
+        if let Some(mut device) =
             DeviceSession::from_detection_with_vesc_profile(&resolution, self.vesc_board_profile)
         {
+            if let Some(classification) = self.user_vehicle_classification {
+                let _ = device.configure_vehicle_kind(classification.kind());
+            }
             let identity = device.identity();
             if (identification_complete
                 || identity.model.is_some()
@@ -627,6 +812,218 @@ mod tests {
         token
     }
 
+    fn identify_vesc(owner: &mut DeviceConnectionSession, token: &ConnectionAttemptToken) {
+        let _ = owner.observe_for_attempt(
+            token,
+            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+        );
+        owner.resolve(token, false, MonotonicTimestamp::new(1));
+        let step = owner
+            .ingest(
+                token,
+                &SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            )
+            .unwrap();
+        let query =
+            step.result
+                .outputs
+                .iter()
+                .find_map(|output| match output {
+                    cutout_core::SessionOutput::Transport(
+                        cutout_core::TransportAction::Write { bytes, .. },
+                    ) => bytes.application_query(),
+                    _ => None,
+                })
+                .expect("startup owns the bounded application query");
+        assert!(owner.mark_application_query_transport(
+            token,
+            query.id.get(),
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            MonotonicTimestamp::new(1)
+        ));
+    }
+
+    #[test]
+    fn vehicle_classification_restore_cannot_replace_a_newer_choice_or_attempt() {
+        use cutout_core::VehicleKind;
+        let mut owner = DeviceConnectionSession::default();
+        let first = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &first);
+        let _ = owner
+            .ingest(
+                &first,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 3_000,
+                    },
+                },
+            )
+            .unwrap();
+        let choice = owner
+            .prepare_vehicle_kind_selection(&first, VehicleKind::Eskate)
+            .unwrap();
+        assert!(owner.apply_vehicle_kind_selection(choice));
+        assert!(!owner.restore_vehicle_kind(&first, VehicleKind::Ebike));
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vehicle_kind(),
+            VehicleKind::Eskate
+        );
+        let second = begin(&mut owner, "B");
+        assert!(!owner.restore_vehicle_kind(&first, VehicleKind::Emoto));
+        assert!(owner.restore_vehicle_kind(&second, VehicleKind::Scooter));
+        assert!(!owner.restore_vehicle_kind(&second, VehicleKind::Ebike));
+        identify_vesc(&mut owner, &second);
+        let _ = owner
+            .ingest(
+                &second,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 3_000,
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vehicle_kind(),
+            VehicleKind::Scooter
+        );
+    }
+
+    #[test]
+    fn vehicle_classification_choice_is_attempt_scoped_and_waits_for_application_discovery() {
+        use cutout_core::{
+            VehicleClassificationProvenance, VehicleClassificationRequirement, VehicleKind,
+        };
+        let mut owner = DeviceConnectionSession::default();
+        let first = begin(&mut owner, "A");
+        assert!(owner.configure_vehicle_kind(&first, VehicleKind::Eskate));
+        identify_vesc(&mut owner, &first);
+        let pending = owner.snapshot().identity.unwrap();
+        assert_eq!(
+            pending.classification_requirement,
+            VehicleClassificationRequirement::Pending
+        );
+        assert_eq!(pending.vehicle_kind(), VehicleKind::Unknown);
+        let _ = owner
+            .ingest(
+                &first,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 3_000,
+                    },
+                },
+            )
+            .unwrap();
+        let classified = owner.snapshot().identity.unwrap();
+        assert_eq!(
+            classified.classification_requirement,
+            VehicleClassificationRequirement::Resolved
+        );
+        assert_eq!(classified.vehicle_kind(), VehicleKind::Eskate);
+        assert_eq!(
+            classified.classification.provenance(),
+            VehicleClassificationProvenance::UserProvided
+        );
+        assert_eq!(classified.model, None);
+
+        let replacement = begin(&mut owner, "B");
+        assert!(!owner.configure_vehicle_kind(&first, VehicleKind::Emoto));
+        identify_vesc(&mut owner, &replacement);
+        let _ = owner
+            .ingest(
+                &replacement,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 3_000,
+                    },
+                },
+            )
+            .unwrap();
+        let unclassified = owner.snapshot().identity.unwrap();
+        assert_eq!(
+            unclassified.classification_requirement,
+            VehicleClassificationRequirement::UserSelectionRequired
+        );
+        assert_eq!(unclassified.vehicle_kind(), VehicleKind::Unknown);
+        assert!(!owner.configure_vehicle_kind(&replacement, VehicleKind::Unknown));
+        assert!(owner.configure_vehicle_kind(&replacement, VehicleKind::Scooter));
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vehicle_kind(),
+            VehicleKind::Scooter
+        );
+        assert_eq!(owner.snapshot().identity.unwrap().model, None);
+        assert_eq!(
+            owner
+                .device
+                .as_ref()
+                .unwrap()
+                .control_profile()
+                .descriptors(true),
+            [] as [crate::device_settings::SettingDescriptor; 0]
+        );
+    }
+
+    #[test]
+    fn vehicle_classification_validated_refloat_overrides_user_choice_without_model_proof() {
+        use cutout_core::{
+            VehicleClassificationProvenance, VehicleClassificationRequirement, VehicleKind,
+        };
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        assert!(owner.configure_vehicle_kind(&token, VehicleKind::Ebike));
+        identify_vesc(&mut owner, &token);
+        let mut payload = [0_u8; 60];
+        payload[..4].copy_from_slice(&[101, 0, 2, 0]);
+        payload[4..11].copy_from_slice(b"Refloat");
+        payload[24..27].copy_from_slice(&[1, 2, 3]);
+        payload[51..55].copy_from_slice(&10_000_u32.to_be_bytes());
+        let mut frame = arrayvec::ArrayVec::new();
+        crate::refloat_codec::encode_custom_app_frame(&payload, &mut frame).unwrap();
+        let input = |bytes| SessionInputDto::Notification {
+            channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+            bytes,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+        };
+        let mut corrupt = frame.to_vec();
+        let crc_index = corrupt.len() - 3;
+        corrupt[crc_index] ^= 1;
+        let _ = owner.ingest(&token, &input(corrupt)).unwrap();
+        assert_eq!(
+            owner
+                .snapshot()
+                .identity
+                .unwrap()
+                .classification_requirement,
+            VehicleClassificationRequirement::Pending
+        );
+        let _ = owner.ingest(&token, &input(frame.to_vec())).unwrap();
+        let observed = owner.snapshot().identity.unwrap();
+        assert_eq!(observed.vehicle_kind(), VehicleKind::Onewheel);
+        assert_eq!(
+            observed.classification.provenance(),
+            VehicleClassificationProvenance::Protocol
+        );
+        assert_eq!(
+            observed.classification_requirement,
+            VehicleClassificationRequirement::Resolved
+        );
+        assert_eq!(
+            observed.vesc_application,
+            Some(crate::VescApplicationDiscovery::Refloat)
+        );
+        assert_eq!(observed.model, None);
+        assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vehicle_kind(),
+            VehicleKind::Onewheel
+        );
+    }
+
     #[test]
     fn replacement_owns_selection_and_rejects_previous_wire_evidence() {
         let mut owner = DeviceConnectionSession::default();
@@ -788,7 +1185,7 @@ mod tests {
         let first = read(&mut owner, &token);
         assert_eq!(first.telemetry.speed.unwrap().value, 989);
         assert_eq!(
-            first.session.identity.unwrap().vehicle_kind,
+            first.session.identity.unwrap().vehicle_kind(),
             crate::VehicleKind::Unknown
         );
         assert!(
@@ -848,7 +1245,10 @@ mod tests {
             owner.next_wakeup_at(&token, true),
             Some(MonotonicTimestamp::new(101))
         );
-        assert_eq!(owner.next_wakeup_at(&token, false), None);
+        assert_eq!(
+            owner.next_wakeup_at(&token, false),
+            Some(MonotonicTimestamp::new(5_001))
+        );
         let tick = owner
             .ingest(
                 &token,

@@ -76,6 +76,25 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
     case electricUnicycle
     case floatwheelAtom
+    case onewheel
+    case scooter
+    case eskate
+    case ebike
+    case emoto
+    case unknown
+
+    public init(vehicleKind: VehicleKind) {
+        self =
+            switch vehicleKind {
+            case .electricUnicycle: .electricUnicycle
+            case .onewheel: .onewheel
+            case .scooter: .scooter
+            case .eskate: .eskate
+            case .ebike: .ebike
+            case .emoto: .emoto
+            case .unknown: .unknown
+            }
+    }
 }
 
 public enum LiveActivityRideValueState: String, Codable, Equatable, Hashable, Sendable {
@@ -460,7 +479,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     }
 
     public var showsCompactPwmBar: Bool {
-        glyph == .floatwheelAtom && pwm.progressValue != nil
+        (glyph == .floatwheelAtom || glyph == .onewheel) && pwm.progressValue != nil
     }
 
     public static var activityAccessibilityLabel: String {

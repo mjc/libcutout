@@ -1,9 +1,62 @@
 import CutoutMobile
 import SwiftUI
 
+/// Shared instrument composition; vehicle adapters supply meaning and supported readings.
+struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secondary: View>: View {
+    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+    let header: Header
+    let primary: (Bool) -> Primary
+    let summary: Summary
+    let secondary: Secondary
+
+    init(
+        @ViewBuilder header: () -> Header,
+        @ViewBuilder primary: @escaping (Bool) -> Primary,
+        @ViewBuilder summary: () -> Summary,
+        @ViewBuilder secondary: () -> Secondary
+    ) {
+        self.header = header()
+        self.primary = primary
+        self.summary = summary()
+        self.secondary = secondary()
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let frame = geometry.frame(in: .global)
+            let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
+            let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
+            let height = max(0, bottom - frame.minY)
+            let landscape = geometry.size.width > height
+            VStack(spacing: 12) {
+                header
+                if landscape {
+                    HStack(spacing: 24) {
+                        primary(true)
+                        VStack(spacing: 12) {
+                            summary
+                            secondary
+                        }
+                        .frame(width: min(320, geometry.size.width * 0.4))
+                    }
+                } else {
+                    primary(false).frame(maxHeight: .infinity)
+                    summary
+                    secondary
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, landscape ? 8 : 0)
+            .padding(.bottom, 28)
+            .frame(width: geometry.size.width, height: height, alignment: .top)
+            .foregroundStyle(PevColors.primaryText)
+        }
+        .background(PevColors.pageBackground)
+    }
+}
+
 /// Presentation only: values and PWM applicability come from the existing ride projection.
 struct EucRideInstruments: View {
-    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
     @State private var showsReadings = false
 
     let title: String
@@ -19,37 +72,15 @@ struct EucRideInstruments: View {
     var disconnect: (() -> Void)? = nil
 
     var body: some View {
-        GeometryReader { geometry in
-            let frame = geometry.frame(in: .global)
-            let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
-            let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
-            let height = max(0, bottom - frame.minY)
-            let landscape = geometry.size.width > height
-            VStack(spacing: 12) {
-                header
-                if landscape {
-                    HStack(spacing: 24) {
-                        primaryInstruments(landscape: true)
-                        VStack(spacing: 12) {
-                            energyReadings
-                            secondaryReadings
-                        }
-                        .frame(width: min(320, geometry.size.width * 0.4))
-                    }
-                } else {
-                    primaryInstruments(landscape: false)
-                        .frame(maxHeight: .infinity)
-                    energyReadings
-                    secondaryReadings
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, landscape ? 8 : 0)
-            .padding(.bottom, 28)
-            .frame(width: geometry.size.width, height: height, alignment: .top)
-            .foregroundStyle(PevColors.primaryText)
+        PevRideInstrumentLayout {
+            header
+        } primary: { landscape in
+            primaryInstruments(landscape: landscape)
+        } summary: {
+            energyReadings
+        } secondary: {
+            secondaryReadings
         }
-        .background(PevColors.pageBackground)
         .sheet(isPresented: $showsReadings) {
             PevRideReadingsDetail(tiles: tiles + [gpsSpeed], footpadText: nil)
         }
@@ -92,27 +123,15 @@ struct EucRideInstruments: View {
     }
 
     private func speedReading(pointSize: CGFloat) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(speed.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
-                .font(.system(size: pointSize, weight: .bold))
-                .monospacedDigit()
-                .tracking(-pointSize * 0.055)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .accessibilityLabel(localizedAppText("euc.speed.caption"))
-                .accessibilityValue(speed.accessibilityValue)
-                .accessibilityIdentifier("ride.hero.speed")
-            Text(speed.displayUnit ?? RideUnits.speedUnit)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(PevColors.muted)
-                .accessibilityHidden(true)
-        }
+        PevRideSpeedReading(
+            speed: speed, caption: localizedAppText("euc.speed.caption"), pointSize: pointSize
+        )
     }
 
     private var energyReadings: some View {
         HStack(alignment: .top) {
             // Limp-home distance is not a range-at-current-pace estimate.
-            EucInstrumentReading(
+            PevInstrumentReading(
                 label: localizedAppText("euc.ride.range"), value: .unavailable,
                 unit: RideUnits.distanceUnit(forSpeedUnit: speed.displayUnit ?? RideUnits.speedUnit),
                 pointSize: 52, identifier: "euc.ride.range"
@@ -131,7 +150,7 @@ struct EucRideInstruments: View {
         return Button {
             showsReadings = true
         } label: {
-            EucInstrumentReading(
+            PevInstrumentReading(
                 label: localizedAppText("ride.metric.battery"), value: value,
                 unit: RideUnits.percentUnit, pointSize: 52, identifier: "euc.ride.battery",
                 alignment: .trailing, showsDisclosure: true, showsProgress: true, progress: batteryProgress
@@ -161,7 +180,7 @@ struct EucRideInstruments: View {
 
     private func secondary(_ kind: PevDashboardTileKind, alignment: HorizontalAlignment) -> some View {
         let reading = tile(kind)
-        return EucInstrumentReading(
+        return PevInstrumentReading(
             label: secondaryLabel(kind), value: reading?.metricValue ?? .unavailable,
             unit: reading?.unit ?? "", pointSize: 23, identifier: "euc.ride.\(kind)", alignment: alignment,
             detail: reading?.detail ?? ""
@@ -182,7 +201,32 @@ struct EucRideInstruments: View {
     }
 }
 
-struct EucInstrumentReading: View {
+/// Shared speed typography; the caller supplies its typed vehicle readout and caption.
+struct PevRideSpeedReading: View {
+    let speed: RideHeroReadout
+    let caption: String
+    let pointSize: CGFloat
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(speed.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
+                .font(.system(size: pointSize, weight: .bold))
+                .monospacedDigit()
+                .tracking(-pointSize * 0.055)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .accessibilityLabel(caption)
+                .accessibilityValue(speed.accessibilityValue)
+                .accessibilityIdentifier("ride.hero.speed")
+            Text(speed.displayUnit ?? RideUnits.speedUnit)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(PevColors.muted)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+struct PevInstrumentReading: View {
     let label: String
     let value: PevDashboardMetricValue
     let unit: String

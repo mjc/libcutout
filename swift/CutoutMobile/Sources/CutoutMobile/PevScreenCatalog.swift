@@ -27,7 +27,7 @@ public enum PevNavigationTarget: Equatable, Hashable, Sendable {
 
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
-    case vescOnewheel = "vesc_onewheel"
+    case vesc = "vesc"
 }
 
 public typealias PevConnectionRoute = DevicePickerConnectionRoute
@@ -702,8 +702,8 @@ extension DevicePickerConnectionRoute {
         switch route {
         case .electricUnicycle:
             self = .electricUnicycle
-        case .vescOnewheel:
-            self = .vescOnewheel
+        case .vesc:
+            self = .vesc
         }
     }
 }

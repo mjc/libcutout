@@ -1,10 +1,22 @@
 import CutoutMobile
+import CutoutMobileFFI
 
 struct VescRideScreenPresentation {
     let snapshot: VescRideSnapshot?
     let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
     let connectionStatusText: String?
+
+    /// Standard Ride owns its quiet status header. Discovery and setup retain the app shell.
+    static func usesOwnHeader(
+        application: VescApplication?,
+        classificationRequirement: MobileVehicleClassificationRequirementDto?
+    ) -> Bool {
+        switch classificationRequirement {
+        case .pending?, .userSelectionRequired?: false
+        case .resolved?, nil: application == .absent
+        }
+    }
 
     var title: String {
         snapshot?.title ?? VescRideSnapshot.defaultTitle
@@ -77,6 +89,7 @@ struct VescRideScreenPresentation {
 
     var dashboardTiles: [PevDashboardTile] {
         guard let snapshot else { return [] }
+        if usesStandardInstruments { return standardDashboardTiles }
         return [
             PevDashboardTile(
                 kind: .batteryVoltage,
@@ -111,6 +124,59 @@ struct VescRideScreenPresentation {
                 accent: .green
             ),
         ]
+    }
+
+    /// Application discovery is independent of physical class. Standard telemetry never
+    /// acquires Refloat balance instruments from a manually selected skateboard class.
+    var usesStandardInstruments: Bool { snapshot?.application == .absent }
+
+    var standardEnergyTile: PevDashboardTile {
+        standardDashboardTiles.first { $0.kind == .batteryLevel }
+            ?? standardDashboardTiles[0]
+    }
+
+    var standardSecondaryTiles: [PevDashboardTile] {
+        standardDashboardTiles.filter {
+            $0.kind == .batteryCurrent || $0.kind == .motorCurrent || $0.kind == .controller
+        }
+    }
+
+    private var standardDashboardTiles: [PevDashboardTile] {
+        var tiles = [
+            PevDashboardTile(
+                kind: .batteryVoltage, label: localizedAppText("vesc.metric.battery_voltage"),
+                metricValue: snapshot?.batteryVoltageMetricValue ?? .unavailable,
+                unit: RideUnits.voltageUnit, detail: "", accent: .yellow
+            ),
+            PevDashboardTile(
+                kind: .batteryCurrent, label: localizedAppText("vesc.metric.battery_current"),
+                // BatteryCurrent's presentation already contains its unit and direction.
+                metricValue: snapshot?.batteryCurrentMetricValue ?? .unavailable,
+                unit: "", detail: "", accent: .cyan
+            ),
+            PevDashboardTile(
+                kind: .motorCurrent, label: localizedAppText("vesc.metric.motor_current"),
+                metricValue: snapshot?.motorCurrentMetricValue ?? .unavailable,
+                unit: RideUnits.currentUnit, detail: motorCurrentDetail, accent: .orange
+            ),
+            PevDashboardTile(
+                kind: .controller, label: localizedAppText("vesc.metric.controller"),
+                metricValue: snapshot?.controllerTemperatureMetricValue ?? .unavailable,
+                unit: RideUnits.temperatureUnit, detail: controllerTemperatureDetail, accent: .green
+            ),
+        ]
+        if let level = snapshot?.batteryLevelReported ?? snapshot?.batteryLevelEstimated {
+            let text = RideUnits.percentText(level.value)
+            tiles.insert(
+                PevDashboardTile(
+                    kind: .batteryLevel, label: localizedAppText("ride.metric.battery"),
+                    metricValue: .available(display: text, accessibility: text), unit: RideUnits.percentUnit,
+                    detail: snapshot?.batteryLevelReported == nil ? localizedAppText("ride.detail.estimated") : "",
+                    accent: .green
+                ), at: 0
+            )
+        }
+        return tiles
     }
 
     private var stopWarningCard: PevWarningCard? {

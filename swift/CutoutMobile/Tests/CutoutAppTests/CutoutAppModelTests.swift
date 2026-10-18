@@ -397,7 +397,7 @@ final class CutoutAppModelTests: XCTestCase {
         core.configureVescBoard(
             profile: VescBoardProfile(
                 motorPolePairs: 15,
-                gearRatioDenominator: 1,
+                gearRatioMilli: 1_000,
                 wheelCircumference: Distance(value: 2_100),
                 batteryType: .liIon,
                 batteryCells: 15,
@@ -1220,7 +1220,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
-                    connectionRoute: .vescOnewheel
+                    connectionRoute: .vesc
                 )
             ]
         )
@@ -1231,7 +1231,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
         XCTAssertEqual(model.phase, .discoveringServices)
         XCTAssertEqual(model.selectedRideTitle, "VESC")
-        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        XCTAssertEqual(model.selectedConnectionRoute, .vesc)
     }
 
     @MainActor
@@ -1248,7 +1248,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Discovered device",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(
@@ -1276,7 +1276,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(core: driver)
@@ -1313,7 +1313,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
-                    connectionRoute: .vescOnewheel
+                    connectionRoute: .vesc
                 )
             ]
         )
@@ -1327,7 +1327,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.emitPhase(.scanning)
 
         XCTAssertEqual(model.phase, .discoveringServices)
-        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        XCTAssertEqual(model.selectedConnectionRoute, .vesc)
         XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
     }
 
@@ -1342,7 +1342,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
-                    connectionRoute: .vescOnewheel
+                    connectionRoute: .vesc
                 )
             ]
         )
@@ -1356,7 +1356,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.emitPhase(.scanning)
 
         XCTAssertEqual(model.phase, .live)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vesc))
         XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
     }
 
@@ -1364,7 +1364,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testStoredDeviceAutoPairingUsesTheCandidateRideRoute() {
         let cases: [(id: String, route: DevicePickerConnectionRoute)] = [
             ("euc-1234", .electricUnicycle),
-            ("vesc-1234", .vescOnewheel),
+            ("vesc-1234", .vesc),
         ]
 
         for testCase in cases {
@@ -1377,7 +1377,7 @@ final class CutoutAppModelTests: XCTestCase {
             store.save(platformIdentifier: testCase.id)
             let row = DevicePickerRow(
                 id: testCase.id,
-                title: testCase.route == .vescOnewheel ? "VESC" : "EUC",
+                title: testCase.route == .vesc ? "VESC" : "EUC",
                 subtitle: "Supported device",
                 detail: "Device 1234",
                 state: DevicePickerRowState(action: .use),
@@ -1451,7 +1451,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
-                    connectionRoute: .vescOnewheel
+                    connectionRoute: .vesc
                 )
             ],
             pairingSucceeds: false
@@ -1590,7 +1590,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let store = DevicePickerSelectionStore()
         clear(store)
@@ -1611,7 +1611,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 .connectFailed("timed out")
             )
@@ -1632,7 +1632,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 .connectFailed("timed out")
             )
@@ -1649,7 +1649,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 .connectFailed("timed out")
             )
@@ -1665,7 +1665,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(core: driver)
@@ -1679,7 +1679,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 phase: .discoveringServices
             )
@@ -1694,7 +1694,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 phase: .discoveringServices
             )
@@ -1716,7 +1716,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 retry: retry
             )
@@ -1731,7 +1731,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 retry: retry
             )
@@ -1740,7 +1740,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         driver.emitPhase(.subscribing)
         driver.emitPhase(.live)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vesc))
 
         driver.onReconnectScheduled?(retry)
 
@@ -1750,7 +1750,7 @@ final class CutoutAppModelTests: XCTestCase {
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
-                    route: .vescOnewheel
+                    route: .vesc
                 ),
                 retry: retry
             )
@@ -1770,7 +1770,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         for phase in [
             SessionConnectionPhase.bluetoothPermissionDenied,
@@ -1789,7 +1789,7 @@ final class CutoutAppModelTests: XCTestCase {
             driver.emitPhase(.live)
             XCTAssertEqual(
                 model.connectionState.navigationIntent(isRecordOnlyCapture: false),
-                .openRide(.vescOnewheel)
+                .openRide(.vesc)
             )
 
             driver.emitPhase(phase)
@@ -1813,7 +1813,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let euc = DevicePickerRow(
             id: "euc-5678",
@@ -2172,7 +2172,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         driver.protocolIdentityCandidate = DevicePickerDiscoveryCandidate(
@@ -2181,7 +2181,7 @@ final class CutoutAppModelTests: XCTestCase {
             productCategory: row.subtitle,
             evidence: "advertisement",
             detail: row.detail,
-            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
             symbolName: row.symbolName
         )
         let model = CutoutAppModel(core: driver)
@@ -2218,7 +2218,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         driver.disconnectPreparation = { throw MobileRideMapError.storageError("disk unavailable") }
@@ -2302,14 +2302,14 @@ final class CutoutAppModelTests: XCTestCase {
             productCategory: "VESC Onewheel",
             evidence: "read-only protocol reply",
             detail: "VESC protocol confirmed",
-            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
             symbolName: row.symbolName
         )
         driver.protocolIdentityCandidate = detected
         model.applyProtocolIdentityCandidate(detected)
         driver.emitPhase(.live)
 
-        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        XCTAssertEqual(model.selectedConnectionRoute, .vesc)
         XCTAssertEqual(model.selectedRideTitle, "Previously connected")
     }
 
@@ -2646,7 +2646,7 @@ final class CutoutAppModelTests: XCTestCase {
             detail: "Device 1234",
             state: DevicePickerRowState(action: .use),
             symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .vescOnewheel
+            connectionRoute: .vesc
         )
         let driver = SessionDriverSpy(rows: [row])
         let manager = FailingLiveActivityManager(error: .authorizationDenied)
@@ -3127,7 +3127,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .live)
         XCTAssertEqual(
             model.connectionState.navigationIntent(isRecordOnlyCapture: false),
-            .openRide(.vescOnewheel)
+            .openRide(.vesc)
         )
         await Self.waitUntil("restored connection starts a ride") {
             await manager.startCount == 1
@@ -3992,9 +3992,9 @@ extension CutoutAppModelTests {
             ConnectionSelection(
                 platformIdentifier: vehicle.candidate.platformIdentifier,
                 title: vehicle.candidate.displayName,
-                route: .vescOnewheel))
+                route: .vesc))
         XCTAssertEqual(model.connectionState, connectedSelection)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vesc))
         XCTAssertFalse(fixture.unlocked.withLock { $0 })
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .idle)
 
@@ -4005,7 +4005,7 @@ extension CutoutAppModelTests {
         }
         XCTAssertEqual(model.phase, .live)
         XCTAssertEqual(model.connectionState, connectedSelection)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vesc))
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
         let startCount = await manager.startCount
         XCTAssertEqual(startCount, 1)

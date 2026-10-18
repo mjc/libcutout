@@ -172,19 +172,13 @@ fn vesc_session_with_startup() -> (
 }
 
 fn vesc_session() -> (DeviceConnectionSession, cutout_core::ConnectionAttemptToken) {
-    let (mut owner, token, startup) = vesc_session_with_startup();
-    let operation_id = transport_writes(&startup)
-        .into_iter()
-        .zip(transport_write_operation_ids(&startup))
-        .find(|(frame, _)| frame_payload(frame).first() == Some(&14))
-        .and_then(|(_, operation_id)| operation_id)
-        .expect("test helper settles the wrapper-owned LinkUp bootstrap");
-    assert!(owner.mark_setting_read_transport(
-        &token,
-        operation_id,
-        SettingTransportStatus::Cancelled,
-        MonotonicTimestamp::new(2),
-    ));
+    let (owner, token, startup) = vesc_session_with_startup();
+    assert!(
+        transport_writes(&startup)
+            .iter()
+            .all(|frame| frame_payload(frame).first() != Some(&14)),
+        "initial telemetry does not assume a firmware configuration schema"
+    );
     (owner, token)
 }
 
@@ -618,14 +612,30 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
     assert_eq!(firmware_info_reads.len(), 1);
     assert_eq!(frame_payload(&firmware_info_reads[0]), &[157]);
 
-    let startup_motor_reads = transport_writes(&startup)
+    assert!(
+        transport_writes(&startup)
+            .iter()
+            .all(|frame| frame_payload(frame).first() != Some(&14))
+    );
+    notification(&mut owner, &token, vesc_firmware_reply(7, 0), 2);
+    let qualified = owner
+        .ingest(
+            &token,
+            &SessionInputDto::Notification {
+                channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+                bytes: vesc_controller_7_values_reply(),
+                monotonic_ms: MonotonicMillisDto { milliseconds: 3 },
+            },
+        )
+        .expect("supported firmware and controller facts qualify configuration inventory");
+    let startup_motor_reads = transport_writes(&qualified)
         .into_iter()
-        .zip(transport_write_operation_ids(&startup))
+        .zip(transport_write_operation_ids(&qualified))
         .filter(|(frame, _)| frame_payload(frame).first() == Some(&14))
         .collect::<Vec<_>>();
     assert_eq!(startup_motor_reads.len(), 1);
     let (motor_read, motor_read_id) = &startup_motor_reads[0];
-    let motor_read_id = motor_read_id.expect("LinkUp bootstrap reads are wrapper-owned");
+    let motor_read_id = motor_read_id.expect("qualified configuration reads are wrapper-owned");
     assert_eq!(frame_payload(motor_read), &[14]);
     assert_eq!(owner.settings_descriptors(), Vec::new());
     assert!(owner.mark_setting_read_transport(
@@ -696,8 +706,7 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
             .telemetry_snapshot()
             .is_some_and(|snapshot| snapshot.speed.is_some())
     );
-    // This reply settles the Firmware Info read issued by the verified VESC
-    // LinkUp above; it is not an unsolicited fact injected into the session.
+    // A repeated firmware observation cannot restart a completed configuration inventory.
     let firmware = owner
         .ingest(
             &token,
@@ -782,20 +791,13 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
 }
 
 #[test]
-fn unsupported_firmware_motor_probe_remains_read_only_telemetry_evidence() {
+fn unsupported_firmware_geometry_remains_read_only_telemetry_evidence() {
     let (mut owner, token, startup) = vesc_session_with_startup();
-    let motor_read_id = transport_writes(&startup)
-        .into_iter()
-        .zip(transport_write_operation_ids(&startup))
-        .find(|(frame, _)| frame_payload(frame).first() == Some(&14))
-        .and_then(|(_, operation_id)| operation_id)
-        .expect("LinkUp motor geometry probe is wrapper-owned");
-    assert!(owner.mark_setting_read_transport(
-        &token,
-        motor_read_id,
-        SettingTransportStatus::Submitted,
-        MonotonicTimestamp::new(3),
-    ));
+    assert!(
+        transport_writes(&startup)
+            .iter()
+            .all(|frame| frame_payload(frame).first() != Some(&14))
+    );
 
     notification(&mut owner, &token, vesc_firmware_reply(6, 0), 4);
     notification(
@@ -1033,6 +1035,45 @@ fn rider_feel_tune_fields_are_not_exposed_as_individual_configuration_settings()
                 SettingId::LateralTiltLimit,
                 DeviceSettingValue::Number(60),
                 MonotonicTimestamp::new(14),
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn replacement_application_info_retires_refloat_identity_and_controls() {
+    let (mut owner, token) = known_refloat_session();
+    assert!(
+        owner
+            .settings_descriptors()
+            .iter()
+            .any(|descriptor| descriptor.id == SettingId::PwmTiltback)
+    );
+    assert_eq!(
+        owner.snapshot().identity.unwrap().vesc_application,
+        Some(cutout_protocols::VescApplicationDiscovery::Refloat)
+    );
+    notification(&mut owner, &token, refloat_info("Other", 1, 3, 0), 20);
+    assert_eq!(
+        owner.snapshot().identity.unwrap().vesc_application,
+        Some(cutout_protocols::VescApplicationDiscovery::Absent)
+    );
+    assert_eq!(
+        owner.snapshot().identity.unwrap().vehicle_kind(),
+        cutout_core::VehicleKind::Unknown
+    );
+    assert_eq!(
+        owner.settings_descriptors(),
+        Vec::new(),
+        "a contradictory application image invalidates this connection's settings authority"
+    );
+    assert!(
+        owner
+            .submit_setting(
+                &token,
+                SettingId::PwmTiltback,
+                DeviceSettingValue::Number(90),
+                MonotonicTimestamp::new(21)
             )
             .is_err()
     );

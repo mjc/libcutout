@@ -3,7 +3,11 @@ import Foundation
 
 /// Queue-confined CoreBluetooth effects for one Rust-owned, protocol-verified attempt.
 final class DeviceSessionTransport: @unchecked Sendable {
-    private typealias PendingOperation = (CoreBluetoothPlannedOperation, (CoreBluetoothWriteDisposition) -> Void)
+    private typealias PendingOperation = (
+        operation: CoreBluetoothPlannedOperation,
+        applicationQuery: MobileApplicationQueryWriteDto?,
+        receipt: (CoreBluetoothWriteDisposition) -> Void
+    )
 
     private enum SettingsWriteReceiptTarget {
         case setting(id: DeviceSettingID, operationID: UInt64)
@@ -46,9 +50,11 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private var invalidated = false
     private(set) var records: [CoreBluetoothLiveRecord] = []
     private var publishedSettings: DeviceSettings?
+    private var publishedDeviceSession: MobileDeviceSessionSnapshotDto?
     private var lastSettingsReadAt: MonotonicMilliseconds?
     private var presentationActive = true
     var onSettingsChange: ((DeviceSettings) -> Void)?
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
     var onSubscriptionFailure: ((BluetoothUuid, Error?) -> Void)?
 
     init(
@@ -234,6 +240,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
+        publishDeviceSessionSnapshot()
         chargeEstimate = ChargeEstimateState(
             chargeEstimator.update(
                 input: MobileChargeEstimateInputDto(
@@ -269,18 +276,28 @@ final class DeviceSessionTransport: @unchecked Sendable {
                 receipt = nil
             }
             if let receipt, planned.isEmpty { recordSettingTransport(receipt) }
+            if let query = action.applicationQuery, planned.isEmpty {
+                recordApplicationQueryTransport(query, index: 0, count: 0, disposition: .rejected)
+            }
             for (index, operation) in planned.enumerated() {
                 pending.append(
                     (
                         operation,
+                        action.applicationQuery,
                         { [weak self] disposition in
-                            guard let self, !self.invalidated,
-                                self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
-                            else { return }
+                            guard let self else { return }
+                            // Keep the native effect receipt even if its authorization has retired.
                             self.record(
                                 .writeReceipt(
                                     platformIdentifier: self.context.platformIdentifier,
                                     operation: operation, disposition: disposition))
+                            guard !self.invalidated,
+                                self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
+                            else { return }
+                            if let query = action.applicationQuery {
+                                self.recordApplicationQueryTransport(
+                                    query, index: index, count: planned.count, disposition: disposition)
+                            }
                             if let receipt, receipt.chunks[index] == .queued {
                                 receipt.chunks[index] = disposition
                                 self.recordSettingTransport(receipt)
@@ -310,10 +327,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     private func execute(_ operations: [PendingOperation]) {
-        for (operation, onReceipt) in operations {
+        for (operation, applicationQuery, onReceipt) in operations {
             guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
             if waitingForSubscription != nil {
-                pendingOperations.append((operation, onReceipt))
+                pendingOperations.append((operation, applicationQuery, onReceipt))
                 if case .writeWithoutResponse = operation { onReceipt(.queued) }
                 continue
             }
@@ -326,6 +343,12 @@ final class DeviceSessionTransport: @unchecked Sendable {
                     guard let self, !self.invalidated,
                         self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
                     else { return false }
+                    if let applicationQuery {
+                        let now = self.clock.now().rawValue
+                        return now < applicationQuery.submitBeforeMs
+                            && self.state.applicationQueryTransportIsCurrent(
+                                token: self.token, queryId: applicationQuery.queryId, monotonicMs: now)
+                    }
                     guard let operationID = self.operationID(of: operation) else { return true }
                     return self.state.settingTransportIsCurrent(
                         token: self.token, operationId: operationID, monotonicMs: self.clock.now().rawValue
@@ -338,7 +361,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private func rejectPendingOperations() {
         let cancelled = pendingOperations
         pendingOperations.removeAll()
-        for (operation, onReceipt) in cancelled {
+        for (operation, _, onReceipt) in cancelled {
             if isWrite(operation) { onReceipt(.cancelled) }
         }
     }
@@ -357,6 +380,33 @@ final class DeviceSessionTransport: @unchecked Sendable {
             return nil
         }
         return operationID
+    }
+
+    private func publishDeviceSessionSnapshot() {
+        let snapshot = state.deviceSessionSnapshot()
+        guard snapshot.connection.token == token, snapshot != publishedDeviceSession else { return }
+        publishedDeviceSession = snapshot
+        onDeviceSessionSnapshotChange?(snapshot)
+    }
+
+    private func recordApplicationQueryTransport(
+        _ query: MobileApplicationQueryWriteDto, index: Int, count: Int,
+        disposition: CoreBluetoothWriteDisposition
+    ) {
+        guard let fragmentIndex = UInt16(exactly: index), let fragmentCount = UInt16(exactly: count) else { return }
+        let status: MobileApplicationQueryTransportStatusDto
+        switch disposition {
+        case .queued: status = .queued
+        case .submitted: status = .submitted
+        case .rejected: status = .rejected
+        case .cancelled: status = .cancelled
+        }
+        _ = state.markApplicationQueryTransport(
+            token: token, queryId: query.queryId, fragmentIndex: fragmentIndex, fragmentCount: fragmentCount,
+            status: status, monotonicMs: clock.now().rawValue
+        )
+        publishDeviceSessionSnapshot()
+        rescheduleTimer()
     }
 
     private func recordSettingTransport(
@@ -424,6 +474,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
         // Confirmation and queue authorization deadlines advance even under backpressure.
         let now = clock.now()
         _ = state.tickSettingTransport(token: token, monotonicMs: now.rawValue)
+        _ = state.tickApplicationQueryTransport(token: token, monotonicMs: now.rawValue)
+        publishDeviceSessionSnapshot()
         publishSettings(at: now, immediately: false)
         guard waitingForSubscription == nil, sink?.canSubmitWithoutResponse() == true else { return }
         _ = try? handleTick(at: now)

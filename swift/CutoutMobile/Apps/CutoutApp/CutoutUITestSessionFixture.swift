@@ -15,6 +15,7 @@ import Foundation
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case vesc
+        case eskate
         case dynamicVesc
         case warningVesc(VescRideWarning)
         case stopVesc(VescRideStopReason)
@@ -52,6 +53,12 @@ import Foundation
             case "bluetooth-unavailable": self = .bluetoothUnavailable
             case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
             case "vesc": self = .vesc
+            case "eskate":
+                #if targetEnvironment(simulator)
+                    self = .eskate
+                #else
+                    return nil
+                #endif
             case "vesc-dynamic": self = .dynamicVesc
             case "vesc-low-voltage": self = .warningVesc(.lowVoltage)
             case "vesc-high-voltage": self = .warningVesc(.highVoltage)
@@ -156,6 +163,16 @@ import Foundation
                     ),
                     symbolName: "circle.hexagongrid.circle"
                 )
+            case .eskate:
+                DevicePickerDiscoveryCandidate(
+                    platformIdentifier: "ui-test-standard-vesc-eskate",
+                    displayName: "Everyday board",
+                    productCategory: "VESC controller",
+                    evidence: "UI test fixture",
+                    detail: "Standard VESC telemetry; physical type requires a user choice",
+                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+                    symbolName: "questionmark.circle"
+                )
             case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc,
                 .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc,
                 .connectingVesc, .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity,
@@ -166,7 +183,7 @@ import Foundation
                     productCategory: "VESC Onewheel",
                     evidence: "UI test fixture",
                     detail: "Deterministic accessibility test device",
-                    support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
                     symbolName: "circle.hexagongrid.circle"
                 )
             }
@@ -298,12 +315,35 @@ import Foundation
                 #endif
                 return [frame]
             }
+            if self == .eskate {
+                // Ordinary firmware identity followed by an explicit non-Refloat app-info
+                // response. The production Rust session derives Absent and requires a choice.
+                return [
+                    Self.vescFixtureFrame(
+                        [157, 7, 0, 2] + Array("fixture".utf8) + [0] + Array("test".utf8) + [0]
+                    ),
+                    Self.vescFixtureFrame(
+                        [36, 101, 0, 2, 0] + Array("No app".utf8) + Array(repeating: 0, count: 14)
+                            + [0, 0, 0] + Array(repeating: 0, count: 33)
+                    ),
+                ]
+            }
             return [
                 Data([
                     2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
                     114, 104, 97, 115, 104, 0, 38, 208, 3,
                 ])
             ]
+        }
+
+        private static func vescFixtureFrame(_ payload: [UInt8]) -> Data {
+            precondition(payload.count < 256)
+            var crc: UInt16 = 0
+            for byte in payload {
+                crc ^= UInt16(byte) << 8
+                for _ in 0..<8 { crc = crc & 0x8000 == 0 ? crc << 1 : (crc << 1) ^ 0x1021 }
+            }
+            return Data([2, UInt8(payload.count)] + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
         }
 
         #if os(iOS) && targetEnvironment(simulator)
@@ -350,6 +390,7 @@ import Foundation
         private var connectingDelayMilliseconds: UInt64 {
             switch self {
             case .connectingVesc, .connectingEuc: 5_000
+            case .eskate: 0
             default: 1_000
             }
         }
@@ -360,6 +401,19 @@ import Foundation
         }
 
         private var telemetry: TelemetrySnapshot {
+            if self == .eskate {
+                // Presentation samples only. No configured drivetrain means no road speed;
+                // voltage does not establish charge percentage, range, or control authority.
+                return TelemetrySnapshot(
+                    operatingState: .unknown, vescWarning: VescRideWarning.none,
+                    voltage: Voltage(value: 49_800),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
+                    motorCurrent: PhaseCurrent(value: 21_000),
+                    powerFlow: .discharge,
+                    controllerTemperature: Temperature(value: 44_000),
+                    motorTemperature: Temperature(value: 39_000)
+                )
+            }
             if isEuc {
                 #if os(iOS) && targetEnvironment(simulator)
                     if CutoutWebsiteScreenshotFixture.screen == .tune {
@@ -979,7 +1033,7 @@ import Foundation
         static func vescRideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
             guard let fixture, !fixture.isEuc else { return nil }
             return VescRideSnapshot(
-                title: "VESC", vehicleKind: .float, subProtocol: .generic,
+                title: "VESC", vehicleKind: .onewheel, application: .absent,
                 controllerState: .unknown, operatingState: .riding, warning: .none,
                 boardSpeed: Speed(value: 8_000), dutyCycle: DutyCycle(permille: 230),
                 dutyHeadroom: BatteryLevel(value: 77),

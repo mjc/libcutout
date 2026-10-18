@@ -5,6 +5,7 @@ import CutoutMobileFFI
 struct CutoutSessionCallbackRegistrar {
     struct Handlers {
         let displayState: (RideDisplayState) -> Void
+        let deviceSession: (MobileDeviceSessionSnapshotDto) -> Void
         let phase: (SessionConnectionPresentation) -> Void
         let reconnectScheduled: (SessionConnectionRetry) -> Void
         let captureEvent: (CaptureEvent) -> Void
@@ -30,6 +31,7 @@ struct CutoutSessionCallbackRegistrar {
 
     func install(_ handlers: Handlers) {
         core.onDisplayStateChange = handlers.displayState
+        core.onDeviceSessionSnapshotChange = handlers.deviceSession
         core.onPhaseChange = handlers.phase
         core.onReconnectScheduled = handlers.reconnectScheduled
         core.onScanStateChange = handlers.scanState

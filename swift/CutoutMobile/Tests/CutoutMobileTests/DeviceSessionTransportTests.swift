@@ -11,6 +11,165 @@ final class DeviceSessionTransportTests: XCTestCase {
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
     ])
 
+    func testTimerPublishesApplicationTimeoutWithoutTelemetryAndDoesNotRepeatUnchangedIdentity() throws {
+        let state = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        let now = Mutex<UInt64>(1)
+        let sink = TransportSink()
+        let transport = makeTransport(
+            state, token: token, sink: sink, writeLimit: 64,
+            clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) }
+        )
+        try queue.sync {
+            defer { transport.invalidate() }
+            var snapshots: [MobileDeviceSessionSnapshotDto] = []
+            transport.onDeviceSessionSnapshotChange = { snapshots.append($0) }
+            _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+            XCTAssertEqual(snapshots.last?.identity?.classificationRequirement, .pending)
+            now.withLock { $0 = 3_000 }
+            transport.handleTimer()
+            XCTAssertEqual(snapshots.count, 3)
+            XCTAssertEqual(snapshots.last?.identity?.vescApplication, .absent)
+            XCTAssertEqual(snapshots.last?.identity?.classificationRequirement, .userSelectionRequired)
+            now.withLock { $0 = 3_100 }
+            transport.handleTimer()
+            XCTAssertEqual(snapshots.count, 3, "Unchanged timer polls must not create UI updates")
+            _ = state.beginConnectionAttempt(platformIdentifier: "replacement", nowMs: 3_200)
+            transport.handleTimer()
+            XCTAssertEqual(snapshots.count, 3, "An old timer cannot publish for a replacement attempt")
+        }
+    }
+
+    func testApplicationQueryQueuedBeyondTwoSecondsGetsFullResponseWindowAfterNativeFlush() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let now = Mutex<UInt64>(1)
+            let sink = TransportSink()
+            // Firmware request submits; the application query queues; values submit.
+            sink.dispositions = [.submitted, .queued, .submitted]
+            let transport = makeTransport(
+                state, token: token, sink: sink, writeLimit: 64,
+                clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) }
+            )
+            defer { transport.invalidate() }
+            let startup = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            let query = try XCTUnwrap(startup.actions.compactMap(\.applicationQuery).first)
+            transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+            sink.canSend = false
+            now.withLock { $0 = 3_001 }
+            transport.handleTimer()
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .pending)
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .queued(queryId: query.queryId, submitBeforeMs: 5_001)
+            )
+            sink.canSend = true
+            transport.handlePeripheralIsReadyToSendWithoutResponse()
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .awaitingResponse(queryId: query.queryId, submittedAtMs: 3_001, responseDeadlineMs: 5_001)
+            )
+            let submitted = sink.submittedWrites.count
+            sink.canSend = false
+            now.withLock { $0 = 5_000 }
+            transport.handleTimer()
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .pending)
+            now.withLock { $0 = 5_001 }
+            transport.handleTimer()
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .absent)
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.classificationRequirement, .userSelectionRequired)
+            XCTAssertEqual(
+                sink.submittedWrites.count, submitted, "Deadline advancement must not poll under backpressure")
+        }
+    }
+
+    func testApplicationQueryPartialSubmissionExpiresUncertainAndCannotFlushRetiredFragment() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let now = Mutex<UInt64>(1)
+            let sink = TransportSink()
+            // At six bytes per native write, the ten-byte query has two fragments.
+            sink.dispositions = [.submitted, .submitted, .queued, .submitted]
+            let transport = makeTransport(
+                state, token: token, sink: sink, writeLimit: 6,
+                clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) }
+            )
+            defer { transport.invalidate() }
+            let startup = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            let query = try XCTUnwrap(startup.actions.compactMap(\.applicationQuery).first)
+            transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+            let submitted = sink.submittedWrites.count
+            sink.canSend = false
+            now.withLock { $0 = 5_001 }
+            transport.handleTimer()
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .pending)
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .partialUncertain(queryId: query.queryId)
+            )
+            sink.canSend = true
+            transport.handlePeripheralIsReadyToSendWithoutResponse()
+            XCTAssertEqual(sink.submittedWrites.count, submitted, "Expired partial query bytes must never submit")
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .partialUncertain(queryId: query.queryId)
+            )
+        }
+    }
+
+    func testApplicationQueryRejectedBeforeSubmissionRemainsKnownUnsent() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let now = Mutex<UInt64>(1)
+            let sink = TransportSink()
+            sink.dispositions = [.submitted, .rejected, .submitted]
+            let transport = makeTransport(
+                state, token: token, sink: sink, writeLimit: 64,
+                clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) }
+            )
+            defer { transport.invalidate() }
+            let startup = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            let query = try XCTUnwrap(startup.actions.compactMap(\.applicationQuery).first)
+            transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+            now.withLock { $0 = 20_000 }
+            transport.handleTimer()
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .pending)
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .knownUnsent(queryId: query.queryId)
+            )
+            let lateNativeReceipt = try XCTUnwrap(sink.receipts.dropFirst().first)
+            let receiptCount = transport.records.count
+            lateNativeReceipt(.submitted)
+            XCTAssertEqual(transport.records.count, receiptCount + 1)
+            XCTAssertEqual(
+                state.deviceSessionSnapshot().identity?.vescApplicationQuery,
+                .partialUncertain(queryId: query.queryId),
+                "Contrary late native evidence must replace a zero-submission claim without starting response time"
+            )
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vescApplication, .pending)
+            guard case .writeReceipt(_, _, .submitted)? = transport.records.last else {
+                return XCTFail("The late actual submission receipt must remain in transport evidence")
+            }
+        }
+    }
+
     private func vescFrame(_ payload: [UInt8]) -> Data {
         var crc: UInt16 = 0
         for byte in payload {
@@ -56,6 +215,16 @@ final class DeviceSessionTransportTests: XCTestCase {
             "crates/cutout-protocols/tests/fixtures/vesc-settings/vesc-7.00-motor-default.bin")
         let image = try Data(contentsOf: imageURL)
         return vescFrame([14] + Array(image))
+    }
+
+    private func vescAppConfigFrame() throws -> Data {
+        let repositoryRoot = (0..<5).reduce(URL(fileURLWithPath: #filePath)) { url, _ in
+            url.deletingLastPathComponent()
+        }
+        let imageURL = repositoryRoot.appendingPathComponent(
+            "crates/cutout-protocols/tests/fixtures/vesc-settings/vesc-7.00-app-default.bin")
+        let image = try Data(contentsOf: imageURL)
+        return vescFrame([17] + Array(image))
     }
 
     private func makeTransport(
@@ -115,18 +284,36 @@ final class DeviceSessionTransportTests: XCTestCase {
         let sink = TransportSink()
         let transport = makeTransport(state, token: token, sink: sink, writeLimit: 64)
         let startup = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
-        XCTAssertTrue(
+        XCTAssertFalse(
             startup.operations.contains { operation in
                 guard case .writeWithoutResponseWithOperationID(_, let bytes, _) = operation else { return false }
                 return bytes.count >= 3 && bytes[2] == 14
             },
-            "VESC LinkUp issues the owned Motor Config read that this fixture answers"
+            "Unqualified VESC LinkUp must not issue a Motor Config read"
         )
         transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
         _ = try transport.handleNotification(
             bytes: vescFirmwareFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(2))
-        _ = try transport.handleNotification(
+        let qualified = try transport.handleNotification(
+            bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(2))
+        XCTAssertTrue(
+            qualified.operations.contains { operation in
+                guard case .writeWithoutResponseWithOperationID(_, let bytes, _) = operation else { return false }
+                return bytes.count >= 3 && bytes[2] == 14
+            },
+            "VESC 7.00 and controller identity admit the owned Motor Config read that this fixture answers"
+        )
+        let motorReadback = try transport.handleNotification(
             bytes: vescMotorConfigFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
+        XCTAssertTrue(
+            motorReadback.operations.contains { operation in
+                guard case .writeWithoutResponseWithOperationID(_, let bytes, _) = operation else { return false }
+                return bytes.count >= 3 && bytes[2] == 17
+            },
+            "The serialized firmware inventory proceeds from Motor Config to App Config"
+        )
+        _ = try transport.handleNotification(
+            bytes: vescAppConfigFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
         sink.receipts.removeAll()
         sink.writes.removeAll()
         sink.submittedWrites.removeAll()
@@ -174,10 +361,10 @@ final class DeviceSessionTransportTests: XCTestCase {
             let (state, transport, sink) = try makeReadyVescTransport()
             defer { transport.invalidate() }
             sink.dispositions = [.rejected]
-            _ = try transport.handleNotification(
-                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
+            // Firmware inventory is complete. Positive application evidence now emits
+            // the initial correlated Refloat config read in this very notification step.
             let step = try transport.handleNotification(
-                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
+                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
             let readOperationID = try XCTUnwrap(
                 step.operations.compactMap { operation -> UInt64? in
                     guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,
@@ -220,10 +407,10 @@ final class DeviceSessionTransportTests: XCTestCase {
         try queue.sync {
             let (state, transport, sink) = try makeReadyVescTransport()
             sink.dispositions = [.queued]
-            _ = try transport.handleNotification(
-                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(3))
+            // Firmware inventory is complete. Positive application evidence now emits
+            // the initial correlated Refloat config read in this very notification step.
             let step = try transport.handleNotification(
-                bytes: controllerValuesFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
+                bytes: refloatInfoFrame(), channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
             let readOperationID = try XCTUnwrap(
                 step.operations.compactMap { operation -> UInt64? in
                     guard case .writeWithoutResponseWithOperationID(_, let bytes, let operationID) = operation,

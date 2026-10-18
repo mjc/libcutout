@@ -2,7 +2,7 @@
 
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, HostSession,
-    ModelRegistryEntry, ParserDiagnosticsDto, ProtocolFamily, ProtocolSession,
+    ModelRegistryEntry, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolFamily, ProtocolSession,
     RideOperatingStateDto, SafetyClass, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
 };
 
@@ -12,6 +12,8 @@ use crate::{
     ConcreteSessionStepResultDto, DeviceDetectionResolution, IdentityConfidence,
     ProtocolFamilyState,
 };
+pub use cutout_core::VehicleKind;
+use cutout_core::{VehicleClassification, VehicleClassificationRequirement};
 
 /// Original protocol outputs retained until shared state owners consume their evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,30 +66,29 @@ impl DeviceSessionStep {
     }
 }
 
-/// Native presentation category, independent of controller protocol or model.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum VehicleKind {
-    /// Protocol evidence does not establish the vehicle's physical kind.
-    Unknown,
-    /// Electric unicycle.
-    ElectricUnicycle,
-    /// Self-balancing board.
-    Board,
-    /// Scooter.
-    Scooter,
-    /// Bicycle.
-    Bike,
-}
-
 /// Verified protocol identity with independently optional model and vehicle kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceSessionIdentity {
     /// Protocol established by validated binary evidence.
     pub protocol: ProtocolFamily,
     /// Physical vehicle category established independently from generic UART.
-    pub vehicle_kind: VehicleKind,
+    pub classification: VehicleClassification,
+    /// Rust-owned admission to a physical vehicle presentation.
+    pub classification_requirement: VehicleClassificationRequirement,
+    /// Application discovery for VESC, independent from physical type and exact model.
+    pub vesc_application: Option<crate::VescApplicationDiscovery>,
+    /// Native query progress and failure evidence, independent from application identity.
+    pub vesc_application_query: Option<crate::VescApplicationQueryState>,
     /// Exact registry identity, never a closest-family substitute.
     pub model: Option<&'static ModelRegistryEntry>,
+}
+
+impl DeviceSessionIdentity {
+    /// Physical type, derived from the classification and its retained provenance.
+    #[must_use]
+    pub const fn vehicle_kind(self) -> VehicleKind {
+        self.classification.kind()
+    }
 }
 
 /// One protocol-owned mobile device session.
@@ -95,6 +96,7 @@ pub struct DeviceSessionIdentity {
 pub struct DeviceSession {
     identity: DeviceSessionIdentity,
     engine: DeviceSessionEngine,
+    user_classification: Option<VehicleClassification>,
 }
 
 #[derive(Debug)]
@@ -105,6 +107,43 @@ enum DeviceSessionEngine {
 }
 
 impl DeviceSession {
+    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => session.application_query_deadline(),
+            _ => None,
+        }
+    }
+    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        if let DeviceSessionEngine::Vesc(session) = &mut self.engine {
+            session.advance_application_query_deadlines(at);
+        }
+    }
+    pub(crate) fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => session.application_query_is_current(id, at),
+            _ => false,
+        }
+    }
+    pub(crate) fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        match &mut self.engine {
+            DeviceSessionEngine::Vesc(session) => {
+                session.record_application_query_transport(id, index, count, status, at)
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn take_failed_setting_operation(&mut self) -> Option<u64> {
         match &mut self.engine {
             DeviceSessionEngine::Vesc(session) => session.take_failed_setting_operation(),
@@ -235,17 +274,66 @@ impl DeviceSession {
         Some(Self {
             identity: DeviceSessionIdentity {
                 protocol,
-                vehicle_kind,
+                classification: VehicleClassification::from_protocol(vehicle_kind),
+                classification_requirement: if vehicle_kind == VehicleKind::Unknown {
+                    VehicleClassificationRequirement::Pending
+                } else {
+                    VehicleClassificationRequirement::Resolved
+                },
+                vesc_application: None,
+                vesc_application_query: None,
                 model,
             },
             engine,
+            user_classification: None,
         })
     }
 
     /// Returns protocol, model and kind without inventing missing identity.
     #[must_use]
-    pub const fn identity(&self) -> DeviceSessionIdentity {
-        self.identity
+    pub fn identity(&self) -> DeviceSessionIdentity {
+        let mut identity = self.identity;
+        if let DeviceSessionEngine::Vesc(session) = &self.engine {
+            let application = session.application_discovery();
+            identity.vesc_application = Some(application);
+            identity.vesc_application_query = Some(session.application_query_state());
+            let (classification, requirement) = match application {
+                crate::VescApplicationDiscovery::Pending => (
+                    VehicleClassification::UNKNOWN,
+                    VehicleClassificationRequirement::Pending,
+                ),
+                crate::VescApplicationDiscovery::Refloat => (
+                    VehicleClassification::from_protocol(VehicleKind::Onewheel),
+                    VehicleClassificationRequirement::Resolved,
+                ),
+                crate::VescApplicationDiscovery::Absent => match self.user_classification {
+                    Some(classification) => {
+                        (classification, VehicleClassificationRequirement::Resolved)
+                    }
+                    None => (
+                        VehicleClassification::UNKNOWN,
+                        VehicleClassificationRequirement::UserSelectionRequired,
+                    ),
+                },
+            };
+            identity.classification = classification;
+            identity.classification_requirement = requirement;
+        }
+        identity
+    }
+
+    /// Attaches a saved user choice without changing protocol, model or command capabilities.
+    pub(crate) fn configure_vehicle_kind(&mut self, kind: VehicleKind) -> bool {
+        let Some(classification) = VehicleClassification::user_provided(kind) else {
+            return false;
+        };
+        match &self.engine {
+            DeviceSessionEngine::Vesc(_) => {
+                self.user_classification = Some(classification);
+                true
+            }
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+        }
     }
 
     /// Selects semantic settings only for an exactly identified supported model.
@@ -453,7 +541,7 @@ mod tests {
         let session =
             DeviceSession::from_detection(&resolution).expect("validated VESC is supported");
         assert_eq!(session.identity().protocol, ProtocolFamily::Vesc);
-        assert_eq!(session.identity().vehicle_kind, VehicleKind::Unknown);
+        assert_eq!(session.identity().vehicle_kind(), VehicleKind::Unknown);
         assert_eq!(session.identity().model, None);
         assert_eq!(session.control_profile().descriptors(true).len(), 0);
     }
@@ -506,7 +594,7 @@ mod tests {
             Some(&crate::NOSFET_AERO_REGISTRY_ENTRY)
         );
         assert_eq!(
-            session.identity().vehicle_kind,
+            session.identity().vehicle_kind(),
             VehicleKind::ElectricUnicycle
         );
         assert!(

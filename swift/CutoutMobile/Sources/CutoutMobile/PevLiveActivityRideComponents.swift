@@ -454,22 +454,28 @@ public struct PevLiveActivityGlyph: View {
     }
 
     public var body: some View {
-        Image(assetName)
-            .resizable()
-            .renderingMode(.original)
-            .interpolation(.high)
-            .scaledToFit()
-            .accessibilityHidden(true)
+        Group {
+            switch snapshot.glyph {
+            case .electricUnicycle:
+                Image("EucGlyph").resizable().renderingMode(.original).interpolation(.high)
+            case .floatwheelAtom, .onewheel:
+                Image("AtomGlyph").resizable().renderingMode(.original).interpolation(.high)
+            case .scooter:
+                Image(systemName: "scooter").resizable()
+            case .eskate:
+                Image(systemName: "skateboard").resizable()
+            case .ebike:
+                Image(systemName: "bicycle").resizable()
+            case .emoto:
+                Image(systemName: "motorcycle").resizable()
+            case .unknown:
+                Image(systemName: "questionmark.circle").resizable()
+            }
+        }
+        .scaledToFit()
+        .accessibilityHidden(true)
     }
 
-    private var assetName: String {
-        switch snapshot.glyph {
-        case .electricUnicycle:
-            "EucGlyph"
-        case .floatwheelAtom:
-            "AtomGlyph"
-        }
-    }
 }
 
 public enum PevLiveActivityPalette {

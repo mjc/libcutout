@@ -61,6 +61,7 @@ mod capture_submission;
 pub use capture_submission::*;
 mod charging;
 pub use charging::*;
+mod device_vehicle;
 mod migrations;
 mod ride_write;
 mod service;
@@ -5298,6 +5299,7 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    DeviceVehicle(device_vehicle::Command),
     CaptureSubmission(capture_submission::Command),
     Charging(charging::Command),
     BeginLiveCapture {
