@@ -306,6 +306,8 @@ the current USB serial or wireless endpoint explicitly. With multiple transports
 the runner refuses to guess. It checks the physical phone's serial, model, API
 and ABI before building, before installing, and before testing. It will not fall
 back to another device if the selected phone is unauthorized, offline or absent.
+Set `CUTOUT_ANDROID_SERIAL` to the known hardware serial to also reject an IP
+address that has been reassigned to another phone before the run begins.
 For a previously authorized TCP connection, reconnect with
 `devenv shell -- adb connect ADDRESS:5555`. Rebooting the phone can require
 re-enabling TCP debugging over USB.

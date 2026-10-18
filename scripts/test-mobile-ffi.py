@@ -75,6 +75,13 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def validate_device(device: dict[str, str], expected_serial: str | None) -> None:
+    if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 26 or device["emulator"] == "1":
+        raise ValueError(f"Expected a physical ARM64 Android 26+ phone: {device}")
+    if expected_serial and device["serial"] != expected_serial:
+        raise ValueError("Physical serial does not match CUTOUT_ANDROID_SERIAL; nothing installed")
+
+
 class Run:
     def __init__(self, mode: str):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -83,7 +90,8 @@ class Run:
         self.count = 0
         self.env = dict(os.environ, CARGO_BUILD_JOBS="1")
         self.receipt = {"mode": mode, "status": "running", "logs": str(self.logs),
-                        "rust_jobs": 1, "gradle_workers": 2}
+                        "rust_jobs": 1, "gradle_workers": 2, "build_status": "not_run",
+                        "install_status": "not_run", "test_status": "not_run"}
         self.selector = ""
 
     def command(self, args: list[str], name: str, timeout: int = 1800) -> str:
@@ -117,6 +125,7 @@ class Run:
         return library
 
     def host(self):
+        self.receipt["build_status"] = "running"
         library = self.prepare(False)
         classpath = os.pathsep.join([self.env["JNA_JAR"], self.env["KOTLIN_COROUTINES_JAR"]])
         jar = TARGET / "uniffi-smoke/kotlin-smoke.jar"
@@ -124,11 +133,15 @@ class Run:
                       str(ROOT / "tests/mobile-ffi/shared/MobileFfiSmoke.kt"),
                       str(ROOT / "tests/mobile-ffi/kotlin-smoke.kt"), "-cp", classpath,
                       "-include-runtime", "-d", str(jar)], "compile-host")
+        self.receipt["build_status"] = "passed"
+        self.receipt["test_status"] = "running"
         print(self.command(["java", f"-Djava.library.path={library.parent}",
                             f"-Djna.library.path={library.parent}", "-cp", str(jar) + os.pathsep + classpath,
                             "Kotlin_smokeKt"], "host-tests"), end="")
+        self.receipt["test_status"] = "passed"
 
     def build(self) -> list[Path]:
+        self.receipt["build_status"] = "running"
         library = self.prepare(True)
         link = TARGET / "android-tests/jniLibs/arm64-v8a" / library.name
         link.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +169,7 @@ class Run:
             if not natives or any(not n.startswith("lib/arm64-v8a/") for n in natives):
                 raise ValueError(f"Unexpected APK native ABIs: {natives}")
             self.receipt["packaged_libraries"] = {n: hashlib.sha256(apk.read(n)).hexdigest() for n in natives}
+        self.receipt["build_status"] = "passed"
         return apks
 
     def identity(self) -> dict[str, str]:
@@ -163,21 +177,22 @@ class Run:
                   "abi": "ro.product.cpu.abi", "emulator": "ro.kernel.qemu"}
         return {key: self.adb(["shell", "getprop", prop], key).strip() for key, prop in fields.items()}
 
-    def device(self, selector: str | None):
+    def device(self, selector: str | None, expected_serial: str | None):
         output = self.command(["adb", "devices", "-l"], "adb-devices", 30)
         self.selector = select_device(output, selector)
         device = self.identity()
-        if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 26 or device["emulator"] == "1":
-            raise ValueError(f"Expected a physical ARM64 Android 26+ phone: {device}")
+        validate_device(device, expected_serial)
         self.receipt["device"] = dict(device, transport=self.selector)
         apks = self.build()
         if self.identity() != device:
             raise ValueError("Device identity changed during build; nothing installed")
+        self.receipt["install_status"] = "running"
         for apk in apks:
             self.adb(["install", "-r", "-t", str(apk)], "install", 180)
-        self.receipt["install"] = "passed"
+        self.receipt["install_status"] = "passed"
         if self.identity() != device:
             raise ValueError("Device identity changed before instrumentation")
+        self.receipt["test_status"] = "running"
         output = self.adb(["shell", "am", "instrument", "-w", "-r", RUNNER], "instrumentation", 180)
         # Keep the raw protocol even when the runner exits zero after a test crash.
         (self.logs / "instrumentation.log").write_text(output)
@@ -194,6 +209,7 @@ class Run:
         self.receipt["tests"] = results
         if any(t["failure"] for t in results):
             raise ValueError("Android instrumentation assertions failed; inspect junit.xml")
+        self.receipt["test_status"] = "passed"
         print(f"PASS {len(results)} Android tests over {self.selector}", flush=True)
 
 
@@ -201,6 +217,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("host", "build", "device"))
     parser.add_argument("--device", default=os.environ.get("CUTOUT_ANDROID_DEVICE"))
+    parser.add_argument("--expected-serial", default=os.environ.get("CUTOUT_ANDROID_SERIAL"))
     args = parser.parse_args()
     environment_root = os.environ.get("DEVENV_ROOT")
     if not environment_root or Path(environment_root).resolve() != ROOT:
@@ -220,7 +237,7 @@ def main() -> int:
             run.receipt["tools"] = {tool: run.command([tool, "--version"], tool).strip()
                                     for tool in ("rustc", "java", "gradle")}
             if args.mode == "device":
-                run.device(args.device)
+                run.device(args.device, args.expected_serial)
             elif args.mode == "build":
                 run.build()
             else:
@@ -230,6 +247,9 @@ def main() -> int:
         except Exception as error:
             run.receipt["status"] = "failed"
             run.receipt["error"] = str(error)
+            for field in ("build_status", "install_status", "test_status"):
+                if run.receipt[field] == "running":
+                    run.receipt[field] = "failed"
             (run.logs / "failure.log").write_text(traceback.format_exc())
             print(error, file=sys.stderr)
             return 1

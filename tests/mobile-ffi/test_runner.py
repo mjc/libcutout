@@ -22,6 +22,12 @@ def status(name, code=0, failure=""):
 
 
 class DeviceSelectionTests(unittest.TestCase):
+    def test_network_endpoint_cannot_substitute_a_different_physical_serial(self):
+        device = {"serial": "OTHER", "abi": "arm64-v8a", "api": "35", "emulator": ""}
+        with self.assertRaisesRegex(ValueError, "Physical serial"):
+            runner.validate_device(device, "EXPECTED")
+        runner.validate_device(device, "OTHER")
+
     def test_explicit_network_transport_is_not_replaced_by_usb(self):
         devices = "List of devices attached\nUSB device usb:1\n192.0.2.1:5555 device\n"
         self.assertEqual(runner.select_device(devices, "192.0.2.1:5555"), "192.0.2.1:5555")
