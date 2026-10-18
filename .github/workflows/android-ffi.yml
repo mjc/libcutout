@@ -3,7 +3,7 @@ name: Android FFI
 on:
   workflow_dispatch:
   pull_request:
-    paths:
+    paths: &android-paths
       - 'crates/**'
       - 'Cargo.*'
       - 'rust-toolchain.toml'
@@ -13,14 +13,7 @@ on:
       - '.github/workflows/android-ffi.yml'
   push:
     branches: [main]
-    paths:
-      - 'crates/**'
-      - 'Cargo.*'
-      - 'rust-toolchain.toml'
-      - 'devenv.*'
-      - 'tests/mobile-ffi/**'
-      - 'scripts/test-mobile-ffi.py'
-      - '.github/workflows/android-ffi.yml'
+    paths: *android-paths
 
 permissions:
   contents: read
@@ -48,8 +41,9 @@ jobs:
           test "$(uname -m)" = arm64
           # Reuse the repository's nixpkgs pin for the CLI as well as its tools.
           revision=$(python3 -c 'import json; print(json.load(open("devenv.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
-          nix run "github:NixOS/nixpkgs/$revision#devenv" -- --no-tui --max-jobs 1 --cores 2 tasks run test:kotlin-bindings-smoke --show-output
-          nix run "github:NixOS/nixpkgs/$revision#devenv" -- --no-tui --max-jobs 1 --cores 2 tasks run build:android-tests --show-output
+          for task in test:kotlin-bindings-smoke build:android-tests; do
+            nix run "github:NixOS/nixpkgs/$revision#devenv" -- --no-tui --max-jobs 1 --cores 2 tasks run "$task" --show-output
+          done
       - name: Keep test and build receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
