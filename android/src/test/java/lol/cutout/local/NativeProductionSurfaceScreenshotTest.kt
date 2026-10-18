@@ -45,6 +45,11 @@ class NativeProductionSurfaceScreenshotTest {
             }
             check(navigation.performClick())
             NativeSurfaceCapture.save(activity.window.decorView, "app-ride-dark")
+            val tune = descendants(activity.window.decorView).single {
+                it.isClickable && it.contentDescription?.toString() == activity.getString(R.string.configuration)
+            }
+            check(tune.performClick())
+            NativeSurfaceCapture.save(activity.window.decorView, "app-settings-dark")
         } finally {
             controller.pause().stop().destroy()
         }
@@ -126,11 +131,25 @@ private object NativeSurfaceCapture {
             check(visibleSamples > 32) { "$name rendered a blank surface on its first layout" }
             val output = File(System.getProperty("cutout.ui.artifacts") ?: "build/test-artifacts/ui")
             check(output.isDirectory || output.mkdirs()) { "Could not create UI artifact directory: $output" }
+            File(output, "$name.layout.txt").writeText(layoutDescription(view))
             File(output, "$name.png").outputStream().use { stream ->
                 check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) { "Could not encode $name.png" }
             }
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    private fun layoutDescription(view: View, depth: Int = 0): String = buildString {
+        append("  ".repeat(depth))
+        append("${view.javaClass.simpleName} tag=${view.tag} bounds=${view.left},${view.top},${view.right},${view.bottom}")
+        append(" measured=${view.measuredWidth}x${view.measuredHeight} visibility=${view.visibility} alpha=${view.alpha}")
+        if (view is android.widget.TextView) {
+            append(" text=${view.text} size=${view.textSize} color=${view.currentTextColor} gravity=${view.gravity}")
+        }
+        appendLine()
+        if (view is android.view.ViewGroup) {
+            for (index in 0 until view.childCount) append(layoutDescription(view.getChildAt(index), depth + 1))
         }
     }
 }

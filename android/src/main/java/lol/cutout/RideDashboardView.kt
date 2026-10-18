@@ -365,9 +365,10 @@ class RideDashboardView(
     }
 
     private fun createEuc(root: LinearLayout, landscape: Boolean) {
-        val speed = speedReading()
+        val contentWidth = (geometryWidth - ui.dp(48)).coerceAtLeast(ui.dp(160))
         if (landscape) {
             val row = ui.row().apply { gravity = Gravity.CENTER }
+            val speed = speedReading((contentWidth * 0.22f).toInt() - ui.dp(44))
             row.addView(speed, LinearLayout.LayoutParams(0, -1, 1f))
             row.addView(createGauge(), LinearLayout.LayoutParams(0, -1, 1f))
             val side = ui.column()
@@ -377,8 +378,10 @@ class RideDashboardView(
             root.addView(row, LinearLayout.LayoutParams(-1, 0, 1f))
         } else {
             val primary = ui.column().apply { gravity = Gravity.CENTER }
-            primary.addView(speed, LinearLayout.LayoutParams(-1, 0, 0.56f))
-            primary.addView(createGauge(), LinearLayout.LayoutParams(-1, 0, 0.44f))
+            val speed = speedReading((contentWidth * 0.44f).toInt() - ui.dp(44))
+            primary.addView(speed, LinearLayout.LayoutParams(-1, 0, 0.42f))
+            primary.addView(ui.space(4))
+            primary.addView(createGauge(), LinearLayout.LayoutParams(-1, 0, 0.58f))
             root.addView(primary, LinearLayout.LayoutParams(-1, 0, 1f))
             root.addView(ui.divider()); addEnergyRow(root); root.addView(ui.divider()); addSecondary(root)
         }
@@ -412,11 +415,11 @@ class RideDashboardView(
         else { root.addView(hero, LinearLayout.LayoutParams(-1, 0, 0.7f)); root.addView(metricGrid(), LinearLayout.LayoutParams(-1, 0, 1.3f)) }
     }
 
-    private fun speedReading(): LinearLayout = ui.row().apply {
+    private fun speedReading(maxSpeedWidth: Int = ui.dp(280)): LinearLayout = ui.row().apply {
         gravity = Gravity.CENTER
         val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
-            setSingleLine(true); maxLines = 1; maxWidth = ui.dp(280)
+            setSingleLine(true); maxLines = 1; maxWidth = maxSpeedWidth.coerceAtLeast(ui.dp(80))
             setAutoSizeTextTypeUniformWithConfiguration(28, 170, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
@@ -436,6 +439,7 @@ class RideDashboardView(
             tag = "euc.ride.headroom.label"
             setAutoSizeTextTypeUniformWithConfiguration(14, 24, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }.also { column.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+        column.addView(ui.space(12))
         gaugeView = HeadroomGauge(ui).apply {
             contentDescription = context.getString(R.string.pwm_headroom)
             tag = "euc.ride.headroom"
@@ -445,7 +449,7 @@ class RideDashboardView(
     }
 
     private fun addEnergyRow(parent: LinearLayout) {
-        val row = ui.row().apply { setPadding(0, ui.dp(12), 0, ui.dp(12)) }
+        val row = ui.row().apply { setPadding(0, ui.dp(14), 0, ui.dp(14)) }
         addInstrument(row, "range", context.getString(R.string.range), "—", context.getString(R.string.distance_unit), 52f, 1f)
         val batteryCell = ui.column().apply {
             gravity = Gravity.END; isClickable = true; isFocusable = true; contentDescription = context.getString(R.string.battery)
@@ -464,9 +468,9 @@ class RideDashboardView(
 
     private fun addSecondary(parent: LinearLayout) {
         val row = ui.row().apply { gravity = Gravity.CENTER_VERTICAL }
-        addInstrument(row, "voltage", context.getString(R.string.voltage), "—", "", 21f, 1f)
-        addInstrument(row, "power", context.getString(R.string.power), "—", "", 21f, 1f, Gravity.CENTER_HORIZONTAL)
-        addInstrument(row, "temperature", context.getString(R.string.temperature), "—", "", 21f, 1f, Gravity.END)
+        addInstrument(row, "voltage", context.getString(R.string.voltage), "—", "", 23f, 1f)
+        addInstrument(row, "power", context.getString(R.string.power), "—", "", 23f, 1f, Gravity.CENTER_HORIZONTAL)
+        addInstrument(row, "temperature", context.getString(R.string.temperature), "—", "", 23f, 1f, Gravity.END)
         parent.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
 
@@ -607,8 +611,12 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
             return
         }
         // Match Swift's 0..100 semicircle while fitting the fixed area at large font scales.
-        val line = ui.dp(9).toFloat()
-        val diameter = minOf(width - line * 2, (height - ui.dp(42)) * 2f).coerceAtLeast(0f)
+        val line = ui.dp(10).toFloat()
+        // Swift sizes the arc at min(360pt, availableWidth - 12pt,
+        // 2 * (gaugeHeight - 28pt)); its surrounding title and endpoint row
+        // consume the remaining 60pt in the parent gauge geometry.
+        val diameter = (minOf(ui.dp(360).toFloat(), width.toFloat(), (height - ui.dp(28)) * 2f) - ui.dp(12))
+            .coerceAtLeast(0f)
         if (diameter <= line * 2) return
         val centerY = height - ui.dp(24).toFloat()
         val rect = RectF((width - diameter) / 2f, centerY - diameter / 2f, (width + diameter) / 2f, centerY + diameter / 2f)

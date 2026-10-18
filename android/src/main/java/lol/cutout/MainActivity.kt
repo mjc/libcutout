@@ -69,7 +69,9 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER; minimumHeight = ui.dp(58)
                 addView(ui.icon(symbol, size = 25))
                 addView(ui.space(3))
-                addView(ui.text(getString(id), 11f, true).apply { setSingleLine(true) })
+                addView(ui.text(getString(id), 11f, true).apply {
+                    setSingleLine(true); gravity = Gravity.CENTER_HORIZONTAL
+                })
                 isClickable = true; isFocusable = true; contentDescription = getString(id)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 setOnClickListener { showPage(id) }
