@@ -1181,6 +1181,71 @@ mod tests {
     }
 
     #[test]
+    fn controller_drivetrain_newer_durable_save_wins_over_older_same_target_restore() {
+        use cutout_core::{
+            VescControllerId, VescDrivetrainProfile, VescDrivetrainRevision, VescDrivetrainTarget,
+        };
+        for target in [
+            VescDrivetrainTarget::LOCAL,
+            VescDrivetrainTarget::can(VescControllerId::new(7), [1; 12]).unwrap(),
+        ] {
+            let mut owner = DeviceConnectionSession::default();
+            let token = begin(&mut owner, "scooter");
+            identify_vesc(&mut owner, &token);
+            let _ = drivetrain_tick(&mut owner, &token, 3_000);
+            let older = VescDrivetrainProfile::for_target(
+                target,
+                cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap(),
+                VescDrivetrainRevision::new(1).unwrap(),
+            );
+            let newer = VescDrivetrainProfile::for_target(
+                target,
+                cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap(),
+                VescDrivetrainRevision::new(2).unwrap(),
+            );
+            let pending = owner
+                .prepare_vesc_controller_drivetrain_selection(&token, target, newer.value())
+                .unwrap();
+            assert!(owner.restore_vesc_controller_drivetrain(&token, older));
+            assert!(owner.apply_vesc_drivetrain_selection(pending, newer));
+            assert_eq!(
+                owner.user_vesc_controller_drivetrain(&token, target),
+                Some(newer)
+            );
+        }
+    }
+
+    #[test]
+    fn controller_drivetrain_pending_save_cannot_override_a_restored_other_association() {
+        use cutout_core::{
+            VescControllerId, VescDrivetrainProfile, VescDrivetrainRevision, VescDrivetrainTarget,
+        };
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "scooter");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let old_target = VescDrivetrainTarget::can(VescControllerId::new(7), [1; 12]).unwrap();
+        let replacement = VescDrivetrainTarget::can(VescControllerId::new(7), [2; 12]).unwrap();
+        let value = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let pending = owner
+            .prepare_vesc_controller_drivetrain_selection(&token, old_target, value)
+            .unwrap();
+        let restored = VescDrivetrainProfile::for_target(
+            replacement,
+            value,
+            VescDrivetrainRevision::new(1).unwrap(),
+        );
+        assert!(owner.restore_vesc_controller_drivetrain(&token, restored));
+        let old_receipt = VescDrivetrainProfile::for_target(
+            old_target,
+            value,
+            VescDrivetrainRevision::new(99).unwrap(),
+        );
+        assert!(!owner.apply_vesc_drivetrain_selection(pending, old_receipt));
+        assert_eq!(owner.configured_vesc_drivetrains(&token), vec![restored]);
+    }
+
+    #[test]
     fn controller_drivetrain_replacement_fences_pending_edits_on_the_same_can_route() {
         use cutout_core::{
             VescControllerId, VescDrivetrainProfile, VescDrivetrainRevision, VescDrivetrainTarget,
