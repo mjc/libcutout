@@ -71,6 +71,11 @@ fun checkNativeGattQueue() {
     check("write after subscription" !in started)
     check("write after subscription" to NativeReceipt.CANCELLED in receipts)
     check(failures == 5)
+    val invalidNativeState = GattOperationQueue({ true }, timer, { failures++ })
+    check(!invalidNativeState.enqueue(GattOperationQueue.Operation("native state invalid",
+        { throw IllegalStateException() }, { receipts += "native state invalid" to it })))
+    check("native state invalid" to NativeReceipt.REJECTED in receipts)
+    check(invalidNativeState.isIdle && failures == 6)
 
     val batch = mutableListOf<NativeReceipt>()
     val receipt = NativeWriteReceipt(2) { batch += it }

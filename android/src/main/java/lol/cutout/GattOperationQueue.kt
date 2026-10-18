@@ -90,7 +90,7 @@ class GattOperationQueue(
             if (!isCurrent()) { close(); return }
             val operation = pending.removeFirst()
             active = operation
-            val result = try { operation.start() } catch (_: SecurityException) { NativeStart.REJECTED }
+            val result = try { operation.start() } catch (_: RuntimeException) { NativeStart.REJECTED }
             when (result) {
                 NativeStart.REJECTED -> {
                     active = null

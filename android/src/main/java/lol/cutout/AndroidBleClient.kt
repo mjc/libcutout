@@ -368,9 +368,12 @@ class AndroidBleClient(private val context: Context) {
             state.connectionAttemptSnapshot().deadlineMs?.let { deadline ->
                 cancelDeadline = timers.after((deadline - minOf(deadline, now())).toLong()) {
                     if (current()) {
-                        state.expireConnectionAttempt(token, now())
-                        session.identify(true)
-                        session.publish()
+                        if (view.phase == NativePhase.CONNECTING) fail("Bluetooth connection timed out")
+                        else {
+                            state.expireConnectionAttempt(token, now())
+                            session.identify(true)
+                            session.publish()
+                        }
                     }
                 }
             }
