@@ -389,9 +389,11 @@ impl VescReadOnlySession {
         self.host.protocol_session().application_query_deadline()
     }
     pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        let local_speed_basis = self.host.protocol_session().user_drivetrain_is_active();
         self.host
             .protocol_session_mut()
             .advance_application_query_deadlines(at);
+        self.invalidate_changed_speed_basis(local_speed_basis);
     }
     pub(crate) fn application_query_is_current(
         &self,
@@ -453,7 +455,11 @@ impl VescReadOnlySession {
     pub fn ingest(&mut self, input: &SessionInputDto) {
         let local_speed_basis = self.host.protocol_session().user_drivetrain_is_active();
         ingest_timestamped_command(&mut self.host, input);
-        if local_speed_basis && !self.host.protocol_session().user_drivetrain_is_active() {
+        self.invalidate_changed_speed_basis(local_speed_basis);
+    }
+
+    fn invalidate_changed_speed_basis(&mut self, was_local: bool) {
+        if was_local != self.host.protocol_session().user_drivetrain_is_active() {
             self.host.invalidate_calculated_speed();
         }
     }
@@ -1244,6 +1250,104 @@ mod tests {
             SessionOutputDto::Transport(TransportActionDto::Write { bytes, .. })
                 if bytes == b"E"
         )));
+    }
+
+    #[test]
+    fn activating_local_geometry_invalidates_pending_controller_speed_until_real_values() {
+        assert_local_geometry_activation(false);
+    }
+
+    #[test]
+    fn deadline_only_activation_invalidates_pending_controller_speed_until_real_values() {
+        assert_local_geometry_activation(true);
+    }
+
+    fn assert_local_geometry_activation(deadline_only: bool) {
+        let reported = cutout_core::VescDrivetrain::parse("100", "7", "1").unwrap();
+        let mut session = super::VescReadOnlySession::with_board_profile(
+            crate::VescBoardProfile::from_speed_geometry(reported.geometry()),
+        );
+        let local = cutout_core::VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        session.configure_user_drivetrain(local);
+        session.ingest(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(1),
+            max_write_len: None,
+        });
+        session.ingest(&SessionInputDto::CommandAt {
+            command: DeviceCommandDto::RequestTelemetry,
+            monotonic_ms: ms(1),
+        });
+        let query = session
+            .host
+            .drain_outputs()
+            .into_iter()
+            .find_map(|output| match output {
+                cutout_core::SessionOutput::Transport(cutout_core::TransportAction::Write {
+                    bytes,
+                    ..
+                }) => bytes.application_query(),
+                _ => None,
+            })
+            .expect("startup owns the bounded application query");
+        assert!(session.record_application_query_transport(
+            query.id,
+            0,
+            1,
+            cutout_core::ApplicationQueryTransportStatus::Submitted,
+            MonotonicTimestamp::new(1),
+        ));
+        let values = vec![
+            2, 23, 50, 0, 0, 1, 143, 1, 184, 1, 134, 0, 0, 8, 52, 0, 0, 4, 216, 0, 0, 39, 16, 1,
+            242, 169, 202, 3,
+        ];
+        session.ingest(&SessionInputDto::Notification {
+            channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+            bytes: values.clone(),
+            monotonic_ms: ms(100),
+        });
+        let pending = session.current_snapshot();
+        assert_eq!(
+            session.application_discovery(),
+            crate::VescApplicationDiscovery::Pending
+        );
+        assert!(pending.speed.is_some());
+        assert_eq!(pending.speed_observed_at_ms, Some(ms(100)));
+        assert_eq!(pending.voltage.unwrap().value, 49_800);
+        if deadline_only {
+            session.advance_application_query_deadlines(MonotonicTimestamp::new(3_000));
+        } else {
+            session.ingest(&SessionInputDto::Tick {
+                monotonic_ms: ms(3_000),
+            });
+        }
+        assert_eq!(
+            session.application_discovery(),
+            crate::VescApplicationDiscovery::Absent
+        );
+        let activated = session.current_snapshot();
+        assert_eq!(activated.speed, None);
+        assert_eq!(activated.speed_observed_at_ms, None);
+        assert_eq!(activated.at_ms, pending.at_ms);
+        assert_eq!(activated.voltage, pending.voltage);
+        assert_eq!(
+            activated.voltage_observed_at_ms,
+            pending.voltage_observed_at_ms
+        );
+        assert_eq!(activated.motor_current, pending.motor_current);
+        assert_eq!(activated.battery_current, pending.battery_current);
+        assert_eq!(
+            activated.battery_current_observed_at_ms,
+            pending.battery_current_observed_at_ms
+        );
+        session.ingest(&SessionInputDto::Notification {
+            channel: VESC_NOTIFY_CHANNEL.as_bytes(),
+            bytes: values,
+            monotonic_ms: ms(3_001),
+        });
+        let measured = session.current_snapshot();
+        assert_eq!(measured.speed.unwrap().value, 2_695);
+        assert_eq!(measured.speed_observed_at_ms, Some(ms(3_001)));
+        assert_ne!(measured.speed, pending.speed);
     }
 
     #[test]

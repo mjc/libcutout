@@ -231,6 +231,68 @@ impl VescDrivetrain {
     }
 }
 
+/// Persisted identity of a device's retained user drivetrain configuration.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VescDrivetrainRevision(u64);
+
+impl VescDrivetrainRevision {
+    /// Checks the nonzero revision identity supplied by a durable owner.
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
+        if value == 0 { None } else { Some(Self(value)) }
+    }
+    /// Returns the persisted revision identity.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+    /// Advances the revision without wrapping an exhausted identity.
+    #[must_use]
+    pub const fn checked_next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(value) => Self::new(value),
+            None => None,
+        }
+    }
+}
+
+/// Evidence behind a saved drivetrain profile; never a controller verification claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VescDrivetrainSource {
+    /// An explicit local user configuration, independent of device-reported geometry.
+    UserConfigured,
+}
+
+/// A checked local drivetrain together with its committed revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VescDrivetrainProfile {
+    value: VescDrivetrain,
+    revision: VescDrivetrainRevision,
+}
+impl VescDrivetrainProfile {
+    /// Retains the durable owner's revision without promoting user input to device proof.
+    #[must_use]
+    pub const fn user_configured(value: VescDrivetrain, revision: VescDrivetrainRevision) -> Self {
+        Self { value, revision }
+    }
+    /// Canonical geometry and original editable diameter.
+    #[must_use]
+    pub const fn value(self) -> VescDrivetrain {
+        self.value
+    }
+    /// Revision committed for this configuration by its durable device owner.
+    #[must_use]
+    pub const fn revision(self) -> VescDrivetrainRevision {
+        self.revision
+    }
+    /// Source of these saved values, separate from protocol and capability evidence.
+    #[must_use]
+    pub const fn source(self) -> VescDrivetrainSource {
+        VescDrivetrainSource::UserConfigured
+    }
+}
+
 fn parse_thousandths(text: &str) -> Option<u32> {
     let text = text.trim();
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
@@ -267,6 +329,30 @@ fn format_thousandths(value: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_drivetrain_revision_is_nonzero_and_never_wraps() {
+        assert_eq!(VescDrivetrainRevision::new(0), None);
+        assert_eq!(
+            VescDrivetrainRevision::new(1)
+                .unwrap()
+                .checked_next()
+                .unwrap()
+                .get(),
+            2
+        );
+        assert_eq!(
+            VescDrivetrainRevision::new(u64::MAX)
+                .unwrap()
+                .checked_next(),
+            None
+        );
+        let value = VescDrivetrain::parse("90", "7", "2.5").unwrap();
+        let profile =
+            VescDrivetrainProfile::user_configured(value, VescDrivetrainRevision::new(1).unwrap());
+        assert_eq!(profile.value(), value);
+        assert_eq!(profile.source(), VescDrivetrainSource::UserConfigured);
+    }
 
     #[test]
     fn user_drivetrain_parses_fractional_geometry_without_rounding() {

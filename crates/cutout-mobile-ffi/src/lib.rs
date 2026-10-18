@@ -5633,6 +5633,11 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported or calculated speed.
     pub speed: Option<SpeedReading>,
 
+    /// Effective local VESC geometry copied atomically with this snapshot.
+    /// Missing context in older captures remains unknown, never today's profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vesc_drivetrain_context: Option<MobileVescDrivetrainContextDto>,
+
     /// Conservative operating state inferred from currently available telemetry.
     pub operating_state: RideOperatingState,
 
@@ -18948,6 +18953,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .voltage_observed_at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
+            vesc_drivetrain_context: None,
             operating_state,
             vesc_operating_mode: snapshot.operating_mode.map(Into::into),
             vesc_warning: snapshot.ride_warning.map(Into::into),
@@ -26413,6 +26419,7 @@ mod tests {
     ) -> MobileTelemetrySnapshotDto {
         MobileTelemetrySnapshotDto {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+            vesc_drivetrain_context: None,
             speed_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             battery_current_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             voltage_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 51;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 52;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -74,6 +74,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         48 => migrate_v48_to_v49(connection)?,
         49 => migrate_v49_to_v50(connection)?,
         50 => migrate_v50_to_v51(connection)?,
+        51 => migrate_v51_to_v52(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -125,6 +126,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 50 {
             migrate_v50_to_v51(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 51 {
+            migrate_v51_to_v52(connection)?;
         }
     }
     Ok(())
@@ -1379,7 +1383,18 @@ fn migrate_v49_to_v50(connection: &mut Connection) -> Result<(), StorageError> {
 
 fn migrate_v50_to_v51(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    transaction.execute_batch(super::device_drivetrain::SCHEMA)?;
+    transaction.execute_batch(super::device_drivetrain::SCHEMA_V51)?;
+    transaction.execute_batch(&schema_pragmas(51))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v51_to_v52(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if !table_has_column(&transaction, "device_vesc_drivetrains", "revision")? {
+        transaction.execute_batch("ALTER TABLE device_vesc_drivetrains ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0);")?;
+    }
+    super::device_drivetrain::verify_schema(&transaction)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -2183,6 +2198,99 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drivetrain_revision_upgrade_preserves_existing_receipts_from_older_version_paths() {
+        for version in [48, 49, 50, 51] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO device_vesc_drivetrains
+                     (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision)
+                     VALUES ('controller-a',90000,7,2500,17,7)",
+                    [],
+                )
+                .unwrap();
+            // Migration fixtures and compatible newer table shapes may retain a valid
+            // revision column while their overall database version is still older.
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+
+            migrate(&mut connection).unwrap();
+
+            verify_current_schema(&connection).unwrap();
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision
+                         FROM device_vesc_drivetrains WHERE platform_identifier='controller-a'",
+                        [],
+                        |row| {
+                            Ok((
+                                row.get::<_, u32>(0)?,
+                                row.get::<_, u8>(1)?,
+                                row.get::<_, u32>(2)?,
+                                row.get::<_, u64>(3)?,
+                                row.get::<_, u64>(4)?,
+                            ))
+                        },
+                    )
+                    .unwrap(),
+                (90_000, 7, 2_500, 17, 7)
+            );
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                CURRENT_SCHEMA_VERSION
+            );
+        }
+    }
+
+    #[test]
+    fn drivetrain_revision_upgrade_rejects_malformed_existing_column_without_advancing() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch("DROP TABLE device_vesc_drivetrains;")
+            .unwrap();
+        connection
+            .execute_batch(super::super::device_drivetrain::SCHEMA_V51)
+            .unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE device_vesc_drivetrains ADD COLUMN revision TEXT NOT NULL DEFAULT '7';
+                 INSERT INTO device_vesc_drivetrains
+                 (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms)
+                 VALUES ('controller-a',90000,7,2500,17);
+                 PRAGMA user_version=51;",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            migrate(&mut connection),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            51
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision FROM device_vesc_drivetrains WHERE platform_identifier='controller-a'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "7"
+        );
+    }
 
     #[test]
     fn diagnostic_consent_migration_rejects_unowned_database_without_mutation() {

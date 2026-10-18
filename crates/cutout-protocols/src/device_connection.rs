@@ -35,6 +35,7 @@ struct ValidationGrant {
 pub struct VescDrivetrainSelection {
     token: ConnectionAttemptToken,
     drivetrain: cutout_core::VescDrivetrain,
+    previous_profile: Option<cutout_core::VescDrivetrainProfile>,
 }
 impl VescDrivetrainSelection {
     /// Device receiving this saved local configuration.
@@ -105,6 +106,8 @@ pub struct DeviceConnectionStep {
     pub result: DeviceSessionStep,
     /// Latest normalized telemetry.
     pub telemetry: TelemetrySnapshotDto,
+    /// Effective user geometry retained atomically with this step's telemetry.
+    pub vesc_drivetrain_context: Option<cutout_core::VescDrivetrainProfile>,
     /// Accumulated parser diagnostics.
     pub diagnostics: ParserDiagnosticsDto,
 }
@@ -122,7 +125,7 @@ pub struct DeviceConnectionSession {
     device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
-    user_vesc_drivetrain: Option<cutout_core::VescDrivetrain>,
+    user_vesc_drivetrain: Option<cutout_core::VescDrivetrainProfile>,
     user_vehicle_classification: Option<cutout_core::VehicleClassification>,
     validation_grant: Option<ValidationGrant>,
     setting_operations:
@@ -448,6 +451,7 @@ impl DeviceConnectionSession {
         Some(VescDrivetrainSelection {
             token: token.clone(),
             drivetrain,
+            previous_profile: self.user_vesc_drivetrain,
         })
     }
 
@@ -456,14 +460,29 @@ impl DeviceConnectionSession {
         clippy::needless_pass_by_value,
         reason = "consumes the prepared selection so it cannot be reused"
     )]
-    pub fn apply_vesc_drivetrain_selection(&mut self, selection: VescDrivetrainSelection) -> bool {
-        if self
-            .prepare_vesc_drivetrain_selection(&selection.token, selection.drivetrain)
-            .is_none()
+    pub fn apply_vesc_drivetrain_selection(
+        &mut self,
+        selection: VescDrivetrainSelection,
+        profile: cutout_core::VescDrivetrainProfile,
+    ) -> bool {
+        if profile.value() != selection.drivetrain
+            || self
+                .prepare_vesc_drivetrain_selection(&selection.token, selection.drivetrain)
+                .is_none()
         {
             return false;
         }
-        self.install_user_drivetrain(selection.drivetrain);
+        if self.user_vesc_drivetrain == Some(profile) {
+            return true;
+        }
+        if self.user_vesc_drivetrain != selection.previous_profile
+            || self
+                .user_vesc_drivetrain
+                .is_some_and(|current| profile.revision() <= current.revision())
+        {
+            return false;
+        }
+        self.install_user_drivetrain(profile);
         true
     }
 
@@ -472,7 +491,7 @@ impl DeviceConnectionSession {
     pub fn user_vesc_drivetrain(
         &self,
         token: &ConnectionAttemptToken,
-    ) -> Option<cutout_core::VescDrivetrain> {
+    ) -> Option<cutout_core::VescDrivetrainProfile> {
         self.state
             .connection
             .is_current(token)
@@ -484,7 +503,7 @@ impl DeviceConnectionSession {
     pub fn restore_vesc_drivetrain(
         &mut self,
         token: &ConnectionAttemptToken,
-        drivetrain: cutout_core::VescDrivetrain,
+        profile: cutout_core::VescDrivetrainProfile,
     ) -> bool {
         if !self.state.connection.is_current(token) || self.user_vesc_drivetrain.is_some() {
             return false;
@@ -503,15 +522,44 @@ impl DeviceConnectionSession {
         }) {
             return false;
         }
-        self.install_user_drivetrain(drivetrain);
+        self.install_user_drivetrain(profile);
         true
     }
 
-    fn install_user_drivetrain(&mut self, drivetrain: cutout_core::VescDrivetrain) {
-        self.user_vesc_drivetrain = Some(drivetrain);
-        if let Some(device) = self.device.as_mut() {
-            device.configure_user_drivetrain(drivetrain);
+    fn install_user_drivetrain(&mut self, profile: cutout_core::VescDrivetrainProfile) {
+        let value_changed = self
+            .user_vesc_drivetrain
+            .map(cutout_core::VescDrivetrainProfile::value)
+            != Some(profile.value());
+        self.user_vesc_drivetrain = Some(profile);
+        if value_changed && let Some(device) = self.device.as_mut() {
+            device.configure_user_drivetrain(profile.value());
         }
+    }
+
+    fn effective_vesc_drivetrain_context(&self) -> Option<cutout_core::VescDrivetrainProfile> {
+        let token = self.state.connection.snapshot().token.as_ref()?;
+        let identity = self.device.as_ref()?.identity();
+        (self.state.connection.is_verified(token)
+            && identity.protocol == ProtocolFamily::Vesc
+            && identity.vesc_application == Some(crate::VescApplicationDiscovery::Absent))
+        .then_some(self.user_vesc_drivetrain)
+        .flatten()
+    }
+
+    /// Effective user geometry for this exact verified standard VESC attempt.
+    ///
+    /// Retained profiles are not effective during application discovery or after Refloat is
+    /// identified. Stale callers cannot obtain the replacement attempt's context.
+    #[must_use]
+    pub fn vesc_drivetrain_context(
+        &self,
+        token: &ConnectionAttemptToken,
+    ) -> Option<cutout_core::VescDrivetrainProfile> {
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        self.effective_vesc_drivetrain_context()
     }
 
     /// Supplies saved controller geometry for this pending attempt without asserting identity.
@@ -746,7 +794,7 @@ impl DeviceConnectionSession {
             DeviceSession::from_detection_with_vesc_profile(&resolution, self.vesc_board_profile)
         {
             if let Some(drivetrain) = self.user_vesc_drivetrain {
-                device.configure_user_drivetrain(drivetrain);
+                device.configure_user_drivetrain(drivetrain.value());
             }
             if let Some(classification) = self.user_vehicle_classification {
                 let _ = device.configure_vehicle_kind(classification.kind());
@@ -871,6 +919,7 @@ impl DeviceConnectionSession {
             session: self.snapshot(),
             result,
             telemetry,
+            vesc_drivetrain_context: self.effective_vesc_drivetrain_context(),
             diagnostics,
         })
     }
@@ -953,6 +1002,246 @@ mod tests {
             cutout_core::ApplicationQueryTransportStatus::Submitted,
             MonotonicTimestamp::new(1)
         ));
+    }
+
+    #[test]
+    fn drivetrain_context_is_absent_without_profile_and_while_application_is_pending() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        let profile = drivetrain_profile("90", 4);
+        assert!(owner.restore_vesc_drivetrain(&token, profile));
+        identify_vesc(&mut owner, &token);
+        assert_eq!(owner.vesc_drivetrain_context(&token), None);
+        assert_eq!(
+            drivetrain_tick(&mut owner, &token, 2).vesc_drivetrain_context,
+            None
+        );
+        assert_eq!(
+            drivetrain_tick(&mut owner, &token, 3_000).vesc_drivetrain_context,
+            Some(profile)
+        );
+        assert_eq!(owner.vesc_drivetrain_context(&token), Some(profile));
+
+        let replacement = begin(&mut owner, "B");
+        assert_eq!(owner.vesc_drivetrain_context(&token), None);
+        assert_eq!(owner.vesc_drivetrain_context(&replacement), None);
+        identify_vesc(&mut owner, &replacement);
+        assert_eq!(
+            drivetrain_tick(&mut owner, &replacement, 3_000).vesc_drivetrain_context,
+            None
+        );
+    }
+
+    #[test]
+    fn drivetrain_save_requires_matching_durable_value_and_advancing_revision() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let first = drivetrain_profile("90", 4);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, first.value())
+            .unwrap();
+        assert!(!owner.apply_vesc_drivetrain_selection(selection, drivetrain_profile("100", 4)));
+        assert_eq!(owner.user_vesc_drivetrain(&token), None);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, first.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, first));
+        let conflicting = drivetrain_profile("100", 4);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, conflicting.value())
+            .unwrap();
+        assert!(!owner.apply_vesc_drivetrain_selection(selection, conflicting));
+        let lower = drivetrain_profile("90", 3);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, lower.value())
+            .unwrap();
+        assert!(!owner.apply_vesc_drivetrain_selection(selection, lower));
+        let original_step = drivetrain_tick(&mut owner, &token, 3_001);
+        assert_eq!(original_step.vesc_drivetrain_context, Some(first));
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, first.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, first));
+        let same_value = drivetrain_profile("90", 5);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, same_value.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, same_value));
+        assert_eq!(
+            drivetrain_tick(&mut owner, &token, 3_002).vesc_drivetrain_context,
+            Some(same_value)
+        );
+        let changed = drivetrain_profile("100", 6);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, changed.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, changed));
+        assert_eq!(
+            drivetrain_tick(&mut owner, &token, 3_003).vesc_drivetrain_context,
+            Some(changed)
+        );
+        assert_eq!(original_step.vesc_drivetrain_context, Some(first));
+    }
+
+    #[test]
+    fn drivetrain_exact_durable_receipt_succeeds_after_identical_restore() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let profile = drivetrain_profile("90", 1);
+        let prepared = owner
+            .prepare_vesc_drivetrain_selection(&token, profile.value())
+            .unwrap();
+        assert!(owner.restore_vesc_drivetrain(&token, profile));
+        let measured = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 4_000,
+                    },
+                },
+            )
+            .unwrap();
+        assert!(measured.telemetry.speed.is_some());
+        assert!(owner.apply_vesc_drivetrain_selection(prepared, profile));
+        let unchanged = drivetrain_tick(&mut owner, &token, 4_001);
+        assert_eq!(unchanged.telemetry, measured.telemetry);
+        assert_eq!(unchanged.vesc_drivetrain_context, Some(profile));
+    }
+
+    #[test]
+    fn drivetrain_unchanged_durable_profile_preserves_calculated_speed_observation() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let profile = drivetrain_profile("90", 1);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, profile.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, profile));
+        let measured = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 4_000,
+                    },
+                },
+            )
+            .unwrap();
+        assert!(measured.telemetry.speed.is_some());
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, profile.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, profile));
+        let unchanged = drivetrain_tick(&mut owner, &token, 4_001);
+        assert_eq!(unchanged.telemetry, measured.telemetry);
+        assert_eq!(unchanged.vesc_drivetrain_context, Some(profile));
+    }
+
+    #[test]
+    fn drivetrain_stale_save_and_restore_cannot_replace_newer_context() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let first = drivetrain_profile("90", 1);
+        let old_selection = owner
+            .prepare_vesc_drivetrain_selection(&token, first.value())
+            .unwrap();
+        let newer = drivetrain_profile("100", 2);
+        let newer_selection = owner
+            .prepare_vesc_drivetrain_selection(&token, newer.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(newer_selection, newer));
+        assert!(!owner.apply_vesc_drivetrain_selection(old_selection, first));
+        assert!(!owner.restore_vesc_drivetrain(&token, drivetrain_profile("90", 3)));
+        assert_eq!(owner.user_vesc_drivetrain(&token), Some(newer));
+        let retired_selection = owner
+            .prepare_vesc_drivetrain_selection(&token, first.value())
+            .unwrap();
+        let replacement = begin(&mut owner, "A");
+        assert!(
+            !owner.apply_vesc_drivetrain_selection(retired_selection, drivetrain_profile("90", 4))
+        );
+        assert!(!owner.restore_vesc_drivetrain(&token, first));
+        assert_eq!(owner.user_vesc_drivetrain(&replacement), None);
+    }
+
+    #[test]
+    fn late_refloat_removes_effective_drivetrain_context_from_the_same_step() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        let profile = drivetrain_profile("90", 1);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, profile.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, profile));
+        let standard = drivetrain_tick(&mut owner, &token, 3_001);
+        assert_eq!(standard.vesc_drivetrain_context, Some(profile));
+        let mut payload = [0_u8; 60];
+        payload[..4].copy_from_slice(&[101, 0, 2, 0]);
+        payload[4..11].copy_from_slice(b"Refloat");
+        payload[24..27].copy_from_slice(&[1, 2, 3]);
+        payload[51..55].copy_from_slice(&10_000_u32.to_be_bytes());
+        let mut frame = arrayvec::ArrayVec::new();
+        crate::refloat_codec::encode_custom_app_frame(&payload, &mut frame).unwrap();
+        let refloat = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Notification {
+                    channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+                    bytes: frame.to_vec(),
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 3_002,
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            refloat.session.identity.unwrap().vesc_application,
+            Some(crate::VescApplicationDiscovery::Refloat)
+        );
+        assert_eq!(refloat.vesc_drivetrain_context, None);
+        assert_eq!(owner.vesc_drivetrain_context(&token), None);
+        assert_eq!(
+            drivetrain_tick(&mut owner, &token, 3_003).vesc_drivetrain_context,
+            None
+        );
+        assert_eq!(standard.vesc_drivetrain_context, Some(profile));
+    }
+
+    fn drivetrain_profile(wheel: &str, revision: u64) -> cutout_core::VescDrivetrainProfile {
+        cutout_core::VescDrivetrainProfile::user_configured(
+            cutout_core::VescDrivetrain::parse(wheel, "7", "2.5").unwrap(),
+            cutout_core::VescDrivetrainRevision::new(revision).unwrap(),
+        )
+    }
+
+    fn drivetrain_tick(
+        owner: &mut DeviceConnectionSession,
+        token: &ConnectionAttemptToken,
+        at: u64,
+    ) -> DeviceConnectionStep {
+        owner
+            .ingest(
+                token,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+                },
+            )
+            .unwrap()
     }
 
     #[test]
