@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
+import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import uniffi.cutout_mobile_ffi.*
@@ -27,6 +28,7 @@ data class BlePresentation(
     val settings: MobileSettingsDto? = null,
     val bms: MobileBmsSnapshotDto? = null,
     val problem: Boolean = false,
+    val selectedVehicleIdentifier: String? = null,
 )
 
 /** Application-owned Android effects. Every Rust call and GATT operation uses one owner. */
@@ -46,6 +48,15 @@ class AndroidBleClient(
     private val found = linkedMapOf<String, Pair<BluetoothDevice, NearbyPev>>()
     private var connection: Connection? = null
     private var pendingConnectId: String? = null
+    private var pendingRetry: MobileConnectionRetryDto? = null
+    private var pendingRetryDevice: BluetoothDevice? = null
+    private var cancelRetryTimer: (() -> Unit)? = null
+    private var restoreAttemptedId: String? = null
+    private var restoreSuppressed = false
+    private var selectedDeviceId: String? = null
+    private var selectionLoaded = false
+    private var selectionLoadInFlight = false
+    private var selectionRevision = 0L
     private var scanCallback: ScanCallback? = null
     private var stopScanTimer: (() -> Unit)? = null
     private var publishTimer: (() -> Unit)? = null
@@ -86,6 +97,12 @@ class AndroidBleClient(
         listener = callback
         postOnOwner {
             if (!hasPermissions()) connection?.fail("Bluetooth permission was revoked")
+            else if (callback != null && pendingRetry != null && isEnabled()) {
+                pendingRetryDevice?.let { armRetryTimer(it, checkNotNull(pendingRetry)) }
+            } else if (callback != null) {
+                loadSavedSelectionOnOwner()
+                tryRestoreSelectedDeviceOnOwner()
+            }
             publish()
         }
     }
@@ -108,6 +125,7 @@ class AndroidBleClient(
 
     fun scan() = postOnOwner {
         if (!isEnabled()) { view = view.copy(problem = true); publish(); return@postOnOwner }
+        if (tryRestoreSelectedDeviceOnOwner()) { publish(); return@postOnOwner }
         stopScanOnOwner()
         found.clear()
         val callback = object : ScanCallback() {
@@ -165,6 +183,22 @@ class AndroidBleClient(
 
     fun connect(id: String) = postOnOwner {
         if (found[id] == null) return@postOnOwner
+        cancelPendingRetryOnOwner()
+        restoreSuppressed = false
+        selectedDeviceId = id
+        selectionRevision += 1
+        val revision = selectionRevision
+        (context.applicationContext as CutoutApplication).rides.withDatabase({ database ->
+            database.saveSelectedDevice(id, now())
+        }) { result ->
+            owner.post {
+                if (revision == selectionRevision && result.isFailure) {
+                    Log.w("CutoutBle", "Saved Bluetooth selection could not be persisted", result.exceptionOrNull())
+                    view = view.copy(problem = true)
+                    publish()
+                }
+            }
+        }
         pendingConnectId = id
         val existing = connection
         if (existing == null) connectPendingOnOwner() else existing.finishTransport(failed = false)
@@ -179,12 +213,16 @@ class AndroidBleClient(
         state.selectDiscoveredPlatform(id)
         val token = checkNotNull(state.beginConnectionAttempt(id, now()).token)
         state.observeConnectionAdvertisement(token, selected.second.advertisedName?.encodeToByteArray())
+        startConnection(selected.first, token)
+    }
+
+    private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto) {
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
             session = state.deviceSessionSnapshot(), problem = false)
-        val next = Connection(token)
+        val next = Connection(token, device)
         connection = next
         try {
-            next.gatt = selected.first.connectGatt(context, false, next.callback, BluetoothDevice.TRANSPORT_LE)
+            next.gatt = device.connectGatt(context, false, next.callback, BluetoothDevice.TRANSPORT_LE)
             if (next.gatt == null) next.fail("Android refused the connection")
             else next.armDeadline()
         } catch (error: Exception) { next.fail("Bluetooth connect failed", error) }
@@ -193,8 +231,117 @@ class AndroidBleClient(
 
     fun disconnect() = postOnOwner {
         pendingConnectId = null
+        restoreSuppressed = true
+        cancelPendingRetryOnOwner()
         val existing = connection
         if (existing != null) existing.finishTransport(failed = false)
+        else {
+            state.disconnectConnectionAttempt()
+            view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                telemetry = null, settings = null, bms = null)
+            publish()
+        }
+    }
+
+    /** Restore only the exact platform identifier explicitly selected by the user. The new
+     * transport still passes through fresh service discovery, GATT validation, and Rust detection. */
+    private fun tryRestoreSelectedDeviceOnOwner(): Boolean {
+        val id = selectedDeviceId ?: return false
+        if (restoreSuppressed || restoreAttemptedId == id || connection != null || pendingRetry != null || !isEnabled()) return false
+        val adapter = manager.adapter ?: return false
+        if (!BluetoothAdapter.checkBluetoothAddress(id)) {
+            restoreAttemptedId = id
+            view = view.copy(problem = true)
+            return false
+        }
+        return try {
+            val device = adapter.getRemoteDevice(id)
+            restoreAttemptedId = id
+            stopScanOnOwner()
+            state.selectDiscoveredPlatform(id)
+            val token = checkNotNull(state.beginConnectionAttempt(id, now()).token)
+            startConnection(device, token)
+            true
+        } catch (error: Exception) {
+            restoreAttemptedId = id
+            view = view.copy(problem = true)
+            Log.w("CutoutBle", "Saved Bluetooth device could not be restored", error)
+            false
+        }
+    }
+
+    /** Load the exact persisted platform identifier from the shared Rust database owner. */
+    private fun loadSavedSelectionOnOwner() {
+        if (selectionLoaded || selectionLoadInFlight) return
+        selectionLoadInFlight = true
+        val revision = selectionRevision
+        (context.applicationContext as CutoutApplication).rides.withDatabase(
+            work = { database -> database.selectedDevice() },
+        ) { result ->
+            owner.post {
+                selectionLoadInFlight = false
+                if (revision != selectionRevision) return@post
+                selectionLoaded = result.isSuccess
+                result.fold(
+                    onSuccess = { selectedDeviceId = it },
+                    onFailure = {
+                        Log.w("CutoutBle", "Saved Bluetooth selection could not be loaded", it)
+                        view = view.copy(problem = true)
+                    },
+                )
+                tryRestoreSelectedDeviceOnOwner()
+                publish()
+            }
+        }
+    }
+
+    private fun scheduleRustRetry(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto) {
+        val decision = state.requestConnectionRetry(token, now(), secureRandom.nextInt(1001).toUShort())
+        when (decision) {
+            is MobileConnectionRetryDecisionDto.Scheduled -> {
+                pendingRetry = decision.retry
+                pendingRetryDevice = device
+                armRetryTimer(device, decision.retry)
+            }
+            is MobileConnectionRetryDecisionDto.Exhausted -> {
+                pendingRetry = null
+                pendingRetryDevice = null
+                cancelRetryTimer?.invoke(); cancelRetryTimer = null
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true)
+            }
+            MobileConnectionRetryDecisionDto.Rejected -> {
+                pendingRetry = null
+                pendingRetryDevice = null
+                cancelRetryTimer?.invoke(); cancelRetryTimer = null
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true)
+            }
+        }
+    }
+
+    private fun armRetryTimer(device: BluetoothDevice, retry: MobileConnectionRetryDto) {
+        cancelRetryTimer?.invoke()
+        val remaining = retry.deadlineMs - minOf(retry.deadlineMs, now())
+        cancelRetryTimer = timers.after(remaining.toLong()) {
+            if (pendingRetry?.token != retry.token || !hasPermissions() || !isEnabled() || restoreSuppressed) return@after
+            val admitted = state.admitConnectionRetry(retry.token, now())
+            if (admitted == null) {
+                if (state.connectionRetryDeadline(retry.token) != null) armRetryTimer(device, retry)
+                return@after
+            }
+            pendingRetry = null
+            pendingRetryDevice = null
+            cancelRetryTimer = null
+            val nextToken = admitted.token ?: return@after
+            stopScanOnOwner()
+            startConnection(device, nextToken)
+        }
+    }
+
+    private fun cancelPendingRetryOnOwner() {
+        cancelRetryTimer?.invoke(); cancelRetryTimer = null
+        pendingRetry?.let { state.cancelConnectionRetry(it.token) }
+        pendingRetry = null
+        pendingRetryDevice = null
     }
 
     fun submit(token: MobileConnectionAttemptTokenDto, id: MobileSettingIdDto,
@@ -204,6 +351,19 @@ class AndroidBleClient(
         try { active.session.submit(id, value); active.reschedule() }
         catch (error: Exception) {
             Log.w("CutoutBle", "setting refused", error)
+            active.session.publish()
+            main.post(refused)
+        }
+    }
+
+    /** Invoke the next Rust-selected action step for this exact connection token. */
+    fun submitAction(token: MobileConnectionAttemptTokenDto, id: MobileDeviceActionIdDto,
+        refused: () -> Unit) = postOnOwner {
+        val active = connection
+        if (active == null || active.token != token) { main.post(refused); return@postOnOwner }
+        try { active.session.submitAction(id); active.reschedule() }
+        catch (error: Exception) {
+            Log.w("CutoutBle", "device action refused", error)
             active.session.publish()
             main.post(refused)
         }
@@ -224,7 +384,8 @@ class AndroidBleClient(
         if (publishTimer != null) return
         publishTimer = timers.after(100) {
             publishTimer = null
-            val owned = view
+            val owned = view.copy(selectedVehicleIdentifier = if (stateOwner.isInitialized())
+                state.discoverySnapshot().selectedPlatformIdentifier else null)
             latestPresentation = owned
             if (stateOwner.isInitialized()) onSessionObservation(owned, state)
             main.post {
@@ -234,7 +395,7 @@ class AndroidBleClient(
         }
     }
 
-    private inner class Connection(val token: MobileConnectionAttemptTokenDto) {
+    private inner class Connection(val token: MobileConnectionAttemptTokenDto, val device: BluetoothDevice) {
         var gatt: BluetoothGatt? = null
         private var retired = false
         private var ending = false
@@ -472,11 +633,22 @@ class AndroidBleClient(
                         publish()
                         return@postOnOwner
                     }
-                    if (failed) state.connectionTransportFailed(token) else state.disconnectConnectionAttempt()
-                    retire(invalidate = false)
-                    connection = null
-                    view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                        telemetry = null, settings = null, bms = null, problem = failed || result.isFailure)
+                    val wasVerified = state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED
+                    if (failed && wasVerified && !restoreSuppressed) {
+                        state.connectionLinkDown(token)
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = true)
+                        scheduleRustRetry(device, token)
+                    } else {
+                        if (failed) restoreAttemptedId = device.address
+                        if (failed) state.connectionTransportFailed(token) else state.disconnectConnectionAttempt()
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = failed)
+                    }
                     publish()
                     connectPendingOnOwner()
                 }
@@ -492,5 +664,9 @@ class AndroidBleClient(
             try { gatt?.disconnect() } catch (_: SecurityException) { }
             gatt?.close(); gatt = null
         }
+    }
+
+    companion object {
+        private val secureRandom = SecureRandom()
     }
 }

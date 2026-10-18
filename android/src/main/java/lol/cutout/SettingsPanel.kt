@@ -17,9 +17,18 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.PopupMenu
+import uniffi.cutout_mobile_ffi.MobileControlRefusalReasonDto
 import uniffi.cutout_mobile_ffi.MobileConnectionAttemptTokenDto
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.MobileConnectionTransportStateDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionAccessDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionDescriptorDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionIdDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionNextStepDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionRoleDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionSnapshotDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionStatusDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionStepDto
 import uniffi.cutout_mobile_ffi.MobileSettingAccessDto
 import uniffi.cutout_mobile_ffi.MobileSettingApplyEffectDto
 import uniffi.cutout_mobile_ffi.MobileSettingChoiceDto
@@ -36,11 +45,13 @@ import uniffi.cutout_mobile_ffi.MobileSettingUnitDto
 import uniffi.cutout_mobile_ffi.MobileSettingsDto
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.util.Locale
 
 /** Android presentation of the Rust-owned settings catalog, matching DeviceControlsForm. */
 class SettingsPanel(
     context: Context,
     private val ownerLifetimeId: String,
+    private val submitAction: (MobileConnectionAttemptTokenDto, MobileDeviceActionIdDto, () -> Unit) -> Unit = { _, _, refused -> refused() },
     private val submit: (MobileConnectionAttemptTokenDto, MobileSettingIdDto, MobileSettingValueDto, () -> Unit) -> Unit,
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
@@ -49,8 +60,10 @@ class SettingsPanel(
     private var renderedGeneration: ULong? = null
     private var renderedToken: MobileConnectionAttemptTokenDto? = null
     private var descriptorKey: List<String> = emptyList()
+    private var actionDescriptorKey: List<String> = emptyList()
     private var pendingUiState: Bundle? = null
     private val rows = linkedMapOf<MobileSettingIdDto, SettingRow>()
+    private val actionRows = linkedMapOf<MobileDeviceActionIdDto, ActionRow>()
     private val emptyMessage = ui.text(ui.label("controls.empty"), 15f, color = ui.muted)
     private val groups = listOf(
         MobileSettingGroupDto.INTERFACE, MobileSettingGroupDto.HAPTICS,
@@ -73,7 +86,7 @@ class SettingsPanel(
     /** Apply owner snapshots without replacing editors when only their observation age changes. */
     fun render(snapshot: MobileSettingsDto?) {
         if (snapshot == null) {
-            if (renderedGeneration != null) rebuild(emptyList(), null)
+            if (renderedGeneration != null) rebuild(emptyList(), emptyList(), null)
             emptyMessage.text = ui.label("settings.readback.unavailable")
             if (emptyMessage.parent == null) page.addView(emptyMessage)
             return
@@ -84,19 +97,27 @@ class SettingsPanel(
             }.sortedBy { it.order.toInt() }
         }
         val key = descriptors.map { descriptorKey(it) }
+        val actions = snapshot.actionDescriptors.filter { it.access != MobileDeviceActionAccessDto.UNVERIFIED }
+            .sortedBy { it.order.toInt() }
+        val actionKey = actions.map { "${it.id}:${it.role}:${it.access}:${it.labelKey}:${it.helpKey}" }
         val token = snapshot.connection.token
         val stableToken = token != null && token.generation == snapshot.connection.generation
-        if (renderedGeneration != snapshot.connection.generation || renderedToken != token || key != descriptorKey) {
-            rebuild(descriptors, snapshot)
+        if (renderedGeneration != snapshot.connection.generation || renderedToken != token ||
+            key != descriptorKey || actionKey != actionDescriptorKey) {
+            rebuild(descriptors, actions, snapshot)
         }
         renderedGeneration = snapshot.connection.generation
         renderedToken = token
         descriptorKey = key
+        actionDescriptorKey = actionKey
         val interactable = stableToken &&
             snapshot.connection.readiness == MobileConnectionReadinessDto.VERIFIED &&
             snapshot.connection.transport == MobileConnectionTransportStateDto.CONNECTED
         rows.values.forEach { row ->
             row.render(snapshot.settings.firstOrNull { it.id == row.descriptor.id }, token, interactable)
+        }
+        actionRows.values.forEach { row ->
+            row.render(snapshot.actions.firstOrNull { it.id == row.descriptor.id }, token, interactable)
         }
         restorePendingState(token)
     }
@@ -132,15 +153,20 @@ class SettingsPanel(
     private fun descriptorKey(value: MobileSettingDescriptorDto) =
         "${value.id}:${value.group}:${value.order}:${value.control}:${value.access}:${value.labelKey}"
 
-    private fun rebuild(descriptors: List<MobileSettingDescriptorDto>, snapshot: MobileSettingsDto?) {
+    private fun rebuild(
+        descriptors: List<MobileSettingDescriptorDto>,
+        actions: List<MobileDeviceActionDescriptorDto>,
+        snapshot: MobileSettingsDto?,
+    ) {
         rows.values.forEach { it.dismissTransientUi() }
         renderedGeneration = snapshot?.connection?.generation
         renderedToken = snapshot?.connection?.token
         page.removeAllViews()
         rows.clear()
+        actionRows.clear()
         page.addView(header)
         page.addView(ui.space(20))
-        if (descriptors.isEmpty()) {
+        if (descriptors.isEmpty() && actions.isEmpty()) {
             page.addView(emptyMessage)
             return
         }
@@ -166,7 +192,125 @@ class SettingsPanel(
                 page.addView(ui.space(20))
             }
         }
+        if (actions.isNotEmpty()) {
+            page.addView(ui.text(ui.label("controls.actions"), 17f, true).apply {
+                isAccessibilityHeading = true
+            })
+            page.addView(ui.space(12))
+            val card = ui.column().apply {
+                background = ui.rounded(22)
+                setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4))
+            }
+            actions.forEachIndexed { index, descriptor ->
+                if (index > 0) card.addView(ui.divider())
+                val row = ActionRow(descriptor)
+                actionRows[descriptor.id] = row
+                card.addView(row.root)
+            }
+            page.addView(card)
+            page.addView(ui.space(20))
+        }
     }
+
+    private inner class ActionRow(val descriptor: MobileDeviceActionDescriptorDto) {
+        val root = ui.column().apply {
+            tag = "settings.action.${descriptor.id.name.lowercase()}"
+            setPadding(0, ui.dp(12), 0, ui.dp(12))
+        }
+        private val button = ui.action(ui.label(descriptor.labelKey)) { invoke() }
+        private val help = ui.text(ui.label(descriptor.helpKey), 14f, color = ui.muted)
+        private val feedback = ui.text("", 14f, color = ui.muted)
+        private var state: MobileDeviceActionSnapshotDto? = null
+        private var token: MobileConnectionAttemptTokenDto? = null
+        private var interactable = false
+        private var submissionFailed = false
+
+        init {
+            button.tag = "settings.action.button.${descriptor.id.name.lowercase()}"
+            root.addView(button, LayoutParams(-1, -2))
+            root.addView(help, LayoutParams(-1, -2))
+            root.addView(feedback, LayoutParams(-1, -2))
+        }
+
+        fun render(
+            nextState: MobileDeviceActionSnapshotDto?,
+            attempt: MobileConnectionAttemptTokenDto?,
+            canInteract: Boolean,
+        ) {
+            state = nextState
+            token = attempt
+            interactable = canInteract && attempt?.generation == renderedGeneration
+            button.text = actionTitle(descriptor, nextState)
+            val label = ui.label(descriptor.labelKey)
+            button.contentDescription = if (label == button.text) label else String.format(
+                Locale.getDefault(), ui.label("controls.action.accessibility")
+                    .replace("%1$@", "%1\$s").replace("%2$@", "%2\$s").replace("%@", "%s"),
+                label, button.text,
+            )
+            button.isEnabled = interactable && actionAvailable(descriptor, nextState)
+            val message = if (submissionFailed) ui.label("settings.state.failed") else nextState?.refusal?.let(::actionRefusal)
+                ?: nextState?.let { actionStatus(it.status) }
+            feedback.text = message.orEmpty()
+            feedback.setTextColor(if (submissionFailed || nextState?.refusal != null || nextState?.status == MobileDeviceActionStatusDto.REFUSED ||
+                nextState?.status == MobileDeviceActionStatusDto.FAILED) ui.red else ui.muted)
+            feedback.visibility = if (message.isNullOrEmpty()) View.GONE else View.VISIBLE
+        }
+
+        private fun invoke() {
+            val attempt = token ?: return
+            if (!interactable || !actionAvailable(descriptor, state)) return
+            submissionFailed = false
+            val send = {
+                submitAction(attempt, descriptor.id) {
+                    post {
+                        submissionFailed = true
+                        render(state, token, interactable)
+                    }
+                }
+            }
+            if (descriptor.role == MobileDeviceActionRoleDto.DESTRUCTIVE) {
+                android.app.AlertDialog.Builder(context)
+                    .setTitle(ui.label(descriptor.labelKey))
+                    .setMessage(ui.label(descriptor.helpKey))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(ui.label(descriptor.labelKey)) { _, _ -> send() }
+                    .show()
+            } else send()
+        }
+    }
+
+    private fun actionAvailable(descriptor: MobileDeviceActionDescriptorDto, state: MobileDeviceActionSnapshotDto?): Boolean =
+        descriptor.access == MobileDeviceActionAccessDto.AVAILABLE && state?.nextStep is MobileDeviceActionNextStepDto.Available
+
+    private fun actionTitle(descriptor: MobileDeviceActionDescriptorDto, state: MobileDeviceActionSnapshotDto?): String =
+        when (val step = state?.nextStep) {
+            is MobileDeviceActionNextStepDto.Available -> when (step.step) {
+                MobileDeviceActionStepDto.PREPARE_GYRO_CALIBRATION -> "controls.prepare"
+                MobileDeviceActionStepDto.START_GYRO_CALIBRATION -> "controls.start"
+                MobileDeviceActionStepDto.INVOKE -> descriptor.labelKey
+            }
+            MobileDeviceActionNextStepDto.Busy -> "controls.waiting"
+            MobileDeviceActionNextStepDto.RestartRequired -> "controls.restart"
+            null -> descriptor.labelKey
+        }.let(ui::label)
+
+    private fun actionStatus(status: MobileDeviceActionStatusDto): String? = when (status) {
+        MobileDeviceActionStatusDto.IDLE, MobileDeviceActionStatusDto.SENT_WITHOUT_CONFIRMATION -> null
+        MobileDeviceActionStatusDto.WAITING_FOR_PROGRESS -> ui.label("controls.waiting")
+        MobileDeviceActionStatusDto.READY_FOR_NEXT_STEP -> ui.label("controls.ready")
+        MobileDeviceActionStatusDto.REFUSED -> ui.label("settings.state.refused")
+        MobileDeviceActionStatusDto.FAILED -> ui.label("settings.state.failed")
+    }
+
+    private fun actionRefusal(reason: MobileControlRefusalReasonDto): String = when (reason) {
+        MobileControlRefusalReasonDto.MISSING_ARM -> "controls.refusal.stationary"
+        MobileControlRefusalReasonDto.EXPIRED_ARM -> "controls.refusal.expired"
+        MobileControlRefusalReasonDto.BUSY -> "controls.refusal.busy"
+        MobileControlRefusalReasonDto.WRONG_MODEL -> "controls.refusal.model"
+        MobileControlRefusalReasonDto.UNSUPPORTED_COMMAND -> "controls.refusal.unsupported"
+        MobileControlRefusalReasonDto.CURRENT_LIMIT_EXCEEDED -> "controls.refusal.limit"
+        MobileControlRefusalReasonDto.WRONG_SAFETY_CLASS -> "controls.refusal.state"
+    }.let(ui::label)
 
     private fun groupKey(group: MobileSettingGroupDto) = when (group) {
         MobileSettingGroupDto.INTERFACE -> "controls.group.interface"

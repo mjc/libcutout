@@ -20,10 +20,92 @@ import uniffi.cutout_mobile_ffi.MobileSettingGroupDto
 import uniffi.cutout_mobile_ffi.MobileSettingStatusDto
 import uniffi.cutout_mobile_ffi.MobileSettingSnapshotDto
 import uniffi.cutout_mobile_ffi.MobileSettingValueDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionAccessDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionConfirmationDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionDescriptorDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionIdDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionNextStepDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionRoleDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionSnapshotDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionStatusDto
+import uniffi.cutout_mobile_ffi.MobileDeviceActionStepDto
+import uniffi.cutout_mobile_ffi.MobileVerificationStatusDto
+import uniffi.cutout_mobile_ffi.MobileControlRefusalReasonDto
 import org.junit.Test
 
 open class SettingsPanelTest {
     private val ownerLifetimeId = "settings-panel-test-owner"
+
+    @Test
+    fun rustActionCatalogRendersStatusAndSubmitsOnlyAvailableActions() {
+        val initial = checkNotNull(productionReplayPresentation().settings)
+        val descriptor = MobileDeviceActionDescriptorDto(
+            id = MobileDeviceActionIdDto.HORN,
+            labelKey = "actions.horn.label",
+            helpKey = "actions.horn.help",
+            order = 0U.toUShort(),
+            role = MobileDeviceActionRoleDto.MOMENTARY,
+            access = MobileDeviceActionAccessDto.AVAILABLE,
+            writeVerification = MobileVerificationStatusDto.HARDWARE_VERIFIED,
+            confirmation = MobileDeviceActionConfirmationDto.NONE,
+        )
+        val action = MobileDeviceActionSnapshotDto(
+            id = descriptor.id,
+            progress = null,
+            status = MobileDeviceActionStatusDto.IDLE,
+            ageMs = null,
+            requestedStep = null,
+            nextStep = MobileDeviceActionNextStepDto.Available(MobileDeviceActionStepDto.INVOKE),
+            refusal = null,
+        )
+        val rustProjection = initial.copy(actionDescriptors = listOf(descriptor), actions = listOf(action))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        val submitted = mutableListOf<MobileDeviceActionIdDto>()
+        try {
+            instrumentation.runOnMainSync {
+                val panel = SettingsPanel(activity, ownerLifetimeId,
+                    submitAction = { _, id, _ -> submitted += id }) { _, _, _, _ -> }
+                activity.setContentView(panel)
+                panel.render(rustProjection)
+                val button = descendants(panel).firstOrNull {
+                    it is Button && it.tag == "settings.action.button.horn"
+                } as? Button ?: error("Rust action descriptor did not create a Tune action")
+                check(button.text.toString() == CutoutUi(activity).label("actions.horn.label")) {
+                    "Action button did not use the Rust-provided localization key"
+                }
+                check(button.isEnabled) { "Verified available Rust action should be enabled" }
+                button.performClick()
+                check(submitted == listOf(MobileDeviceActionIdDto.HORN)) {
+                    "Available action did not submit its typed Rust identity"
+                }
+
+                val busy = action.copy(
+                    status = MobileDeviceActionStatusDto.WAITING_FOR_PROGRESS,
+                    nextStep = MobileDeviceActionNextStepDto.Busy,
+                )
+                panel.render(rustProjection.copy(actions = listOf(busy)))
+                check(!button.isEnabled) { "Rust-busy action remained available" }
+                check(descendants(panel).filterIsInstance<TextView>().any {
+                    it.text.toString() == CutoutUi(activity).label("controls.waiting")
+                }) { "Rust action progress status was not shown" }
+
+                val refused = action.copy(
+                    status = MobileDeviceActionStatusDto.REFUSED,
+                    refusal = MobileControlRefusalReasonDto.MISSING_ARM,
+                )
+                panel.render(rustProjection.copy(actions = listOf(refused)))
+                val refusalText = CutoutUi(activity).label("controls.refusal.stationary")
+                check(descendants(panel).filterIsInstance<TextView>().any { it.text.toString() == refusalText }) {
+                    "Rust action refusal was not shown to the rider"
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
 
     @Test
     fun emptyReadbackAndSettingControlsExposeContextualAccessibilityState() {

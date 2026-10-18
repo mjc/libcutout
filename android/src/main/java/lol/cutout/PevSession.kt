@@ -57,6 +57,13 @@ class PevSession(
         process(state.submitSetting(token, id, value, receivedAtMs), receivedAtMs)
     }
 
+    /** Submit the next protocol-selected action step through the existing Rust session owner. */
+    fun submitAction(id: MobileDeviceActionIdDto) {
+        check(isCurrent)
+        val receivedAtMs = now()
+        process(state.submitAction(token, id, receivedAtMs), receivedAtMs)
+    }
+
     fun writeIsCurrent(operationId: ULong?): Boolean = isCurrent && (operationId == null ||
         state.settingTransportIsCurrent(token, operationId, now()) ||
         state.settingReadTransportIsCurrent(token, operationId, now()))
