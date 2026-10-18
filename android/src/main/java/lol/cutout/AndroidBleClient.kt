@@ -1,7 +1,6 @@
 package lol.cutout
 
 import android.Manifest
-import android.app.Application
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
@@ -26,34 +25,53 @@ data class BlePresentation(
     val session: MobileDeviceSessionSnapshotDto? = null,
     val telemetry: MobileTelemetrySnapshotDto? = null,
     val settings: MobileSettingsDto? = null,
+    val bms: MobileBmsSnapshotDto? = null,
     val problem: Boolean = false,
 )
 
-class CutoutApplication : Application() {
-    val bluetooth by lazy { AndroidBleClient(this) }
-}
-
 /** Application-owned Android effects. Every Rust call and GATT operation uses one owner. */
-class AndroidBleClient(private val context: Context) {
+class AndroidBleClient(
+    private val context: Context,
+    private val onSessionObservation: (BlePresentation, CutoutSessionStateHandle) -> Unit = { _, _ -> },
+) {
     private val owner = Handler(HandlerThread("CutoutBluetooth").apply { start() }.looper)
     private val main = Handler(Looper.getMainLooper())
     private val manager = context.getSystemService(BluetoothManager::class.java)
-    private val state by lazy { CutoutSessionStateHandle() }
+    private val stateOwner = lazy {
+        (context.applicationContext as CutoutApplication).sessionStateForNativeOwner()
+    }
+    private val state by stateOwner
     // Saved editor drafts belong to this native owner, not merely a reusable attempt number.
     val settingsDraftOwnerId: String = UUID.randomUUID().toString()
     private val found = linkedMapOf<String, Pair<BluetoothDevice, NearbyPev>>()
     private var connection: Connection? = null
+    private var pendingConnectId: String? = null
     private var scanCallback: ScanCallback? = null
     private var stopScanTimer: (() -> Unit)? = null
     private var publishTimer: (() -> Unit)? = null
     private var view = BlePresentation()
     @Volatile private var listener: ((BlePresentation) -> Unit)? = null
+    private val additionalObservers = java.util.concurrent.CopyOnWriteArrayList<(BlePresentation) -> Unit>()
+    @Volatile var latestPresentation: BlePresentation = view
+        private set
     private val pendingCallbacks = AtomicInteger()
     private val timers = NativeTimer { delay, action ->
         val runnable = Runnable(action)
         owner.postDelayed(runnable, delay.coerceAtLeast(1))
         val cancel: () -> Unit = { owner.removeCallbacks(runnable) }
         cancel
+    }
+
+    private fun postOnOwner(action: () -> Unit): Boolean = owner.post {
+        try { action() } catch (error: Exception) {
+            Log.w("CutoutBle", "Bluetooth operation could not complete", error)
+            val active = connection
+            if (active != null) active.finishTransport(failed = true)
+            else view = view.copy(scanning = false, phase = NativePhase.IDLE, session = null,
+                telemetry = null, settings = null, bms = null, problem = true)
+            stopScanOnOwner()
+            publish()
+        }
     }
 
     fun hasPermissions(): Boolean = arrayOf(Manifest.permission.BLUETOOTH_SCAN,
@@ -66,14 +84,30 @@ class AndroidBleClient(private val context: Context) {
 
     fun observe(callback: ((BlePresentation) -> Unit)?) {
         listener = callback
-        owner.post {
+        postOnOwner {
             if (!hasPermissions()) connection?.fail("Bluetooth permission was revoked")
             publish()
         }
     }
 
-    fun scan() = owner.post {
-        if (!isEnabled()) { view = view.copy(problem = true); publish(); return@post }
+    fun addObserver(callback: (BlePresentation) -> Unit): AutoCloseable {
+        additionalObservers += callback
+        main.post { if (callback in additionalObservers) callback(latestPresentation) }
+        return AutoCloseable { additionalObservers -= callback }
+    }
+
+    fun diagnosticRecordingEnabled(completed: (Result<Boolean>) -> Unit) = postOnOwner {
+        val result = runCatching { state.automaticDiagnosticRecordingEnabled() }
+        main.post { completed(result) }
+    }
+
+    fun setDiagnosticRecordingEnabled(enabled: Boolean, completed: (Result<Unit>) -> Unit) = postOnOwner {
+        val result = runCatching { state.setAutomaticDiagnosticRecordingEnabled(enabled) }
+        main.post { completed(result.map { Unit }) }
+    }
+
+    fun scan() = postOnOwner {
+        if (!isEnabled()) { view = view.copy(problem = true); publish(); return@postOnOwner }
         stopScanOnOwner()
         found.clear()
         val callback = object : ScanCallback() {
@@ -84,8 +118,8 @@ class AndroidBleClient(private val context: Context) {
                 val observations = results.take(128).map { result -> Triple(result.device,
                     result.scanRecord?.deviceName, Pair(result.rssi,
                         result.scanRecord?.serviceUuids?.map { DiscoveryServiceUuid(it.uuid.wireBytes()) } ?: emptyList())) }
-                owner.post {
-                    if (scanCallback !== this || !hasPermissions()) return@post
+                postOnOwner {
+                    if (scanCallback !== this || !hasPermissions()) return@postOnOwner
                     observations.forEach { (device, name, signal) ->
                         val id = device.address
                         if (found.size >= 128 && id !in found) return@forEach
@@ -103,7 +137,7 @@ class AndroidBleClient(private val context: Context) {
                     publish()
                 }
             }
-            override fun onScanFailed(code: Int) { owner.post {
+            override fun onScanFailed(code: Int) { postOnOwner {
                 if (scanCallback === this) {
                     stopScanOnOwner()
                     view = view.copy(problem = true)
@@ -127,17 +161,25 @@ class AndroidBleClient(private val context: Context) {
         publish()
     }
 
-    fun stopScan() = owner.post { stopScanOnOwner(); publish() }
+    fun stopScan() = postOnOwner { stopScanOnOwner(); publish() }
 
-    fun connect(id: String) = owner.post {
-        val selected = found[id] ?: return@post
-        if (!isEnabled()) { view = view.copy(problem = true); publish(); return@post }
+    fun connect(id: String) = postOnOwner {
+        if (found[id] == null) return@postOnOwner
+        pendingConnectId = id
+        val existing = connection
+        if (existing == null) connectPendingOnOwner() else existing.finishTransport(failed = false)
+    }
+
+    private fun connectPendingOnOwner() {
+        val id = pendingConnectId ?: return
+        pendingConnectId = null
+        val selected = found[id] ?: return
+        if (!isEnabled()) { view = view.copy(problem = true); publish(); return }
         stopScanOnOwner()
-        connection?.retire()
         state.selectDiscoveredPlatform(id)
         val token = checkNotNull(state.beginConnectionAttempt(id, now()).token)
         state.observeConnectionAdvertisement(token, selected.second.advertisedName?.encodeToByteArray())
-        view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null,
+        view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
             session = state.deviceSessionSnapshot(), problem = false)
         val next = Connection(token)
         connection = next
@@ -149,19 +191,16 @@ class AndroidBleClient(private val context: Context) {
         publish()
     }
 
-    fun disconnect() = owner.post {
-        connection?.retire()
-        connection = null
-        state.disconnectConnectionAttempt()
-        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-            telemetry = null, settings = null, problem = false)
-        publish()
+    fun disconnect() = postOnOwner {
+        pendingConnectId = null
+        val existing = connection
+        if (existing != null) existing.finishTransport(failed = false)
     }
 
     fun submit(token: MobileConnectionAttemptTokenDto, id: MobileSettingIdDto,
-        value: MobileSettingValueDto, refused: () -> Unit) = owner.post {
+        value: MobileSettingValueDto, refused: () -> Unit) = postOnOwner {
         val active = connection
-        if (active == null || active.token != token) { main.post(refused); return@post }
+        if (active == null || active.token != token) { main.post(refused); return@postOnOwner }
         try { active.session.submit(id, value); active.reschedule() }
         catch (error: Exception) {
             Log.w("CutoutBle", "setting refused", error)
@@ -186,19 +225,31 @@ class AndroidBleClient(private val context: Context) {
         publishTimer = timers.after(100) {
             publishTimer = null
             val owned = view
-            main.post { listener?.invoke(owned) }
+            latestPresentation = owned
+            if (stateOwner.isInitialized()) onSessionObservation(owned, state)
+            main.post {
+                listener?.invoke(owned)
+                additionalObservers.forEach { it(owned) }
+            }
         }
     }
 
     private inner class Connection(val token: MobileConnectionAttemptTokenDto) {
         var gatt: BluetoothGatt? = null
         private var retired = false
+        private var ending = false
+        private var draining = false
         private val callbackOverflow = AtomicBoolean()
         private var cancelWakeup: (() -> Unit)? = null
         private var cancelDeadline: (() -> Unit)? = null
         private val characteristics = mutableListOf<BluetoothGattCharacteristic>()
         private val subscribed = mutableSetOf<UUID>()
-        val session = PevSession(state, token, ::now, ::effect) { snapshot, telemetry, settings ->
+        val session = PevSession(state, token, ::now, ::effect,
+            onRideTelemetry = { attempt, receivedAtMs, speed ->
+                (context.applicationContext as CutoutApplication).rides.observeRideTelemetry(
+                    state, attempt, receivedAtMs, speed,
+                )
+            }) { snapshot, telemetry, settings ->
             if (current()) {
                 if (snapshot.connection.deadlineMs == null) {
                     cancelDeadline?.invoke(); cancelDeadline = null
@@ -208,19 +259,19 @@ class AndroidBleClient(private val context: Context) {
             }
         }
         private val queue = GattOperationQueue(::current, timers, { fail(it) }, capacity = 128)
-        private fun current(): Boolean = !retired && connection === this && session.isCurrent
+        private fun current(): Boolean = !retired && !ending && connection === this && session.isCurrent
 
         private fun callback(gatt: BluetoothGatt, action: () -> Unit) {
             if (callbackOverflow.get()) return
             if (pendingCallbacks.incrementAndGet() > 256) {
                 pendingCallbacks.decrementAndGet()
                 if (callbackOverflow.compareAndSet(false, true))
-                    owner.post { if (current()) fail("Bluetooth callback queue is full") }
+                    postOnOwner { if (current()) fail("Bluetooth callback queue is full") }
                 return
             }
-            owner.post {
+            postOnOwner {
                 pendingCallbacks.decrementAndGet()
-                if (this.gatt !== gatt || !current()) return@post
+                if (this.gatt !== gatt || !current()) return@postOnOwner
                 try { action() } catch (error: Exception) { fail("Bluetooth callback failed", error) }
             }
         }
@@ -327,6 +378,8 @@ class AndroidBleClient(private val context: Context) {
         }
 
         private fun effect(output: MobileSessionOutputDto) {
+            if (!current()) return
+            output.bmsSnapshot?.let { view = view.copy(bms = it) }
             when (output.kind) {
                 MobileSessionOutputKindDto.SUBSCRIBE -> subscribe(output.channel)
                 MobileSessionOutputKindDto.WRITE -> write(output.channel, output.bytes, output.operationId)
@@ -399,12 +452,35 @@ class AndroidBleClient(private val context: Context) {
         fun fail(message: String, error: Exception? = null) {
             if (!current()) return
             Log.w("CutoutBle", message, error)
+            finishTransport(failed = true)
+        }
+
+        /** Preserve admitted callback order until Rust has settled the recording prefix. */
+        fun finishTransport(failed: Boolean) {
+            if (retired || draining) return
+            ending = true
+            draining = true
             queue.close()
-            state.connectionTransportFailed(token)
-            retire(invalidate = false)
-            view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                telemetry = null, settings = null, problem = true)
-            publish()
+            cancelWakeup?.invoke(); cancelDeadline?.invoke()
+            val endedAt = now()
+            (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
+                postOnOwner {
+                    if (retired || connection !== this) return@postOnOwner
+                    draining = false
+                    if (result.isFailure) {
+                        view = view.copy(problem = true)
+                        publish()
+                        return@postOnOwner
+                    }
+                    if (failed) state.connectionTransportFailed(token) else state.disconnectConnectionAttempt()
+                    retire(invalidate = false)
+                    connection = null
+                    view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                        telemetry = null, settings = null, bms = null, problem = failed || result.isFailure)
+                    publish()
+                    connectPendingOnOwner()
+                }
+            }
         }
 
         fun retire(invalidate: Boolean = true) {

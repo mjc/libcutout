@@ -8,6 +8,11 @@ class PevSession(
     val token: MobileConnectionAttemptTokenDto,
     private val now: () -> ULong,
     private val send: (MobileSessionOutputDto) -> Unit,
+    private val onRideTelemetry: (
+        MobileConnectionAttemptTokenDto,
+        ULong,
+        MobileRideMapSpeedObservationDto?,
+    ) -> Unit = { _, _, _ -> },
     private val updated: (MobileDeviceSessionSnapshotDto, MobileTelemetrySnapshotDto?, MobileSettingsDto) -> Unit,
 ) {
     private var protocolLinked = false
@@ -48,7 +53,8 @@ class PevSession(
 
     fun submit(id: MobileSettingIdDto, value: MobileSettingValueDto) {
         check(isCurrent)
-        process(state.submitSetting(token, id, value, now()))
+        val receivedAtMs = now()
+        process(state.submitSetting(token, id, value, receivedAtMs), receivedAtMs)
     }
 
     fun writeIsCurrent(operationId: ULong?): Boolean = isCurrent && (operationId == null ||
@@ -82,16 +88,23 @@ class PevSession(
         bytes: ByteArray = byteArrayOf(),
         writeLimit: UShort? = null,
     ) {
+        val receivedAtMs = now()
         state.ingestDeviceSession(token, MobileSessionInputDto(kind,
-            MobileMonotonicMillisDto(now()), writeLimit?.let(::MobileTransportWriteLimitDto), channel, bytes))
-            ?.let(::process)
+            MobileMonotonicMillisDto(receivedAtMs), writeLimit?.let(::MobileTransportWriteLimitDto), channel, bytes))
+            ?.let { process(it, receivedAtMs) }
     }
 
-    private fun process(step: MobileDeviceSessionStepDto) {
+    private fun process(step: MobileDeviceSessionStepDto, receivedAtMs: ULong) {
         if (!isCurrent || step.session.connection.token != token) return
         check(step.result.error == null) { "Device session refused input: ${step.result.error?.kind}" }
         telemetry = step.telemetry
         step.result.outputs.forEach(send)
+        val speedObservation = step.telemetry.speed?.let { speed ->
+            step.telemetry.speedObservedAtMs?.let { observedAt ->
+                MobileRideMapSpeedObservationDto(speed.value.value, observedAt.milliseconds)
+            }
+        }
+        onRideTelemetry(token, receivedAtMs, speedObservation)
         publish()
     }
 }
