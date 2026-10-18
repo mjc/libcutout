@@ -25,9 +25,17 @@ let
     after = [ "check:xcode-ios" ];
   };
   nightlyRust = pkgs.rust-bin.nightly.latest.default;
-  androidPackages = pkgs.androidenv.composeAndroidPackages {
+  androidApi = "35";
+  androidBuildTools = "35.0.0";
+  androidPackages = (pkgs.androidenv.override { licenseAccepted = true; }).composeAndroidPackages {
     includeNDK = true;
     ndkVersion = "29.0.14206865";
+    platformVersions = [ androidApi ];
+    buildToolsVersions = [ androidBuildTools ];
+    toolsVersion = null;
+    includeEmulator = false;
+    includeSystemImages = false;
+    cmakeVersions = [ ];
   };
   androidNdk = androidPackages.ndk-bundle;
   androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
@@ -48,8 +56,7 @@ in
   languages.nix.enable = true;
 
   packages = [
-    androidNdk
-    androidPackages.platform-tools
+    androidPackages.androidsdk
     cutoutCargoFuzz
     pkgs.cargo-deny
     pkgs.cargo-fuzz
@@ -71,6 +78,10 @@ in
   ];
 
   env.ANDROID_NDK_ROOT = androidNdkRoot;
+  env.ANDROID_HOME = "${androidPackages.androidsdk}/libexec/android-sdk";
+  env.CUTOUT_ANDROID_API = androidApi;
+  env.CUTOUT_ANDROID_BUILD_TOOLS = androidBuildTools;
+  env.CUTOUT_JNA_VERSION = pkgs.jna.version;
   env.CC_aarch64_linux_android = androidArm64Clang;
   env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidArm64Clang;
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
@@ -215,25 +226,13 @@ in
   '';
 
   tasks."test:kotlin-bindings-smoke".exec = ''
-    cargo build -p cutout-mobile-ffi
-    rm -rf target/uniffi-smoke
-    cargo run -p cutout-uniffi-bindgen -- generate \
-      --library "target/debug/libcutout_mobile_ffi.$([[ "$(uname -s)" == Darwin ]] && printf dylib || printf so)" \
-      --language kotlin \
-      --no-format \
-      --out-dir target/uniffi-smoke/kotlin
-    kotlinc \
-      target/uniffi-smoke/kotlin/uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt \
-      tests/mobile-ffi/kotlin-smoke.kt \
-      -cp "$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
-      -include-runtime \
-      -d target/uniffi-smoke/kotlin-smoke.jar
-    java \
-      -Djava.library.path="$DEVENV_ROOT/target/debug" \
-      -Djna.library.path="$DEVENV_ROOT/target/debug" \
-      -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
-      Kotlin_smokeKt
+    python3 scripts/test-mobile-ffi.py host
   '';
+  tasks."test:kotlin-bindings-smoke".after = [ "test:mobile-ffi-runner" ];
+  tasks."test:mobile-ffi-runner".exec =
+    "python3 -m unittest discover -s tests/mobile-ffi -p 'test_runner.py'";
+  tasks."build:android-tests".exec = "python3 scripts/test-mobile-ffi.py build";
+  tasks."test:android-device".exec = "python3 scripts/test-mobile-ffi.py device";
   tasks."build:ios-ui-tests" = {
     exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];

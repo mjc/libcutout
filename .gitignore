@@ -1,5 +1,6 @@
 /target/
 .build/
+__pycache__/
 /fuzz/artifacts/
 /fuzz/corpus/
 /fuzz/target/
