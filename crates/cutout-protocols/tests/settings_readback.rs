@@ -120,7 +120,7 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
         descriptor.control,
         SettingControl::Number {
             precision: 1,
-            step: 10,
+            editor_step: 10,
             ..
         }
     ));

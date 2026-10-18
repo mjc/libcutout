@@ -187,6 +187,13 @@ import Foundation
                 || self == .autoUnavailableVescLiveActivity
                 || self == .autoStaleVescLiveActivity
         }
+
+        func makeLiveActivityManager() -> any LiveActivityRideLifecycleManaging {
+            // Ordinary fixtures must not leave system activities that relaunch the
+            // app in the background on the next Simulator boot.
+            if startsLive { return LiveActivityRideActivityKitManager() }
+            return CutoutUITestLiveActivityManager()
+        }
         var initialBluetoothState: CutoutSessionTestInitialBluetoothState {
             switch self {
             case .bluetoothUnavailable: .unavailable
@@ -780,6 +787,36 @@ import Foundation
                 // Reuse the same validated Rust receipts when this explicit fixture relaunches.
                 defaults.set(receipts, forKey: receiptKey)
             }.value
+        }
+    }
+    actor CutoutUITestLiveActivityManager: LiveActivityRideLifecycleManaging {
+        private var activityID: String?
+
+        func start(
+            snapshot _: LiveActivityRideSnapshot,
+            rideSessionIdentity: LiveActivityRideSessionIdentity,
+            staleAfterMilliseconds _: UInt64,
+            freshnessExpiresAt _: Date
+        ) async throws -> LiveActivityRideStartOutcome {
+            let id = "ui-test-\(rideSessionIdentity.sessionID)"
+            if activityID == id { return .adopted(activityID: id) }
+            activityID = id
+            return .started(activityID: id)
+        }
+
+        func update(
+            snapshot _: LiveActivityRideSnapshot,
+            staleAfterMilliseconds _: UInt64,
+            freshnessExpiresAt _: Date
+        ) async throws -> LiveActivityRideUpdateOutcome {
+            guard let activityID else { throw LiveActivityRideLifecycleError.activityUnavailable }
+            return LiveActivityRideUpdateOutcome(activityID: activityID)
+        }
+
+        func end(reason _: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
+            let ids = activityID.map { [$0] } ?? []
+            activityID = nil
+            return LiveActivityRideEndOutcome(activityIDs: ids)
         }
     }
 #endif

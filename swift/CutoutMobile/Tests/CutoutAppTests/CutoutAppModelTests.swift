@@ -331,6 +331,7 @@ final class CutoutAppModelTests: XCTestCase {
         let snapshot = try XCTUnwrap(model.settings)
         let token = try XCTUnwrap(snapshot.connection.token)
         XCTAssertEqual(snapshot.connection.readiness, .verified)
+        XCTAssertEqual(snapshot.connection.transport, .connected)
         XCTAssertEqual(snapshot.settingDescriptors, core.settings.settingDescriptors)
         XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
         XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 14)
@@ -347,7 +348,7 @@ final class CutoutAppModelTests: XCTestCase {
         let highBeam = try XCTUnwrap(model.settings?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
-        let tune = EucTuneRouteView(
+        let tune = DeviceTuneRouteView(
             model: model,
             submitSetting: model.submitDeviceSetting,
             submitAction: model.submitDeviceAction
@@ -424,6 +425,16 @@ final class CutoutAppModelTests: XCTestCase {
         }
         XCTAssertEqual(model.phase, .live)
         XCTAssertEqual(model.displayState.notificationCount, expectedNotificationCount)
+
+        XCTAssertTrue(
+            model.settings?.settingDescriptors.isEmpty ?? true,
+            "VESC telemetry replay without supported Refloat evidence must not invent settings descriptors")
+        let tune = DeviceTuneRouteView(
+            model: model,
+            submitSetting: model.submitDeviceSetting,
+            submitAction: model.submitDeviceAction
+        )
+        _ = tune.body
 
         let telemetry = try XCTUnwrap(model.displayState.telemetry)
         XCTAssertNotNil(telemetry.speed)

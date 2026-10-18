@@ -7050,6 +7050,12 @@ pub struct SettingsReadback {
 }
 
 impl SettingsReadback {
+    /// Maximum number of settings entries retained in one readback.
+    #[must_use]
+    pub const fn capacity() -> usize {
+        SETTINGS_READBACK_CAPACITY
+    }
+
     /// Creates an available settings readback.
     #[must_use]
     pub fn available<const N: usize>(entries: [Option<SettingsEntry>; N]) -> Self {
@@ -9884,6 +9890,7 @@ mod tests {
 
     #[test]
     fn settings_readback_preserves_the_eighteenth_entry() {
+        assert_eq!(crate::SettingsReadback::capacity(), 18);
         let entry = crate::SettingsEntry {
             field: crate::RawFieldValue::new(0x11, 3),
             source: ValueSource::Reported,

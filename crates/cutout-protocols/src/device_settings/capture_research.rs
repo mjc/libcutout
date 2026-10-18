@@ -91,7 +91,7 @@ pub fn capture_research_catalog(profile_id: &str) -> Option<CaptureResearchCatal
                 *can_disable = id == SettingId::PwmTiltback;
             }
             Some(CaptureResearchField {
-                id: capture_research_setting_id(id),
+                id: capture_research_setting_id(id)?,
                 setting_id: Some(id),
                 label_key,
                 group,
@@ -120,10 +120,11 @@ pub fn capture_research_catalog(profile_id: &str) -> Option<CaptureResearchCatal
     })
 }
 
-/// Stable capture identity; never derived from Debug or a localized name.
+/// Stable identity for a named capture research field, independent of display text.
+/// Settings outside the existing capture field vocabulary return `None`.
 #[must_use]
-pub const fn capture_research_setting_id(id: SettingId) -> &'static str {
-    match id {
+pub const fn capture_research_setting_id(id: SettingId) -> Option<&'static str> {
+    Some(match id {
         SettingId::Headlight => "headlight",
         SettingId::HighBeam => "high_beam",
         SettingId::TiltbackSpeed => "tiltback_speed",
@@ -155,7 +156,8 @@ pub const fn capture_research_setting_id(id: SettingId) -> &'static str {
         SettingId::AutoShutdownRemaining => "auto_shutdown_remaining",
         SettingId::PowerOffDelay => "power_off_delay",
         SettingId::ChargeMode => "charge_mode",
-    }
+        _ => return None,
+    })
 }
 
 /// A native draft is structurally invalid; import still preserves unknown future fields.
@@ -317,7 +319,9 @@ impl CaptureResearchReadback {
             )) = event
             {
                 for observation in self.profile.normalize_capture_readback(&readback, true) {
-                    let id = capture_research_setting_id(observation.id);
+                    let Some(id) = capture_research_setting_id(observation.id) else {
+                        continue;
+                    };
                     let value = CaptureResearchDecodedValue {
                         setting_id: id,
                         value: observation.value.map(|value| value.value),

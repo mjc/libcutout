@@ -3074,6 +3074,16 @@ fn vesc_reply_matches(command: DeviceCommand, reply: &VescReadOnlyReply) -> bool
 
 fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
     match reply {
+        VescReadOnlyReply::CustomConfig { index, bytes } => {
+            info!(index, config_bytes = bytes.len(), "vesc custom config");
+        }
+        VescReadOnlyReply::AppConfig(bytes) => info!(config_bytes = bytes.len(), "vesc app config"),
+        VescReadOnlyReply::ConfigurationStored => {
+            info!("vesc configuration stored; readback pending");
+        }
+        VescReadOnlyReply::CustomConfigDispatched => {
+            info!("vesc custom config write dispatched; device acceptance is unverified");
+        }
         VescReadOnlyReply::FirmwareInfo {
             major,
             minor,
@@ -3118,6 +3128,21 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
 
 fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
     match reply {
+        VescReadOnlyReply::CustomConfig { index, bytes } => serde_json::json!({
+            "type": "vesc_custom_config",
+            "index": index,
+            "config_bytes": bytes.len(),
+        }),
+        VescReadOnlyReply::AppConfig(bytes) => {
+            serde_json::json!({"type": "vesc_app_config", "config_bytes": bytes.len()})
+        }
+        VescReadOnlyReply::ConfigurationStored => {
+            serde_json::json!({"type": "vesc_configuration_stored"})
+        }
+        VescReadOnlyReply::CustomConfigDispatched => serde_json::json!({
+            "type": "vesc_custom_config_dispatched",
+            "device_acceptance": "unverified",
+        }),
         VescReadOnlyReply::FirmwareInfo {
             major,
             minor,

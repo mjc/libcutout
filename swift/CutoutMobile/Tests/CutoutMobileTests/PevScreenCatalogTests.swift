@@ -218,13 +218,19 @@ final class PevScreenCatalogTests: XCTestCase {
     func testVescRideTabsExposeMapAndKeepLogsDisabled() {
         let tabs = PevRideTabs.vescRideTabs()
 
-        XCTAssertEqual(tabs.map(\.title), ["Ride", "Lighting", "Debug", "Map", "Logs"])
-        XCTAssertNil(tabs[3].disabledReason)
-        XCTAssertEqual(tabs[4].disabledReason, "Logs are not available yet.")
-        XCTAssertTrue(tabs[3].isEnabled)
-        XCTAssertFalse(tabs[4].isEnabled)
-        XCTAssertEqual(tabs[3].destinationTarget, .rideMap)
-        XCTAssertNil(tabs[4].destinationTarget)
+        XCTAssertEqual(tabs.map(\.title), ["Ride", "Lighting", "Debug", "Map", "Tune", "Logs"])
+        let tune = tabs.first(where: { $0.id == .tune })
+        let debug = tabs.first(where: { $0.id == .debug })
+        let map = tabs.first(where: { $0.id == .map })
+        let logs = tabs.first(where: { $0.id == .logs })
+        XCTAssertEqual(tune?.destinationTarget, .tune)
+        XCTAssertEqual(debug?.destinationTarget, .screen(.vescDebug))
+        XCTAssertNil(map?.disabledReason)
+        XCTAssertEqual(logs?.disabledReason, "Logs are not available yet.")
+        XCTAssertEqual(map?.isEnabled, true)
+        XCTAssertEqual(logs?.isEnabled, false)
+        XCTAssertEqual(map?.destinationTarget, .rideMap)
+        XCTAssertNil(logs?.destinationTarget)
     }
 
     func testSharedPickerAndNavigationCopyResolvesFromThePackageCatalog() {
@@ -244,8 +250,8 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(DevicePickerRowState(action: .review).actionTitle, "Review")
         XCTAssertEqual(DevicePickerRowState(action: .later).actionTitle, "Later")
         XCTAssertEqual(PevRideTabs.eucRideTabs().map(\.title), ["Ride", "Lighting", "Pack", "Map", "Tune"])
-        XCTAssertEqual(PevRideTabs.eucRideTabs()[4].destinationTarget, .eucTune)
-        XCTAssertEqual(PevRideTabs.vescRideTabs()[3].destinationTarget, .rideMap)
+        XCTAssertEqual(PevRideTabs.eucRideTabs().first(where: { $0.id == .tune })?.destinationTarget, .tune)
+        XCTAssertEqual(PevRideTabs.vescRideTabs().first(where: { $0.id == .map })?.destinationTarget, .rideMap)
     }
 
     func testSharedPickerStatusCopyResolvesFromThePackageCatalog() {
@@ -276,29 +282,40 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)
         XCTAssertEqual(PevRideTabs.eucRideTabs()[2].destinationTarget, .eucPack)
-        XCTAssertEqual(PevRideTabs.eucRideTabs()[4].destinationTarget, .eucTune)
+        XCTAssertEqual(PevRideTabs.eucRideTabs().first(where: { $0.id == .tune })?.destinationTarget, .tune)
         XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
-        XCTAssertEqual(PevRideTabs.vescRideTabs()[2].destinationTarget, .screen(.vescDebug))
+        XCTAssertEqual(PevRideTabs.vescRideTabs().first(where: { $0.id == .tune })?.destinationTarget, .tune)
+        XCTAssertEqual(
+            PevRideTabs.vescRideTabs().first(where: { $0.id == .debug })?.destinationTarget, .screen(.vescDebug))
     }
 
     func testSelectedTabSemanticsTrackExplicitRoutes() {
-        XCTAssertTrue(PevRideTabs.eucRideTabs(selected: .bmsOverview)[2].isSelected)
-        XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescRide)[0].isSelected)
-        XCTAssertFalse(PevRideTabs.vescRideTabs(selected: .vescDebug)[0].isSelected)
-        XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescDebug)[2].isSelected)
+        XCTAssertTrue(
+            PevRideTabs.eucRideTabs(selected: .bmsOverview).first(where: { $0.id == .pack })?.isSelected == true)
+        XCTAssertTrue(
+            PevRideTabs.vescRideTabs(selected: .vescRide).first(where: { $0.id == .ride })?.isSelected == true)
+        XCTAssertFalse(
+            PevRideTabs.vescRideTabs(selected: .vescDebug).first(where: { $0.id == .ride })?.isSelected == true)
+        XCTAssertTrue(
+            PevRideTabs.vescRideTabs(selected: .vescDebug).first(where: { $0.id == .debug })?.isSelected == true)
 
         let explicitTune = PevRideTabs.eucRideTabs(isTuneSelected: true)
-        XCTAssertTrue(explicitTune[4].isSelected)
-        XCTAssertEqual(explicitTune[4].destinationTarget, .eucTune)
+        XCTAssertTrue(explicitTune.first(where: { $0.id == .tune })?.isSelected == true)
+        XCTAssertEqual(explicitTune.first(where: { $0.id == .tune })?.destinationTarget, .tune)
+
+        let explicitVescTune = PevRideTabs.vescRideTabs(isTuneSelected: true)
+        XCTAssertFalse(explicitVescTune.first(where: { $0.id == .ride })?.isSelected == true)
+        XCTAssertTrue(explicitVescTune.first(where: { $0.id == .tune })?.isSelected == true)
+        XCTAssertEqual(explicitVescTune.first(where: { $0.id == .tune })?.destinationTarget, .tune)
 
         let explicitRide = PevRideTabs.eucRideTabs(selected: .eucRide, isTuneSelected: true)
-        XCTAssertTrue(explicitRide[0].isSelected)
-        XCTAssertFalse(explicitRide[4].isSelected)
+        XCTAssertTrue(explicitRide.first(where: { $0.id == .ride })?.isSelected == true)
+        XCTAssertFalse(explicitRide.first(where: { $0.id == .tune })?.isSelected == true)
 
         let lighting = PevRideTabs.eucRideTabs(lightingSelected: true, isTuneSelected: true)
-        XCTAssertTrue(lighting[1].isSelected)
-        XCTAssertFalse(lighting[0].isSelected)
-        XCTAssertFalse(lighting[4].isSelected)
+        XCTAssertTrue(lighting.first(where: { $0.id == .lighting })?.isSelected == true)
+        XCTAssertFalse(lighting.first(where: { $0.id == .ride })?.isSelected == true)
+        XCTAssertFalse(lighting.first(where: { $0.id == .tune })?.isSelected == true)
     }
 
     func testTabIdentityDoesNotDependOnVisibleTitle() {

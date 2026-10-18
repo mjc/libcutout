@@ -332,9 +332,339 @@ pub enum SettingIdDto {
     PowerOffDelay,
     /// Reported charge mode.
     ChargeMode,
+    /// Semantic setting identity.
+    PushbackDutyAngle,
+    /// Semantic setting identity.
+    PushbackDutySpeed,
+    /// Semantic setting identity.
+    PushbackReturnSpeed,
+    /// Semantic setting identity.
+    PushbackDutyBeepEnabled,
+    /// Semantic setting identity.
+    PushbackPersistentFatalError,
+    /// Semantic setting identity.
+    PushbackHighVoltageAngle,
+    /// Semantic setting identity.
+    PushbackHighVoltageSpeed,
+    /// Semantic setting identity.
+    PushbackLowVoltageAngle,
+    /// Semantic setting identity.
+    PushbackLowVoltageSpeed,
+    /// Semantic setting identity.
+    HapticsDutyFrequency,
+    /// Semantic setting identity.
+    HapticsDutyStrength,
+    /// Semantic setting identity.
+    HapticsErrorFrequency,
+    /// Semantic setting identity.
+    HapticsErrorStrength,
+    /// Semantic setting identity.
+    HapticsVibrateFrequency,
+    /// Semantic setting identity.
+    HapticsVibrateStrength,
+    /// Semantic setting identity.
+    HapticsDutySolidOffset,
+    /// Semantic setting identity.
+    HapticsCurrentThreshold,
+    /// Semantic setting identity.
+    HapticsMinStrength,
+    /// Semantic setting identity.
+    HapticsMaxStrengthSpeed,
+    /// Semantic setting identity.
+    HapticsStrengthCurvature,
+    /// Semantic setting identity.
+    RemoteReceiverType,
+    /// Semantic setting identity.
+    RemoteInputDeadband,
+    /// Semantic setting identity.
+    LightingOn,
+    /// Semantic setting identity.
+    LightingHeadlightsOn,
+    /// Semantic setting identity.
+    LightingHeadlightsTransition,
+    /// Semantic setting identity.
+    LightingDirectionTransition,
+    /// Semantic setting identity.
+    LightingLightsOffWhenLifted,
+    /// Semantic setting identity.
+    LightingStatusOnFrontWhenLifted,
+    /// Semantic setting identity.
+    LightingFrontMode,
+    /// Semantic setting identity.
+    LightingFrontBrightness,
+    /// Semantic setting identity.
+    LightingFrontColor1,
+    /// Semantic setting identity.
+    LightingFrontColor2,
+    /// Semantic setting identity.
+    LightingFrontSpeed,
+    /// Semantic setting identity.
+    LightingRearMode,
+    /// Semantic setting identity.
+    LightingRearBrightness,
+    /// Semantic setting identity.
+    LightingRearColor1,
+    /// Semantic setting identity.
+    LightingRearColor2,
+    /// Semantic setting identity.
+    LightingRearSpeed,
+    /// Semantic setting identity.
+    LightingHeadlightsMode,
+    /// Semantic setting identity.
+    LightingHeadlightsBrightness,
+    /// Semantic setting identity.
+    LightingHeadlightsColor1,
+    /// Semantic setting identity.
+    LightingHeadlightsColor2,
+    /// Semantic setting identity.
+    LightingHeadlightsSpeed,
+    /// Semantic setting identity.
+    LightingTaillightsMode,
+    /// Semantic setting identity.
+    LightingTaillightsBrightness,
+    /// Semantic setting identity.
+    LightingTaillightsColor1,
+    /// Semantic setting identity.
+    LightingTaillightsColor2,
+    /// Semantic setting identity.
+    LightingTaillightsSpeed,
+    /// Semantic setting identity.
+    LightingStatusBrightnessHeadlightsOff,
+    /// Semantic setting identity.
+    LightingStatusBrightnessHeadlightsOn,
+    /// Semantic setting identity.
+    LightingStatusShowSensorsWhileRunning,
+    /// Semantic setting identity.
+    LightingStatusMotorUtilizationThreshold,
+    /// Semantic setting identity.
+    LightingStatusRedBarPercentage,
+    /// Semantic setting identity.
+    LightingStatusIdleTimeout,
+    /// Semantic setting identity.
+    LightingStatusIdleMode,
+    /// Semantic setting identity.
+    LightingStatusIdleBrightness,
+    /// Semantic setting identity.
+    LightingStatusIdleColor1,
+    /// Semantic setting identity.
+    LightingStatusIdleColor2,
+    /// Semantic setting identity.
+    LightingStatusIdleSpeed,
+    /// Semantic setting identity.
+    PackageDisabled,
+    /// Semantic setting identity.
+    PushbackHv,
+    /// Semantic setting identity.
+    PushbackLv,
+    /// Semantic setting identity.
+    SensorsAdcchannel1,
+    /// Semantic setting identity.
+    SensorsAdcchannel2,
+    /// Semantic setting identity.
+    SensorsSwapFootpadAdcs,
+    /// Semantic setting identity.
+    SensorsFootFaultBeepEnabled,
+    /// Semantic setting identity.
+    HardwareBeeperEnabled,
+    /// Semantic setting identity.
+    LightingHardwareMode,
+    /// Semantic setting identity.
+    LightingHardwarePin,
+    /// Semantic setting identity.
+    LightingHardwarePinConfig,
+    /// Semantic setting identity.
+    LightingHardwareStatusOrder,
+    /// Semantic setting identity.
+    LightingHardwareStatusCount,
+    /// Semantic setting identity.
+    LightingHardwareStatusColorOrder,
+    /// Semantic setting identity.
+    LightingHardwareStatusReverse,
+    /// Semantic setting identity.
+    LightingHardwareFrontOrder,
+    /// Semantic setting identity.
+    LightingHardwareFrontCount,
+    /// Semantic setting identity.
+    LightingHardwareFrontColorOrder,
+    /// Semantic setting identity.
+    LightingHardwareFrontReverse,
+    /// Semantic setting identity.
+    LightingHardwareRearOrder,
+    /// Semantic setting identity.
+    LightingHardwareRearCount,
+    /// Semantic setting identity.
+    LightingHardwareRearColorOrder,
+    /// Semantic setting identity.
+    LightingHardwareRearReverse,
+    /// Semantic setting identity.
+    BmsEnabled,
+    /// Semantic setting identity.
+    BmsCellLvThreshold,
+    /// Semantic setting identity.
+    BmsCellHvThreshold,
+    /// Semantic setting identity.
+    BmsCellBalanceThreshold,
+    /// Semantic setting identity.
+    BmsCellHtThreshold,
+    /// Semantic setting identity.
+    BmsCellLtThreshold,
+    /// Semantic setting identity.
+    BmsBmsHtThreshold,
+    /// Semantic setting identity.
+    MotorDriveCurrentLimit,
+    /// Semantic setting identity.
+    MotorBrakingCurrentLimit,
+    /// Semantic setting identity.
+    BatteryCurrentOutLimit,
+    /// Semantic setting identity.
+    BatteryCurrentInLimit,
+    /// Semantic setting identity.
+    AbsoluteMotorCurrentLimit,
+    /// Semantic setting identity.
+    InputVoltageMinimum,
+    /// Semantic setting identity.
+    InputVoltageMaximum,
+    /// Semantic setting identity.
+    BatteryCutbackStart,
+    /// Semantic setting identity.
+    BatteryCutbackEnd,
+    /// Semantic setting identity.
+    RegenerativeBatteryCutbackStart,
+    /// Semantic setting identity.
+    RegenerativeBatteryCutbackEnd,
+    /// Semantic setting identity.
+    FetTemperatureCutbackStart,
+    /// Semantic setting identity.
+    FetTemperatureCutbackEnd,
+    /// Semantic setting identity.
+    MotorTemperatureCutbackStart,
+    /// Semantic setting identity.
+    MotorTemperatureCutbackEnd,
+    /// Semantic setting identity.
+    MotorPowerOutLimit,
+    /// Semantic setting identity.
+    RegenerativeMotorPowerLimit,
+    /// Semantic setting identity.
+    MotorDriveCurrentLimitScale,
+    /// Semantic setting identity.
+    MotorBrakingCurrentLimitScale,
+    /// Semantic setting identity.
+    MotorPoleCount,
+    /// Semantic setting identity.
+    MotorGearRatio,
+    /// Semantic setting identity.
+    WheelDiameter,
+    /// Semantic setting identity.
+    BatteryChemistry,
+    /// Semantic setting identity.
+    BatterySeriesCellCount,
+    /// Semantic setting identity.
+    BatteryCapacity,
+    /// Semantic setting identity.
+    BmsType,
+    /// Semantic setting identity.
+    BmsLimitMode,
+    /// Semantic setting identity.
+    BmsTemperatureLimitingEnabled,
+    /// Semantic setting identity.
+    BmsSocLimitingEnabled,
+    /// Semantic setting identity.
+    BmsMinimumCellVoltageLimitingEnabled,
+    /// Semantic setting identity.
+    BmsMaximumCellVoltageLimitingEnabled,
+    /// Semantic setting identity.
+    BmsTemperatureLimitStart,
+    /// Semantic setting identity.
+    BmsTemperatureLimitEnd,
+    /// Semantic setting identity.
+    BmsSocLimitStart,
+    /// Semantic setting identity.
+    BmsSocLimitEnd,
+    /// Semantic setting identity.
+    BmsCellMinimumVoltageLimitStart,
+    /// Semantic setting identity.
+    BmsCellMinimumVoltageLimitEnd,
+    /// Semantic setting identity.
+    BmsCellMaximumVoltageLimitStart,
+    /// Semantic setting identity.
+    BmsCellMaximumVoltageLimitEnd,
+    /// Semantic setting identity.
+    BmsCanForwardMode,
+    /// Semantic setting identity.
+    ControllerId,
+    /// Semantic setting identity.
+    CommandTimeout,
+    /// Semantic setting identity.
+    CommandTimeoutBrakeCurrent,
+    /// Semantic setting identity.
+    CanStatusRate1,
+    /// Semantic setting identity.
+    CanStatusRate2,
+    /// Semantic setting identity.
+    CanBaudRate,
+    /// Semantic setting identity.
+    CanMode,
+    /// Semantic setting identity.
+    ApplicationToUse,
+    /// Semantic setting identity.
+    KillSwitchMode,
+    /// Semantic setting identity.
+    PpmControlMode,
+    /// Semantic setting identity.
+    PpmHysteresis,
+    /// Semantic setting identity.
+    PpmPulseStart,
+    /// Semantic setting identity.
+    PpmPulseEnd,
+    /// Semantic setting identity.
+    PpmPulseCenter,
+    /// Semantic setting identity.
+    PpmSafeStart,
+    /// Semantic setting identity.
+    PpmRampTimePositive,
+    /// Semantic setting identity.
+    PpmRampTimeNegative,
+    /// Semantic setting identity.
+    AdcControlMode,
+    /// Semantic setting identity.
+    AdcHysteresis,
+    /// Semantic setting identity.
+    AdcVoltageStart,
+    /// Semantic setting identity.
+    AdcVoltageEnd,
+    /// Semantic setting identity.
+    AdcVoltageMinimum,
+    /// Semantic setting identity.
+    AdcVoltageMaximum,
+    /// Semantic setting identity.
+    AdcSafeStart,
+    /// Semantic setting identity.
+    AdcRampTimePositive,
+    /// Semantic setting identity.
+    AdcRampTimeNegative,
+    /// Semantic setting identity.
+    NunchukControlMode,
+    /// Semantic setting identity.
+    NunchukHysteresis,
+    /// Semantic setting identity.
+    NunchukRampTimePositive,
+    /// Semantic setting identity.
+    NunchukRampTimeNegative,
+    /// Semantic setting identity.
+    ImuType,
+    /// Semantic setting identity.
+    ImuMode,
+    /// Semantic setting identity.
+    ImuFilter,
+    /// Semantic setting identity.
+    ImuSampleRate,
+    /// Semantic setting identity.
+    ImuUseMagnetometer,
 }
 
 impl From<SettingId> for SettingIdDto {
+    // Keep this exhaustive UniFFI projection beside its inverse so new IDs cannot be omitted.
+    #[allow(clippy::too_many_lines)]
     fn from(value: SettingId) -> Self {
         match value {
             SettingId::Headlight => Self::Headlight,
@@ -368,11 +698,189 @@ impl From<SettingId> for SettingIdDto {
             SettingId::AutoShutdownRemaining => Self::AutoShutdownRemaining,
             SettingId::PowerOffDelay => Self::PowerOffDelay,
             SettingId::ChargeMode => Self::ChargeMode,
+            SettingId::PushbackDutyAngle => Self::PushbackDutyAngle,
+            SettingId::PushbackDutySpeed => Self::PushbackDutySpeed,
+            SettingId::PushbackReturnSpeed => Self::PushbackReturnSpeed,
+            SettingId::PushbackDutyBeepEnabled => Self::PushbackDutyBeepEnabled,
+            SettingId::PushbackPersistentFatalError => Self::PushbackPersistentFatalError,
+            SettingId::PushbackHighVoltageAngle => Self::PushbackHighVoltageAngle,
+            SettingId::PushbackHighVoltageSpeed => Self::PushbackHighVoltageSpeed,
+            SettingId::PushbackLowVoltageAngle => Self::PushbackLowVoltageAngle,
+            SettingId::PushbackLowVoltageSpeed => Self::PushbackLowVoltageSpeed,
+            SettingId::HapticsDutyFrequency => Self::HapticsDutyFrequency,
+            SettingId::HapticsDutyStrength => Self::HapticsDutyStrength,
+            SettingId::HapticsErrorFrequency => Self::HapticsErrorFrequency,
+            SettingId::HapticsErrorStrength => Self::HapticsErrorStrength,
+            SettingId::HapticsVibrateFrequency => Self::HapticsVibrateFrequency,
+            SettingId::HapticsVibrateStrength => Self::HapticsVibrateStrength,
+            SettingId::HapticsDutySolidOffset => Self::HapticsDutySolidOffset,
+            SettingId::HapticsCurrentThreshold => Self::HapticsCurrentThreshold,
+            SettingId::HapticsMinStrength => Self::HapticsMinStrength,
+            SettingId::HapticsMaxStrengthSpeed => Self::HapticsMaxStrengthSpeed,
+            SettingId::HapticsStrengthCurvature => Self::HapticsStrengthCurvature,
+            SettingId::RemoteReceiverType => Self::RemoteReceiverType,
+            SettingId::RemoteInputDeadband => Self::RemoteInputDeadband,
+            SettingId::LightingOn => Self::LightingOn,
+            SettingId::LightingHeadlightsOn => Self::LightingHeadlightsOn,
+            SettingId::LightingHeadlightsTransition => Self::LightingHeadlightsTransition,
+            SettingId::LightingDirectionTransition => Self::LightingDirectionTransition,
+            SettingId::LightingLightsOffWhenLifted => Self::LightingLightsOffWhenLifted,
+            SettingId::LightingStatusOnFrontWhenLifted => Self::LightingStatusOnFrontWhenLifted,
+            SettingId::LightingFrontMode => Self::LightingFrontMode,
+            SettingId::LightingFrontBrightness => Self::LightingFrontBrightness,
+            SettingId::LightingFrontColor1 => Self::LightingFrontColor1,
+            SettingId::LightingFrontColor2 => Self::LightingFrontColor2,
+            SettingId::LightingFrontSpeed => Self::LightingFrontSpeed,
+            SettingId::LightingRearMode => Self::LightingRearMode,
+            SettingId::LightingRearBrightness => Self::LightingRearBrightness,
+            SettingId::LightingRearColor1 => Self::LightingRearColor1,
+            SettingId::LightingRearColor2 => Self::LightingRearColor2,
+            SettingId::LightingRearSpeed => Self::LightingRearSpeed,
+            SettingId::LightingHeadlightsMode => Self::LightingHeadlightsMode,
+            SettingId::LightingHeadlightsBrightness => Self::LightingHeadlightsBrightness,
+            SettingId::LightingHeadlightsColor1 => Self::LightingHeadlightsColor1,
+            SettingId::LightingHeadlightsColor2 => Self::LightingHeadlightsColor2,
+            SettingId::LightingHeadlightsSpeed => Self::LightingHeadlightsSpeed,
+            SettingId::LightingTaillightsMode => Self::LightingTaillightsMode,
+            SettingId::LightingTaillightsBrightness => Self::LightingTaillightsBrightness,
+            SettingId::LightingTaillightsColor1 => Self::LightingTaillightsColor1,
+            SettingId::LightingTaillightsColor2 => Self::LightingTaillightsColor2,
+            SettingId::LightingTaillightsSpeed => Self::LightingTaillightsSpeed,
+            SettingId::LightingStatusBrightnessHeadlightsOff => {
+                Self::LightingStatusBrightnessHeadlightsOff
+            }
+            SettingId::LightingStatusBrightnessHeadlightsOn => {
+                Self::LightingStatusBrightnessHeadlightsOn
+            }
+            SettingId::LightingStatusShowSensorsWhileRunning => {
+                Self::LightingStatusShowSensorsWhileRunning
+            }
+            SettingId::LightingStatusMotorUtilizationThreshold => {
+                Self::LightingStatusMotorUtilizationThreshold
+            }
+            SettingId::LightingStatusRedBarPercentage => Self::LightingStatusRedBarPercentage,
+            SettingId::LightingStatusIdleTimeout => Self::LightingStatusIdleTimeout,
+            SettingId::LightingStatusIdleMode => Self::LightingStatusIdleMode,
+            SettingId::LightingStatusIdleBrightness => Self::LightingStatusIdleBrightness,
+            SettingId::LightingStatusIdleColor1 => Self::LightingStatusIdleColor1,
+            SettingId::LightingStatusIdleColor2 => Self::LightingStatusIdleColor2,
+            SettingId::LightingStatusIdleSpeed => Self::LightingStatusIdleSpeed,
+            SettingId::PackageDisabled => Self::PackageDisabled,
+            SettingId::PushbackHv => Self::PushbackHv,
+            SettingId::PushbackLv => Self::PushbackLv,
+            SettingId::SensorsAdcchannel1 => Self::SensorsAdcchannel1,
+            SettingId::SensorsAdcchannel2 => Self::SensorsAdcchannel2,
+            SettingId::SensorsSwapFootpadAdcs => Self::SensorsSwapFootpadAdcs,
+            SettingId::SensorsFootFaultBeepEnabled => Self::SensorsFootFaultBeepEnabled,
+            SettingId::HardwareBeeperEnabled => Self::HardwareBeeperEnabled,
+            SettingId::LightingHardwareMode => Self::LightingHardwareMode,
+            SettingId::LightingHardwarePin => Self::LightingHardwarePin,
+            SettingId::LightingHardwarePinConfig => Self::LightingHardwarePinConfig,
+            SettingId::LightingHardwareStatusOrder => Self::LightingHardwareStatusOrder,
+            SettingId::LightingHardwareStatusCount => Self::LightingHardwareStatusCount,
+            SettingId::LightingHardwareStatusColorOrder => Self::LightingHardwareStatusColorOrder,
+            SettingId::LightingHardwareStatusReverse => Self::LightingHardwareStatusReverse,
+            SettingId::LightingHardwareFrontOrder => Self::LightingHardwareFrontOrder,
+            SettingId::LightingHardwareFrontCount => Self::LightingHardwareFrontCount,
+            SettingId::LightingHardwareFrontColorOrder => Self::LightingHardwareFrontColorOrder,
+            SettingId::LightingHardwareFrontReverse => Self::LightingHardwareFrontReverse,
+            SettingId::LightingHardwareRearOrder => Self::LightingHardwareRearOrder,
+            SettingId::LightingHardwareRearCount => Self::LightingHardwareRearCount,
+            SettingId::LightingHardwareRearColorOrder => Self::LightingHardwareRearColorOrder,
+            SettingId::LightingHardwareRearReverse => Self::LightingHardwareRearReverse,
+            SettingId::BmsEnabled => Self::BmsEnabled,
+            SettingId::BmsCellLvThreshold => Self::BmsCellLvThreshold,
+            SettingId::BmsCellHvThreshold => Self::BmsCellHvThreshold,
+            SettingId::BmsCellBalanceThreshold => Self::BmsCellBalanceThreshold,
+            SettingId::BmsCellHtThreshold => Self::BmsCellHtThreshold,
+            SettingId::BmsCellLtThreshold => Self::BmsCellLtThreshold,
+            SettingId::BmsBmsHtThreshold => Self::BmsBmsHtThreshold,
+            SettingId::MotorDriveCurrentLimit => Self::MotorDriveCurrentLimit,
+            SettingId::MotorBrakingCurrentLimit => Self::MotorBrakingCurrentLimit,
+            SettingId::BatteryCurrentOutLimit => Self::BatteryCurrentOutLimit,
+            SettingId::BatteryCurrentInLimit => Self::BatteryCurrentInLimit,
+            SettingId::AbsoluteMotorCurrentLimit => Self::AbsoluteMotorCurrentLimit,
+            SettingId::InputVoltageMinimum => Self::InputVoltageMinimum,
+            SettingId::InputVoltageMaximum => Self::InputVoltageMaximum,
+            SettingId::BatteryCutbackStart => Self::BatteryCutbackStart,
+            SettingId::BatteryCutbackEnd => Self::BatteryCutbackEnd,
+            SettingId::RegenerativeBatteryCutbackStart => Self::RegenerativeBatteryCutbackStart,
+            SettingId::RegenerativeBatteryCutbackEnd => Self::RegenerativeBatteryCutbackEnd,
+            SettingId::FetTemperatureCutbackStart => Self::FetTemperatureCutbackStart,
+            SettingId::FetTemperatureCutbackEnd => Self::FetTemperatureCutbackEnd,
+            SettingId::MotorTemperatureCutbackStart => Self::MotorTemperatureCutbackStart,
+            SettingId::MotorTemperatureCutbackEnd => Self::MotorTemperatureCutbackEnd,
+            SettingId::MotorPowerOutLimit => Self::MotorPowerOutLimit,
+            SettingId::RegenerativeMotorPowerLimit => Self::RegenerativeMotorPowerLimit,
+            SettingId::MotorDriveCurrentLimitScale => Self::MotorDriveCurrentLimitScale,
+            SettingId::MotorBrakingCurrentLimitScale => Self::MotorBrakingCurrentLimitScale,
+            SettingId::MotorPoleCount => Self::MotorPoleCount,
+            SettingId::MotorGearRatio => Self::MotorGearRatio,
+            SettingId::WheelDiameter => Self::WheelDiameter,
+            SettingId::BatteryChemistry => Self::BatteryChemistry,
+            SettingId::BatterySeriesCellCount => Self::BatterySeriesCellCount,
+            SettingId::BatteryCapacity => Self::BatteryCapacity,
+            SettingId::BmsType => Self::BmsType,
+            SettingId::BmsLimitMode => Self::BmsLimitMode,
+            SettingId::BmsTemperatureLimitingEnabled => Self::BmsTemperatureLimitingEnabled,
+            SettingId::BmsSocLimitingEnabled => Self::BmsSocLimitingEnabled,
+            SettingId::BmsMinimumCellVoltageLimitingEnabled => {
+                Self::BmsMinimumCellVoltageLimitingEnabled
+            }
+            SettingId::BmsMaximumCellVoltageLimitingEnabled => {
+                Self::BmsMaximumCellVoltageLimitingEnabled
+            }
+            SettingId::BmsTemperatureLimitStart => Self::BmsTemperatureLimitStart,
+            SettingId::BmsTemperatureLimitEnd => Self::BmsTemperatureLimitEnd,
+            SettingId::BmsSocLimitStart => Self::BmsSocLimitStart,
+            SettingId::BmsSocLimitEnd => Self::BmsSocLimitEnd,
+            SettingId::BmsCellMinimumVoltageLimitStart => Self::BmsCellMinimumVoltageLimitStart,
+            SettingId::BmsCellMinimumVoltageLimitEnd => Self::BmsCellMinimumVoltageLimitEnd,
+            SettingId::BmsCellMaximumVoltageLimitStart => Self::BmsCellMaximumVoltageLimitStart,
+            SettingId::BmsCellMaximumVoltageLimitEnd => Self::BmsCellMaximumVoltageLimitEnd,
+            SettingId::BmsCanForwardMode => Self::BmsCanForwardMode,
+            SettingId::ControllerId => Self::ControllerId,
+            SettingId::CommandTimeout => Self::CommandTimeout,
+            SettingId::CommandTimeoutBrakeCurrent => Self::CommandTimeoutBrakeCurrent,
+            SettingId::CanStatusRate1 => Self::CanStatusRate1,
+            SettingId::CanStatusRate2 => Self::CanStatusRate2,
+            SettingId::CanBaudRate => Self::CanBaudRate,
+            SettingId::CanMode => Self::CanMode,
+            SettingId::ApplicationToUse => Self::ApplicationToUse,
+            SettingId::KillSwitchMode => Self::KillSwitchMode,
+            SettingId::PpmControlMode => Self::PpmControlMode,
+            SettingId::PpmHysteresis => Self::PpmHysteresis,
+            SettingId::PpmPulseStart => Self::PpmPulseStart,
+            SettingId::PpmPulseEnd => Self::PpmPulseEnd,
+            SettingId::PpmPulseCenter => Self::PpmPulseCenter,
+            SettingId::PpmSafeStart => Self::PpmSafeStart,
+            SettingId::PpmRampTimePositive => Self::PpmRampTimePositive,
+            SettingId::PpmRampTimeNegative => Self::PpmRampTimeNegative,
+            SettingId::AdcControlMode => Self::AdcControlMode,
+            SettingId::AdcHysteresis => Self::AdcHysteresis,
+            SettingId::AdcVoltageStart => Self::AdcVoltageStart,
+            SettingId::AdcVoltageEnd => Self::AdcVoltageEnd,
+            SettingId::AdcVoltageMinimum => Self::AdcVoltageMinimum,
+            SettingId::AdcVoltageMaximum => Self::AdcVoltageMaximum,
+            SettingId::AdcSafeStart => Self::AdcSafeStart,
+            SettingId::AdcRampTimePositive => Self::AdcRampTimePositive,
+            SettingId::AdcRampTimeNegative => Self::AdcRampTimeNegative,
+            SettingId::NunchukControlMode => Self::NunchukControlMode,
+            SettingId::NunchukHysteresis => Self::NunchukHysteresis,
+            SettingId::NunchukRampTimePositive => Self::NunchukRampTimePositive,
+            SettingId::NunchukRampTimeNegative => Self::NunchukRampTimeNegative,
+            SettingId::ImuType => Self::ImuType,
+            SettingId::ImuMode => Self::ImuMode,
+            SettingId::ImuFilter => Self::ImuFilter,
+            SettingId::ImuSampleRate => Self::ImuSampleRate,
+            SettingId::ImuUseMagnetometer => Self::ImuUseMagnetometer,
         }
     }
 }
 
 impl From<SettingIdDto> for SettingId {
+    // Keep this exhaustive UniFFI projection beside its inverse so new IDs cannot be omitted.
+    #[allow(clippy::too_many_lines)]
     fn from(value: SettingIdDto) -> Self {
         match value {
             SettingIdDto::Headlight => Self::Headlight,
@@ -406,6 +914,184 @@ impl From<SettingIdDto> for SettingId {
             SettingIdDto::AutoShutdownRemaining => Self::AutoShutdownRemaining,
             SettingIdDto::PowerOffDelay => Self::PowerOffDelay,
             SettingIdDto::ChargeMode => Self::ChargeMode,
+            SettingIdDto::PushbackDutyAngle => Self::PushbackDutyAngle,
+            SettingIdDto::PushbackDutySpeed => Self::PushbackDutySpeed,
+            SettingIdDto::PushbackReturnSpeed => Self::PushbackReturnSpeed,
+            SettingIdDto::PushbackDutyBeepEnabled => Self::PushbackDutyBeepEnabled,
+            SettingIdDto::PushbackPersistentFatalError => Self::PushbackPersistentFatalError,
+            SettingIdDto::PushbackHighVoltageAngle => Self::PushbackHighVoltageAngle,
+            SettingIdDto::PushbackHighVoltageSpeed => Self::PushbackHighVoltageSpeed,
+            SettingIdDto::PushbackLowVoltageAngle => Self::PushbackLowVoltageAngle,
+            SettingIdDto::PushbackLowVoltageSpeed => Self::PushbackLowVoltageSpeed,
+            SettingIdDto::HapticsDutyFrequency => Self::HapticsDutyFrequency,
+            SettingIdDto::HapticsDutyStrength => Self::HapticsDutyStrength,
+            SettingIdDto::HapticsErrorFrequency => Self::HapticsErrorFrequency,
+            SettingIdDto::HapticsErrorStrength => Self::HapticsErrorStrength,
+            SettingIdDto::HapticsVibrateFrequency => Self::HapticsVibrateFrequency,
+            SettingIdDto::HapticsVibrateStrength => Self::HapticsVibrateStrength,
+            SettingIdDto::HapticsDutySolidOffset => Self::HapticsDutySolidOffset,
+            SettingIdDto::HapticsCurrentThreshold => Self::HapticsCurrentThreshold,
+            SettingIdDto::HapticsMinStrength => Self::HapticsMinStrength,
+            SettingIdDto::HapticsMaxStrengthSpeed => Self::HapticsMaxStrengthSpeed,
+            SettingIdDto::HapticsStrengthCurvature => Self::HapticsStrengthCurvature,
+            SettingIdDto::RemoteReceiverType => Self::RemoteReceiverType,
+            SettingIdDto::RemoteInputDeadband => Self::RemoteInputDeadband,
+            SettingIdDto::LightingOn => Self::LightingOn,
+            SettingIdDto::LightingHeadlightsOn => Self::LightingHeadlightsOn,
+            SettingIdDto::LightingHeadlightsTransition => Self::LightingHeadlightsTransition,
+            SettingIdDto::LightingDirectionTransition => Self::LightingDirectionTransition,
+            SettingIdDto::LightingLightsOffWhenLifted => Self::LightingLightsOffWhenLifted,
+            SettingIdDto::LightingStatusOnFrontWhenLifted => Self::LightingStatusOnFrontWhenLifted,
+            SettingIdDto::LightingFrontMode => Self::LightingFrontMode,
+            SettingIdDto::LightingFrontBrightness => Self::LightingFrontBrightness,
+            SettingIdDto::LightingFrontColor1 => Self::LightingFrontColor1,
+            SettingIdDto::LightingFrontColor2 => Self::LightingFrontColor2,
+            SettingIdDto::LightingFrontSpeed => Self::LightingFrontSpeed,
+            SettingIdDto::LightingRearMode => Self::LightingRearMode,
+            SettingIdDto::LightingRearBrightness => Self::LightingRearBrightness,
+            SettingIdDto::LightingRearColor1 => Self::LightingRearColor1,
+            SettingIdDto::LightingRearColor2 => Self::LightingRearColor2,
+            SettingIdDto::LightingRearSpeed => Self::LightingRearSpeed,
+            SettingIdDto::LightingHeadlightsMode => Self::LightingHeadlightsMode,
+            SettingIdDto::LightingHeadlightsBrightness => Self::LightingHeadlightsBrightness,
+            SettingIdDto::LightingHeadlightsColor1 => Self::LightingHeadlightsColor1,
+            SettingIdDto::LightingHeadlightsColor2 => Self::LightingHeadlightsColor2,
+            SettingIdDto::LightingHeadlightsSpeed => Self::LightingHeadlightsSpeed,
+            SettingIdDto::LightingTaillightsMode => Self::LightingTaillightsMode,
+            SettingIdDto::LightingTaillightsBrightness => Self::LightingTaillightsBrightness,
+            SettingIdDto::LightingTaillightsColor1 => Self::LightingTaillightsColor1,
+            SettingIdDto::LightingTaillightsColor2 => Self::LightingTaillightsColor2,
+            SettingIdDto::LightingTaillightsSpeed => Self::LightingTaillightsSpeed,
+            SettingIdDto::LightingStatusBrightnessHeadlightsOff => {
+                Self::LightingStatusBrightnessHeadlightsOff
+            }
+            SettingIdDto::LightingStatusBrightnessHeadlightsOn => {
+                Self::LightingStatusBrightnessHeadlightsOn
+            }
+            SettingIdDto::LightingStatusShowSensorsWhileRunning => {
+                Self::LightingStatusShowSensorsWhileRunning
+            }
+            SettingIdDto::LightingStatusMotorUtilizationThreshold => {
+                Self::LightingStatusMotorUtilizationThreshold
+            }
+            SettingIdDto::LightingStatusRedBarPercentage => Self::LightingStatusRedBarPercentage,
+            SettingIdDto::LightingStatusIdleTimeout => Self::LightingStatusIdleTimeout,
+            SettingIdDto::LightingStatusIdleMode => Self::LightingStatusIdleMode,
+            SettingIdDto::LightingStatusIdleBrightness => Self::LightingStatusIdleBrightness,
+            SettingIdDto::LightingStatusIdleColor1 => Self::LightingStatusIdleColor1,
+            SettingIdDto::LightingStatusIdleColor2 => Self::LightingStatusIdleColor2,
+            SettingIdDto::LightingStatusIdleSpeed => Self::LightingStatusIdleSpeed,
+            SettingIdDto::PackageDisabled => Self::PackageDisabled,
+            SettingIdDto::PushbackHv => Self::PushbackHv,
+            SettingIdDto::PushbackLv => Self::PushbackLv,
+            SettingIdDto::SensorsAdcchannel1 => Self::SensorsAdcchannel1,
+            SettingIdDto::SensorsAdcchannel2 => Self::SensorsAdcchannel2,
+            SettingIdDto::SensorsSwapFootpadAdcs => Self::SensorsSwapFootpadAdcs,
+            SettingIdDto::SensorsFootFaultBeepEnabled => Self::SensorsFootFaultBeepEnabled,
+            SettingIdDto::HardwareBeeperEnabled => Self::HardwareBeeperEnabled,
+            SettingIdDto::LightingHardwareMode => Self::LightingHardwareMode,
+            SettingIdDto::LightingHardwarePin => Self::LightingHardwarePin,
+            SettingIdDto::LightingHardwarePinConfig => Self::LightingHardwarePinConfig,
+            SettingIdDto::LightingHardwareStatusOrder => Self::LightingHardwareStatusOrder,
+            SettingIdDto::LightingHardwareStatusCount => Self::LightingHardwareStatusCount,
+            SettingIdDto::LightingHardwareStatusColorOrder => {
+                Self::LightingHardwareStatusColorOrder
+            }
+            SettingIdDto::LightingHardwareStatusReverse => Self::LightingHardwareStatusReverse,
+            SettingIdDto::LightingHardwareFrontOrder => Self::LightingHardwareFrontOrder,
+            SettingIdDto::LightingHardwareFrontCount => Self::LightingHardwareFrontCount,
+            SettingIdDto::LightingHardwareFrontColorOrder => Self::LightingHardwareFrontColorOrder,
+            SettingIdDto::LightingHardwareFrontReverse => Self::LightingHardwareFrontReverse,
+            SettingIdDto::LightingHardwareRearOrder => Self::LightingHardwareRearOrder,
+            SettingIdDto::LightingHardwareRearCount => Self::LightingHardwareRearCount,
+            SettingIdDto::LightingHardwareRearColorOrder => Self::LightingHardwareRearColorOrder,
+            SettingIdDto::LightingHardwareRearReverse => Self::LightingHardwareRearReverse,
+            SettingIdDto::BmsEnabled => Self::BmsEnabled,
+            SettingIdDto::BmsCellLvThreshold => Self::BmsCellLvThreshold,
+            SettingIdDto::BmsCellHvThreshold => Self::BmsCellHvThreshold,
+            SettingIdDto::BmsCellBalanceThreshold => Self::BmsCellBalanceThreshold,
+            SettingIdDto::BmsCellHtThreshold => Self::BmsCellHtThreshold,
+            SettingIdDto::BmsCellLtThreshold => Self::BmsCellLtThreshold,
+            SettingIdDto::BmsBmsHtThreshold => Self::BmsBmsHtThreshold,
+            SettingIdDto::MotorDriveCurrentLimit => Self::MotorDriveCurrentLimit,
+            SettingIdDto::MotorBrakingCurrentLimit => Self::MotorBrakingCurrentLimit,
+            SettingIdDto::BatteryCurrentOutLimit => Self::BatteryCurrentOutLimit,
+            SettingIdDto::BatteryCurrentInLimit => Self::BatteryCurrentInLimit,
+            SettingIdDto::AbsoluteMotorCurrentLimit => Self::AbsoluteMotorCurrentLimit,
+            SettingIdDto::InputVoltageMinimum => Self::InputVoltageMinimum,
+            SettingIdDto::InputVoltageMaximum => Self::InputVoltageMaximum,
+            SettingIdDto::BatteryCutbackStart => Self::BatteryCutbackStart,
+            SettingIdDto::BatteryCutbackEnd => Self::BatteryCutbackEnd,
+            SettingIdDto::RegenerativeBatteryCutbackStart => Self::RegenerativeBatteryCutbackStart,
+            SettingIdDto::RegenerativeBatteryCutbackEnd => Self::RegenerativeBatteryCutbackEnd,
+            SettingIdDto::FetTemperatureCutbackStart => Self::FetTemperatureCutbackStart,
+            SettingIdDto::FetTemperatureCutbackEnd => Self::FetTemperatureCutbackEnd,
+            SettingIdDto::MotorTemperatureCutbackStart => Self::MotorTemperatureCutbackStart,
+            SettingIdDto::MotorTemperatureCutbackEnd => Self::MotorTemperatureCutbackEnd,
+            SettingIdDto::MotorPowerOutLimit => Self::MotorPowerOutLimit,
+            SettingIdDto::RegenerativeMotorPowerLimit => Self::RegenerativeMotorPowerLimit,
+            SettingIdDto::MotorDriveCurrentLimitScale => Self::MotorDriveCurrentLimitScale,
+            SettingIdDto::MotorBrakingCurrentLimitScale => Self::MotorBrakingCurrentLimitScale,
+            SettingIdDto::MotorPoleCount => Self::MotorPoleCount,
+            SettingIdDto::MotorGearRatio => Self::MotorGearRatio,
+            SettingIdDto::WheelDiameter => Self::WheelDiameter,
+            SettingIdDto::BatteryChemistry => Self::BatteryChemistry,
+            SettingIdDto::BatterySeriesCellCount => Self::BatterySeriesCellCount,
+            SettingIdDto::BatteryCapacity => Self::BatteryCapacity,
+            SettingIdDto::BmsType => Self::BmsType,
+            SettingIdDto::BmsLimitMode => Self::BmsLimitMode,
+            SettingIdDto::BmsTemperatureLimitingEnabled => Self::BmsTemperatureLimitingEnabled,
+            SettingIdDto::BmsSocLimitingEnabled => Self::BmsSocLimitingEnabled,
+            SettingIdDto::BmsMinimumCellVoltageLimitingEnabled => {
+                Self::BmsMinimumCellVoltageLimitingEnabled
+            }
+            SettingIdDto::BmsMaximumCellVoltageLimitingEnabled => {
+                Self::BmsMaximumCellVoltageLimitingEnabled
+            }
+            SettingIdDto::BmsTemperatureLimitStart => Self::BmsTemperatureLimitStart,
+            SettingIdDto::BmsTemperatureLimitEnd => Self::BmsTemperatureLimitEnd,
+            SettingIdDto::BmsSocLimitStart => Self::BmsSocLimitStart,
+            SettingIdDto::BmsSocLimitEnd => Self::BmsSocLimitEnd,
+            SettingIdDto::BmsCellMinimumVoltageLimitStart => Self::BmsCellMinimumVoltageLimitStart,
+            SettingIdDto::BmsCellMinimumVoltageLimitEnd => Self::BmsCellMinimumVoltageLimitEnd,
+            SettingIdDto::BmsCellMaximumVoltageLimitStart => Self::BmsCellMaximumVoltageLimitStart,
+            SettingIdDto::BmsCellMaximumVoltageLimitEnd => Self::BmsCellMaximumVoltageLimitEnd,
+            SettingIdDto::BmsCanForwardMode => Self::BmsCanForwardMode,
+            SettingIdDto::ControllerId => Self::ControllerId,
+            SettingIdDto::CommandTimeout => Self::CommandTimeout,
+            SettingIdDto::CommandTimeoutBrakeCurrent => Self::CommandTimeoutBrakeCurrent,
+            SettingIdDto::CanStatusRate1 => Self::CanStatusRate1,
+            SettingIdDto::CanStatusRate2 => Self::CanStatusRate2,
+            SettingIdDto::CanBaudRate => Self::CanBaudRate,
+            SettingIdDto::CanMode => Self::CanMode,
+            SettingIdDto::ApplicationToUse => Self::ApplicationToUse,
+            SettingIdDto::KillSwitchMode => Self::KillSwitchMode,
+            SettingIdDto::PpmControlMode => Self::PpmControlMode,
+            SettingIdDto::PpmHysteresis => Self::PpmHysteresis,
+            SettingIdDto::PpmPulseStart => Self::PpmPulseStart,
+            SettingIdDto::PpmPulseEnd => Self::PpmPulseEnd,
+            SettingIdDto::PpmPulseCenter => Self::PpmPulseCenter,
+            SettingIdDto::PpmSafeStart => Self::PpmSafeStart,
+            SettingIdDto::PpmRampTimePositive => Self::PpmRampTimePositive,
+            SettingIdDto::PpmRampTimeNegative => Self::PpmRampTimeNegative,
+            SettingIdDto::AdcControlMode => Self::AdcControlMode,
+            SettingIdDto::AdcHysteresis => Self::AdcHysteresis,
+            SettingIdDto::AdcVoltageStart => Self::AdcVoltageStart,
+            SettingIdDto::AdcVoltageEnd => Self::AdcVoltageEnd,
+            SettingIdDto::AdcVoltageMinimum => Self::AdcVoltageMinimum,
+            SettingIdDto::AdcVoltageMaximum => Self::AdcVoltageMaximum,
+            SettingIdDto::AdcSafeStart => Self::AdcSafeStart,
+            SettingIdDto::AdcRampTimePositive => Self::AdcRampTimePositive,
+            SettingIdDto::AdcRampTimeNegative => Self::AdcRampTimeNegative,
+            SettingIdDto::NunchukControlMode => Self::NunchukControlMode,
+            SettingIdDto::NunchukHysteresis => Self::NunchukHysteresis,
+            SettingIdDto::NunchukRampTimePositive => Self::NunchukRampTimePositive,
+            SettingIdDto::NunchukRampTimeNegative => Self::NunchukRampTimeNegative,
+            SettingIdDto::ImuType => Self::ImuType,
+            SettingIdDto::ImuMode => Self::ImuMode,
+            SettingIdDto::ImuFilter => Self::ImuFilter,
+            SettingIdDto::ImuSampleRate => Self::ImuSampleRate,
+            SettingIdDto::ImuUseMagnetometer => Self::ImuUseMagnetometer,
         }
     }
 }

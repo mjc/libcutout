@@ -255,6 +255,9 @@ where
             return false;
         }
         match self {
+            Self::Failed { current, .. } => {
+                *current = Some(SettingValue { value, source });
+            }
             Self::Pending {
                 current,
                 submitted_at,

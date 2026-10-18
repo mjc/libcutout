@@ -138,11 +138,16 @@ enum CaptureResearchPresentation {
         case .interface: "Lights & display"
         case .modes: "Modes"
         case .diagnostics: "Other observations"
+        case .haptics: localizedAppText("controls.group.haptics")
+        case .lighting: localizedAppText("controls.group.lighting")
+        case .hardware: localizedAppText("controls.group.hardware")
+        case .remote: localizedAppText("controls.group.remote")
+        case .battery: localizedAppText("controls.group.battery")
         }
     }
     static func defaultUnit(_ field: MobileCaptureResearchFieldDto) -> String {
         if let unit = field.unitHint { return unit }
-        guard case let .number(_, _, _, _, unit, _) = field.control else {
+        guard case let .number(_, _, _, _, _, unit, _) = field.control else {
             return field.id == "displayed_pack_voltage" ? "V" : ""
         }
         switch unit {
@@ -153,6 +158,16 @@ enum CaptureResearchPresentation {
         case .seconds: return "s"
         case .minutes: return "min"
         case .volts: return "V"
+        case .amperes: return "A"
+        case .hertz: return "Hz"
+        case .degreesPerSecond: return "°/s"
+        case .celsius: return "°C"
+        case .scalar, .raw: return ""
+        case .watts: return "W"
+        case .milliseconds: return "ms"
+        case .revolutionsPerMinute: return "rpm"
+        case .millimetres: return "mm"
+        case .ampHours: return "Ah"
         }
     }
     static func value(_ value: MobileCaptureSettingObservationValueDto, field: MobileCaptureResearchFieldDto? = nil)
@@ -187,7 +202,7 @@ enum CaptureResearchPresentation {
             }
             return String(id)
         case .number(let raw):
-            guard let field, case let .number(_, _, _, precision, _, _) = field.control else { return String(raw) }
+            guard let field, case let .number(_, _, _, _, precision, _, _) = field.control else { return String(raw) }
             let amount = Double(raw) / pow(10, Double(precision))
             let text = amount.formatted(.number.precision(.fractionLength(Int(precision))))
             let unit = defaultUnit(field)
@@ -326,7 +341,7 @@ struct CaptureSettingsWorksheet: View {
                         Text(localizedAppText(choice.labelKey)).tag(String(choice.id))
                     }
                 }.labelsHidden()
-            case .number(_, _, _, _, _, let canDisable):
+            case .number(_, _, _, _, _, _, let canDisable):
                 valueStateControl(field, canDisable: canDisable)
                 if draft.states[field.id] != "off" && draft.states[field.id] != "unobserved" { entry(field) }
             case .readOnly:

@@ -819,3 +819,38 @@ fn duplicate_cutoffs_share_decoder_state_and_existing_capture_bounds() {
         .is_none()
     );
 }
+
+#[test]
+fn unrelated_settings_remain_outside_available_capture_research_profiles() {
+    let unrelated = [
+        SettingId::PushbackDutyAngle,
+        SettingId::HardwareBeeperEnabled,
+        SettingId::MotorDriveCurrentLimit,
+        SettingId::ImuSampleRate,
+    ];
+    for id in unrelated {
+        assert_eq!(capture_research_setting_id(id), None);
+    }
+    assert_eq!(
+        capture_research_setting_id(SettingId::DisplayUnits),
+        Some("display_units")
+    );
+    assert_eq!(
+        capture_research_setting_id(SettingId::PowerOffDelay),
+        Some("power_off_delay")
+    );
+    for profile in ["nosfet_aero", "begode_falcon"] {
+        let catalog = capture_research_catalog(profile).unwrap();
+        assert!(
+            catalog
+                .fields
+                .iter()
+                .filter_map(|field| field.setting_id)
+                .all(|id| !unrelated.contains(&id))
+        );
+    }
+    for profile in ["vesc", "refloat"] {
+        assert_eq!(capture_research_catalog(profile), None);
+        assert!(CaptureResearchReadback::new(profile, 100).is_none());
+    }
+}
