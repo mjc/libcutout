@@ -62,8 +62,7 @@ final class MusicFeatureModel {
     @ObservationIgnored private let selectedHistoryRideID: @MainActor () -> String?
     @ObservationIgnored private let clearSelectedHistoryMusic: @MainActor () -> Void
     @ObservationIgnored private let removeSelectedSpotifyHistory: @MainActor () -> Void
-    @ObservationIgnored private let prepareCaptureMetadataCleanup: @MainActor () async -> Bool
-    @ObservationIgnored private let captureDirectories: [String]
+
     @ObservationIgnored private let setRideHistoryError: @MainActor (MobileRideMapError) -> Void
     @ObservationIgnored private let providerCommandHandler: MusicProviderCommandHandler?
     #if canImport(MediaPlayer) && os(iOS)
@@ -115,8 +114,7 @@ final class MusicFeatureModel {
         selectedHistoryRideID: @escaping @MainActor () -> String?,
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void,
         removeSelectedSpotifyHistory: @escaping @MainActor () -> Void = {},
-        prepareCaptureMetadataCleanup: @escaping @MainActor () async -> Bool = { true },
-        captureDirectories: [String] = [],
+
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void,
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
@@ -139,8 +137,7 @@ final class MusicFeatureModel {
         self.selectedHistoryRideID = selectedHistoryRideID
         self.clearSelectedHistoryMusic = clearSelectedHistoryMusic
         self.removeSelectedSpotifyHistory = removeSelectedSpotifyHistory
-        self.prepareCaptureMetadataCleanup = prepareCaptureMetadataCleanup
-        self.captureDirectories = captureDirectories
+
         self.setRideHistoryError = setRideHistoryError
         self.providerCommandHandler = providerCommandHandler
         self.providerLifecycle = providerLifecycle
@@ -657,11 +654,7 @@ final class MusicFeatureModel {
             return false
         }
         do {
-            guard await prepareCaptureMetadataCleanup() else {
-                setRideHistoryError(.storageError("Finish and save the capture before retrying Spotify cleanup"))
-                return false
-            }
-            try await rideMapState.deleteSpotifyMusicHistoryAsync(captureDirectories: captureDirectories)
+            try await rideMapState.deleteSpotifyMusicHistoryAsync()
             timelineEvents.removeAll { $0.provider == .spotify }
             removeSelectedSpotifyHistory()
             setHistoryPersistenceError(nil)
@@ -1178,7 +1171,7 @@ final class MusicFeatureModel {
                 guard !Task.isCancelled, submission.isCurrent() else { return false }
                 // This observation owns only its Rust SQLite history receipt.
                 // BTLE diagnostics do not carry listening metadata.
-                try submission.settle(capture: nil)
+                try submission.settle()
                 var events: [MobileMusicRideEventDto]?
                 var readError: MobileRideMapError?
                 do { events = try await readHistory() } catch { readError = appRideMapError(error) }

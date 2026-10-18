@@ -40,8 +40,9 @@ Saving listening history is not an upload or sharing action. Keep it opt-in and
 off by default in the ride database. BTLE diagnostic captures have no music
 purpose: do not attach provider observations, listening identifiers or music
 context to their records, writer startup, or exports. Preserve the raw Bluetooth
-evidence independently of music settings. Legacy PEVCAP readers may still accept
-older files that contain music metadata.
+evidence independently of music settings. PEVCAP 1.5 contains transport records,
+locations and settings observations. Runtime readers reject earlier versions,
+standalone music events and embedded music fields, including null fields.
 
 Separate user-exported copies are outside the app's managed capture store. Do not
 claim that local cleanup removes those copies. No audio belongs in the music event
@@ -66,12 +67,11 @@ other providers and their history policies; pending presentation readbacks must
 not restore disconnected Spotify data. A failed credential or database cleanup
 must remain retryable without reconnecting or reporting success.
 
-Disconnect also removes music metadata from older Bluetooth captures controlled
-by the app, including stored event payloads and managed original/export files.
-Retain their raw Bluetooth data and recording/ride associations. Content-addressed
-artifacts need a new, accurately indexed sanitized identity; never change bytes
-under an existing digest. Failure must remain visible and retryable. This does not
-remove separately shared copies outside the app's control.
+The existing Bluetooth capture corpus is migrated separately to PEVCAP 1.5,
+removing music metadata while preserving its raw Bluetooth evidence and
+recording/ride associations. Migrated content-addressed artifacts receive new,
+accurately indexed identities. Spotify disconnection now cleans ride listening
+history; it has no capture writer, file rewrite or capture cleanup target.
 
 ## Review and wording
 
@@ -114,9 +114,8 @@ outcome without maintaining a second queue.
 
 Only the music command's actual SQLite result can settle required history.
 The app supplies no BTLE capture target for music observations. Optional history
-readback and presentation do not define successful settlement. Generic legacy
-queue APIs that accept an explicit capture target still require that target's
-writer receipt; the app does not use them to record music in diagnostics.
+readback and presentation do not define successful settlement. Music observation
+APIs have no capture target or capture-writer receipt.
 
 Release, cancellation, provider retirement, and storage failure cannot
 acknowledge successful history recording. Stop reports `MusicObservationIncomplete`

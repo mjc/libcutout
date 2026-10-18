@@ -376,21 +376,7 @@ import Foundation
                             batteryLevelReported: BatteryLevel(value: 78)
                         )
                     }
-                    if CutoutWebsiteScreenshotFixture.screen == .eucMain {
-                        return TelemetrySnapshot(
-                            speed: Speed(value: 10_700),
-                            speedSource: .reported,
-                            speedQuality: .known,
-                            operatingState: .riding,
-                            voltage: Voltage(value: 120_000),
-                            batteryCurrent: BatteryCurrent.currentOut(milliamps: 7_000),
-                            power: Power(value: 840_000),
-                            powerFlow: .discharge,
-                            controllerTemperature: Temperature(value: 38_000),
-                            pwm: DutyCycle(permille: 420),
-                            batteryLevelReported: BatteryLevel(value: 78)
-                        )
-                    }
+                    if let telemetry = CutoutWebsiteScreenshotFixture.eucRideTelemetry() { return telemetry }
                 #endif
                 return TelemetrySnapshot(
                     speed: Speed(value: 12_000),

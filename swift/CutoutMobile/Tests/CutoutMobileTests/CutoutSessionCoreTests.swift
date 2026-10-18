@@ -752,45 +752,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
     }
 
-    func testMusicCleanupWaitsForAlreadyFinalizingWriterPublication() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let finishing = expectation(description: "writer held before durable publication")
-        let cleanupStarted = expectation(description: "cleanup background barrier entered")
-        let release = DispatchSemaphore(value: 0)
-        defer { release.signal() }
-        let published = Mutex(false)
-        let result = Mutex<Bool?>(nil)
-        let recorder = CutoutSessionCaptureRecorder(
-            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
-            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
-            database: try XCTUnwrap(MobileRideMapState.debugDatabase), publish: { _ in },
-            onWriterCompletion: { _ in published.withLock { $0 = true } })
-        XCTAssertTrue(startRecorder(recorder, directory: directory, origin: .manual))
-        recorder.finishWriterGate = {
-            finishing.fulfill()
-            release.wait()
-        }
-        recorder.finish(publishesResult: true, priorWriteOutcome: .accepted)
-        await fulfillment(of: [finishing], timeout: 2)
-        XCTAssertFalse(recorder.hasWriter)
-        let barrier = recorder.musicMetadataCleanupBarrier()
-        let cleanup = Task.detached {
-            cleanupStarted.fulfill()
-            let accepted = barrier()
-            result.withLock { $0 = accepted }
-            return accepted
-        }
-        await fulfillment(of: [cleanupStarted], timeout: 2)
-        for _ in 0..<1_000 { await Task.yield() }
-        XCTAssertNil(result.withLock { $0 }, "metadata cleanup cannot overtake the retained publication")
-        release.signal()
-        let accepted = await cleanup.value
-        XCTAssertTrue(accepted)
-        XCTAssertTrue(published.withLock { $0 })
-    }
-
     func testFinishWithoutPublishingDoesNotReadPublicationClockOrNotifyCompletion() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

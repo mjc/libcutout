@@ -1,8 +1,7 @@
 //! Bounded ownership before a music callback performs an asynchronous identity read.
 
 use crate::{
-    MobileCaptureWriteOutcomeDto, MobileMusicCaptureTarget, MobileMusicHistoryTransition,
-    MobileMusicObservationDecision, MobileMusicTimelineOutcomeDto,
+    MobileMusicHistoryTransition, MobileMusicObservationDecision, MobileMusicTimelineOutcomeDto,
     MobileMusicTimelineRecordResultDto, MobileRideMapCore, MobileRideMapCoreErrorDto,
     MobileRideMapRecordingTokenDto, ride_maps,
 };
@@ -43,7 +42,6 @@ struct StopObligation {
 enum IncompleteReason {
     Abandoned,
     HistoryUnsettled,
-    CaptureRejected,
     ClassificationFailed,
     RequiredFailed,
     ProviderRetired,
@@ -56,10 +54,6 @@ struct AdmissionEntry {
     phase: ObservationPhase,
 }
 #[derive(Debug)]
-struct OriginalTransition {
-    transition: Box<MobileMusicHistoryTransition>,
-}
-#[derive(Debug)]
 enum ObservationPhase {
     Waiting,
     Observed {
@@ -67,9 +61,8 @@ enum ObservationPhase {
         transition: Option<Box<MobileMusicHistoryTransition>>,
         failed: bool,
     },
-    Writing(OriginalTransition),
+    Writing,
     HistorySettled {
-        original: OriginalTransition,
         outcome: MobileMusicTimelineOutcomeDto,
     },
     Settled,
@@ -183,18 +176,15 @@ impl MobileMusicObservationRequest {
             }
         }
     }
-    /// Confirms authoritative history settlement and the required native capture effect.
+    /// Confirms authoritative ride-history settlement.
     ///
     /// # Errors
     /// Returns incomplete effects or stale observation ownership.
-    pub fn settle(
-        &self,
-        capture: Option<MobileCaptureWriteOutcomeDto>,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
+    pub fn settle(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         let MobileMusicObservationAdmission::Admitted { lease } = &self.admission else {
             return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
         };
-        lease.settle(capture)
+        lease.settle()
     }
     /// Reports a definitive required-processing error before optional native readback.
     /// Settled, released, and retired ownership is unchanged.
@@ -570,7 +560,7 @@ impl MobileMusicObservationLease {
             };
             let failure = match &entry.phase {
                 ObservationPhase::Settled | ObservationPhase::Failed => None,
-                ObservationPhase::Writing(_) | ObservationPhase::HistorySettled { .. } => {
+                ObservationPhase::Writing | ObservationPhase::HistorySettled { .. } => {
                     Some(IncompleteReason::HistoryUnsettled)
                 }
                 _ => Some(IncompleteReason::Abandoned),
@@ -604,10 +594,7 @@ impl MobileMusicObservationLease {
             Err(MobileRideMapCoreErrorDto::StaleRideCommand)
         }
     }
-    fn settle(
-        &self,
-        capture: Option<MobileCaptureWriteOutcomeDto>,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
+    fn settle(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         let mut state = self
             .queue
             .state
@@ -632,22 +619,16 @@ impl MobileMusicObservationLease {
             .iter_mut()
             .find(|entry| entry.id == self.id)
             .ok_or(MobileRideMapCoreErrorDto::StaleRideCommand)?;
-        let needs_capture = match &entry.phase {
+        match &entry.phase {
             ObservationPhase::Observed {
                 recording,
                 transition,
                 failed: false,
-            } if recording.is_none() || transition.is_none() => false,
-            ObservationPhase::HistorySettled { original, outcome } => match outcome {
-                MobileMusicTimelineOutcomeDto::Recorded => {
-                    match original.transition.capture_target {
-                        MobileMusicCaptureTarget::Capture { .. } => true,
-                        MobileMusicCaptureTarget::NoCapture
-                        | MobileMusicCaptureTarget::Unavailable => false,
-                    }
-                }
-                MobileMusicTimelineOutcomeDto::Duplicate
-                | MobileMusicTimelineOutcomeDto::Disabled => false,
+            } if recording.is_none() || transition.is_none() => {}
+            ObservationPhase::HistorySettled { outcome } => match outcome {
+                MobileMusicTimelineOutcomeDto::Recorded
+                | MobileMusicTimelineOutcomeDto::Duplicate
+                | MobileMusicTimelineOutcomeDto::Disabled => {}
                 _ => {
                     entry.phase = ObservationPhase::Failed;
                     state.fail(self.epoch, self.id, IncompleteReason::HistoryUnsettled);
@@ -662,20 +643,6 @@ impl MobileMusicObservationLease {
             },
             ObservationPhase::Settled => return Err(MobileRideMapCoreErrorDto::StaleRideCommand),
             _ => return Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete),
-        };
-        if capture.is_some_and(|outcome| outcome != MobileCaptureWriteOutcomeDto::Accepted) {
-            entry.phase = ObservationPhase::Failed;
-            state.fail(self.epoch, self.id, IncompleteReason::CaptureRejected);
-            let notification = state.head_waker();
-            drop(state);
-            self.queue.changed.notify_all();
-            if let Some(notification) = notification {
-                notification.wake();
-            }
-            return Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete);
-        }
-        if needs_capture && capture.is_none() {
-            return Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete);
         }
         entry.phase = ObservationPhase::Settled;
         let notification = state.head_waker();
@@ -751,7 +718,7 @@ impl MobileMusicObservationLease {
         let Some(entry) = state.order.iter_mut().find(|entry| entry.id == self.id) else {
             return;
         };
-        if let ObservationPhase::Writing(_) = entry.phase {
+        if let ObservationPhase::Writing = entry.phase {
             entry.phase = ObservationPhase::Failed;
             state.fail(self.epoch, self.id, IncompleteReason::HistoryUnsettled);
             let notification = state.head_waker();
@@ -774,14 +741,11 @@ impl MobileMusicObservationLease {
         let Some(entry) = state.order.iter_mut().find(|entry| entry.id == self.id) else {
             return;
         };
-        let previous = std::mem::replace(&mut entry.phase, ObservationPhase::Waiting);
-        entry.phase = match previous {
-            ObservationPhase::Writing(original) => ObservationPhase::HistorySettled {
-                original,
+        if let ObservationPhase::Writing = entry.phase {
+            entry.phase = ObservationPhase::HistorySettled {
                 outcome: result.outcome,
-            },
-            other => other,
-        };
+            };
+        }
     }
     pub(crate) fn claim_write(
         &self,
@@ -809,9 +773,8 @@ impl MobileMusicObservationLease {
                 transition: Some(transition),
                 failed: false,
             } => {
-                let result = (recording.clone(), (*transition).clone());
-                entry.phase = ObservationPhase::Writing(OriginalTransition { transition });
-                Ok(result)
+                entry.phase = ObservationPhase::Writing;
+                Ok((recording, *transition))
             }
             other => {
                 entry.phase = other;
@@ -881,7 +844,6 @@ impl Drop for LeaseWait {
 /// Exact payload from a history association that can no longer be durably appended.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicUnsettledHistoryTransition {
-    pub capture_target: MobileMusicCaptureTarget,
     pub id: crate::MobileMusicHistoryTransitionId,
     pub snapshot: crate::MobileMusicSnapshotDto,
     pub kind: MobileMusicUnsettledHistoryKind,
@@ -1125,9 +1087,6 @@ mod tests {
                     ride_id: "original".into(),
                     generation: 1,
                 }),
-                MobileMusicCaptureTarget::Capture {
-                    generation: crate::MobileCaptureGenerationDto { value: 7 },
-                },
                 music_snapshot(1_100),
                 11_000,
                 5,
@@ -1173,36 +1132,7 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
         );
         assert_eq!(
-            request.settle(None),
-            Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
-        );
-        request.release();
-        drop(fence);
-        assert_eq!(
-            lease
-                .queue
-                .begin_stop()
-                .expect("explicit retry")
-                .wait_result(),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn terminal_capture_rejection_does_not_wait_for_optional_release() {
-        let (request, lease) = writing_observation();
-        lease.history_settled(&MobileMusicTimelineRecordResultDto {
-            outcome: MobileMusicTimelineOutcomeDto::Recorded,
-            sequence: Some(1),
-            effective_policy: Some(crate::MobileMusicHistoryPolicyDto::OpaqueItem),
-        });
-        let fence = lease.queue.begin_stop().expect("Stop fence");
-        assert_eq!(
-            request.settle(Some(MobileCaptureWriteOutcomeDto::Rejected)),
-            Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
-        );
-        assert_eq!(
-            fence.wait_result(),
+            request.settle(),
             Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
         );
         request.release();
@@ -1234,7 +1164,6 @@ mod tests {
             .observe_admitted_music(
                 Arc::clone(&lease),
                 ride.recording_token,
-                MobileMusicCaptureTarget::NoCapture,
                 music_snapshot(1_100),
                 11_000,
                 5,
@@ -1258,7 +1187,7 @@ mod tests {
         let second = lease(&queue);
         let fence = queue.begin_stop().expect("one stop obligation");
         let later = lease(&queue);
-        first.settle(None).expect("no required effects");
+        first.settle().expect("no required effects");
         first.release();
         queue
             .observe(&second, None, || Ok(None))
@@ -1268,7 +1197,7 @@ mod tests {
             epoch: second.epoch,
             admission: MobileMusicObservationAdmission::Admitted { lease: second },
         };
-        second_request.settle(None).expect("second settled");
+        second_request.settle().expect("second settled");
         second_request.release();
         assert_eq!(fence.wait_result(), Ok(()));
         assert_eq!(later.state(), MobileMusicObservationLeaseState::Pending);
@@ -1345,14 +1274,14 @@ mod tests {
             .observation_queue()
             .skip_history(&original_lease)
             .expect("original no-history classification");
-        original.settle(None).expect("original settled");
+        original.settle().expect("original settled");
         original.release();
         assert_eq!(later_lease.state(), MobileMusicObservationLeaseState::Ready);
         replacement
             .observation_queue()
             .skip_history(&later_lease)
             .expect("replacement no-history classification");
-        later.settle(None).expect("replacement settled");
+        later.settle().expect("replacement settled");
         assert_eq!(fence.wait_result(), Ok(()));
     }
 
@@ -1377,7 +1306,6 @@ mod tests {
             replacement.observe_admitted_music(
                 Arc::clone(&lease),
                 None,
-                MobileMusicCaptureTarget::NoCapture,
                 music_snapshot(1_100),
                 11_000,
                 5
@@ -1391,16 +1319,9 @@ mod tests {
                 .is_some()
         );
         let _ = first
-            .observe_admitted_music(
-                lease,
-                None,
-                MobileMusicCaptureTarget::NoCapture,
-                music_snapshot(1_100),
-                11_000,
-                5,
-            )
+            .observe_admitted_music(lease, None, music_snapshot(1_100), 11_000, 5)
             .expect("original history owner");
-        request.settle(None).expect("no recording obligation");
+        request.settle().expect("no recording obligation");
     }
 
     #[test]
@@ -1435,18 +1356,9 @@ mod tests {
         );
         assert_eq!(later_lease.state(), MobileMusicObservationLeaseState::Ready);
         let _ = replacement
-            .observe_admitted_music(
-                later_lease,
-                None,
-                MobileMusicCaptureTarget::NoCapture,
-                music_snapshot(1_100),
-                11_000,
-                5,
-            )
+            .observe_admitted_music(later_lease, None, music_snapshot(1_100), 11_000, 5)
             .expect("other provider remains admitted");
-        later
-            .settle(None)
-            .expect("replacement required work complete");
+        later.settle().expect("replacement required work complete");
         assert_eq!(
             fence.wait_result(),
             Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
@@ -1509,7 +1421,7 @@ mod tests {
         let first = no_history(&queue);
         let fence = queue.begin_stop().expect("stop prefix");
         assert!(queue.begin_stop().is_err(), "only one stop obligation");
-        first.settle(None).expect("no required effects");
+        first.settle().expect("no required effects");
         first.release();
         let later = lease(&queue);
         assert_eq!(later.state(), MobileMusicObservationLeaseState::Pending);
@@ -1518,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn recorded_history_requires_original_capture_receipt_before_stop() {
+    fn recorded_history_settles_without_a_capture_writer() {
         let lifecycle = crate::MobileMusicProviderLifecycle::new();
         let request = lifecycle.begin_music_observation();
         let MobileMusicObservationAdmission::Admitted { lease } = request.admission() else {
@@ -1531,9 +1443,6 @@ mod tests {
                     ride_id: "original".into(),
                     generation: 1,
                 }),
-                MobileMusicCaptureTarget::Capture {
-                    generation: crate::MobileCaptureGenerationDto { value: 7 },
-                },
                 music_snapshot(1_100),
                 11_000,
                 5,
@@ -1545,13 +1454,7 @@ mod tests {
             sequence: Some(1),
             effective_policy: Some(crate::MobileMusicHistoryPolicyDto::OpaqueItem),
         });
-        assert_eq!(
-            request.settle(None),
-            Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
-        );
-        request
-            .settle(Some(MobileCaptureWriteOutcomeDto::Accepted))
-            .expect("actual capture accepted");
+        request.settle().expect("durable ride history settled");
         request.release();
     }
 
@@ -1577,9 +1480,7 @@ mod tests {
             ),
             Ok(MobileMusicObservationContext::OutOfOrder)
         );
-        request
-            .settle(None)
-            .expect("validated non-recordable source");
+        request.settle().expect("validated non-recordable source");
         request.release();
         let foreign = Arc::new(MusicObservationAdmissionQueue::default());
         assert_eq!(
@@ -1622,7 +1523,7 @@ mod tests {
             panic!("second admitted");
         };
         let fence = queue.begin_stop().expect("both observations precede Stop");
-        first.settle(None).expect("first required work complete");
+        first.settle().expect("first required work complete");
         assert_eq!(
             second_lease.state(),
             MobileMusicObservationLeaseState::Ready
@@ -1634,7 +1535,7 @@ mod tests {
         queue
             .skip_history(&second_lease)
             .expect("second may classify before first readback releases");
-        second.settle(None).expect("second required work complete");
+        second.settle().expect("second required work complete");
         assert_eq!(fence.wait_result(), Ok(()));
         assert!(
             second.is_current(),
@@ -1671,7 +1572,7 @@ mod tests {
         queue
             .skip_history(&second_lease)
             .expect("failed optional readback cannot hold next classification");
-        second.settle(None).expect("second required work complete");
+        second.settle().expect("second required work complete");
         assert_eq!(
             fence.wait_result(),
             Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
@@ -1693,7 +1594,7 @@ mod tests {
         else {
             panic!("second admitted");
         };
-        first.settle(None).expect("required work complete");
+        first.settle().expect("required work complete");
         assert!(
             first.is_current(),
             "mere later admission is not publication replacement"
@@ -1769,7 +1670,7 @@ mod tests {
         );
         request.fail_required_effects();
         let successful = no_history(&queue);
-        successful.settle(None).expect("required work complete");
+        successful.settle().expect("required work complete");
         successful.fail_required_effects();
         assert_eq!(
             queue
@@ -1822,7 +1723,7 @@ mod tests {
         let first = no_history(&queue);
         let fence = queue.begin_stop().expect("Stop fence");
         let later = lease(&queue);
-        first.settle(None).expect("required work complete");
+        first.settle().expect("required work complete");
         assert!(
             first.is_current(),
             "optional readback retains FIFO ownership"
@@ -2015,9 +1916,6 @@ mod tests {
             .observe_admitted_music(
                 Arc::clone(&lease),
                 first.recording_token,
-                MobileMusicCaptureTarget::Capture {
-                    generation: crate::MobileCaptureGenerationDto { value: 7 },
-                },
                 music_snapshot(1_100),
                 11_000,
                 7,
@@ -2044,10 +1942,6 @@ mod tests {
             .expect("old association must be reported incomplete");
         assert_eq!(failure.ride_id, first.ride_id);
         assert_eq!(failure.transitions.len(), 1);
-        assert_eq!(
-            failure.transitions[0].capture_target,
-            original.capture_target
-        );
         assert_eq!(failure.transitions[0].id, original.id);
         assert_eq!(failure.transitions[0].snapshot, original.snapshot);
         assert_eq!(failure.transitions[0].wall_clock_at_ms, 11_000);
@@ -2062,9 +1956,6 @@ mod tests {
             .observe_admitted_music(
                 lease,
                 next.recording_token,
-                MobileMusicCaptureTarget::Capture {
-                    generation: crate::MobileCaptureGenerationDto { value: 8 },
-                },
                 music_snapshot(3_100),
                 31_000,
                 9,
@@ -2097,7 +1988,6 @@ mod tests {
                     ride_id: "old".into(),
                     generation: 1,
                 }),
-                MobileMusicCaptureTarget::Unavailable,
                 music_snapshot(1_100),
                 11_000,
                 5,
@@ -2124,7 +2014,6 @@ mod tests {
                     ride_id: "unverified-new".into(),
                     generation: 1
                 }),
-                MobileMusicCaptureTarget::Unavailable,
                 music_snapshot(1_200),
                 12_000,
                 5

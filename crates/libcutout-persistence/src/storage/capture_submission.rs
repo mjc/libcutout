@@ -325,7 +325,7 @@ pub(super) enum Command {
 }
 
 impl RideDatabase {
-    fn submission_source(
+    pub(super) fn submission_source(
         &self,
         source: CaptureSubmissionSource,
     ) -> Result<SourceRecord, CaptureSubmissionError> {
@@ -481,13 +481,8 @@ impl RideDatabase {
                 } else {
                     PevcapEncoding::Jsonl
                 };
-                let digest = crate::export_capture_file_without_music(&original, snapshot)
-                    .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
-                let transformation = if digest == receipt.artifact_digest {
-                    CaptureSubmissionTransformation::Unmodified
-                } else {
-                    CaptureSubmissionTransformation::MusicRemoved
-                };
+                std::fs::copy(&original, snapshot).map_err(StorageError::from)?;
+                let transformation = CaptureSubmissionTransformation::Unmodified;
                 Ok(SnapshotSource {
                     origin: recording.origin,
                     integrity: CaptureSubmissionIntegrity::Complete,

@@ -4,8 +4,8 @@ use super::{
     MAX_CAPTURE_SUBMISSION_DURATION_MILLISECONDS, MAX_CAPTURE_SUBMISSION_EVENTS,
 };
 use crate::{
-    PevcapBinaryError, PevcapEncoding, PevcapEvent, PevcapJsonlError, PevcapReader,
-    PevcapStreamError,
+    CaptureSettingsObservationError, PevcapBinaryError, PevcapEncoding, PevcapEvent,
+    PevcapJsonlError, PevcapReader, PevcapRecordError, PevcapStreamError,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -167,7 +167,7 @@ impl<R: Read> Read for CountedReader<R> {
 
 fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissionValidationError {
     use CaptureSubmissionValidationError::{
-        InvalidPevcap, ReadFailure, TooLarge, UnsupportedFormat,
+        InvalidPevcap, MusicPresent, ReadFailure, TooLarge, TooManyEvents, UnsupportedFormat,
     };
     if counter.too_large {
         return TooLarge;
@@ -178,6 +178,19 @@ fn classify(error: &PevcapStreamError, counter: &ByteCounter) -> CaptureSubmissi
     match error {
         PevcapStreamError::Jsonl(PevcapJsonlError::LineTooLong { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::PayloadTooLarge { .. }) => TooLarge,
+        PevcapStreamError::Jsonl(PevcapJsonlError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        ))
+        | PevcapStreamError::Binary(PevcapBinaryError::SettingsObservation(
+            CaptureSettingsObservationError::TooLarge,
+        )) => TooManyEvents,
+        PevcapStreamError::Jsonl(PevcapJsonlError::Record {
+            source: PevcapRecordError::UnexpectedMusic,
+            ..
+        })
+        | PevcapStreamError::Binary(PevcapBinaryError::Record(
+            PevcapRecordError::UnexpectedMusic,
+        )) => MusicPresent,
         PevcapStreamError::Jsonl(PevcapJsonlError::UnsupportedVersion { .. })
         | PevcapStreamError::Binary(PevcapBinaryError::UnsupportedVersion { .. }) => {
             UnsupportedFormat
@@ -242,14 +255,22 @@ pub fn validate_capture_submission<R: Read>(
                 || value.starts_with("user_note=")
         }),
         annotations: !header.annotations.is_empty(),
+        settings_observations: false,
     };
     let annotation_count = u64::try_from(header.annotations.len()).unwrap_or(u64::MAX);
     let mut events = EventCounter::default();
+    let mut settings_observations = 0;
     while let Some(event) = reader
         .next_event()
         .map_err(|error| classify(&error, &counter.borrow()))?
     {
-        let timestamp = inspect_event(event, &mut categories)?;
+        if let PevcapEvent::SettingsObservation(_) = &event {
+            settings_observations += 1;
+            if settings_observations > crate::MAX_CAPTURE_SETTINGS_OBSERVATIONS {
+                return Err(CaptureSubmissionValidationError::TooManyEvents);
+            }
+        }
+        let timestamp = inspect_event(event, &mut categories);
         events.observe(timestamp)?;
     }
     let counter = counter.borrow();
@@ -262,26 +283,25 @@ pub fn validate_capture_submission<R: Read>(
     })
 }
 
-fn inspect_event(
-    event: PevcapEvent,
-    categories: &mut CaptureSubmissionCategories,
-) -> Result<u64, CaptureSubmissionValidationError> {
+fn inspect_event(event: PevcapEvent, categories: &mut CaptureSubmissionCategories) -> u64 {
     match event {
-        PevcapEvent::Music(_) => Err(CaptureSubmissionValidationError::MusicPresent),
+        PevcapEvent::SettingsObservation(observation) => {
+            categories.notes |= observation.note.is_some()
+                || observation.values.iter().any(|value| value.note.is_some());
+            categories.settings_observations = true;
+            observation.recorded_at_ms
+        }
         PevcapEvent::Record(record) => {
-            if record.music.is_some() {
-                return Err(CaptureSubmissionValidationError::MusicPresent);
-            }
             categories.location |= record.phone_location.is_some();
-            Ok(record.monotonic_ms.get())
+            record.monotonic_ms.get()
         }
         PevcapEvent::Location(sample) => {
             categories.location = true;
-            Ok(sample.receipt_monotonic_ms.get())
+            sample.receipt_monotonic_ms.get()
         }
         PevcapEvent::LocationRejected(rejection) => {
             categories.location = true;
-            Ok(rejection.observation.receipt_monotonic_ms.get())
+            rejection.observation.receipt_monotonic_ms.get()
         }
     }
 }

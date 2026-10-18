@@ -672,7 +672,15 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["music.expand"].isHittable)
     }
 
+    func testMusicPlayerPausedAcrossEucRideMapMore() throws {
+        try assertPausedMusicAcrossEucRoutes()
+    }
+
     func testMusicPlayerPausedAcrossEucRideMapMoreAtAccessibilityDynamicType() throws {
+        try assertPausedMusicAcrossEucRoutes()
+    }
+
+    private func assertPausedMusicAcrossEucRoutes() throws {
         // Three routes, repeated Readings checks, and rotations exceed the default two minutes.
         executionTimeAllowance = 360
         XCTAssertTrue(pairAvailableDevice(.euc))
@@ -717,8 +725,7 @@ final class CutoutAppUITests: XCTestCase {
         assertRideWindowHasSettled(ride, landscape: isLandscape)
         assertRideTextSizeReadback(ride, systemCategory: rideTextSizeCategory)
         let labels =
-            rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
-            ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+            eucRideMetricLabels
         let metrics = labels.map { label in
             ride.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
         }
@@ -757,7 +764,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertFalse(player.exists, app.debugDescription)
             retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: true)
             if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-                assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+                assertAccessibleRideReadings(Self.eucDetailMetricLabels)
             }
             return
         }
@@ -773,7 +780,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: false)
         if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-            assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+            assertAccessibleRideReadings(Self.eucDetailMetricLabels)
         }
     }
 
@@ -846,8 +853,7 @@ final class CutoutAppUITests: XCTestCase {
             if route == nil, ride.exists {
                 XCTAssertEqual(ride.scrollViews.count, 0)
                 let labels =
-                    rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
-                    ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+                    eucRideMetricLabels
                 for label in labels {
                     let metric = ride.descendants(matching: .any).matching(
                         NSPredicate(format: "label == %@", label)
@@ -2533,6 +2539,191 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(actual.height, expected.height, accuracy: 2, file: file, line: line)
     }
 
+    func testCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch() throws {
+        try assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch()
+    }
+
+    func
+        testCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunchInDarkAppearanceAtAccessibilityDynamicType()
+        throws
+    {
+        try assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch()
+    }
+
+    private func assertCaptureSettingsWorksheetRecordsSuccessiveValuesAndRetainsAfterRelaunch() throws {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Capture research acceptance is restricted to Simulator")
+        #endif
+        executionTimeAllowance = 360
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+        enterCapture()
+        let recording = app.descendants(matching: .any)["capture.screen"]
+        let stationary = app.buttons["capture.label.powered_on_stationary.action"]
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
+        stationary.tap()
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+
+        func openWorksheet() {
+            let record = app.buttons["capture.settings.record"]
+            scrollElementFrameIntoViewport(
+                record, in: recording, maxScrolls: 8, occludedBy: app.buttons["capture.stop"]
+            )
+            record.tap()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["capture.settings.worksheet"].waitForExistence(timeout: 5),
+                app.debugDescription
+            )
+        }
+        openWorksheet()
+        let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
+        let saveValues = app.buttons["capture.settings.save"]
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4)
+        saveValues.tap()
+        let validationError = app.staticTexts["capture.settings.error"]
+        scrollElementFrameIntoViewport(validationError, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        XCTAssertEqual(validationError.label, "Choose a device profile.")
+        XCTAssertTrue(worksheet.exists, app.debugDescription)
+        let cancelWorksheet = app.navigationBars.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelWorksheet.isHittable, app.debugDescription)
+        cancelWorksheet.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recording.waitForExistence(timeout: 5), app.debugDescription)
+        for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+        XCTAssertTrue(app.buttons["capture.stop"].isEnabled)
+        XCTAssertFalse(app.buttons["capture.settings.observations"].exists)
+        openWorksheet()
+        func findBrightness() -> XCUIElement {
+            let search = app.searchFields.firstMatch
+            for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
+            scrollElementFrameIntoViewport(search, in: app, maxScrolls: 4)
+            search.tap()
+            let currentText = search.value as? String ?? ""
+            if currentText != "brightness" {
+                let clear = search.buttons["Clear text"]
+                if clear.exists && clear.isHittable {
+                    clear.tap()
+                } else {
+                    search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentText.count))
+                }
+                search.typeText("brightness")
+            }
+            let brightness = app.textFields["capture.settings.value.display_brightness"]
+            scrollElementFrameIntoViewport(brightness, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+            XCTAssertTrue(brightness.waitForExistence(timeout: 5), app.debugDescription)
+            return brightness
+        }
+        let profile = app.buttons["capture.settings.profile"]
+        scrollElementFrameIntoViewport(profile, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        profile.tap()
+        let aeroProfile = app.buttons["NOSFET Aero"].firstMatch
+        XCTAssertTrue(aeroProfile.waitForExistence(timeout: 5), app.debugDescription)
+        aeroProfile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        let selectedProfile = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "NOSFET Aero"), object: profile
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selectedProfile], timeout: 5), .completed, app.debugDescription)
+        let earlierObservation = app.switches["Earlier observation"]
+        scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        earlierObservation.switches.firstMatch.tap()
+        let earlierTime = app.textFields["capture.settings.time"]
+        scrollElementFrameIntoViewport(earlierTime, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        earlierTime.tap()
+        earlierTime.typeText("0")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let brightness = findBrightness()
+        brightness.tap()
+        brightness.typeText("145")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let note = app.descendants(matching: .any)["capture.settings.note"].firstMatch
+        scrollElementFrameIntoViewport(
+            note, in: worksheet, maxScrolls: 8, occludedBy: app.buttons["capture.settings.save"]
+        )
+        note.tap()
+        note.typeText("Before brightness change")
+        app.buttons["capture.settings.keyboard.done"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
+        saveValues.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+
+        openWorksheet()
+        scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        XCTAssertEqual(earlierObservation.value as? String, "1")
+        earlierObservation.switches.firstMatch.tap()
+        XCTAssertEqual(earlierObservation.value as? String, "0")
+        let repeatedBrightness = findBrightness()
+        XCTAssertEqual(repeatedBrightness.value as? String, "145")
+        repeatedBrightness.tap()
+        repeatedBrightness.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).doubleTap()
+        repeatedBrightness.typeText("30")
+        XCTAssertEqual(repeatedBrightness.value as? String, "30", app.debugDescription)
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
+        saveValues.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
+        let observations = app.buttons["capture.settings.observations"]
+        scrollElementFrameIntoViewport(
+            observations, in: recording, maxScrolls: 8, occludedBy: app.buttons["capture.stop"]
+        )
+        observations.tap()
+        let review = app.descendants(matching: .any)["capture.settings.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 145 %"], in: review, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 145 %"].exists)
+        let secondObservation = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH[c] %@", "Observation 2 · ")
+        ).firstMatch
+        scrollElementFrameIntoViewport(secondObservation, in: review, maxScrolls: 12)
+        XCTAssertTrue(secondObservation.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertNotEqual(secondObservation.label.lowercased(), "observation 2 · 00:00")
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: review, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["capture.stop"].tap()
+        let detail = app.descendants(matching: .any)["captures.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 15), app.debugDescription)
+        let saved = app.buttons["capture.settings.saved"]
+        scrollElementFrameIntoViewport(saved, in: detail, maxScrolls: 12)
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), app.debugDescription)
+        app.navigationBars.buttons.firstMatch.tap()
+        let stored = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.database."))
+            .firstMatch
+        XCTAssertTrue(stored.waitForExistence(timeout: 10), app.debugDescription)
+        let captureID = stored.identifier
+        app.terminate()
+        app.launch()
+        app.buttons["device-picker.open-setup"].tap()
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: app.descendants(matching: .any)["setup.screen"], maxScrolls: 8)
+        captures.tap()
+        app.buttons[captureID].tap()
+        let restoredSaved = app.buttons["capture.settings.saved"]
+        scrollElementFrameIntoViewport(restoredSaved, in: app.collectionViews.firstMatch, maxScrolls: 12)
+        restoredSaved.tap()
+        let restoredReview = app.descendants(matching: .any)["capture.settings.review"]
+        XCTAssertTrue(restoredReview.waitForExistence(timeout: 5))
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 145 %"], in: restoredReview, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 145 %"].waitForExistence(timeout: 10))
+        scrollElementFrameIntoViewport(app.staticTexts["You recorded, 30 %"], in: restoredReview, maxScrolls: 12)
+        XCTAssertTrue(app.staticTexts["You recorded, 30 %"].exists)
+        retainCaptureScreenshot("Capture settings retained after relaunch")
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
         app.buttons["captures.labels"].tap()
@@ -3816,7 +4007,7 @@ final class CutoutAppUITests: XCTestCase {
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
                 let frame = window.frame
-                let imageSize = Self.displayedScreenshotSize(self.app.screenshot().image)
+                let imageSize = XCUIScreen.main.screenshot().image.size
                 return frame.width > 0 && frame.height > 0
                     && (frame.width > frame.height) == landscape
                     && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
@@ -3825,8 +4016,8 @@ final class CutoutAppUITests: XCTestCase {
             }, object: app
         )
         XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
-        let screenshot = app.screenshot().image
-        let displayedSize = Self.displayedScreenshotSize(screenshot)
+        let screenshot = XCUIScreen.main.screenshot().image
+        let displayedSize = screenshot.size
         let orientationProof = XCTAttachment(
             string: "device=\(XCUIDevice.shared.orientation.rawValue); window=\(window.frame); "
                 + "imageOrientation=\(screenshot.imageOrientation.rawValue); imageSize=\(screenshot.size); "
@@ -3835,22 +4026,11 @@ final class CutoutAppUITests: XCTestCase {
         orientationProof.name = "settled Ride orientation metadata"
         orientationProof.lifetime = .keepAlways
         add(orientationProof)
-        let screenshotProof = XCTAttachment(screenshot: app.screenshot())
+        let screenshotProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshotProof.name = "settled Ride native screenshot"
         screenshotProof.lifetime = .keepAlways
         add(screenshotProof)
         XCTAssertEqual(displayedSize.width > displayedSize.height, landscape)
-    }
-
-    private static func displayedScreenshotSize(_ image: UIImage) -> CGSize {
-        switch image.imageOrientation {
-        case .left, .right, .leftMirrored, .rightMirrored:
-            CGSize(width: image.size.height, height: image.size.width)
-        case .up, .down, .upMirrored, .downMirrored:
-            image.size
-        @unknown default:
-            image.size
-        }
     }
 
     func testVescEssentialRideControlsRemainVisibleWithoutScrollingAtAccessibilityDynamicType() throws {
@@ -4018,7 +4198,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(screen.scrollViews.count, 0)
         let metricLabels =
             family == .euc
-            ? ["Battery", "pack", "power", "thermal"]
+            ? eucRideMetricLabels
             : ["voltage", "motor current", "board angle", "controller"]
         let mainMetricLabels =
             rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
@@ -4054,7 +4234,7 @@ final class CutoutAppUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
-            assertAccessibleRideReadings(metricLabels)
+            assertAccessibleRideReadings(family == .euc ? Self.eucDetailMetricLabels : metricLabels)
         }
         try beforeDisconnect?(screen)
     }
@@ -5726,6 +5906,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testEucRideTelemetryAgesWithoutAnotherSample() {
+        assertMountedTelemetryAges(for: .euc)
+    }
+
     func testEucRideTelemetryAgesWithoutAnotherSampleAtAccessibilityDynamicType() {
         assertMountedTelemetryAges(for: .euc)
     }
@@ -5758,6 +5942,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(status.frame, statusFrame)
         XCTAssertEqual(speed.frame, speedFrame)
         XCTAssertEqual(screen.scrollViews.count, 0)
+        if family == .euc && rideTextSizeCategory == "UICTContentSizeCategoryL" {
+            let gauge = app.descendants(matching: .any)["euc.ride.headroom"]
+            XCTAssertTrue(gauge.exists)
+            XCTAssertEqual(gauge.value as? String, "unavailable")
+        }
 
     }
 
@@ -6166,11 +6355,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
-        try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
+        try assertConnectedSurface(for: .euc, requiredMetricLabel: "Voltage")
     }
 
     func testEucRidePassesAccessibilityAuditInLandscapeAtExtraExtraExtraLargeType() throws {
-        try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
+        try assertConnectedSurface(for: .euc, requiredMetricLabel: "Voltage")
     }
 
     func testVescRidePassesAccessibilityAuditWithIncreasedContrast() throws {
@@ -6466,6 +6655,13 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         return arguments
+    }
+
+    private static let eucDetailMetricLabels = ["Battery", "pack", "power", "thermal"]
+
+    private var eucRideMetricLabels: [String] {
+        rideTextSizeCategory.hasPrefix("UICTContentSizeCategoryAccessibility")
+            ? ["Battery"] : ["Battery", "Voltage", "Power", "Temperature"]
     }
 
     private var rideTextSizeCategory: String {

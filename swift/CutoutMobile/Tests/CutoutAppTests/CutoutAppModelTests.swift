@@ -3806,6 +3806,19 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         return true
     }
 
+    func recordCaptureSettingsObservation(
+        generation _: CaptureGeneration, draft _: MobileCaptureSettingsDraftDto
+    ) async throws -> MobileCaptureSettingsObservationDto {
+        throw MobileCaptureResearchError.NotRecording
+    }
+    func captureSettingsObservations(generation _: CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto] {
+        throw MobileCaptureResearchError.NotRecording
+    }
+    func captureSettingsReadbackBatch(
+        generation _: CaptureGeneration, requests _: [MobileCaptureResearchReadbackRequestDto]
+    ) async throws -> [MobileCaptureResearchReadbackDto] {
+        throw MobileCaptureResearchError.NotRecording
+    }
     func annotateCapture(key _: String, value _: String) -> Bool { false }
 
     private let captureURL = URL(fileURLWithPath: "/tmp/manual-capture.jsonl")
@@ -3832,7 +3845,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         }
         return captureLabelState.active()
     }
-    func prepareCaptureMetadataCleanup() async -> Bool { true }
+
     func checkpointRideMap() async throws {
         checkpointCount += 1
         try await checkpointOperation?()

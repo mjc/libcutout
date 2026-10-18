@@ -6,9 +6,8 @@ use std::{
 };
 
 use crate::{
-    MobileCaptureOriginDto, MobileCaptureWriteOutcomeDto, MobileMusicHistoryPolicyDto,
-    MobilePevcapCaptureBuilder, MobilePevcapMusicEventDto, MobileTransportWriteLimitDto,
-    MobileWallClockUnixMillisDto, RideDatabaseHandle,
+    MobileCaptureOriginDto, MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder,
+    MobileTransportWriteLimitDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
 };
 
 /// Native observations for one capture startup; Rust owns normalization and admission.
@@ -24,8 +23,6 @@ pub struct MobileCaptureStartRequestDto {
     pub evidence: String,
     pub annotations: Vec<String>,
     pub origin: MobileCaptureOriginDto,
-    /// Legacy boundary input; Bluetooth diagnostics never retain provider music metadata.
-    pub music_history_policy: MobileMusicHistoryPolicyDto,
 }
 
 /// Startup failure before a writer has been installed in the native adapter.
@@ -193,9 +190,7 @@ pub fn prepare_capture_writer(
         request.platform_id,
         Some(MobileTransportWriteLimitDto { bytes: 23 }),
     );
-    if !builder.set_recording_origin(request.origin)
-        || !builder.set_music_history_policy(MobileMusicHistoryPolicyDto::Disabled)
-    {
+    if !builder.set_recording_origin(request.origin) {
         return Err(MobileCaptureStartError::InvalidMetadata);
     }
     for service in request.advertised_services {
@@ -242,7 +237,6 @@ pub fn prepare_capture_writer(
 #[uniffi::export]
 impl MobilePreparedCaptureStart {
     /// Consumes admitted preparation once, including when the actual writer cannot start.
-    /// Optional stale music context cannot reject otherwise valid startup.
     ///
     /// # Errors
     /// Returns `AlreadyStarted` for reuse, `AutomaticRecordingDisabled` after consent
@@ -250,7 +244,6 @@ impl MobilePreparedCaptureStart {
     pub fn start(
         &self,
         monotonic_ms: u64,
-        music_context: Option<MobilePevcapMusicEventDto>,
     ) -> Result<MobileStartedCaptureWriterDto, MobileCaptureStartError> {
         let prepared = self
             .prepared
@@ -267,7 +260,6 @@ impl MobilePreparedCaptureStart {
         {
             return Err(MobileCaptureStartError::WriterStartFailed);
         }
-        let _ = prepared.builder.set_music_context(music_context);
         if !prepared.builder.start_writer(prepared.path.clone()) {
             return Err(MobileCaptureStartError::WriterStartFailed);
         }
@@ -309,7 +301,6 @@ mod tests {
             evidence: "verified".to_owned(),
             annotations: vec!["user_note=one=two\nthree\r四".to_owned()],
             origin: MobileCaptureOriginDto::Manual,
-            music_history_policy: MobileMusicHistoryPolicyDto::Disabled,
         }
     }
 
@@ -361,7 +352,7 @@ mod tests {
             .save_automatic_diagnostic_recording_enabled(false)
             .unwrap();
         assert_eq!(
-            prepared.start(100, None).err(),
+            prepared.start(100).err(),
             Some(MobileCaptureStartError::AutomaticRecordingDisabled)
         );
         let sql = rusqlite::Connection::open(&database_path).unwrap();
@@ -452,7 +443,7 @@ mod tests {
         request.evidence = "user=action\nconfirmed".to_owned();
         let prepared = prepare_capture_writer(request, None).unwrap();
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
-        let started = prepared.start(10_000, None).unwrap();
+        let started = prepared.start(10_000).unwrap();
         assert!(started.path.ends_with(
             "cutout-btle-capture-1700000000-3F2504E0-4F89-41D3-9A0C-0305E82C3301.jsonl"
         ));
@@ -509,7 +500,7 @@ mod tests {
             .unwrap(),
             0
         );
-        let started = prepared.start(1_000, None).unwrap();
+        let started = prepared.start(1_000).unwrap();
         let capture = finished_capture(&started);
         let annotations = capture.header.annotations;
         assert_eq!(annotations.len(), cutout_core::PEVCAP_MAX_ANNOTATIONS);
@@ -575,11 +566,11 @@ mod tests {
             .clone();
         fs::write(&path, b"original capture").unwrap();
         assert_eq!(
-            prepared.start(1_000, None).err(),
+            prepared.start(1_000).err(),
             Some(MobileCaptureStartError::WriterStartFailed)
         );
         assert_eq!(
-            prepared.start(1_001, None).err(),
+            prepared.start(1_001).err(),
             Some(MobileCaptureStartError::AlreadyStarted)
         );
         assert_eq!(fs::read(path).unwrap(), b"original capture");
@@ -590,8 +581,8 @@ mod tests {
         let directory = Directory::new();
         let prepared = prepare_capture_writer(request(&directory), None).unwrap();
         let other = Arc::clone(&prepared);
-        let first = thread::spawn(move || prepared.start(1_000, None));
-        let second = thread::spawn(move || other.start(1_000, None));
+        let first = thread::spawn(move || prepared.start(1_000));
+        let second = thread::spawn(move || other.start(1_000));
         let results = [first.join().unwrap(), second.join().unwrap()];
         assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(
@@ -605,77 +596,6 @@ mod tests {
         let started = results.into_iter().find_map(Result::ok).unwrap();
         let _ = finished_capture(&started);
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn capture_start_stale_optional_music_does_not_reject_writer() {
-        let directory = Directory::new();
-        let mut request = request(&directory);
-        request.music_history_policy = MobileMusicHistoryPolicyDto::OpaqueItem;
-        let prepared = prepare_capture_writer(request, None).unwrap();
-        let music = MobilePevcapMusicEventDto {
-            provider: crate::MobileMusicProviderDto::Spotify,
-            track_id: "spotify:track:test".to_owned(),
-            monotonic_at_ms: 1,
-            wall_clock_unix_ms: 1_700_000_000_000,
-            clock_uncertainty_ms: 1,
-            ride_sequence: None,
-        };
-        let started = prepared.start(10_000, Some(music)).unwrap();
-        assert_eq!(started.builder.music_context.lock().unwrap().len(), 0);
-        let _ = finished_capture(&started);
-    }
-
-    #[test]
-    fn app_btle_capture_omits_all_music_but_preserves_raw_transport() {
-        for provider in [
-            crate::MobileMusicProviderDto::AppleMusic,
-            crate::MobileMusicProviderDto::Spotify,
-        ] {
-            let directory = Directory::new();
-            let mut request = request(&directory);
-            request.music_history_policy = MobileMusicHistoryPolicyDto::HumanReadable;
-            let prepared = prepare_capture_writer(request, None).unwrap();
-            let music = MobilePevcapMusicEventDto {
-                provider,
-                track_id: "provider-track".to_owned(),
-                monotonic_at_ms: 1_001,
-                wall_clock_unix_ms: 1_700_000_000_000,
-                clock_uncertainty_ms: 1,
-                ride_sequence: Some(0),
-            };
-            let started = prepared.start(1_000, Some(music.clone())).unwrap();
-            assert_eq!(
-                started.builder.record_music_event(music.clone()),
-                MobileCaptureWriteOutcomeDto::Accepted
-            );
-            let raw = vec![0x55, 0xaa, 0x01, 0x00, 0xff];
-            assert_eq!(
-                started.builder.record_notification_with_context_and_music(
-                    crate::MobileMonotonicMillisDto {
-                        milliseconds: 1_002
-                    },
-                    vec![1; 16],
-                    vec![2; 16],
-                    raw.clone(),
-                    None,
-                    None,
-                    Some(music),
-                ),
-                MobileCaptureWriteOutcomeDto::Accepted
-            );
-            let capture = finished_capture(&started);
-            assert!(
-                capture.music_events.is_empty(),
-                "no provider music event belongs in BLE diagnostics"
-            );
-            assert_eq!(capture.records.len(), 1);
-            assert_eq!(capture.records[0].bytes.as_ref(), raw.as_slice());
-            assert!(
-                capture.records[0].music.is_none(),
-                "notification context must omit music too"
-            );
-        }
     }
 
     #[test]

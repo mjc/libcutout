@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var presentedSheet: Sheet?
     @Environment(\.openURL) private var openURL
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private enum Sheet: Identifiable {
         case setup, music, musicSettings
@@ -389,7 +390,9 @@ struct ContentView: View {
     private func destinationSurface(for destination: CutoutAppRoute) -> some View {
         let back: (() -> Void)? = destination.isMoreDestination ? { closeNestedDestination() } : nil
         Group {
-            if destination == .devicePicker || isRideMapDetail(destination) {
+            if destination == .devicePicker || isRideMapDetail(destination)
+                || (destination == .eucRide && !dynamicTypeSize.isAccessibilitySize)
+            {
                 routedContent(for: destination)
             } else {
                 PevAppShell(
@@ -466,7 +469,7 @@ struct ContentView: View {
             .scrollContentBackground(.hidden)
             .accessibilityIdentifier("more.screen")
         case .eucRide:
-            EucRideRouteView(model: model)
+            EucRideRouteView(model: model, disconnect: disconnectAction(for: destination))
         case .lighting:
             LightingRouteView(model: lighting, rideModel: model)
         case .eucPack(let packScreen):
