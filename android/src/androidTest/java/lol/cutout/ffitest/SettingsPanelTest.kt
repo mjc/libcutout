@@ -16,6 +16,7 @@ import uniffi.cutout_mobile_ffi.MobileSettingValueSourceDto
 import uniffi.cutout_mobile_ffi.MobileSettingControlDto
 import uniffi.cutout_mobile_ffi.MobileSettingGroupDto
 import uniffi.cutout_mobile_ffi.MobileSettingStatusDto
+import uniffi.cutout_mobile_ffi.MobileSettingSnapshotDto
 import uniffi.cutout_mobile_ffi.MobileSettingValueDto
 import org.junit.Test
 
@@ -42,21 +43,37 @@ open class SettingsPanelTest {
                 val panel = SettingsPanel(activity) { _, _, _, _ -> }
                 val labels = CutoutUi(activity)
                 activity.setContentView(panel)
-                panel.render(null)
                 val unavailable = labels.label("settings.readback.unavailable")
+                check(visibleText(panel, unavailable)) {
+                    "Settings readback should be unavailable before the first owner snapshot"
+                }
+                panel.render(null)
                 check(visibleText(panel, unavailable)) {
                     "Missing settings readback should be described as unavailable"
                 }
 
-                val currentReported = initial.copy(settings = initial.settings.map {
-                    if (it.id == booleanDescriptor.id) it.copy(
-                        current = MobileSettingValueDto.Boolean(true),
-                        requested = MobileSettingValueDto.Boolean(true),
-                        currentSource = MobileSettingValueSourceDto.LIVE_READBACK,
-                        status = MobileSettingStatusDto.CONFIRMED,
+                val booleanState = initial.settings.firstOrNull { it.id == booleanDescriptor.id }
+                    ?: MobileSettingSnapshotDto(
+                        id = booleanDescriptor.id,
+                        current = null,
+                        currentSource = null,
+                        evidence = null,
+                        requested = null,
+                        requestId = null,
+                        status = MobileSettingStatusDto.IDLE,
                         transport = null,
-                    ) else it
-                })
+                        ageMs = null,
+                        refusal = null,
+                    )
+                val currentReported = initial.copy(settings = initial.settings.filterNot {
+                    it.id == booleanDescriptor.id
+                } + booleanState.copy(
+                    current = MobileSettingValueDto.Boolean(true),
+                    requested = MobileSettingValueDto.Boolean(true),
+                    currentSource = MobileSettingValueSourceDto.LIVE_READBACK,
+                    status = MobileSettingStatusDto.CONFIRMED,
+                    transport = null,
+                ))
                 panel.render(currentReported)
                 val booleanRow = descendants(panel).firstOrNull { it.tag == booleanDescriptor.id }
                     ?: error("Missing boolean row")

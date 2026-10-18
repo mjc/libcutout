@@ -61,6 +61,7 @@ class SettingsPanel(
         page.addView(header)
         page.addView(ui.space(20))
         addView(page, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        render(null)
     }
 
     /** Apply owner snapshots without replacing editors when only their observation age changes. */
