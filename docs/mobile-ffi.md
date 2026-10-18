@@ -284,6 +284,51 @@ devenv tasks run test:kotlin-bindings-smoke
 
 The task uses the JNA jar pinned by the devenv environment.
 
+### Kotlin session usage
+
+`tests/mobile-ffi/shared/EucReplaySmoke.kt` is an executable usage example for
+the current generic `CutoutSessionStateHandle`. It runs in both the host smoke
+and Android instrumentation. Rust selects the decoder from observed evidence;
+Kotlin uses `step.session.identity.vehicleKind` for the product-category screen
+and the independently reported `model` for its label. A model name or a generic
+VESC transport must not select the physical vehicle category in Kotlin.
+
+Use one ordered background owner for the handle and native connection events.
+The example uses a single-thread executor and returns an owned snapshot after
+closing the handle. Android's future BluetoothGatt adapter should enqueue
+callbacks onto that owner, copying callback buffers before enqueueing, and
+publish owned snapshots to its UI dispatcher. Rust's internal locks protect
+individual calls; they do not order independently launched Kotlin coroutines.
+
+Retain the token returned by `beginConnectionAttempt` with that native connection.
+Pass the captured token through identification, notifications, timers and
+transport receipts. Reconnecting to the same peripheral creates a new token.
+Late callbacks must retain their original token; replacing it with the latest
+token would admit old bytes into the new session. During shutdown, stop accepting
+callbacks, invalidate the Rust attempt before native cancellation, reject queued
+stale work, then close the handle on its owner.
+
+`ingestDeviceSession` returns this input's ordered `result.outputs`, current
+telemetry, diagnostics and `captureNotificationEvidence` together. Consume each
+output once; this path has no additional output-drain call. A missing step
+means the attempt was not admitted. Keep typed `result.error` and parser ingest
+outcomes distinct. The transport adapter executes subscribe/write/disconnect
+requests and reports actual completion to the existing Rust receipt APIs.
+Capture hooks preserve the original timestamp/channel/bytes and the Rust
+admission evidence; Kotlin must not infer stationary state or deduplication.
+
+The replay uses the existing public hardware-tested
+`crates/cutout-cli/fixtures/pevcap/aero-veteran-live.jsonl`. The runner converts
+its link/notification records into ignored Kotlin fixture source, preserving
+timestamps and chunk boundaries without another runtime JSON dependency or
+copied wire data. Recorded outbound writes are excluded. Identification and
+decoding use separate replay passes; the capture's model label is not an input
+to detection. Tests check fragmented parsing, semantic outputs, retention of all
+fragmented capture bytes, owned snapshot lifetime and stale-token refusal. The receipt
+includes the source capture's hash. This exercises Kotlin consumption of the
+existing session API; live scanning, permissions, GATT queues and transport
+receipt delivery remain LIBCU-34.
+
 ### Physical Android tests
 
 The host JVM and Android instrumentation use the same assertions in
@@ -291,8 +336,8 @@ The host JVM and Android instrumentation use the same assertions in
 isolated app-private temporary directory. It exercises generated Kotlin/JNA
 calls into the actual ARM64 Rust library: session identity, settings snapshots,
 owned frame buffers, camera command outcomes, typed refusals, SQLite writes and
-reopen, and explicit handle shutdown. Inputs are synthetic; no wheel or camera
-connection is made.
+reopen, and explicit handle shutdown. Inputs include synthetic cases and the
+public EUC capture replay; no wheel or camera connection is made.
 
 ```console
 devenv tasks run test:mobile-ffi-runner
