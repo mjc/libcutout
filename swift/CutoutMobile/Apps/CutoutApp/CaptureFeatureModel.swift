@@ -192,7 +192,7 @@ final class CaptureFeatureModel {
         do {
             settingsObservations = try readSettingsObservations(generation)
             settingsError = nil
-        } catch { settingsError = "Could not load settings values." }
+        } catch { settingsError = localizedAppText("capture.settings.load_error") }
     }
 
     func settingsReadback(requests: [MobileCaptureResearchReadbackRequestDto]) async throws

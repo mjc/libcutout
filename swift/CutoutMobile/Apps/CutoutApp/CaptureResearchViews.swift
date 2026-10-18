@@ -58,11 +58,13 @@ final class CaptureResearchDraft {
         }
     }
 
-    func observation() throws -> MobileCaptureSettingsDraftDto {
+    func observation(locale: Locale = .current) throws -> MobileCaptureSettingsDraftDto {
         guard let catalog else { throw DraftError.profile }
         let observedAt: UInt64?
         if useEarlierTime {
-            guard let seconds = Double(earlierTime), seconds.isFinite, seconds >= 0,
+            let decimalSeparator = locale.decimalSeparator ?? "."
+            let normalizedTime = earlierTime.replacingOccurrences(of: decimalSeparator, with: ".")
+            guard let seconds = Double(normalizedTime), seconds.isFinite, seconds >= 0,
                 seconds <= Double(UInt64.max / 1000)
             else { throw DraftError.time }
             let milliseconds = seconds * 1000

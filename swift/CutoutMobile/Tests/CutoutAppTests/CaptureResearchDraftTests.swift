@@ -105,6 +105,21 @@ final class CaptureResearchDraftTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(draft.catalog).fields.contains(where: { $0.id == "display_units" }))
     }
 
+    func testEarlierObservationAcceptsLocaleDecimalSeparatorWithoutPartialParsing() throws {
+        let draft = CaptureResearchDraft()
+        draft.selectProfile("nosfet_aero")
+        draft.useEarlierTime = true
+        draft.earlierTime = "12,5"
+        XCTAssertEqual(try draft.observation(locale: Locale(identifier: "de_DE")).observedAtMs, 12500)
+        XCTAssertThrowsError(try draft.observation(locale: Locale(identifier: "en_US")))
+        draft.earlierTime = "12.5"
+        XCTAssertEqual(try draft.observation(locale: Locale(identifier: "en_US")).observedAtMs, 12500)
+        for invalid in ["12,5 seconds", "12,5.1", "12,,5", "-0,5"] {
+            draft.earlierTime = invalid
+            XCTAssertThrowsError(try draft.observation(locale: Locale(identifier: "de_DE")), invalid)
+        }
+    }
+
     func testEarlierObservationRejectsInvalidNativeText() throws {
         let draft = CaptureResearchDraft()
         draft.selectProfile("nosfet_aero")

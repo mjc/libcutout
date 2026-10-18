@@ -81,6 +81,9 @@ pub const PEVCAP_VERSION_MAJOR: u16 = 1;
 /// Current minor PEVCAP format version.
 pub const PEVCAP_VERSION_MINOR: u16 = 4;
 
+/// PEVCAP version that introduced user-reported settings observations.
+pub const PEVCAP_VERSION_MINOR_SETTINGS: u16 = 4;
+
 /// PEVCAP version that introduced music metadata (legacy captures only).
 pub const PEVCAP_VERSION_MINOR_MUSIC: u16 = 3;
 
@@ -620,6 +623,7 @@ impl PevcapFormatVersion {
     pub const fn is_supported(self) -> bool {
         self.major == PEVCAP_VERSION_MAJOR
             && (self.minor == PEVCAP_VERSION_MINOR
+                || self.minor == PEVCAP_VERSION_MINOR_SETTINGS
                 || self.minor == PEVCAP_VERSION_MINOR_MUSIC
                 || self.minor == PEVCAP_VERSION_MINOR_LOCATIONS
                 || self.minor == PEVCAP_VERSION_MINOR_LEGACY)
@@ -640,7 +644,7 @@ impl PevcapFormatVersion {
     /// Returns whether this version can retain user-reported settings evidence.
     #[must_use]
     pub const fn supports_settings_observations(self) -> bool {
-        self.major == PEVCAP_VERSION_MAJOR && self.minor >= 4
+        self.major == PEVCAP_VERSION_MAJOR && self.minor >= PEVCAP_VERSION_MINOR_SETTINGS
     }
 }
 

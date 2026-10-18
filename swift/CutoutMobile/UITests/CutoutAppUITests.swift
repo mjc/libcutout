@@ -2601,8 +2601,11 @@ final class CutoutAppUITests: XCTestCase {
 
         openWorksheet()
         scrollElementFrameIntoViewport(earlierObservation, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        XCTAssertEqual(earlierObservation.value as? String, "1")
         earlierObservation.tap()
+        XCTAssertEqual(earlierObservation.value as? String, "0")
         let repeatedBrightness = findBrightness()
+        XCTAssertEqual(repeatedBrightness.value as? String, "145")
         repeatedBrightness.tap()
         repeatedBrightness.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "30")
         scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4, occludedBy: app.keyboards.firstMatch)
@@ -2617,6 +2620,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["145 %"].exists)
         scrollElementFrameIntoViewport(app.staticTexts["30 %"], in: review, maxScrolls: 12)
         XCTAssertTrue(app.staticTexts["30 %"].exists)
+        let secondObservation = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH[c] %@", "Observation 2 · ")
+        ).firstMatch
+        scrollElementFrameIntoViewport(secondObservation, in: review, maxScrolls: 12)
+        XCTAssertTrue(secondObservation.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertNotEqual(secondObservation.label.lowercased(), "observation 2 · 00:00")
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["capture.stop"].tap()
         let detail = app.descendants(matching: .any)["captures.detail"]

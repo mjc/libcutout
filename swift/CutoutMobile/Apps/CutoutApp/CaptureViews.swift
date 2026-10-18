@@ -57,6 +57,7 @@ struct CaptureRecordingScreen: View {
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
     let researchDraft: CaptureResearchDraft
     let settingsObservations: [MobileCaptureSettingsObservationDto]
+    let settingsError: String?
     let refreshSettingsObservations: () -> Void
     let recordSettingsObservation: (MobileCaptureSettingsDraftDto) async throws -> Void
     let readSettingsReadback:
@@ -97,6 +98,12 @@ struct CaptureRecordingScreen: View {
             Section("Settings & actions") {
                 Button("Record settings values") { showingWorksheet = true }
                     .disabled(!canAnnotate).accessibilityIdentifier("capture.settings.record")
+                if let settingsError {
+                    Text(settingsError).foregroundStyle(PevColors.warningText)
+                        .accessibilityIdentifier("capture.settings.load-error")
+                    Button(localizedAppText("capture.settings.retry_load"), action: refreshSettingsObservations)
+                        .accessibilityIdentifier("capture.settings.retry-load")
+                }
                 if !settingsObservations.isEmpty {
                     NavigationLink {
                         CaptureSettingsObservationReview(

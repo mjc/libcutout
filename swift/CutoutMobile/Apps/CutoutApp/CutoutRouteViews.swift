@@ -265,6 +265,7 @@ struct CaptureRouteView: View {
             stopCaptureLabel: capture.stopLabel,
             researchDraft: capture.researchDraft,
             settingsObservations: capture.settingsObservations,
+            settingsError: capture.settingsError,
             refreshSettingsObservations: capture.refreshSettingsObservations,
             recordSettingsObservation: capture.recordSettingsObservation,
             readSettingsReadback: capture.settingsReadback

@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "capture.settings.load_error": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Could not load settings values."}}}},
+    "capture.settings.retry_load": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Retry loading settings values"}}}},
     "capture.label.alarm_change": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Alarm mode changed"}}}},
     "capture.research.displayed_pack_voltage": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Displayed pack voltage"}}}},
     "capture.label.powered_on_stationary": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Stationary"}}}},

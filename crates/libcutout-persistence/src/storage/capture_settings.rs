@@ -271,7 +271,7 @@ impl Read for LiveCaptureReader {
                         QueryLimit::new(32).map_err(io::Error::other)?,
                     )
                     .map_err(io::Error::other)?;
-                if page.events.is_empty() {
+                if page.next_sequence < self.next_sequence || page.events.is_empty() {
                     return Err(io::Error::other("capture event prefix changed"));
                 }
                 self.include_page(page);
@@ -398,6 +398,113 @@ mod tests {
             assert_eq!(connection.execute("UPDATE pevcap_capture_chunks SET payload=?1 WHERE artifact_digest=?2 AND sequence=0", rusqlite::params![changed, receipt.artifact_digest]).unwrap(), 1);
             assert!(read_stored_capture(&database, &receipt.artifact_digest).is_err());
             drop(connection);
+            database.shutdown().unwrap();
+        }
+    }
+
+    fn live_reader_fixture(
+        include_legacy_music: bool,
+    ) -> (tempfile::TempDir, RideDatabase, LiveCaptureId) {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let header = PevcapCapture::decode(&binary_capture(), PevcapEncoding::Binary)
+            .unwrap()
+            .header;
+        let id = database
+            .begin_live_capture(
+                header.to_jsonl_line().unwrap().into_bytes(),
+                1_700_000_000_000,
+            )
+            .unwrap();
+        if include_legacy_music {
+            let music = cutout_core::PevcapMusicEvent::new(
+                cutout_core::MusicProvider::AppleMusic,
+                "legacy-item",
+                cutout_core::MonotonicTimestamp::new(0),
+                WallClockUnixTimestamp::new(1_700_000_000_000),
+                1,
+                None,
+            )
+            .unwrap();
+            database
+                .append_live_capture_event(
+                    id,
+                    super::super::LiveCaptureEventKind::Music,
+                    0,
+                    None,
+                    Some(1_700_000_000_000),
+                    music.to_jsonl_line().unwrap().into_bytes(),
+                )
+                .unwrap();
+        }
+        for at in 0..40 {
+            append_reader_record(&database, id, at);
+        }
+        (directory, database, id)
+    }
+
+    fn append_reader_record(database: &RideDatabase, id: LiveCaptureId, at: u64) {
+        let record = PevcapRecord::link_down(cutout_core::MonotonicTimestamp::new(at));
+        let payload = record.to_jsonl_line().unwrap().into_bytes();
+        database
+            .append_live_capture_record(id, record, payload)
+            .unwrap();
+    }
+
+    fn read_cached_first_page(reader: &mut LiveCaptureReader) -> Vec<u8> {
+        let size = reader.lines.iter().map(Vec::len).sum();
+        let mut bytes = vec![0; size];
+        reader.read_exact(&mut bytes).unwrap();
+        assert_eq!(reader.after_sequence, Some(31));
+        bytes
+    }
+
+    #[test]
+    fn live_reader_rejects_sequence_shrink_before_exposing_reindexed_tail() {
+        let (_directory, database, id) = live_reader_fixture(true);
+        database.finish_live_capture(id, 1_700_000_001_000).unwrap();
+        let mut reader = LiveCaptureReader::new(database.clone(), id).unwrap();
+        read_cached_first_page(&mut reader);
+        assert_eq!(reader.next_sequence, 41);
+        database.purge_capture_music_metadata(&[]).unwrap();
+        let page = database
+            .live_capture_page(id, Some(31), QueryLimit::new(32).unwrap())
+            .unwrap();
+        assert_eq!(page.next_sequence, 40);
+        assert_eq!(page.events.len(), 8);
+        let error = reader
+            .read(&mut [0; 1])
+            .expect_err("a reindexed tail must be rejected before emitting another byte");
+        assert_eq!(error.to_string(), "capture event prefix changed");
+        drop(reader);
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn live_reader_accepts_unchanged_or_growing_sequences_without_extending_prefix() {
+        for grow in [false, true] {
+            let (_directory, database, id) = live_reader_fixture(false);
+            let mut reader = LiveCaptureReader::new(database.clone(), id).unwrap();
+            let mut bytes = read_cached_first_page(&mut reader);
+            if grow {
+                for at in 40..44 {
+                    append_reader_record(&database, id, at);
+                }
+            }
+            reader.read_to_end(&mut bytes).unwrap();
+            let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).unwrap();
+            let times = capture
+                .records
+                .iter()
+                .map(|record| record.monotonic_ms.get())
+                .collect::<Vec<_>>();
+            assert_eq!(times, (0..40).collect::<Vec<_>>());
+            assert_eq!(
+                capture.music_events,
+                Vec::<cutout_core::PevcapMusicEvent>::new()
+            );
+            drop(reader);
+            database.finish_live_capture(id, 1_700_000_001_000).unwrap();
             database.shutdown().unwrap();
         }
     }
