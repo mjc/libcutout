@@ -2568,6 +2568,24 @@ final class CutoutAppUITests: XCTestCase {
         openWorksheet()
         let worksheet = app.descendants(matching: .any)["capture.settings.worksheet"]
         let saveValues = app.buttons["capture.settings.save"]
+        scrollElementFrameIntoViewport(saveValues, in: app, maxScrolls: 4)
+        saveValues.tap()
+        let validationError = app.staticTexts["capture.settings.error"]
+        XCTAssertTrue(validationError.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(validationError, in: worksheet, maxScrolls: 8, occludedBy: saveValues)
+        XCTAssertEqual(validationError.label, "Choose a device profile.")
+        XCTAssertTrue(worksheet.exists, app.debugDescription)
+        let cancelWorksheet = app.navigationBars.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelWorksheet.isHittable, app.debugDescription)
+        cancelWorksheet.tap()
+        XCTAssertTrue(worksheet.waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recording.waitForExistence(timeout: 5), app.debugDescription)
+        for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
+        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
+        XCTAssertEqual(stationary.label, "Stop Stationary")
+        XCTAssertTrue(app.buttons["capture.stop"].isEnabled)
+        XCTAssertFalse(app.buttons["capture.settings.observations"].exists)
+        openWorksheet()
         func findBrightness() -> XCUIElement {
             let search = app.searchFields.firstMatch
             for _ in 0..<4 where !search.isHittable { worksheet.swipeDown() }
