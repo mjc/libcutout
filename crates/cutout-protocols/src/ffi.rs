@@ -1,6 +1,7 @@
 use cutout_core::{
-    ControlRefusalDto, HostSession, MonotonicTimestamp, ParserDiagnosticsDto, RideOperatingState,
-    RideOperatingStateDto, SessionInput, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    ControlRefusalDto, HostSession, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolSession,
+    RideOperatingState, RideOperatingStateDto, SessionInput, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto,
 };
 
 use crate::{

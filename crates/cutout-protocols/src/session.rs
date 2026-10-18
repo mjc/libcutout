@@ -219,6 +219,30 @@ pub enum NotificationBufferState {
 
 /// Decoder hook for read-only model notification streams.
 pub trait ReadOnlyNotificationDecoder {
+    /// Updates command-encoding time without polling or emitting transport effects.
+    fn observe_host_time(&mut self, _at: MonotonicTimestamp) {}
+
+    /// Checks the current application query's native submission admission.
+    fn application_query_is_current(
+        &self,
+        _id: cutout_core::ApplicationQueryId,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
+
+    /// Retains native fragment evidence at the protocol owner.
+    fn record_application_query_transport(
+        &mut self,
+        _id: cutout_core::ApplicationQueryId,
+        _index: u16,
+        _count: u16,
+        _status: cutout_core::ApplicationQueryTransportStatus,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
+
     /// Conservative framing evidence; unsupported adapters retain every observation.
     fn notification_buffer_state(&self) -> NotificationBufferState {
         NotificationBufferState::Unknown
@@ -968,6 +992,30 @@ impl VescNotificationDecoder {
 }
 
 impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
+    fn observe_host_time(&mut self, at: MonotonicTimestamp) {
+        self.now_ms = at.as_milliseconds();
+        self.advance_application_query_deadlines(at);
+    }
+
+    fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        Self::application_query_is_current(self, id, at)
+    }
+
+    fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        Self::record_application_query_transport(self, id, index, count, status, at)
+    }
+
     fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
         self.polling.then(|| {
             MonotonicTimestamp::new(self.last_poll_ms.unwrap_or(self.now_ms).saturating_add(100))
@@ -997,8 +1045,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     }
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
-        self.now_ms = monotonic_ms.as_milliseconds();
-        self.advance_application_query_deadlines(monotonic_ms);
+        self.observe_host_time(monotonic_ms);
         if self.polling {
             self.poll_if_due(output);
         }
@@ -1243,7 +1290,8 @@ impl VescNotificationDecoder {
         use cutout_core::ApplicationQueryTransportStatus;
         if let ApplicationQueryProgress::KnownUnsent { query_id } = self.refloat_discovery.query
             && query_id == id.get()
-            && status == ApplicationQueryTransportStatus::Submitted
+            && (status == ApplicationQueryTransportStatus::Submitted
+                || status == ApplicationQueryTransportStatus::SubmissionUnknown)
         {
             // A native receipt is evidence even when submission authorization already expired.
             // Retain uncertainty without reopening either submission or response admission.
@@ -1255,6 +1303,11 @@ impl VescNotificationDecoder {
         };
         if query.write.id != id || at.get() < query.emitted_at_ms {
             return false;
+        }
+        if status == ApplicationQueryTransportStatus::SubmissionUnknown {
+            self.refloat_discovery.query =
+                ApplicationQueryProgress::PartialUncertain { query_id: id.get() };
+            return true;
         }
         let index = usize::from(fragment_index);
         let count = usize::from(fragment_count);
@@ -1304,6 +1357,9 @@ impl VescNotificationDecoder {
             ApplicationQueryTransportStatus::Rejected
             | ApplicationQueryTransportStatus::Cancelled => {
                 self.refloat_discovery.query = query.failed_state();
+            }
+            ApplicationQueryTransportStatus::SubmissionUnknown => {
+                unreachable!("handled before fragment accounting")
             }
         }
         true
@@ -2692,29 +2748,23 @@ impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
 }
 
 impl<M: ReadOnlyModelSpec> ProtocolSession for ReadOnlySession<M> {
+    fn observe_host_time(&mut self, at: MonotonicTimestamp) {
+        self.decoder.observe_host_time(at);
+    }
+
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         handle_read_only_session::<M>(&mut self.connected, &mut self.decoder, input, output);
     }
-}
 
-impl ReadOnlySession<VescGenericModel> {
-    pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
-        self.decoder.application_query_state()
-    }
-    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
-        self.decoder.application_query_deadline()
-    }
-    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
-        self.decoder.advance_application_query_deadlines(at);
-    }
-    pub(crate) fn application_query_is_current(
+    fn application_query_is_current(
         &self,
         id: cutout_core::ApplicationQueryId,
         at: MonotonicTimestamp,
     ) -> bool {
         self.decoder.application_query_is_current(id, at)
     }
-    pub(crate) fn record_application_query_transport(
+
+    fn record_application_query_transport(
         &mut self,
         id: cutout_core::ApplicationQueryId,
         index: u16,
@@ -2725,9 +2775,23 @@ impl ReadOnlySession<VescGenericModel> {
         self.decoder
             .record_application_query_transport(id, index, count, status, at)
     }
+}
 
+impl ReadOnlySession<VescGenericModel> {
+    /// Current connection's query progress, separate from passive application evidence.
+    #[must_use]
+    pub fn application_query_state(&self) -> crate::VescApplicationQueryState {
+        self.decoder.application_query_state()
+    }
+    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        self.decoder.application_query_deadline()
+    }
+    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        self.decoder.advance_application_query_deadlines(at);
+    }
     /// Current application evidence from this connection, independent of its model.
-    pub(crate) fn application_discovery(&self) -> VescApplicationDiscovery {
+    #[must_use]
+    pub fn application_discovery(&self) -> VescApplicationDiscovery {
         self.decoder.refloat_discovery.application()
     }
 

@@ -7679,6 +7679,8 @@ pub enum ApplicationQueryTransportStatus {
     Rejected,
     /// This fragment was cancelled before submission.
     Cancelled,
+    /// The native write was invoked but its submission outcome cannot be established.
+    SubmissionUnknown,
 }
 
 /// Bounded transport write payload.
@@ -7941,6 +7943,30 @@ pub enum SessionOutputError {
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
+
+    /// Supplies current host time before an untimestamped command, without issuing periodic work.
+    fn observe_host_time(&mut self, _at: MonotonicTimestamp) {}
+
+    /// Checks application-query admission immediately before a native fragment write.
+    fn application_query_is_current(
+        &self,
+        _id: ApplicationQueryId,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
+
+    /// Records native fragment evidence without treating host acceptance as a device ACK.
+    fn record_application_query_transport(
+        &mut self,
+        _id: ApplicationQueryId,
+        _index: u16,
+        _count: u16,
+        _status: ApplicationQueryTransportStatus,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
 }
 
 /// Host-facing synchronous session facade.
