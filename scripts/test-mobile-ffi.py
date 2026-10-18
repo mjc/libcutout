@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import traceback
@@ -26,6 +27,9 @@ REPLAY_SOURCE = TARGET / "uniffi-smoke/replay/EucReplayFixture.kt"
 REPLAY_CAPTURE = ROOT / "crates/cutout-cli/fixtures/pevcap/aero-veteran-live.jsonl"
 APP = "lol.cutout"
 RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
+GRADLE_CACHE = TARGET / "android-tests/gradle-cache"
+SHARED_LABEL_PREFIXES = ("settings.", "actions.", "controls.", "euc.", "vesc.",
+                         "ride.", "status.", "footpad.")
 
 
 def select_device(output: str, selector: str | None) -> str:
@@ -115,6 +119,23 @@ def prepare_replay() -> None:
         REPLAY_SOURCE.write_text(source)
 
 
+def prepare_shared_labels() -> None:
+    labels = {}
+    for source in (ROOT / "swift/CutoutMobile/Sources/CutoutMobile/Localizable.xcstrings",
+                   ROOT / "swift/CutoutMobile/Apps/CutoutApp/Localizable.xcstrings"):
+        for key, entry in json.loads(source.read_text())["strings"].items():
+            if key.startswith(SHARED_LABEL_PREFIXES):
+                for language, value in entry.get("localizations", {}).items():
+                    text = value.get("stringUnit", {}).get("value")
+                    if text is not None:
+                        labels.setdefault(language, {})[key] = text
+    resource = TARGET / "android-tests/resources/raw/shared_labels.json"
+    resource.parent.mkdir(parents=True, exist_ok=True)
+    contents = json.dumps(labels, sort_keys=True, ensure_ascii=False)
+    if not resource.exists() or resource.read_text() != contents:
+        resource.write_text(contents)
+
+
 def validate_device(device: dict[str, str], expected_serial: str | None) -> None:
     if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 33 or device["emulator"] == "1":
         raise ValueError(f"Expected a physical ARM64 Android 33+ phone: {device}")
@@ -133,16 +154,19 @@ class Run:
                         "rust_jobs": 1, "gradle_workers": 2, "build_status": "not_run",
                         "install_status": "not_run", "test_status": "not_run", "launch_status": "not_run"}
         self.selector = ""
+        self.last_returncode = 0
 
-    def command(self, args: list[str], name: str, timeout: int = 1800) -> str:
+    def command(self, args: list[str], name: str, timeout: int = 1800,
+                allow_failure: bool = False) -> str:
         self.count += 1
         log = self.logs / f"{self.count:02d}-{name}.log"
         print(f"{name}: {log}", flush=True)
         with log.open("w") as output:
             result = subprocess.run(args, cwd=ROOT, env=self.env, stdout=output,
                                     stderr=subprocess.STDOUT, timeout=timeout)
+        self.last_returncode = result.returncode
         text = log.read_text(errors="replace")
-        if result.returncode:
+        if result.returncode and not allow_failure:
             raise RuntimeError(f"{name} failed ({result.returncode}):\n" + "\n".join(text.splitlines()[-25:]))
         return text
 
@@ -151,21 +175,7 @@ class Run:
 
     def prepare(self, android: bool) -> Path:
         prepare_replay()
-        if android:
-            labels = {}
-            for source in (ROOT / "swift/CutoutMobile/Sources/CutoutMobile/Localizable.xcstrings",
-                           ROOT / "swift/CutoutMobile/Apps/CutoutApp/Localizable.xcstrings"):
-                for key, entry in json.loads(source.read_text())["strings"].items():
-                    if key.startswith(("settings.", "actions.", "controls.")):
-                        for language, value in entry.get("localizations", {}).items():
-                            text = value.get("stringUnit", {}).get("value")
-                            if text is not None:
-                                labels.setdefault(language, {})[key] = text
-            resource = TARGET / "android-tests/resources/raw/shared_labels.json"
-            resource.parent.mkdir(parents=True, exist_ok=True)
-            contents = json.dumps(labels, sort_keys=True, ensure_ascii=False)
-            if not resource.exists() or resource.read_text() != contents:
-                resource.write_text(contents)
+        prepare_shared_labels()
         self.receipt["replay_capture_sha256"] = digest(REPLAY_CAPTURE)
         args = ["cargo", "build", "--locked", "--jobs", "1", "-p", "cutout-mobile-ffi", "--lib"]
         folder = TARGET / "debug"
@@ -235,6 +245,71 @@ class Run:
         self.receipt["build_status"] = "passed"
         return apks
 
+    def local(self) -> None:
+        if platform.system() != "Darwin" or platform.machine().lower() not in ("arm64", "aarch64"):
+            raise ValueError("Local Robolectric UI tests require ARM64 macOS")
+        self.receipt["build_status"] = "running"
+        library = self.prepare(False)
+        self.receipt["rust_build_status"] = "passed"
+        self.receipt["test_status"] = "running"
+        artifacts = self.logs / "ui"
+        artifacts.mkdir()
+        result_dir = TARGET / "android-tests/build/test-results/testDebugUnitTest"
+        shutil.rmtree(result_dir, ignore_errors=True)
+        gradle = ["gradle", "--no-daemon", "--max-workers=2", "--console=plain",
+                  "--project-cache-dir", str(GRADLE_CACHE),
+                  f"-Pcutout.native.library.dir={library.parent}",
+                  f"-Pcutout.ui.artifacts={artifacts}",
+                  "-p", str(ANDROID), "testDebugUnitTest"]
+        self.command(gradle, "android-local-ui-tests", allow_failure=True)
+        if self.last_returncode == 0:
+            self.receipt["build_status"] = "passed"
+        result_files = sorted(result_dir.glob("TEST-*.xml"))
+        results = []
+        skipped = []
+        for result_file in result_files:
+            try:
+                root = ET.parse(result_file).getroot()
+            except ET.ParseError as error:
+                raise ValueError(f"Invalid Gradle JUnit report {result_file}: {error}") from error
+            for case in root.iter("testcase"):
+                failure = case.find("failure")
+                if failure is None:
+                    failure = case.find("error")
+                skip = case.find("skipped")
+                detail = "" if failure is None else (failure.get("message", "") + "\n" + (failure.text or "")).strip()
+                result = {"class": case.get("classname", ""), "test": case.get("name", ""),
+                          "failure": detail}
+                if skip is not None:
+                    result["skipped"] = skip.get("message", "") or (skip.text or "skipped")
+                    skipped.append(result)
+                results.append(result)
+        if not results:
+            raise ValueError("Gradle reported no local UI test cases; inspect android-local-ui-tests.log")
+        suite = ET.Element("testsuite", name="cutout-android-local-ui",
+                           tests=str(len(results)),
+                           failures=str(sum(bool(test["failure"]) for test in results)),
+                           skipped=str(len(skipped)))
+        for result in results:
+            case = ET.SubElement(suite, "testcase", classname=result["class"], name=result["test"])
+            if result["failure"]:
+                ET.SubElement(case, "failure").text = result["failure"]
+            if "skipped" in result:
+                ET.SubElement(case, "skipped", message=result["skipped"])
+        ET.ElementTree(suite).write(self.logs / "junit.xml", encoding="utf-8", xml_declaration=True)
+        self.receipt["tests"] = results
+        self.receipt["test_count"] = len(results)
+        self.receipt["failure_count"] = sum(bool(test["failure"]) for test in results)
+        self.receipt["skipped_count"] = len(skipped)
+        self.receipt["junit_xml"] = str(self.logs / "junit.xml")
+        self.receipt["ui_artifacts"] = str(artifacts)
+        if self.last_returncode:
+            raise ValueError(f"Gradle local UI tests failed with exit code {self.last_returncode}; inspect junit.xml")
+        if self.receipt["failure_count"] or skipped:
+            raise ValueError("Local UI tests contain failures or skips; inspect junit.xml")
+        self.receipt["test_status"] = "passed"
+        print(f"PASS {len(results)} local Android UI tests; screenshots: {artifacts}", flush=True)
+
     def identity(self) -> dict[str, str]:
         fields = {"serial": "ro.serialno", "model": "ro.product.model", "api": "ro.build.version.sdk",
                   "abi": "ro.product.cpu.abi", "emulator": "ro.kernel.qemu"}
@@ -285,10 +360,13 @@ class Run:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("host", "build", "device", "app"))
+    parser.add_argument("mode", choices=("host", "build", "device", "app", "local"))
     parser.add_argument("--device", default=os.environ.get("CUTOUT_ANDROID_DEVICE"))
     parser.add_argument("--expected-serial", default=os.environ.get("CUTOUT_ANDROID_SERIAL"))
     args = parser.parse_args()
+    if args.mode == "local" and (platform.system() != "Darwin" or
+                                  platform.machine().lower() not in ("arm64", "aarch64")):
+        parser.error("Local Robolectric UI tests require ARM64 macOS")
     environment_root = os.environ.get("DEVENV_ROOT")
     if not environment_root or Path(environment_root).resolve() != ROOT:
         parser.error("Run from this repository's devenv")
@@ -306,7 +384,9 @@ def main() -> int:
             run.receipt["tracked_diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
             run.receipt["tools"] = {tool: run.command([tool, "--version"], tool).strip()
                                     for tool in ("rustc", "java", "gradle")}
-            if args.mode in ("device", "app"):
+            if args.mode == "local":
+                run.local()
+            elif args.mode in ("device", "app"):
                 run.device(args.device, args.expected_serial, launch=args.mode == "app")
             elif args.mode == "build":
                 run.build()

@@ -12,13 +12,13 @@ import lol.cutout.MainActivity
 import lol.cutout.R
 import org.junit.Test
 
-class ProductionAppTest {
+open class ProductionAppTest {
     @Test
     fun launcherOpensDevicePickerAndSettingsNavigation() = withActivity { activity ->
         val context = activity
         check(visibleText(activity, context.getString(R.string.picker_title)))
         clickDescription(activity, context.getString(R.string.configuration))
-        check(visibleText(activity, CutoutUi(context).label("controls.empty")))
+        check(visibleText(activity, CutoutUi(context).label("settings.readback.unavailable")))
         clickDescription(activity, context.getString(R.string.devices))
         check(visibleText(activity, context.getString(R.string.picker_title)))
     }

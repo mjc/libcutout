@@ -17,7 +17,7 @@ import uniffi.cutout_mobile_ffi.DiscoveryServiceUuid
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.mobileDiscoveryCandidateFromAdvertisement
 
-class DevicePickerPanelTest {
+open class DevicePickerPanelTest {
     @Test
     fun recoveryActionsRequestPermissionAndOpenSettingsSeparately() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

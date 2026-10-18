@@ -355,10 +355,22 @@ public EUC capture replay; no wheel or camera connection is made.
 ```console
 devenv tasks run test:mobile-ffi-runner
 devenv tasks run test:kotlin-bindings-smoke
+devenv tasks run test:android-ui
 devenv tasks run build:android-tests
 CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 devenv tasks run test:android-device
 CUTOUT_ANDROID_DEVICE=192.168.1.115:5555 CUTOUT_ANDROID_SERIAL=ZY22K6J64X devenv tasks run run:android-app
 ```
+
+`test:android-ui` runs the production native views through Robolectric 4.16
+with API 35 and Native Graphics on ARM64 macOS. It reuses the host Rust library,
+the production Gradle project and the picker, settings and Ride instrumentation
+assertions. It checks recovery actions, stable view identity, attempt-bound
+settings drafts, Rust-selected operating states and relayout without new
+telemetry. It also renders light and dark PNGs of the actual picker, EUC Ride and
+settings views. These checks require no phone, emulator or Simulator. They do
+not establish physical Bluetooth behavior or on-device rendering acceptance.
+The first run downloads the pinned test dependencies and Android runtime jars;
+later runs reuse the existing project cache.
 
 The address above is an example. Use `devenv shell -- adb devices -l` to select
 the current USB serial or wireless endpoint explicitly. With multiple transports,
@@ -409,8 +421,10 @@ The runner serializes its own invocations, uses one Cargo compiler job and at
 most two Gradle workers, runs Kotlin compilation within the capped Gradle JVM,
 and disables persistent Gradle daemons. Rust uses the existing `target`;
 Android intermediates and native-library symlinks live in `target/android-tests`.
-Generated bindings remain under ignored `target/uniffi-smoke`, and Gradle uses
-its normal shared dependency cache. Do not run this concurrently with another
+Generated bindings remain under ignored `target/uniffi-smoke`. Gradle reuses its
+shared dependency cache and keeps project metadata in
+`target/android-tests/gradle-cache`; local UI tests use one
+768 MiB worker. Do not run this concurrently with another
 Cutout native build or Simulator window.
 
 Each run retains logs and `receipt.json` in
@@ -421,8 +435,8 @@ revision/diff, tool versions, device identity, APK hashes and packaged native
 library hashes. An ADB exit code of zero alone does not pass instrumentation:
 all advertised tests must finish with explicit outcomes.
 
-The Android FFI CI workflow runs host smoke and ARM64 APK builds serially on an
-ARM64 Mac runner. Physical-device tests remain opt-in. Android cross-builds
+The Android FFI CI workflow runs host smoke, local native-view tests and ARM64
+APK builds serially on an ARM64 Mac runner. Physical-device tests remain opt-in. Android cross-builds
 remain outside `project:quality-gate` under LIBCU-860. Remove obsolete run logs
 or `target/android-tests` only when no runner owns its lock; retain the relevant
 receipts and reuse the shared Cargo/Gradle caches rather than creating new ones.

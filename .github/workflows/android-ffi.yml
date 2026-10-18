@@ -43,7 +43,7 @@ jobs:
           test "$(uname -m)" = arm64
           # Reuse the repository's nixpkgs pin for the CLI as well as its tools.
           revision=$(python3 -c 'import json; print(json.load(open("devenv.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
-          for task in test:kotlin-bindings-smoke build:android-tests; do
+          for task in test:kotlin-bindings-smoke test:android-ui build:android-tests; do
             nix run "github:NixOS/nixpkgs/$revision#devenv" -- --no-tui --max-jobs 1 --cores 2 tasks run "$task" --show-output
           done
       - name: Keep test and build receipts
