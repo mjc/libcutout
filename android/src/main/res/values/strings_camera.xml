@@ -1,0 +1,12 @@
+<resources>
+    <string name="camera_unsupported">Controls are unavailable for this camera.</string>
+    <string name="camera_read_failed">Could not connect to the camera. Check that it is switched on and that you are connected to its Wi-Fi, then retry.</string>
+    <string name="camera_command_unavailable">The camera command is unavailable. Refresh camera evidence and try again.</string>
+    <string name="camera_wifi_required">Connect to the camera Wi-Fi to continue.</string>
+    <string name="camera_preview_failed">The camera preview could not be opened.</string>
+    <string name="camera_media_unavailable">This camera file is no longer available. Refresh the file list.</string>
+    <string name="camera_media_download_failed">The camera file could not be downloaded.</string>
+    <string name="camera_thumbnail_unavailable">A preview image is not available for this file.</string>
+    <string name="camera_thumbnail_failed">The camera thumbnail could not be loaded.</string>
+    <string name="camera_worker_busy">Camera is busy. Try again shortly.</string>
+</resources>
