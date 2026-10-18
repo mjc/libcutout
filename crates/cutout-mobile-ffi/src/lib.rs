@@ -5924,6 +5924,27 @@ pub struct MobilePhoneLocationSnapshotDto {
     pub gps_speed: Option<SpeedReading>,
 }
 
+/// Freshness of the normalized phone speed readback at a caller-supplied monotonic time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePhoneLocationFreshnessDto {
+    /// No canonical sample with a usable speed has been received.
+    Unavailable,
+    /// The latest phone speed sample is inside the shared telemetry freshness window.
+    Fresh,
+    /// The latest phone speed sample has aged beyond the shared telemetry freshness window.
+    Stale,
+}
+
+/// Phone speed plus its original monotonic receive time and Rust freshness decision.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobilePhoneLocationReadbackDto {
+    pub snapshot: MobilePhoneLocationSnapshotDto,
+    pub received_at_monotonic_ms: Option<u64>,
+    pub freshness: MobilePhoneLocationFreshnessDto,
+    /// Shared ride-map telemetry freshness window used by this readback.
+    pub stale_after_ms: u64,
+}
+
 /// Provider exposed by a music adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicProviderDto {
@@ -6411,7 +6432,13 @@ fn mobile_music_event_dtos(
 /// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobilePhoneLocationState {
-    latest_sample: Mutex<Option<MobilePhoneLocationSampleDto>>,
+    latest: Mutex<MobilePhoneLocationStateValue>,
+}
+
+#[derive(Debug, Default)]
+struct MobilePhoneLocationStateValue {
+    latest_sample: Option<MobilePhoneLocationSampleDto>,
+    received_at_monotonic_ms: Option<u64>,
 }
 
 /// Source of a Rust-owned canonical ride.
@@ -15255,27 +15282,61 @@ impl MobilePhoneLocationState {
 
     /// Clears the latest sample so a new capture cannot inherit an older location context.
     pub fn clear(&self) {
-        *self
-            .latest_sample
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
+            MobilePhoneLocationStateValue::default();
     }
 
     pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
-        *self
-            .latest_sample
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(sample);
+        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
+            MobilePhoneLocationStateValue {
+                latest_sample: Some(sample),
+                received_at_monotonic_ms: None,
+            };
+        phone_location_snapshot(Some(sample))
+    }
+
+    /// Ingests the source sample with its separate native monotonic receipt time.
+    pub fn ingest_at(
+        &self,
+        sample: MobilePhoneLocationSampleDto,
+        received_at_monotonic_ms: u64,
+    ) -> MobilePhoneLocationSnapshotDto {
+        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
+            MobilePhoneLocationStateValue {
+                latest_sample: Some(sample),
+                received_at_monotonic_ms: Some(received_at_monotonic_ms),
+            };
         phone_location_snapshot(Some(sample))
     }
 
     #[must_use]
     pub fn current_snapshot(&self) -> MobilePhoneLocationSnapshotDto {
-        let sample = *self
-            .latest_sample
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        phone_location_snapshot(sample)
+        let latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
+        phone_location_snapshot(latest.latest_sample)
+    }
+
+    /// Returns a fresh/stale decision using the shared ride-map telemetry window.
+    #[must_use]
+    pub fn current_readback_at(&self, now_monotonic_ms: u64) -> MobilePhoneLocationReadbackDto {
+        let latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
+        let snapshot = phone_location_snapshot(latest.latest_sample);
+        let received_at_monotonic_ms = snapshot.gps_speed.and(latest.received_at_monotonic_ms);
+        let freshness = match ride_maps::telemetry_freshness(
+            received_at_monotonic_ms.map(ride_maps::MonotonicMilliseconds::new),
+            ride_maps::MonotonicMilliseconds::new(now_monotonic_ms),
+        ) {
+            ride_maps::TelemetryFreshness::Unavailable => {
+                MobilePhoneLocationFreshnessDto::Unavailable
+            }
+            ride_maps::TelemetryFreshness::Fresh => MobilePhoneLocationFreshnessDto::Fresh,
+            ride_maps::TelemetryFreshness::Stale => MobilePhoneLocationFreshnessDto::Stale,
+        };
+        MobilePhoneLocationReadbackDto {
+            snapshot,
+            received_at_monotonic_ms,
+            freshness,
+            stale_after_ms: ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS,
+        }
     }
 }
 
@@ -24812,6 +24873,33 @@ mod tests {
             .expect("a valid stationary fix has zero display speed");
         assert_eq!(speed.value.value, 0);
         assert_eq!(speed.source, MobileValueSourceDto::Estimated);
+    }
+
+    #[test]
+    fn mobile_phone_speed_readback_preserves_receipt_time_and_rust_freshness() {
+        let state = MobilePhoneLocationState::default();
+        let sample = capture_phone_location_fixture();
+        state.ingest_at(sample, 1_000);
+
+        let fresh = state.current_readback_at(1_000 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
+        assert_eq!(fresh.freshness, MobilePhoneLocationFreshnessDto::Fresh);
+        assert_eq!(fresh.received_at_monotonic_ms, Some(1_000));
+        let speed = fresh.snapshot.gps_speed.expect("fixture reports GPS speed");
+        assert_eq!(speed.value.value, 4_470);
+        assert_eq!(speed.source, MobileValueSourceDto::Reported);
+
+        let stale = state.current_readback_at(1_001 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
+        assert_eq!(stale.freshness, MobilePhoneLocationFreshnessDto::Stale);
+        assert_eq!(stale.snapshot.gps_speed, fresh.snapshot.gps_speed);
+
+        state.clear();
+        let unavailable = state.current_readback_at(10_000);
+        assert_eq!(
+            unavailable.freshness,
+            MobilePhoneLocationFreshnessDto::Unavailable
+        );
+        assert_eq!(unavailable.received_at_monotonic_ms, None);
+        assert_eq!(unavailable.snapshot.gps_speed, None);
     }
 
     #[test]

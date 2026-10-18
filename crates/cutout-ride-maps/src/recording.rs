@@ -152,6 +152,37 @@ impl std::str::FromStr for VehicleIdentity {
 
 /// Maximum age of telemetry that qualifies a route point as fresh.
 pub const TELEMETRY_FRESHNESS_MILLISECONDS: u64 = 2_000;
+
+/// Freshness of an observation relative to the Rust-owned monotonic clock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryFreshness {
+    /// No receipt time is available, or the receipt time is in the future.
+    Unavailable,
+    /// The observation is at most [`TELEMETRY_FRESHNESS_MILLISECONDS`] old.
+    Fresh,
+    /// The observation is older than [`TELEMETRY_FRESHNESS_MILLISECONDS`].
+    Stale,
+}
+
+/// Classifies an observation using the shared telemetry freshness window.
+#[must_use]
+pub fn telemetry_freshness(
+    received_at: Option<MonotonicMilliseconds>,
+    now: MonotonicMilliseconds,
+) -> TelemetryFreshness {
+    let Some(received_at) = received_at else {
+        return TelemetryFreshness::Unavailable;
+    };
+    if received_at > now {
+        return TelemetryFreshness::Unavailable;
+    }
+    if now.saturating_sub(received_at) <= TELEMETRY_FRESHNESS_MILLISECONDS {
+        TelemetryFreshness::Fresh
+    } else {
+        TelemetryFreshness::Stale
+    }
+}
+
 /// Maximum number of live route points retained by the in-memory projection.
 pub const MAX_LIVE_ROUTE_POINTS: usize = 4_096;
 
@@ -1623,12 +1654,40 @@ mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
         RidePointSequence, RideRecordingTiming, RideSegmentCount, RideSegmentStartReason,
-        VehicleAssociation, VehicleIdentityError, route_admission,
+        TelemetryFreshness, VehicleAssociation, VehicleIdentityError, route_admission,
+        telemetry_freshness,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
         RideLifecycleState, ValidatedRideTransition, VehicleIdentity, WallClockUnixMilliseconds,
     };
+
+    #[test]
+    fn telemetry_freshness_uses_exact_shared_boundary_and_rejects_future_receipts() {
+        let received = MonotonicMilliseconds::new(1_000);
+        assert_eq!(
+            telemetry_freshness(
+                Some(received),
+                MonotonicMilliseconds::new(1_000 + super::TELEMETRY_FRESHNESS_MILLISECONDS),
+            ),
+            TelemetryFreshness::Fresh,
+        );
+        assert_eq!(
+            telemetry_freshness(
+                Some(received),
+                MonotonicMilliseconds::new(1_001 + super::TELEMETRY_FRESHNESS_MILLISECONDS),
+            ),
+            TelemetryFreshness::Stale,
+        );
+        assert_eq!(
+            telemetry_freshness(Some(MonotonicMilliseconds::new(1_001)), received),
+            TelemetryFreshness::Unavailable,
+        );
+        assert_eq!(
+            telemetry_freshness(None, MonotonicMilliseconds::new(1_000)),
+            TelemetryFreshness::Unavailable,
+        );
+    }
 
     #[test]
     fn vehicle_identity_string_parsing_preserves_validation_and_normalization() {

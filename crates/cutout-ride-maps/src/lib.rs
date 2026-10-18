@@ -69,8 +69,9 @@ pub use recording::{
     MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata,
     RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence, RideRecordingTiming,
     RideSegmentCount, RideSegmentStartReason, RouteTelemetryState, StationaryLocationObservation,
-    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
-    VehicleIdentityError, clamped_transition_timestamp, route_admission,
+    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryFreshness, TelemetryObservation, VehicleAssociation,
+    VehicleIdentity, VehicleIdentityError, clamped_transition_timestamp, route_admission,
+    telemetry_freshness,
 };
 mod projection;
 pub use projection::{
