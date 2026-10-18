@@ -6,6 +6,10 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -273,7 +277,7 @@ class RideDashboardView(
             tag = "ride.readings.open"
             setOnClickListener { showDetails() }
         }
-        addInstrument(batteryCell, "battery", context.getString(R.string.battery) + "  ›", "—", "%", 42f, 0f)
+        addInstrument(batteryCell, "battery", context.getString(R.string.battery) + "  ›", "—", "%", 42f, 0f, Gravity.END)
         batteryProgress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; progressTintList = android.content.res.ColorStateList.valueOf(ui.foreground)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(ui.stroke)
@@ -286,8 +290,8 @@ class RideDashboardView(
     private fun addSecondary(parent: LinearLayout) {
         val row = ui.row().apply { gravity = Gravity.CENTER_VERTICAL }
         addInstrument(row, "voltage", context.getString(R.string.voltage), "—", "", 21f, 1f)
-        addInstrument(row, "power", context.getString(R.string.power), "—", "", 21f, 1f)
-        addInstrument(row, "temperature", context.getString(R.string.temperature), "—", "", 21f, 1f)
+        addInstrument(row, "power", context.getString(R.string.power), "—", "", 21f, 1f, Gravity.CENTER_HORIZONTAL)
+        addInstrument(row, "temperature", context.getString(R.string.temperature), "—", "", 21f, 1f, Gravity.END)
         parent.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
 
@@ -307,15 +311,19 @@ class RideDashboardView(
         listOf("battery" to context.getString(R.string.battery), "voltage" to context.getString(R.string.voltage),
             "power" to context.getString(R.string.power), "temperature" to context.getString(R.string.temperature))
             .chunked(2).forEach { pair ->
-                addView(ui.row().apply { pair.forEach { (key, label) -> addInstrument(this, key, label, "—", "", 29f, 1f) } },
+                addView(ui.row().apply { pair.forEach { (key, label) -> addInstrument(this, key, label, "—", "", 20f, 1f, carded = true) } },
                     LinearLayout.LayoutParams(-1, 0, 1f))
             }
     }
 
-    private fun addInstrument(parent: LinearLayout, key: String, label: String, initial: String, unit: String, size: Float, weight: Float) {
-        val cell = ui.column().apply { gravity = if (key == "battery") Gravity.END else Gravity.START }
+    private fun addInstrument(parent: LinearLayout, key: String, label: String, initial: String, unit: String,
+        size: Float, weight: Float, alignment: Int = Gravity.START, carded: Boolean = false) {
+        val cell = ui.column().apply {
+            gravity = alignment
+            if (carded) { background = ui.rounded(16); setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6)) }
+        }
         cell.addView(ui.text(label, 13f, color = ui.muted).apply { maxLines = 1; setSingleLine(true) })
-        val valueRow = ui.row().apply { isBaselineAligned = true }
+        val valueRow = ui.row().apply { isBaselineAligned = true; gravity = alignment or Gravity.CENTER_VERTICAL }
         val value = ui.text(initial, size, true).apply {
             setSingleLine(true); maxLines = 1
             setAutoSizeTextTypeUniformWithConfiguration(16, size.toInt().coerceAtLeast(16), 1, android.util.TypedValue.COMPLEX_UNIT_SP)
@@ -325,7 +333,10 @@ class RideDashboardView(
         if (unit.isNotEmpty()) valueRow.addView(ui.text(" $unit", if (size > 30) 16f else 12f, color = ui.muted))
         cell.addView(valueRow)
         val horizontal = parent.orientation == LinearLayout.HORIZONTAL
-        parent.addView(cell, LinearLayout.LayoutParams(if (horizontal) 0 else -1, -2, if (horizontal) weight else 0f))
+        parent.addView(cell, LinearLayout.LayoutParams(if (horizontal) 0 else -1,
+            if (carded) -1 else -2, if (horizontal) weight else 0f).apply {
+            if (carded) setMargins(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4))
+        })
     }
 
     private fun updateSurface(speed: String, headroom: MobileRiderHeadroomValueDto?, headroomText: String,
@@ -346,13 +357,21 @@ class RideDashboardView(
         readingValues["headroom"]?.text = headroomText
         readingValues["range"]?.text = context.getString(R.string.unavailable)
         readingValues["battery"]?.text = battery
-        readingValues["voltage"]?.text = voltage
-        readingValues["power"]?.text = power
-        readingValues["temperature"]?.text = temperature
+        setQuantity("voltage", voltage)
+        setQuantity("power", power)
+        setQuantity("temperature", temperature)
         batteryProgress?.progress = batteryReading?.value?.value?.toInt()?.coerceIn(0, 100) ?: 0
         val batteryCell = readingValues["battery"]?.parent?.parent as? View
         batteryCell?.contentDescription = if (batteryReading == null) context.getString(R.string.battery)
             else "${context.getString(R.string.battery)} $battery%"
+    }
+
+    private fun setQuantity(key: String, value: String) {
+        val boundary = value.lastIndexOf(' ')
+        readingValues[key]?.text = if (boundary < 0) value else SpannableString(value).apply {
+            setSpan(RelativeSizeSpan(0.6f), boundary + 1, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(ForegroundColorSpan(ui.muted), boundary + 1, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
     }
 
     private fun showDetails() {
@@ -372,6 +391,7 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
     private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = ui.stroke }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = if (ui.dark) ui.yellow else ui.foreground }
     private val primary = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent.color; textAlign = Paint.Align.CENTER; typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD) }
+    private val unit = Paint(primary)
     private val endpoint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ui.muted; textAlign = Paint.Align.CENTER; typeface = android.graphics.Typeface.create("sans-serif-medium", 0) }
 
     fun update(value: MobileRiderHeadroomValueDto?, percentage: Int?, display: String) {
@@ -402,7 +422,17 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
             width * 0.30f)
         endpoint.textSize = 12f * resources.displayMetrics.scaledDensity
         val baseline = centerY + ui.dp(3).toFloat()
-        canvas.drawText(display, width / 2f, baseline, primary)
+        if (percentage == null) canvas.drawText(display, width / 2f, baseline, primary)
+        else {
+            val number = display.removeSuffix("%")
+            unit.textSize = primary.textSize * 0.4f
+            val numberWidth = primary.measureText(number)
+            val unitWidth = unit.measureText("%")
+            val gap = ui.dp(4).toFloat()
+            val left = (width - numberWidth - unitWidth - gap) / 2f
+            canvas.drawText(number, left + numberWidth / 2f, baseline, primary)
+            canvas.drawText("%", left + numberWidth + gap + unitWidth / 2f, baseline, unit)
+        }
         val endBaseline = centerY + ui.dp(16).toFloat()
         canvas.drawText("0", rect.left, endBaseline, endpoint)
         canvas.drawText("100", rect.right, endBaseline, endpoint)
