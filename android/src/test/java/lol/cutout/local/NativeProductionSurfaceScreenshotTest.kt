@@ -121,6 +121,9 @@ private object NativeSurfaceCapture {
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
         )
         view.layout(0, 0, width, height)
+        // TextView completes single-line scrolling and cursor positioning at pre-draw.
+        // A manual bitmap draw must deliver the same boundary as ViewRootImpl.
+        view.viewTreeObserver.dispatchOnPreDraw()
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             view.draw(Canvas(bitmap))
