@@ -23,7 +23,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets["main"].apply {
-        java.srcDirs("../shared", repository.resolve("target/uniffi-smoke/kotlin"))
+        java.srcDirs("../shared", repository.resolve("target/uniffi-smoke/kotlin"),
+            repository.resolve("target/uniffi-smoke/replay"))
         jniLibs.srcDir(repository.resolve("target/android-tests/jniLibs"))
     }
     compileOptions {

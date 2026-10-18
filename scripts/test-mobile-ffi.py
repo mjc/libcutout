@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 ANDROID = ROOT / "tests/mobile-ffi/android"
 BINDINGS = TARGET / "uniffi-smoke/kotlin"
+REPLAY_SOURCE = TARGET / "uniffi-smoke/replay/EucReplayFixture.kt"
+REPLAY_CAPTURE = ROOT / "crates/cutout-cli/fixtures/pevcap/aero-veteran-live.jsonl"
 APP = "lol.cutout.ffitest"
 RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
 
@@ -75,6 +77,35 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def prepare_replay() -> None:
+    """Compile the existing public capture into Kotlin inputs, without a JSON dependency."""
+    rows = [json.loads(line) for line in REPLAY_CAPTURE.read_text().splitlines()]
+    if "capture_privacy=public" not in rows[0]["header"]["annotations"]:
+        raise ValueError("Only a public capture may be packaged in the test app")
+    kinds = {"LinkUp": "LINK_UP", "Inbound": "NOTIFICATION", "LinkDown": "LINK_DOWN"}
+    lines = [f"// Generated from {REPLAY_CAPTURE.relative_to(ROOT).as_posix()}.",
+             "package lol.cutout.smoke", "import uniffi.cutout_mobile_ffi.*",
+             "internal fun eucReplayInputs(): List<MobileSessionInputDto> = listOf("]
+    for row in rows[1:]:
+        record = row["record"]
+        kind = kinds.get(record["direction"])
+        if kind is None:
+            continue  # Captured outbound commands are observations, never requests to send.
+        arrays = []
+        for field in ("characteristic", "bytes"):
+            values = (str(b if b < 128 else b - 256) for b in record[field])
+            arrays.append("byteArrayOf(" + ", ".join(values) + ")")
+        limit = record.get("link_max_write_len")
+        limit_source = "null" if limit is None else f"MobileTransportWriteLimitDto({limit}U)"
+        lines.append(f"    MobileSessionInputDto(MobileSessionInputKindDto.{kind}, "
+                     f"MobileMonotonicMillisDto({record['monotonic_ms']}UL), {limit_source}, "
+                     f"{arrays[0]}, {arrays[1]}),")
+    source = "\n".join([*lines, ")", ""])
+    REPLAY_SOURCE.parent.mkdir(parents=True, exist_ok=True)
+    if not REPLAY_SOURCE.exists() or REPLAY_SOURCE.read_text() != source:
+        REPLAY_SOURCE.write_text(source)
+
+
 def validate_device(device: dict[str, str], expected_serial: str | None) -> None:
     if not device["serial"] or device["abi"] != "arm64-v8a" or int(device["api"]) < 26 or device["emulator"] == "1":
         raise ValueError(f"Expected a physical ARM64 Android 26+ phone: {device}")
@@ -110,6 +141,8 @@ class Run:
         return self.command(["adb", "-s", self.selector, *args], name, timeout)
 
     def prepare(self, android: bool) -> Path:
+        prepare_replay()
+        self.receipt["replay_capture_sha256"] = digest(REPLAY_CAPTURE)
         args = ["cargo", "build", "--locked", "--jobs", "1", "-p", "cutout-mobile-ffi", "--lib"]
         folder = TARGET / "debug"
         if android:
@@ -131,6 +164,7 @@ class Run:
         jar = TARGET / "uniffi-smoke/kotlin-smoke.jar"
         self.command(["kotlinc", str(BINDINGS / "uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt"),
                       str(ROOT / "tests/mobile-ffi/shared/MobileFfiSmoke.kt"),
+                      str(ROOT / "tests/mobile-ffi/shared/EucReplaySmoke.kt"), str(REPLAY_SOURCE),
                       str(ROOT / "tests/mobile-ffi/kotlin-smoke.kt"), "-cp", classpath,
                       "-include-runtime", "-d", str(jar)], "compile-host")
         self.receipt["build_status"] = "passed"

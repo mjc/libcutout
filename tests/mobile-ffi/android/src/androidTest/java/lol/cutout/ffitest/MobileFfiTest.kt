@@ -7,6 +7,7 @@ import java.io.File
 import java.nio.file.Files
 import lol.cutout.smoke.checkCaptureHistoryBoundary
 import lol.cutout.smoke.checkSessionAndCameraBoundary
+import lol.cutout.smoke.checkEucCaptureReplay
 import org.junit.Before
 import org.junit.Test
 
@@ -23,6 +24,9 @@ class MobileFfiTest {
 
     @Test
     fun persistenceReopenAndTypedFailures() = withStorage(::checkCaptureHistoryBoundary)
+
+    @Test
+    fun eucCaptureReplayAndConnectionReplacement() = checkEucCaptureReplay()
 
     private fun withStorage(test: (File) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
