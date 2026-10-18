@@ -2,7 +2,8 @@
     <string name="ride_waiting_title">Ready when you are</string>
     <string name="choose_device">Choose device</string>
     <string name="ride_readings">Ride readings</string>
+    <string name="ride_vesc_default_title">VESC</string>
     <string name="range">Range</string>
-    <string name="distance_unit">km</string>
+    <string name="distance_unit">mi</string>
     <string name="done">Done</string>
 </resources>

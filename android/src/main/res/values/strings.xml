@@ -27,7 +27,7 @@
     <string name="connection_failed">Connection interrupted</string>
     <string name="connection_conflict">Device identification changed. Reconnect to try again.</string>
     <string name="speed">Speed</string>
-    <string name="speed_unit">km/h</string>
+    <string name="speed_unit">mph</string>
     <string name="battery">Battery</string>
     <string name="voltage">Pack</string>
     <string name="power">Power</string>

@@ -12,11 +12,13 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import uniffi.cutout_mobile_ffi.*
 import java.util.Locale
@@ -33,6 +35,7 @@ class RideDashboardView(
     private var identityTitle = ""
     private var statusText = ""
     private var active = false
+    private var warningStatus = false
     private var displayKind = DisplayKind.UNKNOWN
     private var details: List<Pair<String, String>> = emptyList()
     private var headingView: TextView? = null
@@ -43,6 +46,7 @@ class RideDashboardView(
     private var speedView: TextView? = null
     private var speedUnitView: TextView? = null
     private var gaugeView: HeadroomGauge? = null
+    private var footpadView: TextView? = null
     private var readingValues = mutableMapOf<String, TextView>()
     private var batteryProgress: ProgressBar? = null
 
@@ -55,12 +59,25 @@ class RideDashboardView(
         val identity = value.session?.identity
         identityTitle = identity?.model
             ?: value.session?.connection?.token?.platformIdentifier?.let { id -> value.devices.firstOrNull { it.id == id }?.name }
-            ?: context.getString(R.string.find_pev)
+            ?: if (identity?.protocol == MobileProtocolFamilyDto.VESC) context.getString(R.string.ride_vesc_default_title)
+                else context.getString(R.string.find_pev)
         active = value.session?.connection?.transport?.let { it != MobileConnectionTransportStateDto.DISCONNECTED } == true
         val readiness = value.session?.connection?.readiness
+        val snapshot = value.telemetry.takeIf { readiness == MobileConnectionReadinessDto.VERIFIED }
+        displayKind = when {
+            identity?.vehicleKind == MobileVehicleKindDto.ELECTRIC_UNICYCLE -> DisplayKind.EUC
+            identity?.protocol == MobileProtocolFamilyDto.VESC -> DisplayKind.VESC
+            else -> DisplayKind.UNKNOWN
+        }
+        warningStatus = displayKind == DisplayKind.VESC && snapshot != null && vescWarningTitle(snapshot) != null
         statusText = when {
             value.problem || readiness == MobileConnectionReadinessDto.FAILED -> context.getString(R.string.connection_failed)
-            readiness == MobileConnectionReadinessDto.VERIFIED -> context.getString(R.string.connected)
+            readiness == MobileConnectionReadinessDto.VERIFIED && snapshot != null -> when (displayKind) {
+                DisplayKind.EUC -> eucStatus(snapshot.operatingState)
+                DisplayKind.VESC -> vescStatus(snapshot)
+                DisplayKind.UNKNOWN -> context.getString(R.string.connected)
+            }
+            readiness == MobileConnectionReadinessDto.VERIFIED -> ui.label("euc.status.connected")
             readiness == MobileConnectionReadinessDto.RECORD_ONLY -> context.getString(R.string.record_only)
             readiness == MobileConnectionReadinessDto.CONFLICTED -> context.getString(R.string.connection_conflict)
             value.phase == NativePhase.CONNECTING -> context.getString(R.string.connecting)
@@ -68,12 +85,6 @@ class RideDashboardView(
             value.phase == NativePhase.IDENTIFYING -> context.getString(R.string.identifying)
             else -> context.getString(R.string.disconnected)
         }
-        displayKind = when {
-            identity?.vehicleKind == MobileVehicleKindDto.ELECTRIC_UNICYCLE -> DisplayKind.EUC
-            identity?.protocol == MobileProtocolFamilyDto.VESC -> DisplayKind.VESC
-            else -> DisplayKind.UNKNOWN
-        }
-        val snapshot = value.telemetry.takeIf { readiness == MobileConnectionReadinessDto.VERIFIED }
         val projection = snapshot?.let(::mobileRiderDashboardProjection)
         val metrics = projection?.dashboardMetrics.orEmpty()
         val battery = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.BatteryLevel>()
@@ -83,7 +94,7 @@ class RideDashboardView(
         val thermal = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.Thermal>().firstOrNull()?.readback
         val headroom = projection?.safetyMetrics.orEmpty()
             .filterIsInstance<MobileRiderSafetyMetricDescriptorDto.PwmHeadroom>().firstOrNull()?.value
-        val speed = snapshot?.speed?.let { format(it.value.value.toDouble() * 0.0036, 1) }
+        val speed = snapshot?.speed?.let { format(it.value.value.toDouble() * 0.0022369362920544, 1) }
             ?: context.getString(R.string.unavailable)
         val batteryText = battery?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + it.value.value }
             ?: context.getString(R.string.unavailable)
@@ -93,9 +104,21 @@ class RideDashboardView(
         val powerText = power?.let { format(it.value.toDouble() / 1_000_000, 2) + " kW" } ?: unavailable
         val thermalText = thermal?.maximum?.let { format(it.value.toDouble() / 1000, 0) + " °C" } ?: unavailable
         val headroomText = (headroom as? MobileRiderHeadroomValueDto.Available)?.let { "${it.permille / 10U}%" } ?: unavailable
+        val vescVoltageText = snapshot?.voltage?.value?.value?.let { format(it.toDouble() / 1000, 1) + " V" } ?: unavailable
+        val motorCurrentText = snapshot?.motorCurrent?.value?.value?.let { format(it.toDouble() / 1000, 1) + " A" } ?: unavailable
+        val boardAngleText = snapshot?.pitch?.value?.value?.let { format(it.toDouble() / 1000, 1) + "°" } ?: unavailable
+        val vescTemperatureText = snapshot?.controllerTemperature?.value?.value?.let { format(it.toDouble() / 1000, 1) + " °C" } ?: unavailable
+        val footpadText = snapshot?.footpad?.let(::footpadText).orEmpty()
         details = buildList {
             add(context.getString(R.string.speed) to "$speed ${context.getString(R.string.speed_unit)}")
             add(context.getString(R.string.pwm_headroom) to headroomText)
+            if (displayKind == DisplayKind.VESC) {
+                add(ui.label("vesc.metric.battery_voltage") to vescVoltageText)
+                add(ui.label("vesc.metric.motor_current") to motorCurrentText)
+                add(ui.label("vesc.metric.board_angle") to boardAngleText)
+                add(ui.label("vesc.metric.controller") to vescTemperatureText)
+                if (footpadText.isNotEmpty()) add(ui.label("footpad.title") to footpadText)
+            }
             metrics.forEach { metric -> when (metric) {
                 is MobileRiderDashboardMetricDescriptorDto.BatteryLevel -> add(context.getString(R.string.battery) to "$batteryText%")
                 // The standalone Rust charge-estimator DTO is not carried by Android's
@@ -113,7 +136,8 @@ class RideDashboardView(
             surfaceKey = key
             createSurface(snapshot != null, landscape)
         }
-        updateSurface(speed, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery)
+        updateSurface(speed, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery,
+            vescVoltageText, motorCurrentText, boardAngleText, vescTemperatureText, footpadText)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -146,10 +170,70 @@ class RideDashboardView(
         return "${displayKind.name}:$hasTelemetry:$landscape:$sizeClass:$fontScaleClass"
     }
 
+    private fun eucStatus(state: RideOperatingState): String = when (state) {
+        RideOperatingState.PARKED -> ui.label("euc.status.parked")
+        RideOperatingState.STANDING -> ui.label("euc.status.standing")
+        RideOperatingState.RIDING -> ui.label("euc.status.riding")
+        RideOperatingState.CHARGING -> ui.label("euc.status.charging")
+        RideOperatingState.UNKNOWN -> ui.label("euc.status.connected")
+    }
+
+    private fun vescStatus(snapshot: MobileTelemetrySnapshotDto): String {
+        vescWarningTitle(snapshot)?.let { return it }
+        when (snapshot.vescOperatingMode) {
+            MobileVescRideOperatingModeDto.DARKRIDE -> return ui.label("vesc.mode.darkride")
+            MobileVescRideOperatingModeDto.HANDTEST -> return ui.label("vesc.mode.handtest")
+            MobileVescRideOperatingModeDto.FLYWHEEL -> return ui.label("vesc.mode.flywheel")
+            else -> Unit
+        }
+        return when (snapshot.operatingState) {
+            RideOperatingState.PARKED -> ui.label("vesc.debug.state.parked")
+            RideOperatingState.STANDING -> ui.label("vesc.debug.state.standing")
+            RideOperatingState.RIDING -> ui.label("vesc.debug.state.riding")
+            RideOperatingState.CHARGING -> ui.label("vesc.debug.state.charging")
+            // Swift's VESC screen presents an unknown state as generic connected.
+            RideOperatingState.UNKNOWN -> ui.label("euc.status.connected")
+        }
+    }
+
+    /** Mirrors Swift's warning title selection from the Rust-decoded warning/stop enums. */
+    private fun vescWarningTitle(snapshot: MobileTelemetrySnapshotDto): String? = when (snapshot.vescWarning) {
+        MobileVescRideWarningDto.LOW_VOLTAGE -> ui.label("vesc.warning.low_voltage")
+        MobileVescRideWarningDto.HIGH_VOLTAGE -> ui.label("vesc.warning.high_voltage")
+        MobileVescRideWarningDto.MOSFET_TEMPERATURE -> ui.label("vesc.warning.mosfet_temperature")
+        MobileVescRideWarningDto.MOTOR_TEMPERATURE -> ui.label("vesc.warning.motor_temperature")
+        MobileVescRideWarningDto.CURRENT -> ui.label("vesc.warning.current")
+        MobileVescRideWarningDto.DUTY_PUSHBACK, MobileVescRideWarningDto.SPEED_PUSHBACK -> ui.label("vesc.warning.duty_pushback")
+        MobileVescRideWarningDto.TEMPERATURE_PUSHBACK -> ui.label("vesc.warning.temperature_pushback")
+        MobileVescRideWarningDto.WHEELSLIP -> ui.label("vesc.warning.wheelslip")
+        MobileVescRideWarningDto.SENSORS -> ui.label("vesc.warning.sensors")
+        MobileVescRideWarningDto.LOW_BATTERY -> ui.label("vesc.warning.low_battery")
+        MobileVescRideWarningDto.ERROR, MobileVescRideWarningDto.BMS_CONNECTION -> ui.label("vesc.warning.error")
+        MobileVescRideWarningDto.NONE -> when (snapshot.vescStopReason) {
+            MobileVescRideStopReasonDto.PITCH -> ui.label("vesc.stop.pitch")
+            MobileVescRideStopReasonDto.ROLL -> ui.label("vesc.stop.roll")
+            MobileVescRideStopReasonDto.SWITCH_HALF -> ui.label("vesc.stop.switch_half")
+            MobileVescRideStopReasonDto.SWITCH_FULL -> ui.label("vesc.stop.switch_full")
+            MobileVescRideStopReasonDto.REVERSE -> ui.label("vesc.stop.reverse")
+            MobileVescRideStopReasonDto.QUICK_STOP -> ui.label("vesc.stop.quick_stop")
+            else -> null
+        }
+        // A missing/unknown warning is not itself evidence of a stop reason.
+        else -> null
+    }
+
+    private fun footpadText(footpad: MobileFootpadTelemetryDto): String = when (footpad.contactState) {
+        MobileFootpadContactState.NONE -> ui.label("footpad.contact.none")
+        MobileFootpadContactState.LEFT -> ui.label("footpad.contact.left")
+        MobileFootpadContactState.RIGHT -> ui.label("footpad.contact.right")
+        MobileFootpadContactState.BOTH -> ui.label("footpad.contact.both")
+        null -> String.format(Locale.getDefault(), ui.label("footpad.state").replace("%lld", "%d"), footpad.state.toInt())
+    }
+
     private fun createSurface(hasTelemetry: Boolean, landscape: Boolean) {
         removeAllViews()
         readingValues.clear()
-        gaugeView = null; batteryProgress = null
+        gaugeView = null; batteryProgress = null; footpadView = null
         emptyStatusView = null
         val root = ui.column().apply { setPadding(ui.dp(24), ui.dp(4), ui.dp(24), ui.dp(12)) }
         addView(root, LayoutParams(-1, -1))
@@ -167,7 +251,7 @@ class RideDashboardView(
         }
         header.addView(headingView, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(statusDot, LinearLayout.LayoutParams(ui.dp(6), ui.dp(6)).apply { marginEnd = ui.dp(6) })
-        header.addView(statusView)
+        header.addView(statusView, LinearLayout.LayoutParams(0, -2, 0.7f))
         val close = TextView(context).apply {
             text = "×"; textSize = 25f; gravity = Gravity.CENTER
             setTextColor(ui.foreground); contentDescription = context.getString(if (active) R.string.disconnect else R.string.choose_device)
@@ -192,11 +276,82 @@ class RideDashboardView(
             root.addView(empty, LinearLayout.LayoutParams(-1, 0, 1f))
             return
         }
+        if (resources.configuration.fontScale >= 1.5f) {
+            val scroll = ScrollView(context).apply {
+                isFillViewport = false
+                descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+                tag = "ride.accessible.readings.scroll"
+            }
+            val readings = ui.column().apply { setPadding(0, ui.dp(12), 0, ui.dp(24)) }
+            scroll.addView(readings, ScrollView.LayoutParams(-1, -2))
+            root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+            createAccessibleReadings(readings)
+            return
+        }
         when (displayKind) {
             DisplayKind.EUC -> createEuc(root, landscape)
             DisplayKind.VESC -> createVesc(root, landscape)
             DisplayKind.UNKNOWN -> createUnknown(root, landscape)
         }
+    }
+
+    /** Large system fonts get the same essential readings in a native scrollable surface. */
+    private fun createAccessibleReadings(parent: LinearLayout) {
+        parent.addView(speedReading(), LinearLayout.LayoutParams(-1, -2))
+        parent.addView(ui.space(12))
+        when (displayKind) {
+            DisplayKind.EUC -> {
+                addAccessibleHeadroom(parent, ui.label("ride.safety.pwm_headroom"))
+                parent.addView(ui.divider())
+                addAccessibleMetric(parent, "range", context.getString(R.string.range), "— ${context.getString(R.string.distance_unit)}")
+                addAccessibleMetric(parent, "battery", context.getString(R.string.battery), "— %")
+                parent.addView(ui.divider())
+                addAccessibleMetric(parent, "voltage", context.getString(R.string.voltage), "—")
+                addAccessibleMetric(parent, "power", context.getString(R.string.power), "—")
+                addAccessibleMetric(parent, "temperature", context.getString(R.string.temperature), "—")
+            }
+            DisplayKind.VESC -> {
+                addAccessibleHeadroom(parent, ui.label("vesc.duty_headroom.label"))
+                listOf(
+                    "vesc_voltage" to ui.label("vesc.metric.battery_voltage"),
+                    "motor_current" to ui.label("vesc.metric.motor_current"),
+                    "board_angle" to ui.label("vesc.metric.board_angle"),
+                    "controller_temperature" to ui.label("vesc.metric.controller"),
+                ).forEach { (key, label) -> addAccessibleMetric(parent, key, label, "—") }
+                footpadView = ui.text("", 16f, true, ui.muted).apply {
+                    maxLines = 2; contentDescription = ui.label("footpad.title"); tag = "vesc.ride.footpad"
+                }.also { parent.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+            }
+            DisplayKind.UNKNOWN -> {
+                listOf(
+                    "battery" to context.getString(R.string.battery),
+                    "voltage" to context.getString(R.string.voltage),
+                    "power" to context.getString(R.string.power),
+                    "temperature" to context.getString(R.string.temperature),
+                ).forEach { (key, label) -> addAccessibleMetric(parent, key, label, "—") }
+            }
+        }
+    }
+
+    private fun addAccessibleMetric(parent: LinearLayout, key: String, label: String, initial: String) {
+        val cell = ui.column().apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) }
+        cell.addView(ui.text(label, 18f, color = ui.muted))
+        val value = ui.text(initial, 30f, true).apply { maxLines = 3; tag = "ride.accessible.metric.$key" }
+        readingValues[key] = value
+        cell.addView(value, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(cell, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun addAccessibleHeadroom(parent: LinearLayout, label: String) {
+        val cell = ui.column().apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) }
+        cell.addView(ui.text(label, 18f, color = ui.muted))
+        val value = ui.text("—", 30f, true).apply { maxLines = 2; tag = "ride.accessible.metric.headroom" }
+        readingValues["headroom"] = value
+        cell.addView(value)
+        gaugeView = HeadroomGauge(ui, barOnly = true).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }.also { cell.addView(it, LinearLayout.LayoutParams(-1, ui.dp(16))) }
+        parent.addView(cell, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun createEuc(root: LinearLayout, landscape: Boolean) {
@@ -221,8 +376,13 @@ class RideDashboardView(
 
     private fun createVesc(root: LinearLayout, landscape: Boolean) {
         val hero = ui.column().apply { gravity = Gravity.CENTER }
-        hero.addView(speedReading()); hero.addView(ui.space(14)); addHeadroomBar(hero)
-        val grid = metricGrid()
+        hero.addView(speedReading()); hero.addView(ui.space(14)); addHeadroomBar(hero, ui.label("vesc.duty_headroom.label"))
+        val grid = vescMetricGrid()
+        footpadView = ui.text("", 13f, true, ui.muted).apply {
+            gravity = Gravity.CENTER; maxLines = 1; setSingleLine(true)
+            contentDescription = ui.label("footpad.title")
+            tag = "vesc.ride.footpad"
+        }
         if (landscape) {
             root.addView(ui.row().apply {
                 addView(hero, LinearLayout.LayoutParams(0, -1, 1f)); addView(grid, LinearLayout.LayoutParams(0, -1, 1.3f))
@@ -230,6 +390,7 @@ class RideDashboardView(
         } else {
             root.addView(hero, LinearLayout.LayoutParams(-1, 0, 0.8f)); root.addView(grid, LinearLayout.LayoutParams(-1, 0, 1.2f))
         }
+        root.addView(footpadView, LinearLayout.LayoutParams(-1, ui.dp(24)))
     }
 
     private fun createUnknown(root: LinearLayout, landscape: Boolean) {
@@ -242,17 +403,19 @@ class RideDashboardView(
     }
 
     private fun speedReading(): LinearLayout = ui.row().apply {
-        gravity = Gravity.CENTER; isBaselineAligned = true
+        gravity = Gravity.CENTER
+        val readout = ui.row().apply { gravity = Gravity.CENTER; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), 100f, true).apply {
-            setSingleLine(true); maxLines = 1
-            setAutoSizeTextTypeUniformWithConfiguration(42, 120, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            setSingleLine(true); maxLines = 1; maxWidth = ui.dp(220)
+            setAutoSizeTextTypeUniformWithConfiguration(28, 120, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         speedView = speed
         speed.tag = "ride.hero.speed"
-        addView(speed, LinearLayout.LayoutParams(0, -2, 1f))
+        readout.addView(speed, LinearLayout.LayoutParams(-2, -2))
         val unit = ui.text(" ${context.getString(R.string.speed_unit)}", 18f, true, ui.muted)
         speedUnitView = unit
-        addView(unit)
+        readout.addView(unit)
+        addView(readout, LinearLayout.LayoutParams(-2, -2))
     }
 
     private fun createGauge(): View {
@@ -295,9 +458,9 @@ class RideDashboardView(
         parent.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
 
-    private fun addHeadroomBar(parent: LinearLayout) {
+    private fun addHeadroomBar(parent: LinearLayout, label: String) {
         parent.addView(ui.row().apply {
-            addView(ui.text(context.getString(R.string.pwm_headroom), 13f, color = ui.muted), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(ui.text(label, 13f, color = ui.muted), LinearLayout.LayoutParams(0, -2, 1f))
             val value = ui.text("—", 14f, true)
             readingValues["headroom"] = value
             addView(value)
@@ -313,6 +476,18 @@ class RideDashboardView(
             .chunked(2).forEach { pair ->
                 addView(ui.row().apply { pair.forEach { (key, label) -> addInstrument(this, key, label, "—", "", 20f, 1f, carded = true) } },
                     LinearLayout.LayoutParams(-1, 0, 1f))
+            }
+    }
+
+    private fun vescMetricGrid(): LinearLayout = ui.column().apply {
+        listOf("vesc_voltage" to ui.label("vesc.metric.battery_voltage"),
+            "motor_current" to ui.label("vesc.metric.motor_current"),
+            "board_angle" to ui.label("vesc.metric.board_angle"),
+            "controller_temperature" to ui.label("vesc.metric.controller"))
+            .chunked(2).forEach { pair ->
+                addView(ui.row().apply {
+                    pair.forEach { (key, label) -> addInstrument(this, key, label, "—", "", 20f, 1f, carded = true) }
+                }, LinearLayout.LayoutParams(-1, 0, 1f))
             }
     }
 
@@ -340,7 +515,8 @@ class RideDashboardView(
     }
 
     private fun updateSurface(speed: String, headroom: MobileRiderHeadroomValueDto?, headroomText: String,
-        battery: String, voltage: String, power: String, temperature: String, batteryReading: BatteryLevelReading?) {
+        battery: String, voltage: String, power: String, temperature: String, batteryReading: BatteryLevelReading?,
+        vescVoltage: String, motorCurrent: String, boardAngle: String, vescTemperature: String, footpad: String) {
         headingView?.text = identityTitle
         headingView?.contentDescription = identityTitle
         statusView?.text = statusText
@@ -348,18 +524,26 @@ class RideDashboardView(
         closeView?.contentDescription = context.getString(if (active) R.string.disconnect else R.string.choose_device)
         statusDot?.background = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.OVAL
-            setColor(if (statusText == context.getString(R.string.connected)) ui.muted else ui.orange)
+            setColor(if (warningStatus || !active) ui.orange else ui.muted)
         }
         statusView?.contentDescription = statusText
         speedView?.text = speed
         val percent = (headroom as? MobileRiderHeadroomValueDto.Available)?.permille?.toInt()
         gaugeView?.update(headroom, percent, headroomText)
         readingValues["headroom"]?.text = headroomText
-        readingValues["range"]?.text = context.getString(R.string.unavailable)
-        readingValues["battery"]?.text = battery
+        val accessibleText = resources.configuration.fontScale >= 1.5f
+        readingValues["range"]?.text = if (accessibleText) "${context.getString(R.string.unavailable)} ${context.getString(R.string.distance_unit)}"
+            else context.getString(R.string.unavailable)
+        readingValues["battery"]?.text = if (accessibleText) "$battery %" else battery
         setQuantity("voltage", voltage)
         setQuantity("power", power)
         setQuantity("temperature", temperature)
+        setQuantity("vesc_voltage", vescVoltage)
+        setQuantity("motor_current", motorCurrent)
+        setQuantity("board_angle", boardAngle)
+        setQuantity("controller_temperature", vescTemperature)
+        footpadView?.text = footpad
+        footpadView?.contentDescription = if (footpad.isEmpty()) ui.label("footpad.title") else "${ui.label("footpad.title")}: $footpad"
         batteryProgress?.progress = batteryReading?.value?.value?.toInt()?.coerceIn(0, 100) ?: 0
         val batteryCell = readingValues["battery"]?.parent?.parent as? View
         batteryCell?.contentDescription = if (batteryReading == null) context.getString(R.string.battery)
