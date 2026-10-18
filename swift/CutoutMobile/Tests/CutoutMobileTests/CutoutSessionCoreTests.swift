@@ -1597,8 +1597,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         let published = expectation(description: "Phone sample delivered to Main")
+        defer { core.onPhoneLocationSnapshotChange = nil }
         core.onPhoneLocationSnapshotChange = { snapshot, _ in
-            if snapshot.latestSample != nil { published.fulfill() }
+            guard snapshot.latestSample != nil else { return }
+            // Availability changes may republish the retained sample; wait for its first publication.
+            core.onPhoneLocationSnapshotChange = nil
+            published.fulfill()
         }
         core.deliverPhoneLocationsForTesting([location])
         await fulfillment(of: [published], timeout: 2)
@@ -5538,8 +5542,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             locationEffects: locationEffects
         )
 
+        defer { core.onPhoneLocationSnapshotChange = nil }
         core.onPhoneLocationSnapshotChange = { snapshot, _ in
-            if snapshot.latestSample != nil { published.fulfill() }
+            guard snapshot.latestSample != nil else { return }
+            // Availability changes may republish the retained sample; wait for its first publication.
+            core.onPhoneLocationSnapshotChange = nil
+            published.fulfill()
         }
         core.deliverPhoneLocationsForTesting([location])
         await fulfillment(of: [recorded, published], timeout: 2)
