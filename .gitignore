@@ -1,6 +1,7 @@
 /target/
 .build/
 __pycache__/
+.kotlin/
 /fuzz/artifacts/
 /fuzz/corpus/
 /fuzz/target/
