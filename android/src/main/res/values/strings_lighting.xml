@@ -7,4 +7,13 @@
     <string name="lighting_effect_id">Effect %1$d</string>
     <string name="lighting_confirmed">Last reported color: %1$d, %2$d, %3$d</string>
     <string name="lighting_associated_vehicle">Associated with vehicle %1$s</string>
+    <string name="lighting_association_none">No vehicle is associated with this accessory.</string>
+    <string name="lighting_association_current">Remove association with the currently selected PEV</string>
+    <string name="lighting_association_set_current">Associate with the currently selected PEV</string>
+    <string name="lighting_association_clear">Clear vehicle association</string>
+    <string name="lighting_preset_accessibility">Apply preset %1$s. %2$s</string>
+    <string name="lighting_preset_effect_summary">Effect %1$s · speed %2$d</string>
+    <string name="lighting_preset_music_summary">Controller music · sensitivity %1$d%%</string>
+    <string name="lighting_preset_solid_summary">Solid RGB · %1$d%%</string>
+    <string name="lighting_unknown_effect">Effect %1$d</string>
 </resources>

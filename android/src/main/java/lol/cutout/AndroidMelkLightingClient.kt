@@ -28,6 +28,8 @@ data class LightingPresentation(
     val presets: List<MobileRgbLightingPresetDto>,
     val error: String? = null,
     val permissionMissing: Boolean = false,
+    /** Currently selected opaque PEV identity, supplied by the app's selected device token. */
+    val selectedVehicle: String? = null,
 )
 
 /** Native BLE effects for the Rust-owned MELK session reducer. No MELK frames or retry policy live here. */
@@ -268,7 +270,7 @@ class AndroidMelkLightingClient(private val context: Context) {
     private fun makePresentation(error: String? = null, permissionMissing: Boolean = !hasPermissions()) = LightingPresentation(
         core.snapshot(), candidates.values.map { it.second }.sortedByDescending { it.rssi }, record?.platformIdentifier(),
         record?.alias(), record?.vehicleIdentifier(), record?.restoreEnabled() ?: false, record?.requestedState(), record?.confirmedState(),
-        record?.presets() ?: emptyList(), error, permissionMissing,
+        record?.presets() ?: emptyList(), error, permissionMissing, selectedVehicle,
     )
     private fun publish(error: String? = null, permissionMissing: Boolean = !hasPermissions()) {
         presentation = makePresentation(error, permissionMissing)

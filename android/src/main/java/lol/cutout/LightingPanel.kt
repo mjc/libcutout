@@ -255,10 +255,22 @@ class LightingPanel(
         val quick = listOf(Triple("lighting.preset.red", 255, 0 to 0), Triple("lighting.preset.blue", 0, 0 to 255), Triple("lighting.preset.night", 16, 20 to 32))
         card.addView(ui.row().apply { quick.forEach { (key, red, rest) -> addView(ui.action(ui.label(key)) { client.setSolidColor(red, rest.first, rest.second) }.apply { isEnabled = ready() }, LinearLayout.LayoutParams(0, -2, 1f)) } })
         current?.presets.orEmpty().forEach { preset ->
-            card.addView(ui.action("${preset.name}  ·  ${context.getString(R.string.lighting_percent, preset.requested.brightness.toInt())}") { client.applyPreset(preset) }.apply {
-                isEnabled = ready(); contentDescription = preset.name
+            val summary = presetSummary(preset.requested)
+            val row = ui.column().apply {
+                tag = "lighting.preset.${preset.name}"; setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10))
+                background = ui.rounded(14); isEnabled = ready(); isClickable = true; isFocusable = true
+                addView(ui.text(preset.name, 16f, true))
+                addView(ui.text(summary, 13f, color = ui.muted))
+                contentDescription = context.getString(R.string.lighting_preset_accessibility, preset.name, summary)
+                setOnClickListener { if (ready()) client.applyPreset(preset) }
                 setOnLongClickListener { android.app.AlertDialog.Builder(context).setItems(arrayOf(ui.label("lighting.preset.replace"), ui.label("lighting.preset.delete"))) { _, which -> if (which == 0) client.replacePreset(preset.name) else client.removePreset(preset.name) }.show(); true }
-            })
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                        super.onInitializeAccessibilityNodeInfo(host, info); info.className = Button::class.java.name
+                    }
+                }
+            }
+            card.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
         }
         val name = EditText(context).apply { hint = ui.label("lighting.preset.name"); setSingleLine(true); contentDescription = ui.label("lighting.preset.name") }
         card.addView(ui.row().apply {
@@ -307,7 +319,19 @@ class LightingPanel(
                 setOnCheckedChangeListener { _, checked -> client.setRestoreEnabled(checked) }
             }
             addView(restore)
-            presentation.associatedVehicle?.let { addView(ui.text(context.getString(R.string.lighting_associated_vehicle, it), 14f, color = ui.muted)) }
+            addView(ui.text(
+                if (presentation.associatedVehicle != null) context.getString(R.string.lighting_associated_vehicle, presentation.associatedVehicle)
+                else context.getString(R.string.lighting_association_none), 14f, color = ui.muted,
+            ))
+            val selectedVehicle = presentation.selectedVehicle
+            if (selectedVehicle != null) {
+                addView(ui.action(
+                    context.getString(if (presentation.associatedVehicle == selectedVehicle) R.string.lighting_association_current else R.string.lighting_association_set_current),
+                ) { client.setAssociatedVehicle(if (presentation.associatedVehicle == selectedVehicle) null else selectedVehicle) })
+            }
+            if (presentation.associatedVehicle != null && presentation.associatedVehicle != selectedVehicle) {
+                addView(ui.action(context.getString(R.string.lighting_association_clear)) { client.setAssociatedVehicle(null) })
+            }
         }
         android.app.AlertDialog.Builder(context).setTitle(presentation.alias ?: presentation.snapshot.name ?: ui.label("lighting.default_name"))
             .setView(content)
@@ -317,6 +341,17 @@ class LightingPanel(
                     .setNegativeButton(android.R.string.cancel, null).setPositiveButton(ui.label("lighting.forget")) { _, _ -> client.forgetAccessory() }.show()
             }
             .setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun presetSummary(requested: MobileMelkLightingRestoreStateDto): String = when (val playback = requested.playback) {
+        is MobileLightingPlaybackDto.Effect -> context.getString(
+            R.string.lighting_preset_effect_summary,
+            mobileMelkLightingPatternCatalog().firstOrNull { it.id == playback.pattern }?.name
+                ?: context.getString(R.string.lighting_unknown_effect, playback.pattern.toInt()),
+            playback.speed.toInt(),
+        )
+        is MobileLightingPlaybackDto.Music -> context.getString(R.string.lighting_preset_music_summary, playback.sensitivity.toInt())
+        MobileLightingPlaybackDto.Solid, null -> context.getString(R.string.lighting_preset_solid_summary, requested.brightness.toInt())
     }
 }
 
