@@ -295,24 +295,29 @@ struct CaptureSettingsWorksheet: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button("Save values") {
-                focusedField = nil
-                guard !isSaving else { return }
-                isSaving = true
-                Task { @MainActor in
-                    defer { isSaving = false }
-                    do {
-                        try await save(draft.observation())
-                        draft.error = nil
-                        dismiss()
-                    } catch { draft.error = CaptureResearchPresentation.error(error) }
+            VStack(spacing: 0) {
+                Button {
+                    focusedField = nil
+                    guard !isSaving else { return }
+                    isSaving = true
+                    Task { @MainActor in
+                        defer { isSaving = false }
+                        do {
+                            try await save(draft.observation())
+                            draft.error = nil
+                            dismiss()
+                        } catch { draft.error = CaptureResearchPresentation.error(error) }
+                    }
+                } label: {
+                    Text("Save values")
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
+                .disabled(isSaving)
+                .buttonStyle(.borderedProminent).tint(PevColors.yellow).foregroundStyle(.black)
+                .accessibilityIdentifier("capture.settings.save")
             }
-            .disabled(isSaving)
-            .buttonStyle(.borderedProminent).tint(PevColors.yellow).foregroundStyle(.black)
-            .frame(maxWidth: .infinity, minHeight: 44).padding()
+            .padding()
             .background(PevColors.pageBackground)
-            .accessibilityIdentifier("capture.settings.save")
         }
         .tint(PevColors.yellow)
         .interactiveDismissDisabled(isSaving)
