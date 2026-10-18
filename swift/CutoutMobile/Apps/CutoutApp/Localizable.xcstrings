@@ -3134,8 +3134,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "available" } } }
     },
     "ride.hero.value.unavailable" : {
-      "comment" : "Ride hero visible speed placeholder and VoiceOver availability state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+      "comment" : "Compact visible placeholder for unavailable numeric Ride speed; VoiceOver uses unavailable_accessibility.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "--" } } }
     },
     "ride.hero.value.unavailable_accessibility" : {
       "comment" : "VoiceOver sentence fragment for unavailable Ride hero speed.",

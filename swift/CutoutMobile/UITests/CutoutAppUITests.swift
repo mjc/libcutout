@@ -4287,9 +4287,9 @@ final class CutoutAppUITests: XCTestCase {
         app.terminate()
         // Keep the same fixture database to verify that the Rust-owned user association restores.
         app.launch()
-        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
-        use.tap()
+        // Existing selected-device restoration reconnects directly; no second manual pairing is needed.
         XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(use.exists)
         XCTAssertFalse(choice.exists)
         XCTAssertEqual(energy.label, "voltage")
     }

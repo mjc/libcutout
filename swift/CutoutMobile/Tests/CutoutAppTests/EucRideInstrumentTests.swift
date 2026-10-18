@@ -75,6 +75,42 @@ final class EucRideInstrumentTests: XCTestCase {
         }
     }
 
+    func testRefloatFixtureResolvesApplicationThroughSubmittedQueryWithoutUserClassification() async throws {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let suiteName = "EucRideInstrumentTests-refloat-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let core = CutoutSessionCore(
+            testScript: fixture.testScript, suppressNativeLocation: true, selectedDeviceStore: store
+        )
+        let model = CutoutAppModel(
+            core: core, selectedDeviceStore: store, liveActivityManager: fixture.makeLiveActivityManager()
+        )
+        defer { core.disconnectAndScan() }
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if model.device.deviceSessionSnapshot?.identity?.vescApplication == .refloat,
+                model.displayState.telemetry?.voltage != nil
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let identity = try XCTUnwrap(model.device.deviceSessionSnapshot?.identity)
+        XCTAssertEqual(identity.protocol, .vesc)
+        XCTAssertEqual(identity.vescApplication, .refloat)
+        XCTAssertEqual(identity.vescApplicationQuery, .resolved)
+        XCTAssertEqual(identity.classificationRequirement, .resolved)
+        XCTAssertEqual(identity.classificationProvenance, .protocol)
+        XCTAssertEqual(identity.vehicleKind, .onewheel)
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.application, .refloat)
+        XCTAssertEqual(ride.vehicleKind, .onewheel)
+    }
+
     func testEskateFixtureRequiresUserClassificationAndLeavesUnsupportedReadingsUnavailable() async throws {
         let fixture = CutoutUITestSessionFixture.eskate
         let suiteName = "EucRideInstrumentTests-eskate-\(UUID().uuidString)"

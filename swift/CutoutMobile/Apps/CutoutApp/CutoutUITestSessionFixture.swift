@@ -260,6 +260,19 @@ import Foundation
                 || self == .eucUnknownTopology
         }
 
+        /// These fixtures explicitly represent Refloat; the standard e-skate fixture does not.
+        var isRefloatVesc: Bool {
+            switch self {
+            case .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc,
+                .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc,
+                .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity,
+                .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+                true
+            default:
+                false
+            }
+        }
+
         private var refreshesVescSafetyState: Bool {
             testVescWarning != nil || testVescStopReason != nil
         }
@@ -328,12 +341,19 @@ import Foundation
                     ),
                 ]
             }
-            return [
-                Data([
-                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
-                    114, 104, 97, 115, 104, 0, 38, 208, 3,
-                ])
-            ]
+            let firmware = Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ])
+            guard isRefloatVesc else { return [firmware] }
+            // INFO v2 for Refloat 1.3.0, with a 1 kHz tick rate and no extra capabilities.
+            // The live session replays this after its own query's native submission.
+            let info = Self.vescFixtureFrame(
+                [36, 101, 0, 2, 0] + Array("Refloat".utf8) + Array(repeating: 0, count: 13)
+                    + [1, 3, 0] + Array(repeating: 0, count: 24)
+                    + [0, 0, 3, 232] + Array(repeating: 0, count: 5)
+            )
+            return [firmware, info]
         }
 
         private static func vescFixtureFrame(_ payload: [UInt8]) -> Data {
@@ -362,10 +382,13 @@ import Foundation
 
         var testScript: CutoutSessionTestScript {
             let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
+            let notifications = protocolNotifications
             return CutoutSessionTestScript(
                 candidate: candidate,
                 telemetry: emitsPendingTelemetry ? nil : telemetry,
-                protocolNotifications: protocolNotifications,
+                protocolNotifications: notifications,
+                // Application proof belongs to the live protocol owner, after LinkUp submits INFO.
+                protocolDetectionNotifications: isRefloatVesc ? Array(notifications.prefix(1)) : nil,
                 protocolNotificationIntervalMilliseconds: isEuc
                     && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS") ? 500 : nil,
                 telemetryUpdate: telemetryUpdate,
@@ -1031,9 +1054,9 @@ import Foundation
         }
 
         static func vescRideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
-            guard let fixture, !fixture.isEuc else { return nil }
+            guard fixture?.isRefloatVesc == true else { return nil }
             return VescRideSnapshot(
-                title: "VESC", vehicleKind: .onewheel, application: .absent,
+                title: "VESC", vehicleKind: .onewheel, application: .refloat,
                 controllerState: .unknown, operatingState: .riding, warning: .none,
                 boardSpeed: Speed(value: 8_000), dutyCycle: DutyCycle(permille: 230),
                 dutyHeadroom: BatteryLevel(value: 77),
