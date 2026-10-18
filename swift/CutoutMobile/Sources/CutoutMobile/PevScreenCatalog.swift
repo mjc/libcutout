@@ -19,7 +19,7 @@ public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case camera
     case screen(PevScreenID)
     case eucPack
-    case eucTune
+    case tune
     case vescRide
     case rideMap
     case lighting

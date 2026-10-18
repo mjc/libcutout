@@ -406,7 +406,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
 
     func testFailedEndKeepsActivityActiveForRetry() async {
         let manager = RecordingLiveActivityRideLifecycleManager(endError: .activityUnavailable)
-        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let state = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager, sessionState: state)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
         await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
@@ -414,6 +415,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .activityUnavailable)
+        XCTAssertNotEqual(state.rideSessionSnapshot().activity, .ended)
 
         await manager.setEndError(nil)
         await coordinator.end(requestID: 3, reason: .sessionEnded)
@@ -421,6 +423,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let recoveredError = await coordinator.lastError
         let events = await manager.recordedEvents()
         XCTAssertNil(recoveredError)
+        XCTAssertEqual(state.rideSessionSnapshot().activity, .ended)
         XCTAssertEqual(
             events,
             [.start(snapshot), .end(.sessionEnded), .end(.sessionEnded)]
@@ -676,6 +679,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         }
         await fulfillment(of: [disconnected], timeout: 1)
         XCTAssertEqual(state.rideSessionSnapshot().phase, .ending(reason: .userDisconnect))
+        XCTAssertEqual(state.rideSessionSnapshot().activity, .ending)
 
         await manager.resumeFirstStart()
         await firstRequest.value
@@ -683,6 +687,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(snapshot), .end(.disconnected)])
         XCTAssertEqual(state.rideSessionSnapshot().phase, .ended(reason: .userDisconnect))
+        XCTAssertEqual(state.rideSessionSnapshot().activity, .ended)
     }
 
     func testRecoveryIdentitySurvivesReplacementByLatestPresentationWhilePlatformIsBlocked() async throws {
@@ -834,12 +839,14 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         await fulfillment(of: [flushed], timeout: 1)
         XCTAssertEqual(state.rideSessionSnapshot().appPresence, .background)
         XCTAssertEqual(state.rideSessionSnapshot().phase, .ending(reason: .userDisconnect))
+        XCTAssertEqual(state.rideSessionSnapshot().activity, .ending)
         await manager.resumeFirstEnd()
         await ending.value
         await background.value
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(snapshot), .end(.disconnected)])
         XCTAssertEqual(state.rideSessionSnapshot().phase, .ended(reason: .userDisconnect))
+        XCTAssertEqual(state.rideSessionSnapshot().activity, .ended)
     }
 
     func testQueuedFreshPresentationExpiresDuringStalledStartWithoutRenewingOldTelemetry() async {

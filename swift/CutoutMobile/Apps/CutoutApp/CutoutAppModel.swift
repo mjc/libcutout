@@ -94,6 +94,7 @@ final class CutoutAppModel {
             return "fixture=\(String(describing: Self.uiTestFixture));script=\(script);"
                 + "phase=\(phase);session=\(session.phase);activity=\(session.activity);"
                 + "activityAcknowledged=\(activityID?.isEmpty == false);"
+                + "activityEnded=\(session.activity == .ended);"
                 + "restoration=\(rideSessionRestorationState);error=\(String(describing: liveActivityError))"
         }
     #endif
@@ -424,7 +425,7 @@ final class CutoutAppModel {
             selectedDeviceStore: selectedDeviceStore,
             restoredDeviceSelection: restoredDeviceSelection,
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager(),
+            liveActivityManager: makeLiveActivityManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
@@ -445,7 +446,7 @@ final class CutoutAppModel {
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager(),
+            liveActivityManager: Self.makeLiveActivityManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
@@ -1449,7 +1450,21 @@ final class CutoutAppModel {
         return CutoutSessionCore()
     }
 
+    private static func makeLiveActivityManager() -> any LiveActivityRideLifecycleManaging {
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = uiTestFixture {
+                return fixture.makeLiveActivityManager()
+            }
+        #endif
+        return LiveActivityRideActivityKitManager()
+    }
+
     #if DEBUG
+        static var isUITestLiveActivityCleanupLaunch: Bool {
+            uiTestFixture == .bluetoothUnavailable
+                && CommandLine.arguments.contains("--ui-test-cleanup-live-activities")
+        }
+
         private static var uiTestFixture: CutoutUITestSessionFixture? {
             CutoutUITestSessionFixture.resolve(
                 environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],

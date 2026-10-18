@@ -392,16 +392,39 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        continueAfterFailure = true
         let cleanup = livePrivateSendCleanup
         livePrivateSendCleanup = nil
         cleanup?()
+        let activityFixtureExited = fixture.usesSystemLiveActivity && app?.state == .notRunning
+        if fixture.usesSystemLiveActivity, let app {
+            if activityFixtureExited {
+                launchLiveActivityCleanup()
+            } else {
+                app.activate()
+                if !app.launchArguments.contains("--ui-test-cleanup-live-activities"),
+                    !app.descendants(matching: .any)["device-picker.screen"].exists,
+                    !app.buttons["dashboard.disconnect"].isHittable
+                {
+                    tapNavigationTab("ride", title: "Ride")
+                }
+            }
+        }
         let disconnect = app?.buttons["dashboard.disconnect"]
         if disconnect?.exists == true, disconnect?.isHittable == true {
             disconnect?.tap()
             _ = app?.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
         }
+        if fixture.usesSystemLiveActivity {
+            if let app, app.state != .notRunning {
+                assertSystemLiveActivitiesEnded()
+            } else {
+                XCTFail("The Live Activity cleanup app did not stay running")
+            }
+        }
         app?.terminate()
         app = nil
+        XCTAssertFalse(activityFixtureExited, "The real Live Activity fixture exited before teardown")
         XCUIDevice.shared.orientation = .portrait
         try await super.tearDown()
     }
@@ -1073,7 +1096,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
         XCTAssertTrue(navigationTab("tune", title: "Tune").isHittable, app.debugDescription)
         tapNavigationTab("tune", title: "Tune")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.tune"].waitForExistence(timeout: 5))
         navigationTab("ride", title: "Ride").tap()
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
         disconnectIfConnected()
@@ -3351,7 +3374,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertNotNil(connectedScreen(timeout: 20))
         defer { disconnectIfConnected() }
         tapNavigationTab("tune", title: "Tune")
-        let tune = app.descendants(matching: .any)["settings.screen.eucTune"]
+        let tune = app.descendants(matching: .any)["settings.screen.tune"]
         XCTAssertTrue(tune.waitForExistence(timeout: 5))
         let alarms = app.buttons["settings.open-alarms"]
         for _ in 0..<8 where !alarms.isHittable { tune.swipeUp() }
@@ -3407,7 +3430,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
         tapNavigationTab("tune", title: "Tune")
-        let screen = app.descendants(matching: .any)["settings.screen.eucTune"]
+        let screen = app.descendants(matching: .any)["settings.screen.tune"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
 
         let turnOn = app.buttons["settings.on.highBeam"]
@@ -3456,11 +3479,10 @@ final class CutoutAppUITests: XCTestCase {
         let controls = [
             "highBeam", "displayBrightness", "displayUnits", "beeperVolumePercent",
             "tiltbackSpeed", "pwmTiltback", "lateralTiltLimit", "speedAlarmThreshold", "brakeOverpressureAlarm",
-            "pedalHardness", "dynamicAssist", "pedalDipCompensation", "pedalAngle", "ridingPreset",
-            "voltageCorrection", "highSpeedMode", "lowBatteryMode", "transportMode",
+            "pedalHardness", "dynamicAssist", "pedalDipCompensation", "pedalAngle", "voltageCorrection",
         ]
-        let booleans: Set<String> = ["highBeam", "highSpeedMode", "lowBatteryMode", "transportMode"]
-        let choices: Set<String> = ["displayUnits", "ridingPreset"]
+        let booleans: Set<String> = ["highBeam"]
+        let choices: Set<String> = ["displayUnits"]
         for _ in 0..<8 where !turnOn.isHittable { screen.swipeDown() }
         for id in controls {
             let label = app.staticTexts["settings.control.\(id)"]
@@ -3481,6 +3503,9 @@ final class CutoutAppUITests: XCTestCase {
             }
             XCTAssertFalse(app.staticTexts["settings.requested.\(id)"].exists)
         }
+        for id in ["ridingPreset", "highSpeedMode", "lowBatteryMode", "transportMode"] {
+            XCTAssertFalse(app.staticTexts["settings.control.\(id)"].exists)
+        }
         XCTAssertFalse(app.staticTexts["settings.control.chargeLimitDiagnostic"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["settings.validationDisclosure"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["settings.validationAuthorization"].exists)
@@ -3492,7 +3517,7 @@ final class CutoutAppUITests: XCTestCase {
         ] {
             XCTAssertFalse(app.staticTexts[text].exists)
         }
-        attachScreenshot(of: app, named: "Tune — all 18 ordinary settings")
+        attachScreenshot(of: app, named: "Tune — all 14 ordinary settings")
     }
 
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
@@ -3657,7 +3682,7 @@ final class CutoutAppUITests: XCTestCase {
             self.tapNavigationTab("map", title: "Map")
             XCTAssertTrue(self.app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
             self.tapNavigationTab("tune", title: "Tune")
-            XCTAssertTrue(self.app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+            XCTAssertTrue(self.app.descendants(matching: .any)["settings.screen.tune"].waitForExistence(timeout: 5))
             self.tapNavigationTab("more", title: "More")
             XCTAssertTrue(self.app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
             self.tapNavigationTab("camera", title: "Camera")
@@ -4657,6 +4682,23 @@ final class CutoutAppUITests: XCTestCase {
             connectionState: "stale",
             stateName: "Terminated process"
         )
+    }
+
+    func testVescLiveActivityAutoFixtureCleanupLaunchEndsRetainedActivity() {
+        assertLiveActivityForegroundAcknowledged()
+        let readback = app.staticTexts["dashboard.lifecycle-readback"]
+        let nativeActivity = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS 'nativeActivityCount=1;'"), object: readback)
+        XCTAssertEqual(XCTWaiter.wait(for: [nativeActivity], timeout: 15), .completed, app.debugDescription)
+
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+        launchLiveActivityCleanup()
+        assertSystemLiveActivitiesEnded()
+        let cleanupReadback = app.staticTexts["dashboard.lifecycle-readback"].value as? String ?? ""
+        XCTAssertTrue(cleanupReadback.contains("cleanupEndedActivityCount=1;"), cleanupReadback)
+        XCTAssertFalse(app.buttons["dashboard.disconnect"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists, app.debugDescription)
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -6344,7 +6386,7 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("PickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable") {
             arguments.append("--seed-ui-test-live-route")
         }
-        if name.contains("AcrossAccessibilityCategories") {
+        if fixture.usesSystemLiveActivity || name.contains("AcrossAccessibilityCategories") {
             arguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES", "--ui-test-live-activity-readback"]
         }
         if name.contains("LightingBrightnessSliderCommits") {
@@ -6512,6 +6554,16 @@ final class CutoutAppUITests: XCTestCase {
         case vescCriticalLiveActivityAuto
         case vescUnavailableLiveActivityAuto
         case vescStaleLiveActivityAuto
+
+        var usesSystemLiveActivity: Bool {
+            switch self {
+            case .vescLiveActivityAuto, .vescDynamicLiveActivityAuto, .vescCriticalLiveActivityAuto,
+                .vescUnavailableLiveActivityAuto, .vescStaleLiveActivityAuto:
+                true
+            default:
+                false
+            }
+        }
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("RideMapShowsUnavailableStorage") { return .rideMapStorageUnavailable }
@@ -7270,6 +7322,32 @@ final class CutoutAppUITests: XCTestCase {
         guard disconnect.waitForExistence(timeout: 2) else { return }
         disconnect.tap()
         _ = app.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
+        if fixture.usesSystemLiveActivity { assertSystemLiveActivitiesEnded() }
+    }
+
+    private func launchLiveActivityCleanup() {
+        app.launchEnvironment = Fixture.bluetoothUnavailable.launchEnvironment
+        app.launchArguments =
+            Fixture.bluetoothUnavailable.launchArguments + [
+                "--ui-test-cleanup-live-activities", "--ui-test-live-activity-readback",
+                "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+            ]
+        app.launch()
+    }
+
+    private func assertSystemLiveActivitiesEnded() {
+        let readback = app.staticTexts["dashboard.lifecycle-readback"]
+        let ended = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "value CONTAINS 'activityEnded=true;' AND value CONTAINS 'nativeActivityCount=0;'"
+            ), object: readback)
+        let result = XCTWaiter.wait(for: [ended], timeout: 15)
+        let value = readback.value as? String ?? "No lifecycle cleanup readback"
+        let attachment = XCTAttachment(string: value)
+        attachment.name = "Actual Live Activity end acknowledgment"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(result, .completed, value)
     }
 
     private func openEucBmsMap() -> XCUIElement? {

@@ -476,8 +476,8 @@ struct ContentView: View {
                 selectedGroupIndex: destination.selectedBmsGroupIndex,
                 navigate: navigate
             )
-        case .eucTune:
-            EucTuneRouteView(
+        case .tune:
+            DeviceTuneRouteView(
                 model: model,
                 submitSetting: model.submitDeviceSetting,
                 submitAction: model.submitDeviceAction
@@ -538,7 +538,7 @@ struct ContentView: View {
             localizedAppText("navigation.section.lighting")
         case .eucPack:
             localizedAppText("navigation.section.pack")
-        case .eucTune:
+        case .tune:
             localizedAppText("navigation.section.tune")
         case .vescDebug:
             localizedAppText("navigation.section.debug")

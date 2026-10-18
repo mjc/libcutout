@@ -1,6 +1,10 @@
 import CutoutMobile
 import SwiftUI
 
+#if DEBUG && targetEnvironment(simulator)
+    import ActivityKit
+#endif
+
 #if os(macOS)
     import AppKit
 #endif
@@ -18,6 +22,9 @@ struct CutoutApp: App {
     @State private var pendingMusicURL: URL?
     @State private var latestScenePhase: ScenePhase = .inactive
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
+    #if DEBUG && targetEnvironment(simulator)
+        @State private var uiTestCleanupEndedActivityCount: Int?
+    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -43,11 +50,17 @@ struct CutoutApp: App {
                         if CommandLine.arguments.contains("--ui-test-live-activity-readback"),
                             UserDefaults.standard.bool(forKey: "CUTOUT_UI_TEST_ENVIRONMENT_READBACK"), let model
                         {
-                            Text("Live Activity test state")
-                                .font(.system(size: 1))
-                                .opacity(0.01)
-                                .accessibilityIdentifier("dashboard.lifecycle-readback")
-                                .accessibilityValue(model.uiTestLifecycleReadback)
+                            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                                Text("Live Activity test state")
+                                    .font(.system(size: 1))
+                                    .opacity(0.01)
+                                    .accessibilityIdentifier("dashboard.lifecycle-readback")
+                                    .accessibilityValue(
+                                        model.uiTestLifecycleReadback
+                                            + ";nativeActivityCount=\(Activity<LiveActivityRideAttributes>.activities.count);"
+                                            + "cleanupEndedActivityCount=\(uiTestCleanupEndedActivityCount.map(String.init) ?? "none");"
+                                    )
+                            }
                         }
                     #endif
                 }
@@ -59,6 +72,9 @@ struct CutoutApp: App {
                 }
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     latestScenePhase = phase
+                    #if DEBUG && targetEnvironment(simulator)
+                        guard !CutoutAppModel.isUITestLiveActivityCleanupLaunch else { return }
+                    #endif
                     switch phase {
                     case .active:
                         model?.appDidBecomeActive()
@@ -169,6 +185,16 @@ struct CutoutApp: App {
                 let lighting = LightingRouteModel.uiTestConnectedLightingModel() ?? LightingRouteModel()
             #else
                 let lighting = LightingRouteModel()
+            #endif
+            #if DEBUG && targetEnvironment(simulator)
+                if CutoutAppModel.isUITestLiveActivityCleanupLaunch {
+                    // Publish the cleanup readback only after native cleanup returns.
+                    let ended = try await LiveActivityRideActivityKitManager().end(reason: .unavailable)
+                    uiTestCleanupEndedActivityCount = ended.activityIDs.count
+                    opened.endLiveActivity(reason: .unavailable)
+                    model = opened
+                    return
+                }
             #endif
             self.lighting = lighting
             model = opened

@@ -75,6 +75,334 @@ pub enum SettingId {
     AutoShutdownRemaining,
     /// Configured idle delay before power-off, reported in minutes.
     PowerOffDelay,
+    /// Refloat ordinary setting `tiltback_duty_angle`.
+    PushbackDutyAngle,
+    /// Refloat ordinary setting `tiltback_duty_speed`.
+    PushbackDutySpeed,
+    /// Refloat ordinary setting `tiltback_return_speed`.
+    PushbackReturnSpeed,
+    /// Refloat ordinary setting `is_dutybeep_enabled`.
+    PushbackDutyBeepEnabled,
+    /// Refloat ordinary setting `persistent_fatal_error`.
+    PushbackPersistentFatalError,
+    /// Refloat ordinary setting `tiltback_hv_angle`.
+    PushbackHighVoltageAngle,
+    /// Refloat ordinary setting `tiltback_hv_speed`.
+    PushbackHighVoltageSpeed,
+    /// Refloat ordinary setting `tiltback_lv_angle`.
+    PushbackLowVoltageAngle,
+    /// Refloat ordinary setting `tiltback_lv_speed`.
+    PushbackLowVoltageSpeed,
+    /// Refloat ordinary setting `haptic.duty.frequency`.
+    HapticsDutyFrequency,
+    /// Refloat ordinary setting `haptic.duty.strength`.
+    HapticsDutyStrength,
+    /// Refloat ordinary setting `haptic.error.frequency`.
+    HapticsErrorFrequency,
+    /// Refloat ordinary setting `haptic.error.strength`.
+    HapticsErrorStrength,
+    /// Refloat ordinary setting `haptic.vibrate.frequency`.
+    HapticsVibrateFrequency,
+    /// Refloat ordinary setting `haptic.vibrate.strength`.
+    HapticsVibrateStrength,
+    /// Refloat ordinary setting `haptic.duty_solid_offset`.
+    HapticsDutySolidOffset,
+    /// Refloat ordinary setting `haptic.current_threshold`.
+    HapticsCurrentThreshold,
+    /// Refloat ordinary setting `haptic.min_strength`.
+    HapticsMinStrength,
+    /// Refloat ordinary setting `haptic.max_strength_speed`.
+    HapticsMaxStrengthSpeed,
+    /// Refloat ordinary setting `haptic.strength_curvature`.
+    HapticsStrengthCurvature,
+    /// Refloat ordinary setting `inputtilt_remote_type`.
+    RemoteReceiverType,
+    /// Refloat ordinary setting `inputtilt_deadband`.
+    RemoteInputDeadband,
+    /// Refloat ordinary setting `leds.on`.
+    LightingOn,
+    /// Refloat ordinary setting `leds.headlights_on`.
+    LightingHeadlightsOn,
+    /// Refloat ordinary setting `leds.headlights_transition`.
+    LightingHeadlightsTransition,
+    /// Refloat ordinary setting `leds.direction_transition`.
+    LightingDirectionTransition,
+    /// Refloat ordinary setting `leds.lights_off_when_lifted`.
+    LightingLightsOffWhenLifted,
+    /// Refloat ordinary setting `leds.status_on_front_when_lifted`.
+    LightingStatusOnFrontWhenLifted,
+    /// Refloat ordinary setting `leds.front.mode`.
+    LightingFrontMode,
+    /// Refloat ordinary setting `leds.front.brightness`.
+    LightingFrontBrightness,
+    /// Refloat ordinary setting `leds.front.color1`.
+    LightingFrontColor1,
+    /// Refloat ordinary setting `leds.front.color2`.
+    LightingFrontColor2,
+    /// Refloat ordinary setting `leds.front.speed`.
+    LightingFrontSpeed,
+    /// Refloat ordinary setting `leds.rear.mode`.
+    LightingRearMode,
+    /// Refloat ordinary setting `leds.rear.brightness`.
+    LightingRearBrightness,
+    /// Refloat ordinary setting `leds.rear.color1`.
+    LightingRearColor1,
+    /// Refloat ordinary setting `leds.rear.color2`.
+    LightingRearColor2,
+    /// Refloat ordinary setting `leds.rear.speed`.
+    LightingRearSpeed,
+    /// Refloat ordinary setting `leds.headlights.mode`.
+    LightingHeadlightsMode,
+    /// Refloat ordinary setting `leds.headlights.brightness`.
+    LightingHeadlightsBrightness,
+    /// Refloat ordinary setting `leds.headlights.color1`.
+    LightingHeadlightsColor1,
+    /// Refloat ordinary setting `leds.headlights.color2`.
+    LightingHeadlightsColor2,
+    /// Refloat ordinary setting `leds.headlights.speed`.
+    LightingHeadlightsSpeed,
+    /// Refloat ordinary setting `leds.taillights.mode`.
+    LightingTaillightsMode,
+    /// Refloat ordinary setting `leds.taillights.brightness`.
+    LightingTaillightsBrightness,
+    /// Refloat ordinary setting `leds.taillights.color1`.
+    LightingTaillightsColor1,
+    /// Refloat ordinary setting `leds.taillights.color2`.
+    LightingTaillightsColor2,
+    /// Refloat ordinary setting `leds.taillights.speed`.
+    LightingTaillightsSpeed,
+    /// Refloat ordinary setting `leds.status.brightness_headlights_off`.
+    LightingStatusBrightnessHeadlightsOff,
+    /// Refloat ordinary setting `leds.status.brightness_headlights_on`.
+    LightingStatusBrightnessHeadlightsOn,
+    /// Refloat ordinary setting `leds.status.show_sensors_while_running`.
+    LightingStatusShowSensorsWhileRunning,
+    /// Refloat ordinary setting `leds.status.motor_utilization_threshold`.
+    LightingStatusMotorUtilizationThreshold,
+    /// Refloat ordinary setting `leds.status.red_bar_percentage`.
+    LightingStatusRedBarPercentage,
+    /// Refloat ordinary setting `leds.status.idle_timeout`.
+    LightingStatusIdleTimeout,
+    /// Refloat ordinary setting `leds.status_idle.mode`.
+    LightingStatusIdleMode,
+    /// Refloat ordinary setting `leds.status_idle.brightness`.
+    LightingStatusIdleBrightness,
+    /// Refloat ordinary setting `leds.status_idle.color1`.
+    LightingStatusIdleColor1,
+    /// Refloat ordinary setting `leds.status_idle.color2`.
+    LightingStatusIdleColor2,
+    /// Refloat ordinary setting `leds.status_idle.speed`.
+    LightingStatusIdleSpeed,
+    /// Refloat ordinary setting `disabled`.
+    PackageDisabled,
+    /// Refloat ordinary setting `tiltback_hv`.
+    PushbackHv,
+    /// Refloat ordinary setting `tiltback_lv`.
+    PushbackLv,
+    /// Refloat ordinary setting `fault_adc1`.
+    SensorsAdcchannel1,
+    /// Refloat ordinary setting `fault_adc2`.
+    SensorsAdcchannel2,
+    /// Refloat ordinary setting `hardware.swap_footpad_adcs`.
+    SensorsSwapFootpadAdcs,
+    /// Refloat ordinary setting `is_footbeep_enabled`.
+    SensorsFootFaultBeepEnabled,
+    /// Refloat ordinary setting `is_beeper_enabled`.
+    HardwareBeeperEnabled,
+    /// Refloat ordinary setting `hardware.leds.mode`.
+    LightingHardwareMode,
+    /// Refloat ordinary setting `hardware.leds.pin`.
+    LightingHardwarePin,
+    /// Refloat ordinary setting `hardware.leds.pin_config`.
+    LightingHardwarePinConfig,
+    /// Refloat ordinary setting `hardware.leds.status.order`.
+    LightingHardwareStatusOrder,
+    /// Refloat ordinary setting `hardware.leds.status.count`.
+    LightingHardwareStatusCount,
+    /// Refloat ordinary setting `hardware.leds.status.color_order`.
+    LightingHardwareStatusColorOrder,
+    /// Refloat ordinary setting `hardware.leds.status.reverse`.
+    LightingHardwareStatusReverse,
+    /// Refloat ordinary setting `hardware.leds.front.order`.
+    LightingHardwareFrontOrder,
+    /// Refloat ordinary setting `hardware.leds.front.count`.
+    LightingHardwareFrontCount,
+    /// Refloat ordinary setting `hardware.leds.front.color_order`.
+    LightingHardwareFrontColorOrder,
+    /// Refloat ordinary setting `hardware.leds.front.reverse`.
+    LightingHardwareFrontReverse,
+    /// Refloat ordinary setting `hardware.leds.rear.order`.
+    LightingHardwareRearOrder,
+    /// Refloat ordinary setting `hardware.leds.rear.count`.
+    LightingHardwareRearCount,
+    /// Refloat ordinary setting `hardware.leds.rear.color_order`.
+    LightingHardwareRearColorOrder,
+    /// Refloat ordinary setting `hardware.leds.rear.reverse`.
+    LightingHardwareRearReverse,
+    /// Refloat ordinary setting `bms.enabled`.
+    BmsEnabled,
+    /// Refloat ordinary setting `bms.cell_lv_threshold`.
+    BmsCellLvThreshold,
+    /// Refloat ordinary setting `bms.cell_hv_threshold`.
+    BmsCellHvThreshold,
+    /// Refloat ordinary setting `bms.cell_balance_threshold`.
+    BmsCellBalanceThreshold,
+    /// Refloat ordinary setting `bms.cell_ht_threshold`.
+    BmsCellHtThreshold,
+    /// Refloat ordinary setting `bms.cell_lt_threshold`.
+    BmsCellLtThreshold,
+    /// Refloat ordinary setting `bms.bms_ht_threshold`.
+    BmsBmsHtThreshold,
+    /// VESC configuration field `l_current_max`.
+    MotorDriveCurrentLimit,
+    /// VESC configuration field `l_current_min`.
+    MotorBrakingCurrentLimit,
+    /// VESC configuration field `l_in_current_max`.
+    BatteryCurrentOutLimit,
+    /// VESC configuration field `l_in_current_min`.
+    BatteryCurrentInLimit,
+    /// VESC configuration field `l_abs_current_max`.
+    AbsoluteMotorCurrentLimit,
+    /// VESC configuration field `l_min_vin`.
+    InputVoltageMinimum,
+    /// VESC configuration field `l_max_vin`.
+    InputVoltageMaximum,
+    /// VESC configuration field `l_battery_cut_start`.
+    BatteryCutbackStart,
+    /// VESC configuration field `l_battery_cut_end`.
+    BatteryCutbackEnd,
+    /// VESC configuration field `l_battery_regen_cut_start`.
+    RegenerativeBatteryCutbackStart,
+    /// VESC configuration field `l_battery_regen_cut_end`.
+    RegenerativeBatteryCutbackEnd,
+    /// VESC configuration field `l_temp_fet_start`.
+    FetTemperatureCutbackStart,
+    /// VESC configuration field `l_temp_fet_end`.
+    FetTemperatureCutbackEnd,
+    /// VESC configuration field `l_temp_motor_start`.
+    MotorTemperatureCutbackStart,
+    /// VESC configuration field `l_temp_motor_end`.
+    MotorTemperatureCutbackEnd,
+    /// VESC configuration field `l_watt_max`.
+    MotorPowerOutLimit,
+    /// VESC configuration field `l_watt_min`.
+    RegenerativeMotorPowerLimit,
+    /// VESC configuration field `l_current_max_scale`.
+    MotorDriveCurrentLimitScale,
+    /// VESC configuration field `l_current_min_scale`.
+    MotorBrakingCurrentLimitScale,
+    /// VESC configuration field `si_motor_poles`.
+    MotorPoleCount,
+    /// VESC configuration field `si_gear_ratio`.
+    MotorGearRatio,
+    /// VESC configuration field `si_wheel_diameter`.
+    WheelDiameter,
+    /// VESC configuration field `si_battery_type`.
+    BatteryChemistry,
+    /// VESC configuration field `si_battery_cells`.
+    BatterySeriesCellCount,
+    /// VESC configuration field `si_battery_ah`.
+    BatteryCapacity,
+    /// VESC configuration field `bms.type`.
+    BmsType,
+    /// VESC configuration field `bms.limit_mode`.
+    BmsLimitMode,
+    /// VESC BMS temperature limiting flag projected from `bms.limit_mode` bit 0.
+    BmsTemperatureLimitingEnabled,
+    /// VESC BMS state-of-charge limiting flag projected from `bms.limit_mode` bit 1.
+    BmsSocLimitingEnabled,
+    /// VESC BMS minimum-cell-voltage limiting flag projected from `bms.limit_mode` bit 2.
+    BmsMinimumCellVoltageLimitingEnabled,
+    /// VESC BMS maximum-cell-voltage limiting flag projected from `bms.limit_mode` bit 3.
+    BmsMaximumCellVoltageLimitingEnabled,
+    /// VESC configuration field `bms.t_limit_start`.
+    BmsTemperatureLimitStart,
+    /// VESC configuration field `bms.t_limit_end`.
+    BmsTemperatureLimitEnd,
+    /// VESC configuration field `bms.soc_limit_start`.
+    BmsSocLimitStart,
+    /// VESC configuration field `bms.soc_limit_end`.
+    BmsSocLimitEnd,
+    /// VESC configuration field `bms.vmin_limit_start`.
+    BmsCellMinimumVoltageLimitStart,
+    /// VESC configuration field `bms.vmin_limit_end`.
+    BmsCellMinimumVoltageLimitEnd,
+    /// VESC configuration field `bms.vmax_limit_start`.
+    BmsCellMaximumVoltageLimitStart,
+    /// VESC configuration field `bms.vmax_limit_end`.
+    BmsCellMaximumVoltageLimitEnd,
+    /// VESC configuration field `bms.fwd_can_mode`.
+    BmsCanForwardMode,
+    /// VESC configuration field `controller_id`.
+    ControllerId,
+    /// VESC configuration field `timeout_msec`.
+    CommandTimeout,
+    /// VESC configuration field `timeout_brake_current`.
+    CommandTimeoutBrakeCurrent,
+    /// VESC configuration field `can_status_rate_1`.
+    CanStatusRate1,
+    /// VESC configuration field `can_status_rate_2`.
+    CanStatusRate2,
+    /// VESC configuration field `can_baud_rate`.
+    CanBaudRate,
+    /// VESC configuration field `can_mode`.
+    CanMode,
+    /// VESC configuration field `app_to_use`.
+    ApplicationToUse,
+    /// VESC configuration field `kill_sw_mode`.
+    KillSwitchMode,
+    /// VESC configuration field `app_ppm_conf.ctrl_type`.
+    PpmControlMode,
+    /// VESC configuration field `app_ppm_conf.hyst`.
+    PpmHysteresis,
+    /// VESC configuration field `app_ppm_conf.pulse_start`.
+    PpmPulseStart,
+    /// VESC configuration field `app_ppm_conf.pulse_end`.
+    PpmPulseEnd,
+    /// VESC configuration field `app_ppm_conf.pulse_center`.
+    PpmPulseCenter,
+    /// VESC configuration field `app_ppm_conf.safe_start`.
+    PpmSafeStart,
+    /// VESC configuration field `app_ppm_conf.ramp_time_pos`.
+    PpmRampTimePositive,
+    /// VESC configuration field `app_ppm_conf.ramp_time_neg`.
+    PpmRampTimeNegative,
+    /// VESC configuration field `app_adc_conf.ctrl_type`.
+    AdcControlMode,
+    /// VESC configuration field `app_adc_conf.hyst`.
+    AdcHysteresis,
+    /// VESC configuration field `app_adc_conf.voltage_start`.
+    AdcVoltageStart,
+    /// VESC configuration field `app_adc_conf.voltage_end`.
+    AdcVoltageEnd,
+    /// VESC configuration field `app_adc_conf.voltage_min`.
+    AdcVoltageMinimum,
+    /// VESC configuration field `app_adc_conf.voltage_max`.
+    AdcVoltageMaximum,
+    /// VESC configuration field `app_adc_conf.safe_start`.
+    AdcSafeStart,
+    /// VESC configuration field `app_adc_conf.ramp_time_pos`.
+    AdcRampTimePositive,
+    /// VESC configuration field `app_adc_conf.ramp_time_neg`.
+    AdcRampTimeNegative,
+    /// VESC configuration field `app_chuk_conf.ctrl_type`.
+    NunchukControlMode,
+    /// VESC configuration field `app_chuk_conf.hyst`.
+    NunchukHysteresis,
+    /// VESC configuration field `app_chuk_conf.ramp_time_pos`.
+    NunchukRampTimePositive,
+    /// VESC configuration field `app_chuk_conf.ramp_time_neg`.
+    NunchukRampTimeNegative,
+    /// VESC configuration field `imu_conf.type`.
+    ImuType,
+    /// VESC configuration field `imu_conf.mode`.
+    ImuMode,
+    /// VESC configuration field `imu_conf.filter`.
+    ImuFilter,
+    /// VESC configuration field `imu_conf.sample_rate_hz`.
+    ImuSampleRate,
+    /// VESC configuration field `imu_conf.use_magnetometer`.
+    ImuUseMagnetometer,
     /// Whether the wheel reports that it is charging.
     ChargeMode,
 }
@@ -357,6 +685,30 @@ impl DeviceSettingsState {
         true
     }
 
+    /// Fails a protocol procedure without rewriting its native transport evidence.
+    ///
+    /// A submitted write can still fail its subsequent verification. Stale or
+    /// already terminal operations cannot change the current request.
+    pub fn fail_operation(&mut self, request_id: u64, at: MonotonicTimestamp) -> bool {
+        let Some(record) = self
+            .records
+            .values_mut()
+            .find(|record| record.request_id == Some(request_id))
+        else {
+            return false;
+        };
+        if record.transport_at.is_some_and(|latest| at < latest)
+            || !match record.state {
+                SettingState::Pending { .. } => true,
+                _ => false,
+            }
+        {
+            return false;
+        }
+        record.state.fail();
+        true
+    }
+
     /// Earliest readable setting confirmation deadline; none while transport is pending.
     #[must_use]
     pub fn next_confirmation_at(&self) -> Option<MonotonicTimestamp> {
@@ -445,6 +797,29 @@ impl DeviceSettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn procedure_failure_preserves_submission_and_cannot_confirm_from_later_readback() {
+        let mut settings = DeviceSettingsState::default();
+        settings.require_managed_transport();
+        let id = SettingId::PwmTiltback;
+        let desired = DeviceSettingValue::Number(81);
+        let request = settings.submission(
+            id,
+            desired,
+            SettingSubmissionOutcome::Accepted,
+            SettingCompletionStrategy::MatchingReadback,
+            time(10),
+        );
+        assert!(settings.transport(id, request, SettingTransportStatus::Submitted, time(11)));
+        assert!(!settings.fail_operation(request, time(9)));
+        assert!(settings.fail_operation(request, time(12)));
+        settings.observe(id, desired, SettingValueSource::LiveReadback, time(13));
+        let record = settings.snapshot(time(14))[0];
+        assert_eq!(record.status, SettingCommandStatus::Failed);
+        assert_eq!(record.transport, Some(SettingTransportStatus::Submitted));
+        assert_eq!(record.current.map(|reading| reading.value), Some(desired));
+        assert!(!settings.fail_operation(request, time(15)));
+    }
     use crate::{
         ControlRefusalReason, MonotonicTimestamp, SettingCommandStatus, SettingValueSource,
     };

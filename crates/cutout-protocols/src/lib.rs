@@ -106,7 +106,11 @@ mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
 mod refloat_codec;
+mod refloat_settings;
 mod registry;
+mod vesc_configuration;
+mod vesc_settings_image;
+mod vesc_settings_session;
 mod wire_crc;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
