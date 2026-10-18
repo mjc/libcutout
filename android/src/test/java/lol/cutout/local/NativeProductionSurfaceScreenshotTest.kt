@@ -1,5 +1,6 @@
 package lol.cutout.local
 
+import android.app.Activity
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Bitmap
@@ -66,18 +67,27 @@ class NativeProductionSurfaceScreenshotTest {
         )
 
         for (dark in listOf(false, true)) {
-            val context = configuredContext(app, dark)
-            val panel = DevicePickerPanel(context, {}, {}, {}, {})
-            panel.render(BlePresentation(devices = devices), permitted = true, enabled = true, hasScanned = true)
-            NativeSurfaceCapture.save(panel, "picker-${mode(dark)}")
+            val controller = Robolectric.buildActivity(Activity::class.java).setup()
+            val activity = controller.get()
+            try {
+                val context = configuredContext(app, dark)
+                val panel = DevicePickerPanel(context, {}, {}, {}, {})
+                panel.render(BlePresentation(devices = devices), permitted = true, enabled = true, hasScanned = true)
+                activity.setContentView(panel)
+                NativeSurfaceCapture.save(panel, "picker-${mode(dark)}")
 
-            val ride = RideDashboardView(context, {}, {})
-            ride.render(replay)
-            NativeSurfaceCapture.save(ride, "ride-${mode(dark)}")
+                val ride = RideDashboardView(context, {}, {})
+                ride.render(replay)
+                activity.setContentView(ride)
+                NativeSurfaceCapture.save(ride, "ride-${mode(dark)}")
 
-            val configuration = SettingsPanel(context, "surface-fixture-owner") { _, _, _, _ -> }
-            configuration.render(settings)
-            NativeSurfaceCapture.save(configuration, "settings-${mode(dark)}")
+                val configuration = SettingsPanel(context, "surface-fixture-owner") { _, _, _, _ -> }
+                configuration.render(settings)
+                activity.setContentView(configuration)
+                NativeSurfaceCapture.save(configuration, "settings-${mode(dark)}")
+            } finally {
+                controller.pause().stop().destroy()
+            }
         }
     }
 
@@ -116,14 +126,20 @@ private object NativeSurfaceCapture {
         val density = view.resources.displayMetrics.density
         val width = (WIDTH_DP * density).toInt()
         val height = (HEIGHT_DP * density).toInt()
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, width, height)
-        // TextView completes single-line scrolling and cursor positioning at pre-draw.
-        // A manual bitmap draw must deliver the same boundary as ViewRootImpl.
-        view.viewTreeObserver.dispatchOnPreDraw()
+        var settled = false
+        repeat(4) {
+            if (!settled) {
+                view.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+                )
+                view.layout(0, 0, width, height)
+                // TextView finishes scrolling at pre-draw; auto-size can request another layout.
+                val cancelled = view.viewTreeObserver.dispatchOnPreDraw()
+                settled = !cancelled && !view.isLayoutRequested
+            }
+        }
+        check(settled) { "$name did not settle after four native layout/pre-draw traversals" }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             view.draw(Canvas(bitmap))
