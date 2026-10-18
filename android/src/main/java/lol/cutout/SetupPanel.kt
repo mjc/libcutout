@@ -19,6 +19,7 @@ class SetupPanel(
     private val page = ui.column()
     private val error = ui.text("", 14f, color = ui.orange)
     private var binding = false
+    private val phoneAlarms = PhoneAlarmPanel(context, app.phoneAlarms, onNotifications)
     private val autostart = toggle(context.getString(R.string.setup_ride_autostart)) { enabled ->
         app.rides.withCore({ it.setRideAutostartEnabled(enabled) }) { result ->
             result.onFailure { showFailure() }; reload()
@@ -40,6 +41,8 @@ class SetupPanel(
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.music), onClick = onMusic))
         page.addView(ui.space(20))
+        page.addView(phoneAlarms, LinearLayout.LayoutParams(-1, -2))
+        page.addView(ui.space(20))
         page.addView(ui.text(context.getString(R.string.setup_diagnostics), 17f, true))
         page.addView(diagnostics)
         page.addView(ui.text(context.getString(R.string.setup_diagnostics_detail), 14f, color = ui.muted))
@@ -55,6 +58,7 @@ class SetupPanel(
     }
 
     fun reload() {
+        app.refreshPhoneAlarmAuthorization()
         autostart.isEnabled = false; diagnostics.isEnabled = false
         app.rides.withCore({ it.rideAutostartEnabled() }) { result ->
             result.onSuccess { binding = true; autostart.isChecked = it; binding = false; autostart.isEnabled = true }
@@ -65,6 +69,8 @@ class SetupPanel(
                 .onFailure { showFailure() }
         }
     }
+
+    fun dispose() { phoneAlarms.dispose() }
 
     private fun toggle(title: String, changed: (Boolean) -> Unit) = Switch(context).apply {
         text = title; textSize = 17f; setTextColor(ui.foreground)

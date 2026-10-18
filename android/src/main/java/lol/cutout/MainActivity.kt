@@ -81,11 +81,14 @@ class MainActivity : Activity() {
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         ride = RideDashboardView(this, onDisconnect = { client.disconnect() }, onChooseDevice = { showPage(R.string.devices) })
+        observations += app.locations.observePhoneSpeed(ride::renderPhoneSpeed)
         picker = DevicePickerPanel(this, onScan = ::scanOrRequestPermission,
             onOpenSettings = ::openAppSettings,
             onOpenConfiguration = { setupReturnPage = page; showPage(R.string.setup) },
             onConnect = { client.connect(it); showPage(R.string.ride) })
-        settings = SettingsPanel(this, client.settingsDraftOwnerId) { token, id, value, refused -> client.submit(token, id, value, refused) }
+        settings = SettingsPanel(this, client.settingsDraftOwnerId,
+            submit = { token, id, value, refused -> client.submit(token, id, value, refused) },
+            submitAction = { token, id, refused -> client.submitAction(token, id, refused) })
         settings.restoreUiState(savedInstanceState?.getBundle("settings-ui"))
         addPanel(R.string.ride, ride)
         addPanel(R.string.devices, picker)
@@ -127,6 +130,7 @@ class MainActivity : Activity() {
         super.onResume(); resumed = true
         client.observe(::render)
         app.music.refreshSessions()
+        app.refreshPhoneAlarmAuthorization()
         app.locations.setAuthorizationEvidence(if (preferences.getBoolean("location.asked", false))
             MobileRideMapLocationAuthorizationDto.DENIED else MobileRideMapLocationAuthorizationDto.NOT_DETERMINED)
         map?.onHostResume(); map?.refreshLocation(); camera?.setActive(page == R.string.camera); lighting?.setActive(page == R.string.lighting)
@@ -145,6 +149,7 @@ class MainActivity : Activity() {
         if (lighting != null) app.lighting.observe(null)
         panels.values.filterIsInstance<MusicPanel>().forEach { it.dispose() }
         panels.values.filterIsInstance<MusicSettingsPanel>().forEach { it.dispose() }
+        setup?.dispose()
         onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
         super.onDestroy()
     }
@@ -158,6 +163,7 @@ class MainActivity : Activity() {
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grants: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grants)
+        if (requestCode == NOTIFICATION_PERMISSION) app.refreshPhoneAlarmAuthorization()
         if (requestCode == BLUETOOTH_PERMISSION && client.hasPermissions() && client.isEnabled()) {
             if (page == R.string.lighting) app.lighting.resume() else { scanned = true; client.scan() }
         }
@@ -201,6 +207,7 @@ class MainActivity : Activity() {
     internal fun render(value: BlePresentation) {
         val hadConnection = latest.session?.connection?.token != null
         latest = value
+        app.existingLighting?.selectVehicle(value.selectedVehicleIdentifier ?: value.session?.connection?.token?.platformIdentifier)
         val connected = value.session?.connection?.token != null
         if (hadConnection && !connected && (page == R.string.ride || page == R.string.configuration || page == R.string.pack)) showPage(R.string.devices)
         if (!connected && page == R.string.ride && value.phase == NativePhase.IDLE) showPage(R.string.devices)
@@ -224,7 +231,11 @@ class MainActivity : Activity() {
         if (page == R.string.devices && id != page) { client.stopScan(); scanned = false }
         if (!panels.containsKey(id)) when (id) {
             R.string.map -> {
-                val panel = RideMapPanel(this, app.rides, app.charging, ::requestLocation, ::shareRide, app.music::historyPolicyForNewRide)
+                val panel = RideMapPanel(this, app.rides, app.charging, ::requestLocation, ::shareRide, app.music::historyPolicyForNewRide,
+                    resolveVehicleName = { identifier ->
+                        latest.session?.takeIf { it.connection?.token?.platformIdentifier == identifier }?.identity?.model
+                            ?: latest.devices.firstOrNull { it.id == identifier }?.name
+                    }, onOpenLocationSettings = ::openAppSettings)
                 map = panel; addPanel(id, panel)
                 if (hostStarted) panel.onHostStart()
                 if (resumed) panel.onHostResume()
@@ -232,6 +243,7 @@ class MainActivity : Activity() {
             R.string.more -> addPanel(id, ScrollView(this).apply { addView(ui.column()) })
             R.string.camera -> { val panel = CameraPanel(this, app.camera); camera = panel; addPanel(id, panel) }
             R.string.lighting -> {
+                app.lighting.selectVehicle(latest.selectedVehicleIdentifier ?: latest.session?.connection?.token?.platformIdentifier)
                 val panel = LightingPanel(this, app.lighting, ::scanOrRequestPermission)
                 lighting = panel; addPanel(id, panel)
                 observations += app.lighting.addObserver { if (resumed) maintainForegroundWork() }

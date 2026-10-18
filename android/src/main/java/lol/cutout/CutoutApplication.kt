@@ -32,9 +32,17 @@ open class CutoutApplication : Application() {
     private val chargingOwner = lazy { AndroidChargingClient(this, rides) }
     val charging: AndroidChargingClient get() = chargingOwner.value
     private val bluetoothOwner = lazy {
-        AndroidBleClient(this)
+        AndroidBleClient(this) { presentation, state ->
+            phoneAlarms.onSessionObservation(presentation, state)
+        }
     }
     val bluetooth: AndroidBleClient get() = bluetoothOwner.value
+    private val phoneAlarmOwner = lazy { AndroidPhoneAlarmClient(this) }
+    val phoneAlarms: AndroidPhoneAlarmClient get() = phoneAlarmOwner.value
+    fun refreshPhoneAlarmAuthorization() {
+        if (!phoneAlarmOwner.isInitialized()) return
+        rides.withDatabase({ phoneAlarms.refreshAuthorization(sessionStateForNativeOwner()) }) { }
+    }
     private val lightingOwner = lazy { AndroidMelkLightingClient(this) }
     val lighting: AndroidMelkLightingClient get() = lightingOwner.value
     val existingLighting: AndroidMelkLightingClient? get() = if (lightingOwner.isInitialized()) lighting else null
@@ -53,6 +61,7 @@ open class CutoutApplication : Application() {
         if (locationOwner.isInitialized()) locations.close()
         if (cameraOwner.isInitialized()) camera.close()
         if (musicOwner.isInitialized()) music.close()
+        if (phoneAlarmOwner.isInitialized()) phoneAlarms.close()
         if (chargingOwner.isInitialized()) charging.close()
         if (rideOwner.isInitialized()) rides.close()
         if (lightingOwner.isInitialized()) lighting.stop()
