@@ -1,17 +1,22 @@
 package lol.cutout
 
-import android.app.AlertDialog
+import android.graphics.Color
+import android.content.res.ColorStateList
+import android.graphics.drawable.RippleDrawable
 import android.content.Context
 import android.os.Bundle
 import android.text.InputType
 import android.text.TextWatcher
 import android.text.Editable
 import android.view.Gravity
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.PopupMenu
 import uniffi.cutout_mobile_ffi.MobileConnectionAttemptTokenDto
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.MobileConnectionTransportStateDto
@@ -192,11 +197,13 @@ class SettingsPanel(
         private var priorRequestId: ULong? = null
         private var failure: String? = null
         private var numericEdit: EditText? = null
-        private var choiceButton: android.widget.Button? = null
+        private var numericSlider: SeekBar? = null
+        private var choiceButton: TextView? = null
+        private val booleanButtons = mutableListOf<android.widget.Button>()
         private var applyButton: android.widget.Button? = null
-        private var decrementButton: android.widget.Button? = null
-        private var incrementButton: android.widget.Button? = null
-        private var choiceDialog: AlertDialog? = null
+        private var decrementButton: TextView? = null
+        private var incrementButton: TextView? = null
+        private var choicePopup: PopupMenu? = null
         private var invalidNumericInput = false
         private var suppressNumericWatcher = false
         private val control = descriptor.control
@@ -204,7 +211,26 @@ class SettingsPanel(
         init {
             val titleRow = ui.row()
             titleRow.addView(title, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-            titleRow.addView(summary)
+            when (control) {
+                is MobileSettingControlDto.Boolean -> {
+                    booleanButton(false, titleRow)
+                    booleanButton(true, titleRow)
+                }
+                is MobileSettingControlDto.Choices -> {
+                    choiceButton = createChoiceButton().also {
+                        titleRow.addView(it, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                    }
+                }
+                is MobileSettingControlDto.Number -> {
+                    summary.gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                    titleRow.addView(summary, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, ui.dp(40)))
+                    val shape = control as MobileSettingControlDto.Number
+                    numericEdit = createNumberEditor(shape).also {
+                        titleRow.addView(it, LinearLayout.LayoutParams(ui.dp(92), ui.dp(40)))
+                    }
+                }
+                else -> titleRow.addView(summary)
+            }
             root.addView(titleRow)
             root.addView(controls)
             listOf(help, semantics, effect, feedback).filterNotNull().forEach {
@@ -224,40 +250,24 @@ class SettingsPanel(
             }
             interactable = enabled && attempt == boundAttempt && descriptor.access == MobileSettingAccessDto.WRITABLE
             setChildrenEnabled(controls, interactable)
+            booleanButtons.forEach { it.isEnabled = interactable }
+            choiceButton?.isEnabled = interactable &&
+                (control as? MobileSettingControlDto.Choices)?.choices?.any { it.writable } == true
             controls.alpha = if (interactable || descriptor.access == MobileSettingAccessDto.READ_ONLY) 1f else .55f
             updateSummary()
             updateFeedback()
         }
 
         fun dismissTransientUi() {
-            choiceDialog?.dismiss()
-            choiceDialog = null
+            choicePopup?.dismiss()
+            choicePopup = null
         }
 
         private fun buildControls() {
             if (descriptor.access == MobileSettingAccessDto.READ_ONLY) return
             when (val shape = control) {
-                is MobileSettingControlDto.Boolean -> {
-                    val line = ui.row()
-                    line.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                    booleanButton(false, line)
-                    booleanButton(true, line)
-                    controls.addView(line)
-                }
+                is MobileSettingControlDto.Boolean -> Unit // Boolean choices stay inline with their title.
                 is MobileSettingControlDto.Choices -> {
-                    val writable = shape.choices.filter { it.writable }
-                    val line = ui.row()
-                    val selected = ui.action(context.getString(R.string.setting_unknown)) {
-                        val values = writable.map { choiceLabel(it) }.toTypedArray()
-                        choiceDialog = AlertDialog.Builder(context).setItems(values) { _, which ->
-                            val choice = writable.getOrNull(which) ?: return@setItems
-                            edit(MobileSettingValueDto.Choice(choice.id))
-                        }.show()
-                    }
-                    choiceButton = selected
-                    line.addView(selected, LinearLayout.LayoutParams(-1, LayoutParams.WRAP_CONTENT))
-                    controls.addView(line)
-                    if (writable.isEmpty()) selected.isEnabled = false
                     val buttons = ui.row().apply { gravity = Gravity.END }
                     val apply = ui.action(ui.label("controls.apply"), primary = true) {
                         draft?.let { send(it) }
@@ -274,62 +284,160 @@ class SettingsPanel(
             }
         }
 
+        private fun createChoiceButton() = TextView(context).apply {
+            textSize = 17f
+            setTextColor(ui.foreground)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            setPadding(ui.dp(8), 0, 0, 0)
+            minHeight = ui.dp(44)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showChoices(this) }
+            contentDescription = ui.label(descriptor.labelKey)
+            tag = "settings.picker.${descriptor.id}"
+        }
+
+        private fun showChoices(anchor: View) {
+            val options = (control as? MobileSettingControlDto.Choices)?.choices.orEmpty().filter { it.writable }
+            if (options.isEmpty()) return
+            val popup = PopupMenu(context, anchor)
+            options.forEachIndexed { index, choice -> popup.menu.add(0, index, index, choiceLabel(choice)) }
+            popup.setOnMenuItemClickListener { item ->
+                val choice = options.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+                edit(MobileSettingValueDto.Choice(choice.id))
+                true
+            }
+            choicePopup?.dismiss()
+            choicePopup = popup
+            popup.setOnDismissListener { if (choicePopup === popup) choicePopup = null }
+            popup.show()
+        }
+
         private fun booleanButton(value: Boolean, into: LinearLayout) {
             val button = ui.action(ui.label(if (value) "controls.on" else "settings.choice.off")) {
                 send(MobileSettingValueDto.Boolean(value))
+            }.apply {
+                tag = value
+                contentDescription = formatLabel(
+                    "controls.boolean.action", ui.label(descriptor.labelKey),
+                    ui.label(if (value) "controls.on" else "settings.choice.off"),
+                )
+                minimumHeight = ui.dp(44)
+                minHeight = ui.dp(44)
+                setPadding(ui.dp(8), 0, ui.dp(8), 0)
+                background = RippleDrawable(
+                    ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
+                    ui.rounded(10, Color.TRANSPARENT, false), null,
+                )
             }
-            button.tag = value
-            button.contentDescription = formatLabel(
-                "controls.boolean.action", ui.label(descriptor.labelKey),
-                ui.label(if (value) "controls.on" else "settings.choice.off"),
-            )
-            button.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                marginStart = ui.dp(6)
+            button.layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, ui.dp(44)).apply {
+                marginStart = ui.dp(4)
             }
+            booleanButtons += button
             into.addView(button)
+        }
+
+        private fun stepperSegment(symbol: String) = ui.text(symbol, 22f, true).apply {
+            gravity = Gravity.CENTER
+            minWidth = ui.dp(44)
+            minimumHeight = ui.dp(44)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { }
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = android.widget.Button::class.java.name
+                    info.isClickable = true
+                }
+            }
+        }
+
+        private fun createNumberEditor(shape: MobileSettingControlDto.Number) = EditText(context).apply {
+            textSize = 17f
+            setTextColor(ui.foreground)
+            setHintTextColor(ui.muted)
+            hint = "—"
+            setSelectAllOnFocus(false)
+            background = null
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            minimumWidth = ui.dp(64)
+            minHeight = ui.dp(40)
+            setPadding(0, 0, 0, 0)
+            tag = "settings.editor.${descriptor.id}"
+            contentDescription = "${ui.label(descriptor.labelKey)}: —"
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+            setSingleLine(true)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    if (suppressNumericWatcher) return
+                    val parsed = parseFixed(s?.toString().orEmpty(), shape.precision.toInt())
+                    val nextDraft = parsed?.takeIf { it in shape.minimum..shape.maximum }?.let { MobileSettingValueDto.Number(it) }
+                    if (nextDraft != draft) {
+                        draft = nextDraft
+                        submitted = null
+                        pendingLocalSubmission = false
+                        failure = null
+                    }
+                    invalidNumericInput = parsed == null || parsed !in shape.minimum..shape.maximum
+                    updateSummary(); updateFeedback()
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
         }
 
         private fun buildNumber(shape: MobileSettingControlDto.Number) {
             val line = ui.row()
-            val input = EditText(context).apply {
-                textSize = 17f
-                setTextColor(ui.foreground)
-                setHintTextColor(ui.muted)
-                hint = ui.label("settings.value.draft")
-                tag = "settings.editor.${descriptor.id}"
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
-                setSingleLine(true)
-                addTextChangedListener(object : TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                        if (suppressNumericWatcher) return
-                        val parsed = parseFixed(s?.toString().orEmpty(), shape.precision.toInt())
-                        val nextDraft = parsed?.takeIf { it in shape.minimum..shape.maximum }?.let { MobileSettingValueDto.Number(it) }
-                        if (nextDraft != draft) {
-                            draft = nextDraft
-                            submitted = null
-                            pendingLocalSubmission = false
-                            failure = null
-                        }
-                        invalidNumericInput = parsed == null || parsed !in shape.minimum..shape.maximum
+            val slider = SeekBar(context).apply {
+                tag = "settings.slider.${descriptor.id}"
+                contentDescription = ui.label(descriptor.labelKey)
+                progressTintList = ColorStateList.valueOf(ui.muted)
+                progressBackgroundTintList = ColorStateList.valueOf(ui.stroke)
+                thumbTintList = ColorStateList.valueOf(ui.muted)
+                max = sliderMaximum(shape)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        if (!fromUser) return
+                        val value = sliderValue(shape, progress)
+                        draft = MobileSettingValueDto.Number(value)
+                        submitted = null
+                        pendingLocalSubmission = false
+                        failure = null
+                        invalidNumericInput = false
+                        setNumericText(formatFixed(value, shape.precision.toInt()), force = true)
                         updateSummary(); updateFeedback()
                     }
-                    override fun afterTextChanged(s: Editable?) = Unit
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
                 })
             }
-            numericEdit = input
-            input.minimumHeight = ui.dp(52)
-            input.contentDescription = ui.label(descriptor.labelKey)
-            line.addView(input, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-            val decrement = ui.action("−") { step(shape, false) }
-                .apply { contentDescription = context.getString(R.string.setting_decrease, ui.label(descriptor.labelKey), "") }
-            val increment = ui.action("+") { step(shape, true) }
-                .apply { contentDescription = context.getString(R.string.setting_increase, ui.label(descriptor.labelKey), "") }
+            numericSlider = slider
+            line.addView(slider, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+
+            val stepper = ui.row().apply {
+                background = ui.rounded(28, Color.rgb(69, 69, 72), outlined = false)
+                setPadding(ui.dp(4), 0, ui.dp(4), 0)
+                minimumHeight = ui.dp(44)
+            }
+            val decrement = stepperSegment("−").apply {
+                contentDescription = context.getString(R.string.setting_decrease, ui.label(descriptor.labelKey), "")
+                setOnClickListener { step(shape, false) }
+            }
             decrementButton = decrement
+            val increment = stepperSegment("+").apply {
+                contentDescription = context.getString(R.string.setting_increase, ui.label(descriptor.labelKey), "")
+                setOnClickListener { step(shape, true) }
+            }
             incrementButton = increment
-            line.addView(decrement)
-            line.addView(increment)
+            stepper.addView(decrement, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+            stepper.addView(ui.divider().apply {
+                layoutParams = LinearLayout.LayoutParams(ui.dp(1), ui.dp(26))
+            })
+            stepper.addView(increment, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+            line.addView(stepper, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, ui.dp(44)))
             controls.addView(line)
+
             val buttons = ui.row().apply { gravity = Gravity.END }
             if (shape.canDisable) buttons.addView(ui.action(ui.label("settings.choice.off")) {
                 edit(MobileSettingValueDto.Disabled)
@@ -345,6 +453,33 @@ class SettingsPanel(
             applyButton = apply
             buttons.addView(apply)
             controls.addView(buttons)
+        }
+
+        private fun sliderMaximum(shape: MobileSettingControlDto.Number): Int {
+            val editorStep = shape.editorStep.toLong().coerceAtLeast(1L)
+            val range = shape.maximum.toLong() - shape.minimum.toLong()
+            if (range <= 0) return 1
+            return ((range + editorStep - 1) / editorStep).coerceIn(1L, 10_000L).toInt()
+        }
+
+        private fun sliderProgress(shape: MobileSettingControlDto.Number, value: Int): Int {
+            val minimum = shape.minimum.toLong()
+            val range = shape.maximum.toLong() - minimum
+            val editorStep = shape.editorStep.toLong().coerceAtLeast(1L)
+            val ticks = sliderMaximum(shape).toLong()
+            if (range <= 0) return 0
+            val maxIndex = (range + editorStep - 1) / editorStep
+            val index = ((value.toLong() - minimum).coerceAtLeast(0) + editorStep / 2) / editorStep
+            return ((index * ticks + maxIndex / 2) / maxIndex).toInt().coerceIn(0, ticks.toInt())
+        }
+
+        private fun sliderValue(shape: MobileSettingControlDto.Number, progress: Int): Int {
+            val minimum = shape.minimum.toLong()
+            val range = shape.maximum.toLong() - minimum
+            val editorStep = shape.editorStep.toLong().coerceAtLeast(1L)
+            val ticks = sliderMaximum(shape).toLong()
+            val index = ((progress.toLong().coerceIn(0L, ticks) * ((range + editorStep - 1) / editorStep) + ticks / 2) / ticks)
+            return (minimum + index * editorStep).coerceAtMost(shape.maximum.toLong()).toInt()
         }
 
         private fun step(shape: MobileSettingControlDto.Number, increasing: Boolean) {
@@ -373,8 +508,12 @@ class SettingsPanel(
 
         private fun edit(value: MobileSettingValueDto) {
             draft = value; submitted = null; pendingLocalSubmission = false; failure = null; invalidNumericInput = false
-            if (value is MobileSettingValueDto.Number) {
-                (control as? MobileSettingControlDto.Number)?.let { setNumericText(formatFixed(value.value, it.precision.toInt()), force = true) }
+            when (value) {
+                is MobileSettingValueDto.Number -> (control as? MobileSettingControlDto.Number)?.let {
+                    setNumericText(formatFixed(value.value, it.precision.toInt()), force = true)
+                }
+                is MobileSettingValueDto.Disabled -> setNumericText("", force = true)
+                else -> Unit
             }
             updateSummary(); updateFeedback()
         }
@@ -503,7 +642,36 @@ class SettingsPanel(
             }
             summary.text = if (requested == null) primary else "$primary\n${ui.label("settings.value.requested")}: ${valueText(requested)}"
             if (control is MobileSettingControlDto.Number) {
-                numericEdit?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(draft ?: current)}"
+                val numeric = control as MobileSettingControlDto.Number
+                val numberValue = (draft as? MobileSettingValueDto.Number) ?: (current as? MobileSettingValueDto.Number)
+                val labels = mutableListOf<String>()
+                if (draft != null && draft != current) {
+                    labels += ui.label(if (draft == submitted && state?.requested == draft) "settings.value.requested" else "settings.value.draft")
+                } else if (current != null) {
+                    labels += ui.label(sourceKey(state?.currentSource))
+                } else {
+                    labels += ui.label(sourceKey(state?.currentSource))
+                }
+                val requested = state?.requested?.takeIf {
+                    it != current && it != draft && state?.status != MobileSettingStatusDto.IDLE &&
+                        state?.status != MobileSettingStatusDto.CONFIRMED
+                }
+                if (requested != null) labels += ui.label("settings.value.requested")
+                summary.text = labels.joinToString(" / ")
+                val editText = numberValue?.let { formatFixed(it.value, numeric.precision.toInt()) }.orEmpty()
+                if (!invalidNumericInput && numericEdit?.hasFocus() != true && numericEdit?.text?.toString() != editText) {
+                    setNumericText(editText)
+                }
+                numericEdit?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(numberValue)}"
+                numericSlider?.let { seek ->
+                    val active = draft ?: current
+                    val raw = (active as? MobileSettingValueDto.Number)?.value
+                    val progress = raw?.let { sliderProgress(numeric, it) } ?: 0
+                    if (seek.progress != progress) seek.progress = progress
+                    val hasBase = draft != null || current != null
+                    seek.isEnabled = interactable && hasBase && numeric.minimum < numeric.maximum && numeric.editorStep > 0
+                    seek.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(active)}"
+                }
                 decrementButton?.contentDescription = context.getString(
                     R.string.setting_decrease, ui.label(descriptor.labelKey), valueText(draft ?: current),
                 )
@@ -513,44 +681,47 @@ class SettingsPanel(
                 applyButton?.contentDescription = "${formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
             }
             if (control is MobileSettingControlDto.Choices) {
-                choiceButton?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(draft ?: current)}"
+                val displayed = draft ?: current
+                choiceButton?.text = "${valueText(displayed)}  ⌃⌄"
+                choiceButton?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(displayed)}"
                 applyButton?.contentDescription = "${formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
-                choiceButton?.text = valueText(draft ?: current)
-                choiceButton?.isEnabled = interactable && control.choices.any { it.writable }
+                summary.text = if (displayed == null) "" else ui.label(
+                    if (draft != null && draft != current) "settings.value.draft" else sourceKey(state?.currentSource),
+                )
             }
             val selected = when {
                 failure != null || state?.transport == MobileSettingTransportStatusDto.REJECTED -> current
                 state?.status == MobileSettingStatusDto.WAITING_FOR_CONFIRMATION || state?.status == MobileSettingStatusDto.SENT_WITHOUT_CONFIRMATION -> state?.requested
                 else -> current
             }
-            (controls.getChildAt(0) as? LinearLayout)?.let { line ->
-                for (index in 0 until line.childCount) {
-                    val child = line.getChildAt(index)
-                    if (child.tag is Boolean) {
-                        val chosenBoolean = selected as? MobileSettingValueDto.Boolean
-                        val isSelected = chosenBoolean?.value == child.tag
-                        child.alpha = if (isSelected) 1f else .65f
-                        child.isSelected = isSelected
-                        val selectionState = when {
-                            !isSelected -> null
-                            state?.requested == selected &&
-                                (state?.status == MobileSettingStatusDto.WAITING_FOR_CONFIRMATION ||
-                                    state?.status == MobileSettingStatusDto.SENT_WITHOUT_CONFIRMATION) ->
-                                ui.label("controls.accessibility.requested")
-                            state?.current == selected -> when (state?.currentSource) {
-                                MobileSettingValueSourceDto.LIVE_READBACK -> ui.label("controls.accessibility.reported")
-                                MobileSettingValueSourceDto.CAPTURE_REPLAY -> ui.label("settings.value.replay")
-                                MobileSettingValueSourceDto.USER_REQUEST -> ui.label("controls.accessibility.requested")
-                                else -> null
-                            }
-                            else -> null
-                        }
-                        val option = ui.label(if (child.tag == true) "controls.on" else "settings.choice.off")
-                        child.contentDescription = formatLabel(
-                            "controls.boolean.action", ui.label(descriptor.labelKey), option,
-                        ) + selectionState?.let { ", $it" }.orEmpty()
+            booleanButtons.forEach { child ->
+                val value = child.tag as? Boolean ?: return@forEach
+                val isSelected = (selected as? MobileSettingValueDto.Boolean)?.value == value
+                child.alpha = 1f
+                child.isSelected = isSelected
+                child.background = RippleDrawable(
+                    ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
+                    ui.rounded(10, if (isSelected) ui.yellow else Color.TRANSPARENT, false), null,
+                )
+                child.setTextColor(if (isSelected) Color.BLACK else ui.foreground)
+                val selectionState = when {
+                    !isSelected -> null
+                    state?.requested == selected &&
+                        (state?.status == MobileSettingStatusDto.WAITING_FOR_CONFIRMATION ||
+                            state?.status == MobileSettingStatusDto.SENT_WITHOUT_CONFIRMATION) ->
+                        ui.label("controls.accessibility.requested")
+                    state?.current == selected -> when (state?.currentSource) {
+                        MobileSettingValueSourceDto.LIVE_READBACK -> ui.label("controls.accessibility.reported")
+                        MobileSettingValueSourceDto.CAPTURE_REPLAY -> ui.label("settings.value.replay")
+                        MobileSettingValueSourceDto.USER_REQUEST -> ui.label("controls.accessibility.requested")
+                        else -> null
                     }
+                    else -> null
                 }
+                val option = ui.label(if (value) "controls.on" else "settings.choice.off")
+                child.contentDescription = formatLabel(
+                    "controls.boolean.action", ui.label(descriptor.labelKey), option,
+                ) + selectionState?.let { ", $it" }.orEmpty()
             }
             val changed = draft != null && draft != current
             val hasNumericBase = draft != null || current != null
@@ -597,9 +768,10 @@ class SettingsPanel(
     private fun choiceLabel(choice: MobileSettingChoiceDto) = ui.label(choice.labelKey)
 
     private fun sourceKey(source: MobileSettingValueSourceDto?) = when (source) {
+        MobileSettingValueSourceDto.LIVE_READBACK -> "settings.value.wheel"
         MobileSettingValueSourceDto.CAPTURE_REPLAY -> "settings.value.replay"
         MobileSettingValueSourceDto.USER_REQUEST -> "settings.value.requested"
-        else -> "settings.value.wheel"
+        MobileSettingValueSourceDto.UNKNOWN, null -> "settings.value.wheel"
     }
 
     private fun effectLabel(effect: MobileSettingApplyEffectDto) = when (effect) {

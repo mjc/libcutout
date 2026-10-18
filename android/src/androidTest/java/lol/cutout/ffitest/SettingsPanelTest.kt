@@ -5,6 +5,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.SeekBar
+import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
 import java.math.BigDecimal
 import lol.cutout.MainActivity
@@ -140,11 +142,18 @@ open class SettingsPanelTest {
                 }
                 val numericRow = descendants(panel).firstOrNull { it.tag == numericDescriptor.id }
                     ?: error("Missing numeric row")
-                val decrement = descendants(numericRow).filterIsInstance<Button>()
+                val decrement = descendants(numericRow).filterIsInstance<TextView>()
                     .firstOrNull { it.text.toString() == "−" }
                 val decrementLabel = activity.getString(R.string.setting_decrease, numericName, "")
                 check(decrement?.contentDescription.toString().startsWith(decrementLabel.substringBeforeLast(":"))) {
-                    "Numeric decrement button has no accessible purpose"
+                    "Numeric decrement control has no accessible purpose"
+                }
+                check(decrement?.createAccessibilityNodeInfo()?.className == Button::class.java.name) {
+                    "Numeric stepper segment is not exposed with native button semantics"
+                }
+                val slider = tagged<SeekBar>(panel, "settings.slider.${numericDescriptor.id}")
+                check(slider.max > 0 && slider.contentDescription.toString().startsWith("$numericName:")) {
+                    "Numeric setting does not expose the descriptor-backed range slider"
                 }
             }
         } finally {
