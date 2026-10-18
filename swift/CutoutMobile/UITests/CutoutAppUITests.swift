@@ -2555,7 +2555,9 @@ final class CutoutAppUITests: XCTestCase {
         enterCapture()
         let recording = app.descendants(matching: .any)["capture.screen"]
         let stationary = app.buttons["capture.label.powered_on_stationary.action"]
-        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
         stationary.tap()
         XCTAssertEqual(stationary.label, "Stop Stationary")
 
@@ -2586,7 +2588,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(worksheet.waitForNonExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(recording.waitForExistence(timeout: 5), app.debugDescription)
         for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
-        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
         XCTAssertEqual(stationary.label, "Stop Stationary")
         XCTAssertTrue(app.buttons["capture.stop"].isEnabled)
         XCTAssertFalse(app.buttons["capture.settings.observations"].exists)
@@ -2642,7 +2646,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
         for _ in 0..<6 where !stationary.isHittable { recording.swipeDown() }
-        scrollElementFrameIntoViewport(stationary, in: recording, maxScrolls: 6)
+        scrollElementFrameIntoViewport(
+            stationary, in: recording, maxScrolls: 6, occludedBy: app.buttons["capture.stop"]
+        )
         XCTAssertEqual(stationary.label, "Stop Stationary")
 
         openWorksheet()
@@ -2658,7 +2664,9 @@ final class CutoutAppUITests: XCTestCase {
         saveValues.tap()
         XCTAssertTrue(worksheet.waitForNonExistence(timeout: 10), app.debugDescription)
         let observations = app.buttons["capture.settings.observations"]
-        scrollElementFrameIntoViewport(observations, in: recording, maxScrolls: 8)
+        scrollElementFrameIntoViewport(
+            observations, in: recording, maxScrolls: 8, occludedBy: app.buttons["capture.stop"]
+        )
         observations.tap()
         let review = app.descendants(matching: .any)["capture.settings.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))

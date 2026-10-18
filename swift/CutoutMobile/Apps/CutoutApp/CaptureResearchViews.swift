@@ -281,6 +281,7 @@ struct CaptureSettingsWorksheet: View {
                 }
             }
         }
+        .accessibilityIdentifier("capture.settings.worksheet")
         .disabled(isSaving)
         .searchable(text: $search, prompt: "Find a setting")
         .scrollDismissesKeyboard(.interactively)
@@ -315,7 +316,6 @@ struct CaptureSettingsWorksheet: View {
         }
         .tint(PevColors.yellow)
         .interactiveDismissDisabled(isSaving)
-        .accessibilityIdentifier("capture.settings.worksheet")
     }
 
     private func matches(_ field: MobileCaptureResearchFieldDto) -> Bool {
