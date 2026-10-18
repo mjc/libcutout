@@ -992,10 +992,11 @@ impl<R: Read> PevcapReader<R> {
         self.replay_into_host_inner(mode, host, outputs, Some(contains_link_up), |_, _| {})
     }
 
-    /// Replays each original record after allowing the caller to install its context.
+    /// Replays with caller-owned context around each original record.
     ///
-    /// The callback runs once for every record, including outbound writes, before
-    /// link handling or notification chunking and after any synthetic link-up.
+    /// The callback receives Before and After once for every record, including
+    /// outbound writes. Before follows any synthetic link-up and precedes explicit
+    /// link handling or notification chunking; After follows the complete host input.
     ///
     /// # Errors
     ///
@@ -1006,12 +1007,12 @@ impl<R: Read> PevcapReader<R> {
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
         contains_link_up: bool,
-        before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+        record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     ) -> Result<PevcapReplayStats, PevcapStreamError>
     where
         S: ProtocolSession,
     {
-        self.replay_into_host_inner(mode, host, outputs, Some(contains_link_up), before_record)
+        self.replay_into_host_inner(mode, host, outputs, Some(contains_link_up), record_context)
     }
 
     fn replay_into_host_inner<S>(
@@ -1020,7 +1021,7 @@ impl<R: Read> PevcapReader<R> {
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
         contains_link_up: Option<bool>,
-        mut before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+        mut record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     ) -> Result<PevcapReplayStats, PevcapStreamError>
     where
         S: ProtocolSession,
@@ -1050,7 +1051,7 @@ impl<R: Read> PevcapReader<R> {
                 stats.replay_input_count += 1;
             }
             saw_record = true;
-            before_record(&record, host);
+            record_context(PevcapReplayRecord::Before(&record), host);
             match record.direction {
                 PevcapDirection::LinkUp => host.ingest_link_up(LinkInfo {
                     monotonic_ms: record.monotonic_ms,
@@ -1059,11 +1060,10 @@ impl<R: Read> PevcapReader<R> {
                 PevcapDirection::LinkDown => host.ingest_link_down(),
                 PevcapDirection::Inbound => {
                     replay_pevcap_notification(&record, mode, host, outputs);
-                    stats.replay_input_count += 1;
-                    continue;
                 }
                 PevcapDirection::Outbound => {}
             }
+            record_context(PevcapReplayRecord::After(&record), host);
             host.drain_outputs_into(outputs);
             if record.direction != PevcapDirection::Outbound {
                 stats.replay_input_count += 1;
@@ -1122,10 +1122,11 @@ impl<R: Read> PevcapReader<R> {
         self.replay_semantic_events_inner(mode, session, Some(contains_link_up), |_, _| {})
     }
 
-    /// Collects semantic events after allowing context installation once per original record.
+    /// Collects semantic events with caller-owned context around each original record.
     ///
-    /// The callback includes outbound writes, precedes link handling and notification
-    /// chunking, and follows any synthetic link-up.
+    /// The callback receives Before and After once for each record, including outbound
+    /// writes. Before follows any synthetic link-up; After follows the complete input,
+    /// including all notification chunks.
     ///
     /// # Errors
     ///
@@ -1135,12 +1136,12 @@ impl<R: Read> PevcapReader<R> {
         mode: PevcapReplayMode<'_>,
         session: S,
         contains_link_up: bool,
-        before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+        record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats), PevcapReplayError>
     where
         S: ProtocolSession,
     {
-        self.replay_semantic_events_inner(mode, session, Some(contains_link_up), before_record)
+        self.replay_semantic_events_inner(mode, session, Some(contains_link_up), record_context)
     }
 
     fn replay_semantic_events_inner<S>(
@@ -1148,7 +1149,7 @@ impl<R: Read> PevcapReader<R> {
         mode: PevcapReplayMode<'_>,
         session: S,
         contains_link_up: Option<bool>,
-        mut before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+        mut record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats), PevcapReplayError>
     where
         S: ProtocolSession,
@@ -1186,7 +1187,7 @@ impl<R: Read> PevcapReader<R> {
                 stats.replay_input_count += 1;
             }
             saw_record = true;
-            before_record(&record, &mut host);
+            record_context(PevcapReplayRecord::Before(&record), &mut host);
             match record.direction {
                 PevcapDirection::LinkUp => host.ingest_link_up(LinkInfo {
                     monotonic_ms: record.monotonic_ms,
@@ -1202,11 +1203,10 @@ impl<R: Read> PevcapReader<R> {
                         &mut events,
                         DEFAULT_REPLAY_OUTPUT_LIMIT,
                     )?;
-                    stats.replay_input_count += 1;
-                    continue;
                 }
                 PevcapDirection::Outbound => {}
             }
+            record_context(PevcapReplayRecord::After(&record), &mut host);
             drain_semantic_events_checked(
                 &mut host,
                 &mut outputs,
@@ -2347,22 +2347,22 @@ impl PevcapCapture {
         self.replay_mode_into_host(PevcapReplayMode::Whole, host, outputs);
     }
 
-    /// Replays with caller-owned context installed once before each original record.
+    /// Replays with caller-owned context around each original record.
     ///
-    /// Outbound writes receive the callback but remain audit records rather than
-    /// host inputs. The callback precedes explicit link handling and notification
-    /// chunking, and follows any synthetic link-up.
+    /// Every record, including outbound audit writes, receives Before and After once.
+    /// Before follows any synthetic link-up and precedes explicit link handling and
+    /// notification chunking. After follows the complete record's host application.
     pub fn replay_with_record_context<S>(
         &self,
         mode: PevcapReplayMode<'_>,
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
-        before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+        record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     ) where
         S: ProtocolSession,
     {
         let result: Result<(), Infallible> =
-            replay_pevcap_capture(self, host, before_record, |step, host| {
+            replay_pevcap_capture(self, host, record_context, |step, host| {
                 match step {
                     PevcapReplayStep::Drain => host.drain_outputs_into(outputs),
                     PevcapReplayStep::Notification(record) => {
@@ -2809,6 +2809,15 @@ impl PevcapCapture {
     }
 }
 
+/// Original-record boundary exposed to caller-owned replay context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PevcapReplayRecord<'a> {
+    /// Before explicit link handling or notification chunking, after any synthetic link-up.
+    Before(&'a PevcapRecord),
+    /// After the complete record has been applied to the host, before the next record.
+    After(&'a PevcapRecord),
+}
+
 /// Notification chunking mode used by PEVCAP replay.
 #[derive(Clone, Copy, Debug)]
 pub enum PevcapReplayMode<'a> {
@@ -2874,7 +2883,7 @@ enum PevcapReplayStep<'a> {
 fn replay_pevcap_capture<S, E>(
     capture: &PevcapCapture,
     host: &mut HostSession<S>,
-    mut before_record: impl FnMut(&PevcapRecord, &mut HostSession<S>),
+    mut record_context: impl FnMut(PevcapReplayRecord<'_>, &mut HostSession<S>),
     mut handle_step: impl FnMut(PevcapReplayStep<'_>, &mut HostSession<S>) -> Result<(), E>,
 ) -> Result<(), E>
 where
@@ -2893,7 +2902,7 @@ where
     }
 
     for record in &capture.records {
-        before_record(record, host);
+        record_context(PevcapReplayRecord::Before(record), host);
         match record.direction {
             PevcapDirection::LinkUp => {
                 host.ingest_link_up(LinkInfo {
@@ -2904,10 +2913,10 @@ where
             PevcapDirection::LinkDown => host.ingest_link_down(),
             PevcapDirection::Inbound => {
                 handle_step(PevcapReplayStep::Notification(record), host)?;
-                continue;
             }
             PevcapDirection::Outbound => {}
         }
+        record_context(PevcapReplayRecord::After(record), host);
         handle_step(PevcapReplayStep::Drain, host)?;
     }
 
@@ -4252,13 +4261,40 @@ mod tests {
     }
 
     #[cfg(feature = "serde")]
+    #[derive(Default)]
+    struct RecordContextLog {
+        started: Vec<PevcapDirection>,
+        completed: Vec<PevcapDirection>,
+        expected_bytes: usize,
+    }
+
+    #[cfg(feature = "serde")]
     fn install_record_context(
-        record: &PevcapRecord,
+        phase: PevcapReplayRecord<'_>,
         host: &mut HostSession<RecordingSession>,
-        seen: &mut Vec<PevcapDirection>,
+        seen: &mut RecordContextLog,
     ) {
-        seen.push(record.direction);
-        host.protocol_session_mut().record_context = seen.len();
+        match phase {
+            PevcapReplayRecord::Before(record) => {
+                assert_eq!(
+                    seen.completed, seen.started,
+                    "prior record must finish first"
+                );
+                seen.started.push(record.direction);
+                if record.direction == PevcapDirection::Inbound {
+                    seen.expected_bytes += record.bytes.len();
+                }
+                host.protocol_session_mut().record_context = seen.started.len();
+            }
+            PevcapReplayRecord::After(record) => {
+                assert_eq!(
+                    host.protocol_session().bytes.borrow().len(),
+                    seen.expected_bytes
+                );
+                seen.completed.push(record.direction);
+                host.protocol_session_mut().record_context = 0;
+            }
+        }
     }
 
     #[cfg(feature = "serde")]
@@ -4271,7 +4307,7 @@ mod tests {
         let observed = Rc::clone(&recorder.input_contexts);
         let mut host = HostSession::new(recorder);
         let mut outputs = Vec::new();
-        let mut seen = Vec::new();
+        let mut seen = RecordContextLog::default();
         capture.replay_with_record_context(mode, &mut host, &mut outputs, |record, host| {
             install_record_context(record, host, &mut seen);
         });
@@ -4280,7 +4316,8 @@ mod tests {
             .iter()
             .map(|record| record.direction)
             .collect();
-        assert_eq!(seen, expected_records);
+        assert_eq!(seen.started, expected_records);
+        assert_eq!(seen.completed, expected_records);
         assert_eq!(outputs, replay_outputs(capture, mode));
         let contexts = observed.borrow().clone();
         if !contains_link_up {
@@ -4310,7 +4347,7 @@ mod tests {
             let observed = Rc::clone(&recorder.input_contexts);
             let mut host = HostSession::new(recorder);
             let mut streamed_outputs = Vec::new();
-            let mut streamed_seen = Vec::new();
+            let mut streamed_seen = RecordContextLog::default();
             let stats = reader
                 .replay_into_host_with_record_context(
                     mode,
@@ -4320,7 +4357,8 @@ mod tests {
                     |record, host| install_record_context(record, host, &mut streamed_seen),
                 )
                 .unwrap();
-            assert_eq!(streamed_seen, expected_records);
+            assert_eq!(streamed_seen.started, expected_records);
+            assert_eq!(streamed_seen.completed, expected_records);
             assert_eq!(*observed.borrow(), contexts);
             assert_eq!(streamed_outputs, outputs);
             assert_eq!(stats.replay_input_count, capture.replay_input_count());
@@ -4328,7 +4366,7 @@ mod tests {
             let mut reader = PevcapReader::new(Cursor::new(bytes), encoding).unwrap();
             let recorder = RecordingSession::default();
             let observed = Rc::clone(&recorder.input_contexts);
-            let mut semantic_seen = Vec::new();
+            let mut semantic_seen = RecordContextLog::default();
             let (events, semantic_stats) = reader
                 .replay_semantic_events_with_record_context(
                     mode,
@@ -4344,7 +4382,8 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(semantic_seen, expected_records);
+            assert_eq!(semantic_seen.started, expected_records);
+            assert_eq!(semantic_seen.completed, expected_records);
             assert_eq!(*observed.borrow(), contexts);
             assert_eq!(events, expected_events);
             assert_eq!(semantic_stats, stats);
