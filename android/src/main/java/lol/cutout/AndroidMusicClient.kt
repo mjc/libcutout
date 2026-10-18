@@ -1,0 +1,920 @@
+package lol.cutout
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.provider.Settings
+import android.net.Uri
+import uniffi.cutout_mobile_ffi.*
+import java.io.Closeable
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
+
+data class AndroidMusicPresentation(
+    val selectedProvider: MobileMusicProviderDto = MobileMusicProviderDto.APPLE_MUSIC,
+    val snapshot: MobileMusicSnapshotDto? = null,
+    val listenerAccessGranted: Boolean = false,
+    val error: String? = null,
+    val artwork: Bitmap? = null,
+    val historyPolicy: MobileMusicHistoryPolicyDto = MobileMusicHistoryPolicyDto.DISABLED,
+    val history: MobileMusicHistoryDto? = null,
+    val historyError: String? = null,
+    val lastRecordedSequence: ULong? = null,
+)
+
+/** Receives lifecycle notifications from the OS-managed notification-listener service. */
+object AndroidMusicSessionBridge {
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    fun addListener(listener: () -> Unit): Closeable {
+        listeners += listener
+        return Closeable { listeners -= listener }
+    }
+    internal fun notifySessionsChanged() = listeners.forEach { it() }
+}
+
+/**
+ * Platform media-session adapter. It consumes only sessions exposed by Android after the user
+ * enables notification-listener access. Rust canonicalizes observations and admits commands.
+ */
+class AndroidMusicClient(
+    context: Context,
+    private val lifecycle: MobileMusicProviderLifecycle,
+    private val rides: RideMapRuntime,
+    private val onPresentation: (AndroidMusicPresentation) -> Unit = {},
+) : Closeable, RideMapStopAdmissionFence {
+    private val appContext = context.applicationContext
+    private val main = Handler(Looper.getMainLooper())
+    private val artworkWorker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        { task -> Thread(task, "CutoutMusicArtwork").apply { isDaemon = true } },
+        ThreadPoolExecutor.DiscardOldestPolicy(),
+    )
+    private val artworkRequest = AtomicLong(0)
+    // Native callbacks are admitted before entering this FIFO. Core work is serialized through
+    // RideMapRuntime; this worker only waits for each lease and polls asynchronous receipts.
+    private val observationWorker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(32),
+        { task -> Thread(task, "CutoutMusicObservation").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+    private val historyWorker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(8),
+        { task -> Thread(task, "CutoutMusicHistory").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+    private val queuedObservations = AtomicLong(0)
+    private val manager = appContext.getSystemService(MediaSessionManager::class.java)
+    private val notificationListener = ComponentName(appContext, AndroidMusicNotificationListenerService::class.java)
+    private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private val observers = CopyOnWriteArrayList<(AndroidMusicPresentation) -> Unit>()
+    private val bridgeObservation = AndroidMusicSessionBridge.addListener { main.post { refreshSessions() } }
+    private var activeSessionListener: MediaSessionManager.OnActiveSessionsChangedListener? = null
+    private var currentController: MediaController? = null
+    private var currentControllerCallback: MediaController.Callback? = null
+    private var providerGeneration: MobileMusicProviderSessionId? = null
+    private var monitorGeneration: MobileMusicMonitorId? = null
+    private var selectedProvider = musicProviderFromStorage(preferences.getString(PROVIDER_KEY, null))
+    private var defaultHistoryPolicy = historyPolicyFromStorage(preferences.getString(HISTORY_POLICY_KEY, null))
+    @Volatile var latestPresentation = AndroidMusicPresentation(
+        selectedProvider = selectedProvider,
+        historyPolicy = defaultHistoryPolicy,
+    )
+        private set
+    private var closed = false
+    @Volatile private var acceptingObservations = true
+    @Volatile private var observationLifecycleReady = false
+
+    init {
+        rides.setFutureRideMusicHistoryPolicy(defaultHistoryPolicy)
+    }
+
+    fun observe(observer: (AndroidMusicPresentation) -> Unit): Closeable {
+        observers += observer
+        main.post { if (observer in observers) observer(latestPresentation) }
+        return Closeable { observers -= observer }
+    }
+
+    /** Opens Android's system page only after an explicit user action. */
+    fun notificationListenerSettingsIntent(): Intent =
+        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    fun hasNotificationListenerAccess(): Boolean {
+        val enabled = Settings.Secure.getString(appContext.contentResolver, "enabled_notification_listeners")
+            ?: return false
+        return enabled.split(':').any { flattened ->
+            val component = ComponentName.unflattenFromString(flattened)
+            component == notificationListener
+        }
+    }
+
+    /** Provider choice is an explicit app preference; it never launches that provider. */
+    fun selectProvider(provider: MobileMusicProviderDto) {
+        if (selectedProvider == provider) return
+        selectedProvider = provider
+        preferences.edit().putString(PROVIDER_KEY, musicProviderProfile(provider).storageKey).apply()
+        retireProvider()
+        publish(latestPresentation.copy(selectedProvider = provider, snapshot = null, artwork = null, error = null,
+            listenerAccessGranted = hasNotificationListenerAccess()))
+        if (hasNotificationListenerAccess()) refreshSessions()
+    }
+
+    /** The persisted Swift-equivalent preference used for rides created in the future. */
+    fun historyPolicyForNewRide(): MobileMusicHistoryPolicyDto = defaultHistoryPolicy
+
+    /** Call only after RideMapRuntime.bindMusicObservationLifecycle has completed successfully. */
+    fun markObservationLifecycleReady() {
+        val ready = {
+            observationLifecycleReady = true
+            refreshSessions()
+        }
+        if (Looper.myLooper() == main.looper) ready() else main.post(ready)
+    }
+
+    /** Refreshes active-ride privacy policy and its authoritative timeline from Rust/SQLite. */
+    fun refreshHistory() {
+        rides.withCore({ core ->
+            val snapshot = core.currentSnapshot(SystemClock.elapsedRealtime().toULong())
+            val active = snapshot?.state == MobileRideLifecycleStateDto.ACTIVE ||
+                snapshot?.state == MobileRideLifecycleStateDto.PAUSED
+            val policy = if (active) core.currentMusicHistoryPolicy() else defaultHistoryPolicy
+            val command = if (active) core.beginCurrentMusicHistory() else null
+            policy to command
+        }) { result ->
+            result.onSuccess { (policy, command) ->
+                if (command == null) {
+                    publish(latestPresentation.copy(historyPolicy = policy, history = null, historyError = null))
+                } else pollHistory(command, policy)
+            }.onFailure { error ->
+                publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+            }
+        }
+    }
+
+    /** Persists the default for future rides; if a ride is open, Rust commits its active policy. */
+    fun setHistoryPolicy(policy: MobileMusicHistoryPolicyDto, completed: (Result<Unit>) -> Unit = {}) {
+        main.post {
+            if (closed) {
+                completed(Result.failure(IllegalStateException("Music client is closed")))
+                return@post
+            }
+            val previous = defaultHistoryPolicy
+            defaultHistoryPolicy = policy
+            preferences.edit().putString(HISTORY_POLICY_KEY, historyPolicyStorageKey(policy)).apply()
+            rides.setFutureRideMusicHistoryPolicy(policy)
+            rides.withCore({ core ->
+                val snapshot = core.currentSnapshot(SystemClock.elapsedRealtime().toULong())
+                if (snapshot == null || snapshot.state != MobileRideLifecycleStateDto.ACTIVE &&
+                    snapshot.state != MobileRideLifecycleStateDto.PAUSED
+                ) {
+                    // A future-ride preference has no active Rust ride to mutate.
+                    null
+                } else {
+                    core.beginSetMusicHistoryPolicy(policy)
+                }
+            }) { result ->
+                result.onSuccess { command ->
+                    if (command == null) {
+                        publish(latestPresentation.copy(historyPolicy = policy, historyError = null))
+                        completed(Result.success(Unit))
+                    } else pollWrite(command) { write ->
+                        write.onSuccess {
+                            refreshHistory()
+                            completed(Result.success(Unit))
+                        }.onFailure { error ->
+                            defaultHistoryPolicy = previous
+                            preferences.edit().putString(HISTORY_POLICY_KEY, historyPolicyStorageKey(previous)).apply()
+                            rides.setFutureRideMusicHistoryPolicy(previous)
+                            publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+                            completed(Result.failure(error))
+                        }
+                    }
+                }.onFailure { error ->
+                    defaultHistoryPolicy = previous
+                    preferences.edit().putString(HISTORY_POLICY_KEY, historyPolicyStorageKey(previous)).apply()
+                    rides.setFutureRideMusicHistoryPolicy(previous)
+                    publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+                    completed(Result.failure(error))
+                }
+            }
+        }
+    }
+
+    /** Deletes active-ride music history only after Rust reports durable completion. */
+    fun deleteCurrentHistory(completed: (Result<Unit>) -> Unit = {}) {
+        rides.withCore({ it.beginDeleteCurrentMusicHistory() }) { result ->
+            result.onSuccess { command ->
+                pollWrite(command) { write ->
+                    write.onSuccess {
+                        refreshHistory()
+                        completed(Result.success(Unit))
+                    }.onFailure { error ->
+                        publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+                        completed(Result.failure(error))
+                    }
+                }
+            }.onFailure { error ->
+                publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+                completed(Result.failure(error))
+            }
+        }
+    }
+
+    /** Runs [completed] after every callback admitted before this call has settled in Rust. */
+    fun drainObservations(completed: () -> Unit) {
+        try {
+            observationWorker.execute { main.post(completed) }
+        } catch (_: RuntimeException) {
+            // A rejected barrier means the owner is closing; do not claim pending work settled.
+            main.post { publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_failed))) }
+        }
+    }
+
+    /** Freezes callback admission and drains the accepted FIFO before a ride Stop is submitted. */
+    fun prepareStopAfterObservations(completed: () -> Unit) {
+        val prepare = {
+            acceptingObservations = false
+            drainObservations(completed)
+        }
+        if (Looper.myLooper() == main.looper) prepare() else main.post(prepare)
+    }
+
+    override fun beforeRideStop(proceed: () -> Unit) = prepareStopAfterObservations(proceed)
+
+    override fun onRideStopFailed() = resumeObservations()
+
+    override fun onRideRecordingActive() = resumeObservations()
+
+    /** Reopens callback admission after a failed Stop or a new/resumed recording. */
+    fun resumeObservations() {
+        if (Looper.myLooper() == main.looper) acceptingObservations = true
+        else main.post { acceptingObservations = true }
+    }
+
+    /** Called after the user enables access or returns from system Settings. */
+    fun refreshSessions() {
+        if (closed) return
+        if (!observationLifecycleReady) return
+        val hasAccess = hasNotificationListenerAccess()
+        if (!hasAccess) {
+            detachSession()
+            publish(newPresentation(null, false, appContext.getString(R.string.music_access_required)))
+            return
+        }
+        if (monitorGeneration == null) startMonitoring()
+        try {
+            val sessions = manager?.getActiveSessions(notificationListener).orEmpty()
+            if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+                detachSession()
+                publish(newPresentation(soundcloudUnavailableSnapshot(SystemClock.elapsedRealtime().toULong()), true))
+                return
+            }
+            val matching = sessions.firstOrNull { providerForPackage(it.packageName) == selectedProvider }
+            attachSession(matching)
+        } catch (error: SecurityException) {
+            detachSession()
+            publish(newPresentation(null, false, error.message ?: appContext.getString(R.string.music_access_required)))
+        } catch (error: RuntimeException) {
+            detachSession()
+            publish(newPresentation(null, true, error.message ?: appContext.getString(R.string.music_session_unavailable)))
+        }
+    }
+
+    private fun startMonitoring() {
+        if (!observationLifecycleReady || monitorGeneration != null || !hasNotificationListenerAccess()) return
+        lifecycle.requestMonitor(MobileMusicProviderMonitorRequest.OBSERVE)
+        val effect = lifecycle.beginMonitor() ?: return
+        if (effect.start != MobileMusicProviderMonitorStart.OBSERVE) {
+            lifecycle.finishMonitor(effect.generation)
+            return
+        }
+        monitorGeneration = effect.generation
+        val listener = MediaSessionManager.OnActiveSessionsChangedListener { main.post { refreshSessions() } }
+        activeSessionListener = listener
+        try {
+            manager?.addOnActiveSessionsChangedListener(listener, notificationListener, Handler(main.looper))
+            refreshSessionsWithoutStarting()
+        } catch (_: SecurityException) {
+            lifecycle.finishMonitor(effect.generation)
+            monitorGeneration = null
+            publish(newPresentation(null, false, appContext.getString(R.string.music_access_required)))
+        }
+    }
+
+    private fun refreshSessionsWithoutStarting() {
+        try {
+            val sessions = manager?.getActiveSessions(notificationListener).orEmpty()
+            if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+                publish(newPresentation(soundcloudUnavailableSnapshot(SystemClock.elapsedRealtime().toULong()), true))
+                return
+            }
+            attachSession(sessions.firstOrNull { providerForPackage(it.packageName) == selectedProvider })
+        } catch (_: SecurityException) {
+            publish(newPresentation(null, false, appContext.getString(R.string.music_access_required)))
+        }
+    }
+
+    private fun attachSession(controller: MediaController?) {
+        if (currentController?.sessionToken == controller?.sessionToken) {
+            controller?.let(::observeController)
+            return
+        }
+        detachSession()
+        if (controller == null) {
+            publish(newPresentation(unavailableSnapshot(), true, appContext.getString(R.string.music_no_active_session)))
+            return
+        }
+        currentController = controller
+        providerGeneration = lifecycle.beginProviderSession()
+        val callback = object : MediaController.Callback() {
+            override fun onMetadataChanged(metadata: MediaMetadata?) = observeController(controller)
+            override fun onPlaybackStateChanged(state: PlaybackState?) = observeController(controller)
+            override fun onSessionDestroyed() {
+                main.post { if (currentController === controller) refreshSessions() }
+            }
+        }
+        currentControllerCallback = callback
+        try {
+            controller.registerCallback(callback, Handler(main.looper))
+            observeController(controller)
+        } catch (error: RuntimeException) {
+            detachSession()
+            publish(newPresentation(null, true, error.message ?: appContext.getString(R.string.music_session_unavailable)))
+        }
+    }
+
+    private fun observeController(controller: MediaController) {
+        if (!acceptingObservations || currentController !== controller || providerForPackage(controller.packageName) != selectedProvider) return
+        val snapshot = project(controller)
+        val metadata = controller.metadata
+        val immediateArtwork = boundedArtwork(metadata)
+        val wallClockAtMs = System.currentTimeMillis().toULong()
+        val request = lifecycle.beginMusicObservation()
+        when (val admission = request.admission()) {
+            is MobileMusicObservationAdmission.Admitted -> {
+                queuedObservations.incrementAndGet()
+                try {
+                    observationWorker.execute {
+                        try {
+                            processObservation(request, admission.lease, snapshot, immediateArtwork, wallClockAtMs)
+                        } catch (error: Exception) {
+                            request.failRequiredEffects()
+                            main.post {
+                                publish(latestPresentation.copy(
+                                    error = error.message ?: appContext.getString(R.string.music_observation_failed),
+                                ))
+                            }
+                        } finally {
+                            request.release()
+                            request.close()
+                            queuedObservations.decrementAndGet()
+                        }
+                    }
+                } catch (error: RuntimeException) {
+                    request.failRequiredEffects()
+                    request.release()
+                    request.close()
+                    queuedObservations.decrementAndGet()
+                    publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_failed)))
+                }
+                if (immediateArtwork == null) loadArtworkUri(controller, metadata)
+            }
+            MobileMusicObservationAdmission.Full -> {
+                request.close()
+                publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_queue_full)))
+            }
+            MobileMusicObservationAdmission.Exhausted -> {
+                request.close()
+                publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_failed)))
+            }
+        }
+    }
+
+    /** Performs Swift's admitted-player, ride-context, classified-history and receipt sequence. */
+    private fun processObservation(
+        request: MobileMusicObservationRequest,
+        lease: MobileMusicObservationLease,
+        source: MobileMusicSnapshotDto,
+        artwork: Bitmap?,
+        wallClockAtMs: ULong,
+    ) {
+        while (request.isCurrent() && lease.state() == MobileMusicObservationLeaseState.PENDING) {
+            Thread.sleep(OBSERVATION_POLL_INTERVAL_MS)
+        }
+        if (!request.isCurrent() || lease.state() != MobileMusicObservationLeaseState.READY) return
+        val canonical = lifecycle.observeAdmittedPlayer(lease, source)
+        if (canonical != null) {
+            main.post {
+                if (!closed && request.isCurrent()) {
+                    publish(latestPresentation.copy(
+                        snapshot = canonical,
+                        listenerAccessGranted = true,
+                        error = null,
+                        artwork = artwork,
+                    ))
+                }
+            }
+        }
+
+        val observationContext = withCoreBlocking { core ->
+            val previousFailure = core.retireClosedMusicHistory(lifecycle, lease)
+            val current = core.currentSnapshot(SystemClock.elapsedRealtime().toULong())
+            val context = current?.rideId?.let { rideId ->
+                core.musicObservationContextForObservation(lease, rideId, source.observedAtMs)
+            }
+            previousFailure to context
+        }
+        val (previousFailure, context) = observationContext
+        if (previousFailure != null) {
+            main.post {
+                if (!closed && request.isCurrent()) publish(latestPresentation.copy(
+                    historyError = appContext.getString(R.string.music_previous_history_incomplete),
+                ))
+            }
+        }
+        val recording = when (context) {
+            is MobileMusicObservationContext.Ready -> context.recording
+            MobileMusicObservationContext.RideNotOpen, MobileMusicObservationContext.OutOfOrder, null -> null
+        }
+        if (context == MobileMusicObservationContext.OutOfOrder) {
+            request.settle()
+            return
+        }
+
+        val decision = lifecycle.observeAdmittedMusic(
+            lease,
+            recording,
+            source,
+            wallClockAtMs,
+            0uL,
+        ) ?: run {
+            request.settle()
+            return
+        }
+        val transition = decision.historyTransition
+        if (transition == null) {
+            request.settle()
+            return
+        }
+        if (recording == null) {
+            lifecycle.acknowledgeHistoryTransition(transition.id)
+            request.settle()
+            return
+        }
+
+        val command = withCoreBlocking { core -> core.beginRecordMusicObservation(lease) }
+        val result = pollMusicCommand(command)
+        when (result.outcome) {
+            MobileMusicTimelineOutcomeDto.RECORDED,
+            MobileMusicTimelineOutcomeDto.DUPLICATE,
+            MobileMusicTimelineOutcomeDto.DISABLED -> lifecycle.acknowledgeHistoryTransition(transition.id)
+            MobileMusicTimelineOutcomeDto.FULL,
+            MobileMusicTimelineOutcomeDto.OUT_OF_ORDER,
+            MobileMusicTimelineOutcomeDto.RIDE_NOT_OPEN -> Unit
+        }
+        request.settle()
+        main.post {
+            if (!closed && request.isCurrent()) {
+                publish(latestPresentation.copy(
+                    lastRecordedSequence = result.sequence ?: latestPresentation.lastRecordedSequence,
+                    historyPolicy = result.effectivePolicy ?: latestPresentation.historyPolicy,
+                    error = null,
+                ))
+            }
+        }
+    }
+
+    private fun <T> withCoreBlocking(block: (MobileRideMapCore) -> T): T {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<Result<T>>()
+        rides.withCore({ core -> block(core) }) { value ->
+            result.set(value)
+            latch.countDown()
+        }
+        latch.await()
+        return checkNotNull(result.get()).getOrThrow()
+    }
+
+    private fun pollMusicCommand(command: MobileRideMapMusicCommand): MobileMusicTimelineRecordResultDto {
+        try {
+            while (true) {
+                when (val result = command.poll()) {
+                    MobileRideMapMusicPollDto.Pending -> Thread.sleep(OBSERVATION_POLL_INTERVAL_MS)
+                    is MobileRideMapMusicPollDto.Completed -> return result.result
+                }
+            }
+        } finally {
+            command.close()
+        }
+    }
+
+    private fun pollHistory(command: MobileRideMapMusicHistoryCommand, policy: MobileMusicHistoryPolicyDto) {
+        try {
+            historyWorker.execute {
+                try {
+                    var history: MobileMusicHistoryDto? = null
+                    while (true) {
+                        when (val state = command.poll()) {
+                            MobileRideMapMusicHistoryPollDto.Pending -> Thread.sleep(OBSERVATION_POLL_INTERVAL_MS)
+                            is MobileRideMapMusicHistoryPollDto.Completed -> {
+                                history = state.history
+                                break
+                            }
+                        }
+                    }
+                    main.post {
+                        publish(latestPresentation.copy(
+                            historyPolicy = policy,
+                            history = history,
+                            historyError = null,
+                        ))
+                    }
+                } catch (error: Exception) {
+                    main.post { publish(latestPresentation.copy(historyError = error.message ?: error.toString())) }
+                } finally {
+                    command.close()
+                }
+            }
+        } catch (error: RuntimeException) {
+            command.close()
+            publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+        }
+    }
+
+    private fun pollWrite(command: MobileRideMapMusicWriteCommand, completed: (Result<Unit>) -> Unit) {
+        try {
+            historyWorker.execute {
+                val result = runCatching {
+                    while (true) {
+                        when (command.poll()) {
+                            MobileRideMapMusicWritePollDto.PENDING -> Thread.sleep(OBSERVATION_POLL_INTERVAL_MS)
+                            MobileRideMapMusicWritePollDto.COMPLETED -> return@runCatching Unit
+                        }
+                    }
+                }
+                command.close()
+                main.post { completed(result) }
+            }
+        } catch (error: RuntimeException) {
+            command.close()
+            completed(Result.failure(error))
+        }
+    }
+
+    private fun project(controller: MediaController): MobileMusicSnapshotDto {
+        val metadata = controller.metadata
+        val playback = controller.playbackState
+        val actions = playback?.actions ?: 0L
+        val launchAvailable = appContext.packageManager.getLaunchIntentForPackage(controller.packageName) != null
+        val provider = selectedProvider
+        val state = when (playback?.state) {
+            PlaybackState.STATE_PLAYING, PlaybackState.STATE_FAST_FORWARDING, PlaybackState.STATE_REWINDING -> MobileMusicPlaybackStateDto.PLAYING
+            PlaybackState.STATE_PAUSED -> MobileMusicPlaybackStateDto.PAUSED
+            PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> MobileMusicPlaybackStateDto.STOPPED
+            PlaybackState.STATE_BUFFERING, PlaybackState.STATE_CONNECTING -> MobileMusicPlaybackStateDto.BUFFERING
+            else -> MobileMusicPlaybackStateDto.UNAVAILABLE
+        }
+        val itemId = metadata?.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+            ?: metadata?.description?.mediaUri?.toString()
+        val item = itemId?.takeIf(String::isNotBlank)?.let { id ->
+            MobileMusicItemDto(
+                identifier = id.take(MAX_FIELD_LENGTH),
+                title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)?.take(MAX_FIELD_LENGTH),
+                artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)?.take(MAX_FIELD_LENGTH),
+            )
+        }
+        return MobileMusicSnapshotDto(
+            provider = provider,
+            sessionId = "${controller.packageName}:${controller.sessionToken.hashCode()}",
+            state = state,
+            item = item,
+            positionMilliseconds = playback?.position?.takeIf { it >= 0L }?.toULong(),
+            durationMilliseconds = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.takeIf { it > 0L }?.toULong(),
+            observedAtMs = SystemClock.elapsedRealtime().toULong(),
+            capabilities = MobileMusicCapabilitiesDto(
+                previous = has(actions, PlaybackState.ACTION_SKIP_TO_PREVIOUS),
+                play = has(actions, PlaybackState.ACTION_PLAY) || has(actions, PlaybackState.ACTION_PLAY_PAUSE),
+                pause = has(actions, PlaybackState.ACTION_PAUSE) || has(actions, PlaybackState.ACTION_PLAY_PAUSE),
+                next = has(actions, PlaybackState.ACTION_SKIP_TO_NEXT),
+                openProvider = launchAvailable,
+            ),
+        )
+    }
+
+    private fun boundedArtwork(metadata: MediaMetadata?): Bitmap? {
+        val original = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            ?: return null
+        val longest = maxOf(original.width, original.height)
+        if (longest <= MAX_ARTWORK_EDGE) return original
+        val scale = MAX_ARTWORK_EDGE.toFloat() / longest
+        return Bitmap.createScaledBitmap(
+            original,
+            (original.width * scale).toInt().coerceAtLeast(1),
+            (original.height * scale).toInt().coerceAtLeast(1),
+            true,
+        )
+    }
+
+    private fun loadArtworkUri(controller: MediaController, metadata: MediaMetadata?) {
+        val uri = metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ART_URI)
+            ?: return
+        val parsed = runCatching { Uri.parse(uri) }.getOrNull() ?: return
+        if (parsed.scheme != "https" && parsed.scheme != "content") return
+        val requestId = artworkRequest.incrementAndGet()
+        val sessionToken = controller.sessionToken
+        val generation = providerGeneration
+        try {
+            artworkWorker.execute {
+                val bitmap = runCatching { loadBoundedArtwork(parsed) }.getOrNull() ?: return@execute
+                main.post {
+                    if (requestId != artworkRequest.get() || closed || currentController?.sessionToken != sessionToken ||
+                        providerGeneration != generation
+                    ) return@post
+                    val current = latestPresentation
+                    if (current.selectedProvider == selectedProvider) publish(current.copy(artwork = bitmap))
+                }
+            }
+        } catch (_: RuntimeException) {
+            // Artwork is optional; a full queue leaves the current player presentation intact.
+        }
+    }
+
+    private fun loadBoundedArtwork(uri: Uri): Bitmap? {
+        val bytes = if (uri.scheme == "content") {
+            appContext.contentResolver.openInputStream(uri)?.use { readAtMost(it) }
+        } else {
+            val connection = (URL(uri.toString()).openConnection() as HttpURLConnection).apply {
+                connectTimeout = ARTWORK_CONNECT_TIMEOUT_MS
+                readTimeout = ARTWORK_READ_TIMEOUT_MS
+                instanceFollowRedirects = false
+                requestMethod = "GET"
+            }
+            try {
+                if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
+                if (connection.contentLengthLong > MAX_ARTWORK_BYTES) return null
+                connection.inputStream.use { readAtMost(it) }
+            } finally {
+                connection.disconnect()
+            }
+        } ?: return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val sample = (maxOf(bounds.outWidth, bounds.outHeight) / MAX_ARTWORK_EDGE).coerceAtLeast(1)
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
+        })
+    }
+
+    private fun readAtMost(input: java.io.InputStream): ByteArray? {
+        val output = ByteArrayOutputStream()
+        val chunk = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val count = input.read(chunk)
+            if (count < 0) break
+            total += count
+            if (total > MAX_ARTWORK_BYTES) return null
+            output.write(chunk, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun observeController(controller: MediaController, command: MobileMusicCommandDto): Result<Unit> {
+        if (currentController !== controller) return Result.failure(IllegalStateException("Music session changed"))
+        val generation = providerGeneration ?: return Result.failure(IllegalStateException("Music session is unavailable"))
+        val snapshot = project(controller)
+        val effect = lifecycle.beginSupportedTransportEffect(
+            MobileMusicTransportOwner.Provider(generation), command, snapshot.capabilities,
+            SystemClock.elapsedRealtime().toULong(),
+        ) ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_command_unavailable)))
+        val result = runCatching {
+            when (command) {
+                MobileMusicCommandDto.PLAY -> controller.transportControls.play()
+                MobileMusicCommandDto.PAUSE -> controller.transportControls.pause()
+                MobileMusicCommandDto.PREVIOUS -> controller.transportControls.skipToPrevious()
+                MobileMusicCommandDto.NEXT -> controller.transportControls.skipToNext()
+                MobileMusicCommandDto.OPEN_PROVIDER -> {
+                    val intent = appContext.packageManager.getLaunchIntentForPackage(controller.packageName)
+                        ?: error(appContext.getString(R.string.music_provider_unavailable))
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    appContext.startActivity(intent)
+                }
+            }
+        }
+        val outcome = if (result.isSuccess) MobileMusicTransportOutcome.ACCEPTED else MobileMusicTransportOutcome.FAILED
+        lifecycle.finishTransport(generation, effect.id, outcome)
+        return result
+    }
+
+    fun command(command: MobileMusicCommandDto, completed: (Result<Unit>) -> Unit = {}) {
+        if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+            completeAction(if (command == MobileMusicCommandDto.OPEN_PROVIDER) openSoundCloud() else Result.failure(
+                IllegalStateException(appContext.getString(R.string.music_command_unavailable)),
+            ), completed)
+            return
+        }
+        val controller = currentController
+        if (controller == null) {
+            completeAction(
+                Result.failure(IllegalStateException(appContext.getString(R.string.music_no_active_session))),
+                completed,
+            )
+            return
+        }
+        main.post { completeAction(observeController(controller, command), completed) }
+    }
+
+    private fun openSoundCloud(): Result<Unit> {
+        val generation = providerGeneration ?: lifecycle.beginProviderSession()
+            ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_provider_unavailable)))
+        providerGeneration = generation
+        val admission = lifecycle.beginSoundcloudCommand(
+            generation, MobileMusicCommandDto.OPEN_PROVIDER, SystemClock.elapsedRealtime().toULong(),
+        )
+        val handoff = admission as? MobileSoundCloudCommandAdmission.Handoff
+            ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_command_unavailable)))
+        return runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(handoff.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            appContext.startActivity(intent)
+        }.also { result ->
+            lifecycle.finishTransport(
+                generation,
+                handoff.effect.id,
+                if (result.isSuccess) MobileMusicTransportOutcome.ACCEPTED else MobileMusicTransportOutcome.FAILED,
+            )
+        }
+    }
+
+    /** Opens the selected provider only in response to an explicit UI command. */
+    fun openSelectedProvider(completed: (Result<Unit>) -> Unit = {}) {
+        val result = if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+            openSoundCloud()
+        } else {
+            openSelectedSystemProvider()
+        }
+        completeAction(result, completed)
+    }
+
+    private fun completeAction(result: Result<Unit>, completed: (Result<Unit>) -> Unit) {
+        val error = result.exceptionOrNull()?.message
+        publish(latestPresentation.copy(error = error))
+        completed(result)
+    }
+
+    private fun openSelectedSystemProvider(): Result<Unit> {
+        val packageName = when (selectedProvider) {
+            MobileMusicProviderDto.APPLE_MUSIC -> APPLE_MUSIC_PACKAGE
+            MobileMusicProviderDto.SPOTIFY -> SPOTIFY_PACKAGE
+            MobileMusicProviderDto.SOUND_CLOUD -> return Result.failure(IllegalStateException("SoundCloud uses its Rust-admitted handoff"))
+        }
+        val generation = providerGeneration ?: lifecycle.beginProviderSession()
+            ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_provider_unavailable)))
+        providerGeneration = generation
+        val intent = appContext.packageManager.getLaunchIntentForPackage(packageName)
+            ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_provider_unavailable)))
+        val capabilities = MobileMusicCapabilitiesDto(false, false, false, false, true)
+        val effect = lifecycle.beginSupportedTransportEffect(
+            MobileMusicTransportOwner.Provider(generation), MobileMusicCommandDto.OPEN_PROVIDER,
+            capabilities, SystemClock.elapsedRealtime().toULong(),
+        ) ?: return Result.failure(IllegalStateException(appContext.getString(R.string.music_command_unavailable)))
+        return runCatching {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            appContext.startActivity(intent)
+        }.also { result ->
+            lifecycle.finishTransport(
+                generation, effect.id,
+                if (result.isSuccess) MobileMusicTransportOutcome.ACCEPTED else MobileMusicTransportOutcome.FAILED,
+            )
+        }
+    }
+
+    private fun unavailableSnapshot() = MobileMusicSnapshotDto(
+        provider = selectedProvider,
+        sessionId = "android-no-active-session",
+        state = MobileMusicPlaybackStateDto.UNAVAILABLE,
+        item = null,
+        positionMilliseconds = null,
+        durationMilliseconds = null,
+        observedAtMs = SystemClock.elapsedRealtime().toULong(),
+        capabilities = MobileMusicCapabilitiesDto(false, false, false, false, false),
+    )
+
+    private fun detachSession() {
+        artworkRequest.incrementAndGet()
+        val controller = currentController
+        val callback = currentControllerCallback
+        if (controller != null && callback != null) runCatching { controller.unregisterCallback(callback) }
+        providerGeneration?.let { generation ->
+            lifecycle.retireProviderSession(generation)
+            lifecycle.invalidateCommandFeedback()
+        }
+        currentController = null
+        currentControllerCallback = null
+        providerGeneration = null
+    }
+
+    private fun retireProvider() {
+        detachSession()
+    }
+
+    private fun publish(value: AndroidMusicPresentation) {
+        latestPresentation = value
+        onPresentation(value)
+        observers.forEach { observer -> main.post { if (observer in observers) observer(value) } }
+    }
+
+    private fun newPresentation(
+        snapshot: MobileMusicSnapshotDto?,
+        listenerAccessGranted: Boolean,
+        error: String? = null,
+    ): AndroidMusicPresentation = latestPresentation.copy(
+        selectedProvider = selectedProvider,
+        snapshot = snapshot,
+        listenerAccessGranted = listenerAccessGranted,
+        error = error,
+        artwork = null,
+        historyPolicy = latestPresentation.historyPolicy,
+    )
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        activeSessionListener?.let { listener -> runCatching { manager?.removeOnActiveSessionsChangedListener(listener) } }
+        activeSessionListener = null
+        detachSession()
+        monitorGeneration?.let(lifecycle::finishMonitor)
+        monitorGeneration = null
+        bridgeObservation.close()
+        lifecycle.cancelMonitor()
+        artworkWorker.shutdownNow()
+        observationWorker.shutdownNow()
+        historyWorker.shutdownNow()
+    }
+
+    private fun has(actions: Long, action: Long) = actions and action != 0L
+
+    private fun providerForPackage(packageName: String): MobileMusicProviderDto? = when (packageName) {
+        SPOTIFY_PACKAGE -> MobileMusicProviderDto.SPOTIFY
+        APPLE_MUSIC_PACKAGE -> MobileMusicProviderDto.APPLE_MUSIC
+        else -> null
+    }
+
+    companion object {
+        const val SPOTIFY_PACKAGE = "com.spotify.music"
+        const val APPLE_MUSIC_PACKAGE = "com.apple.android.music"
+        const val SOUNDCLOUD_PACKAGE = "com.soundcloud.android"
+        private const val PREFERENCES_NAME = "music_provider_preferences"
+        private const val PROVIDER_KEY = "selected_provider"
+        private const val HISTORY_POLICY_KEY = "music_history_policy_default"
+        private const val MAX_ARTWORK_EDGE = 512
+        private const val MAX_ARTWORK_BYTES = 2 * 1024 * 1024
+        private const val ARTWORK_CONNECT_TIMEOUT_MS = 2_000
+        private const val ARTWORK_READ_TIMEOUT_MS = 3_000
+        private const val MAX_FIELD_LENGTH = 256
+        private const val OBSERVATION_POLL_INTERVAL_MS = 10L
+    }
+}
+
+private fun historyPolicyFromStorage(value: String?): MobileMusicHistoryPolicyDto = when (value) {
+    "opaque_item" -> MobileMusicHistoryPolicyDto.OPAQUE_ITEM
+    "human_readable" -> MobileMusicHistoryPolicyDto.HUMAN_READABLE
+    else -> MobileMusicHistoryPolicyDto.DISABLED
+}
+
+private fun historyPolicyStorageKey(policy: MobileMusicHistoryPolicyDto): String = when (policy) {
+    MobileMusicHistoryPolicyDto.DISABLED -> "disabled"
+    MobileMusicHistoryPolicyDto.OPAQUE_ITEM -> "opaque_item"
+    MobileMusicHistoryPolicyDto.HUMAN_READABLE -> "human_readable"
+}
+
+/** Manifest registration is owned by the app integration; this service never reads notification text. */
+class AndroidMusicNotificationListenerService : android.service.notification.NotificationListenerService() {
+    override fun onListenerConnected() { AndroidMusicSessionBridge.notifySessionsChanged() }
+    override fun onListenerDisconnected() { AndroidMusicSessionBridge.notifySessionsChanged() }
+    override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification?) {
+        AndroidMusicSessionBridge.notifySessionsChanged()
+    }
+    override fun onNotificationRemoved(sbn: android.service.notification.StatusBarNotification?) {
+        AndroidMusicSessionBridge.notifySessionsChanged()
+    }
+}
