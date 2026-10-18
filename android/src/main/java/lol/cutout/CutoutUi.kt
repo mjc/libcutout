@@ -45,7 +45,7 @@ class CutoutUi(val context: Context) {
     fun action(title: String, primary: Boolean = false, onClick: () -> Unit) = Button(context).apply {
         text = title; textSize = 17f; isAllCaps = false; includeFontPadding = false
         typeface = Typeface.create("sans-serif", Typeface.BOLD)
-        setTextColor(if (primary) Color.BLACK else foreground)
+        setTextColor(if (primary) Color.BLACK else this@CutoutUi.foreground)
         minHeight = dp(48); minimumHeight = dp(48); minWidth = 0; minimumWidth = 0
         setPadding(dp(16), dp(12), dp(16), dp(12))
         elevation = 0f; stateListAnimator = null

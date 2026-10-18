@@ -88,7 +88,7 @@ class RideDashboardView(
         val voltageText = voltage?.let { format(it.value.toDouble() / 1000, 1) + " V" } ?: unavailable
         val powerText = power?.let { format(it.value.toDouble() / 1_000_000, 2) + " kW" } ?: unavailable
         val thermalText = thermal?.maximum?.let { format(it.value.toDouble() / 1000, 0) + " °C" } ?: unavailable
-        val headroomText = (headroom as? MobileRiderHeadroomValueDto.Available)?.let { "${it.permille / 10}%" } ?: unavailable
+        val headroomText = (headroom as? MobileRiderHeadroomValueDto.Available)?.let { "${it.permille / 10U}%" } ?: unavailable
         details = buildList {
             add(context.getString(R.string.speed) to "$speed ${context.getString(R.string.speed_unit)}")
             add(context.getString(R.string.pwm_headroom) to headroomText)
@@ -350,7 +350,7 @@ class RideDashboardView(
         readingValues["power"]?.text = power
         readingValues["temperature"]?.text = temperature
         batteryProgress?.progress = batteryReading?.value?.value?.toInt()?.coerceIn(0, 100) ?: 0
-        val batteryCell = readingValues["battery"]?.parent?.parent
+        val batteryCell = readingValues["battery"]?.parent?.parent as? View
         batteryCell?.contentDescription = if (batteryReading == null) context.getString(R.string.battery)
             else "${context.getString(R.string.battery)} $battery%"
     }
@@ -390,7 +390,7 @@ private class HeadroomGauge(private val ui: CutoutUi, private val barOnly: Boole
         }
         // Match Swift's 0..100 semicircle while fitting the fixed area at large font scales.
         val line = ui.dp(9).toFloat()
-        val diameter = minOf(width - line * 2, (height - ui.dp(42)) * 2).coerceAtLeast(0f)
+        val diameter = minOf(width - line * 2, (height - ui.dp(42)) * 2f).coerceAtLeast(0f)
         if (diameter <= line * 2) return
         val centerY = height - ui.dp(24).toFloat()
         val rect = RectF((width - diameter) / 2f, centerY - diameter / 2f, (width + diameter) / 2f, centerY + diameter / 2f)

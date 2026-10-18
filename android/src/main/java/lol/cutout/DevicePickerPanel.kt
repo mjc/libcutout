@@ -173,7 +173,7 @@ class DevicePickerPanel(
         }
         recoveryAction.setOnClickListener {
             when {
-                permissionNeeded, bluetoothOff, failed, empty -> onScan()
+                permissionNeeded || bluetoothOff || failed || empty -> onScan()
             }
         }
         settingsAction.visibility = if (permissionNeeded) View.VISIBLE else View.GONE
