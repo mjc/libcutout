@@ -597,6 +597,17 @@ class SettingsPanel(
 
         fun restoreUiState(saved: Bundle?) {
             if (saved == null) return
+            // A saved editor draft is presentation state, but it must not outlive
+            // the descriptor's current Rust authorization boundary.
+            if (descriptor.access != MobileSettingAccessDto.WRITABLE) {
+                draft = null
+                submitted = null
+                pendingLocalSubmission = false
+                invalidNumericInput = false
+                updateSummary()
+                updateFeedback()
+                return
+            }
             draft = saved.getValue("draft")
             submitted = draft?.takeIf {
                 it == state?.requested && state?.requestId != null &&

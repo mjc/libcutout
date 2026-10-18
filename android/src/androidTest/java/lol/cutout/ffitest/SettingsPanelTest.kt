@@ -130,11 +130,11 @@ open class SettingsPanelTest {
                     "Replay numeric descriptor exposes no draft value distinct from readback"
                 }
                 val editor = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
-                val unavailable = initial.copy(connection = initial.connection.copy(
+                val unavailableConnection = initial.copy(connection = initial.connection.copy(
                     readiness = uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto.PENDING,
                     transport = uniffi.cutout_mobile_ffi.MobileConnectionTransportStateDto.CONNECTING,
                 ))
-                panel.render(unavailable)
+                panel.render(unavailableConnection)
                 check(!editor.isEnabled) { "Numeric editor remained editable before connection verification" }
                 val readOnly = initial.copy(settingDescriptors = initial.settingDescriptors.map {
                     if (it.id == numericDescriptor.id) it.copy(access = MobileSettingAccessDto.READ_ONLY) else it
@@ -146,6 +146,17 @@ open class SettingsPanelTest {
                 val editable = tagged<EditText>(panel, "settings.editor.${numericDescriptor.id}")
                 check(editable.isEnabled) { "Writable editor stayed disabled on verified attempt" }
                 editable.setText(BigDecimal.valueOf(raw.toLong(), numeric.precision.toInt()).toPlainString())
+                val savedWritableDraft = panel.saveUiState()
+                val restoredReadOnlyPanel = SettingsPanel(activity, ownerLifetimeId) { _, _, _, _ -> }
+                activity.setContentView(restoredReadOnlyPanel)
+                restoredReadOnlyPanel.render(readOnly)
+                restoredReadOnlyPanel.restoreUiState(savedWritableDraft)
+                val readOnlySavedRow = restoredReadOnlyPanel.saveUiState()
+                    .getBundle("row.${numericDescriptor.id.name}")
+                check(readOnlySavedRow?.containsKey("draft") != true) {
+                    "Restoring a writable draft reintroduced it under a read-only descriptor"
+                }
+                panel.render(currentReported)
                 val apply = tagged<Button>(panel, "settings.apply.${numericDescriptor.id}")
                 val numericName = labels.label(numericDescriptor.labelKey)
                 check(editable.contentDescription.toString().startsWith("$numericName:")) {
