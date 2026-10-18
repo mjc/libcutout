@@ -695,6 +695,19 @@ impl VescBoardProfile {
         self
     }
 
+    /// Returns the checked geometry used by this profile's calculated speed.
+    pub(crate) fn speed_geometry(self) -> Option<VescSpeedGeometry> {
+        self.calculates_speed
+            .then(|| {
+                VescSpeedGeometry::new(
+                    self.motor_pole_pairs,
+                    self.gear_ratio_denominator,
+                    self.wheel_circumference,
+                )
+            })
+            .flatten()
+    }
+
     /// Creates a profile from VESC speed geometry.
     #[must_use]
     pub const fn from_speed_geometry(geometry: VescSpeedGeometry) -> Self {

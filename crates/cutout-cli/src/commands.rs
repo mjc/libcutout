@@ -1030,7 +1030,7 @@ impl fmt::Display for PevcapReplayReportLine<'_> {
                 " interpreter_library={} interpreter_registry={} interpreter_decoder_source={}",
                 replay.library_version(),
                 hex::encode(replay.registry_hash()),
-                replay.decoder_source_hash()
+                replay.decoder_source_hash().unwrap_or("--")
             )?;
         }
         Ok(())

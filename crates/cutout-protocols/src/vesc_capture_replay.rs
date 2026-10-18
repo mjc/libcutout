@@ -106,10 +106,11 @@ impl VescReplayObservation {
     pub fn registry_hash(&self) -> [u8; 32] {
         cutout_core::registry_entries_hash(&crate::MODEL_REGISTRY)
     }
-    /// Source fingerprint of the interpreting protocol/core build inputs.
+    /// Source fingerprint of the complete protocol/core workspace inputs, when available.
+    /// Packaged consumers without those source inputs retain explicit absence.
     #[must_use]
-    pub const fn decoder_source_hash(&self) -> &'static str {
-        env!("CUTOUT_REPLAY_DECODER_SOURCE_SHA256")
+    pub const fn decoder_source_hash(&self) -> Option<&'static str> {
+        option_env!("CUTOUT_REPLAY_DECODER_SOURCE_SHA256")
     }
 }
 
@@ -271,9 +272,10 @@ impl VescCaptureReplaySession {
             host.invalidate_calculated_speed();
         } else if session.geometry.user_value().is_none() {
             let basis = session.protocol_basis();
-            let changed = session.geometry.geometry() != basis.geometry();
+            let speed_matches_basis =
+                session.inner.replay_calculated_speed_geometry() == basis.geometry();
             session.geometry = basis;
-            if changed {
+            if !speed_matches_basis {
                 host.invalidate_calculated_speed();
             }
         }
@@ -295,6 +297,9 @@ impl VescCaptureReplaySession {
 
 impl ProtocolSession for VescCaptureReplaySession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        if let SessionInput::LinkUp(link) = &input {
+            self.last_receipt = Some(link.monotonic_ms);
+        }
         match input {
             SessionInput::Command(_) => {}
             SessionInput::Notification { .. }
@@ -340,7 +345,7 @@ mod tests {
                     "revision":revision,"source":"user_configured",
                     "wheel_diameter_micrometres":diameter,"wheel_circumference_mm":circumference,
                     "motor_pole_pairs":7,"motor_to_wheel_ratio_milli":2500
-                }, "speed":{"value":{"value":999999}}
+                }, "speed":{"value":{"value":999_999}}
             })
             .to_string(),
         })
@@ -502,6 +507,28 @@ mod tests {
     }
 
     #[test]
+    fn captured_geometry_replay_first_receipt_cannot_predate_its_link() {
+        let mut host = HostSession::new(VescCaptureReplaySession::new(
+            VescReplayGeometryPolicy::Captured,
+        ));
+        host.ingest_link_up(LinkInfo {
+            monotonic_ms: MonotonicTimestamp::new(300),
+            max_write_len: None,
+        });
+        let stale = ingest(&mut host, &record(90_000, 283, 1, 1, 250));
+        assert_eq!(
+            stale.disposition,
+            VescReplayRecordDisposition::Ignored(VescReplayRejection::OutOfOrder)
+        );
+        assert_eq!(stale.telemetry.speed, None);
+        let fresh = ingest(&mut host, &record(90_000, 283, 1, 1, 320));
+        assert_eq!(
+            fresh.telemetry.speed_observed_at_ms,
+            Some(MonotonicTimestamp::new(320))
+        );
+    }
+
+    #[test]
     fn captured_geometry_replay_wrong_characteristic_cannot_retire_context_or_partial_frame() {
         let mut host = host(VescReplayGeometryPolicy::Captured);
         let mut first = record(90_000, 283, 1, 1, 100);
@@ -594,12 +621,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn captured_geometry_replay_shared_driver_preserves_chunks_reconnects_and_passivity() {
-        use cutout_core::{
-            PevcapCapture, PevcapEncoding, PevcapHeader, PevcapReader, PevcapReplayMode,
-            WallClockUnixTimestamp,
-        };
+    fn reconnect_capture() -> cutout_core::PevcapCapture {
+        use cutout_core::{PevcapCapture, PevcapHeader, WallClockUnixTimestamp};
         let mut first = record(90_000, 283, 1, 1, 100);
         let mut end = first.clone();
         end.monotonic_ms = MonotonicTimestamp::new(110);
@@ -620,7 +643,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        let capture = PevcapCapture::new(
+        PevcapCapture::new(
             header,
             vec![
                 PevcapRecord::link_up(MonotonicTimestamp::new(0), None),
@@ -639,7 +662,13 @@ mod tests {
                 unknown,
                 record(90_000, 283, 1, 2, 320),
             ],
-        );
+        )
+    }
+
+    #[test]
+    fn captured_geometry_replay_shared_driver_preserves_chunks_reconnects_and_passivity() {
+        use cutout_core::{PevcapEncoding, PevcapReader, PevcapReplayMode};
+        let capture = reconnect_capture();
         let lengths = capture.arbitrary_notification_chunk_lengths();
         for policy in [
             VescReplayGeometryPolicy::Captured,
@@ -710,6 +739,76 @@ mod tests {
         }
     }
 
+    fn setup_geometry(diameter_metres: f32) -> Vec<u8> {
+        let mut payload = vec![91];
+        payload.resize(41, 0);
+        payload.push(14);
+        payload.extend_from_slice(&2.5_f32.to_bits().to_be_bytes());
+        payload.extend_from_slice(&diameter_metres.to_bits().to_be_bytes());
+        let mut frame = vec![2, u8::try_from(payload.len()).unwrap()];
+        frame.extend_from_slice(&payload);
+        frame.extend_from_slice(&crate::wire_crc::crc16_xmodem(&payload).to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
+    #[test]
+    fn captured_geometry_replay_protocol_geometry_keeps_only_speed_using_its_actual_basis() {
+        let mut host = host(VescReplayGeometryPolicy::Captured);
+        let mut raw = record(90_000, 283, 1, 1, 100);
+        raw.semantic_telemetry = None;
+        let rpm = raw.bytes.clone();
+        let mut combined = setup_geometry(0.090);
+        combined.extend_from_slice(&rpm);
+        raw.bytes = combined.into();
+        let initial = ingest(&mut host, &raw);
+        assert_eq!(
+            initial
+                .telemetry
+                .speed
+                .unwrap()
+                .value
+                .as_millimetres_per_second(),
+            1617
+        );
+        assert!(matches!(
+            initial.geometry,
+            VescReplayGeometryBasis::ProtocolEvidence(_)
+        ));
+        let mut combined = setup_geometry(0.100);
+        combined.extend_from_slice(&rpm);
+        raw.bytes = combined.into();
+        raw.monotonic_ms = MonotonicTimestamp::new(200);
+        assert_eq!(
+            ingest(&mut host, &raw)
+                .telemetry
+                .speed
+                .unwrap()
+                .value
+                .as_millimetres_per_second(),
+            1794
+        );
+        let mut reverse = rpm.to_vec();
+        reverse.extend_from_slice(&setup_geometry(0.090));
+        raw.bytes = reverse.into();
+        raw.monotonic_ms = MonotonicTimestamp::new(300);
+        assert_eq!(
+            ingest(&mut host, &raw).telemetry.speed,
+            None,
+            "RPM before a later geometry change is stale"
+        );
+        let mut round_trip = setup_geometry(0.100);
+        round_trip.extend_from_slice(&rpm);
+        round_trip.extend_from_slice(&setup_geometry(0.090));
+        raw.bytes = round_trip.into();
+        raw.monotonic_ms = MonotonicTimestamp::new(400);
+        assert_eq!(
+            ingest(&mut host, &raw).telemetry.speed,
+            None,
+            "speed using intermediate geometry is stale even when final geometry returns to A"
+        );
+    }
+
     #[test]
     fn captured_geometry_replay_identifies_interpreter_without_overwriting_original_version() {
         let mut host = host(VescReplayGeometryPolicy::Captured);
@@ -723,7 +822,10 @@ mod tests {
             result.registry_hash(),
             cutout_core::registry_entries_hash(&crate::MODEL_REGISTRY)
         );
-        assert_eq!(result.decoder_source_hash().len(), 64);
-        assert_ne!(result.decoder_source_hash(), "0".repeat(64));
+        let source_hash = result
+            .decoder_source_hash()
+            .expect("workspace fingerprint available");
+        assert_eq!(source_hash.len(), 64);
+        assert_ne!(source_hash, "0".repeat(64));
     }
 }

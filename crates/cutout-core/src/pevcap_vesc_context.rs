@@ -218,7 +218,7 @@ mod tests {
         })
     }
 
-    fn record(snapshot: Value) -> PevcapRecord {
+    fn record(snapshot: &Value) -> PevcapRecord {
         PevcapRecord::inbound_notification(
             MonotonicTimestamp::new(100),
             GattChannel::from_bytes([1; 16]),
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn captured_vesc_context_legacy_local_retains_profile_attempt_provenance_and_original() {
         let record =
-            record(json!({"vesc_drivetrain_context": context(), "speed": {"value": 1_617}}));
+            record(&json!({"vesc_drivetrain_context": context(), "speed": {"value": 1_617}}));
         let original = record.clone();
         let checked = assert_local(&record);
         assert_eq!(
@@ -267,7 +267,7 @@ mod tests {
     fn captured_vesc_context_accepts_explicit_local_and_preserves_replay_source() {
         let mut context = context();
         context["target"] = json!("local");
-        let mut record = record(json!({"vesc_drivetrain_context": context}));
+        let mut record = record(&json!({"vesc_drivetrain_context": context}));
         record.target = Some(RequestTarget::Local);
         record.semantic_telemetry.as_mut().unwrap().provenance = PevcapTelemetryProvenance::Replay;
         assert_eq!(
@@ -283,13 +283,13 @@ mod tests {
             json!({"vesc_drivetrain_context": null}),
             json!({"vesc_drivetrain_contexts": [context()]}),
         ] {
-            let record = record(snapshot);
+            let record = record(&snapshot);
             assert_eq!(
                 record.captured_vesc_drivetrain(),
                 CapturedVescDrivetrainEvidence::Missing
             );
         }
-        let mut record = record(json!({}));
+        let mut record = record(&json!({}));
         record.semantic_telemetry = None;
         assert_eq!(
             record.captured_vesc_drivetrain(),
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn captured_vesc_context_nonlocal_or_unknown_target_never_becomes_local() {
         assert_eq!(
-            record(json!({"vesc_drivetrain_context": {"target": {"can": {"controller_id": 3}}}}))
+            record(&json!({"vesc_drivetrain_context": {"target": {"can": {"controller_id": 3}}}}))
                 .captured_vesc_drivetrain(),
             CapturedVescDrivetrainEvidence::UnsupportedTarget
         );
@@ -313,11 +313,11 @@ mod tests {
             let mut context = context();
             context["target"] = target;
             assert_eq!(
-                record(json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
+                record(&json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
                 CapturedVescDrivetrainEvidence::UnsupportedTarget
             );
         }
-        let mut record = record(json!({"vesc_drivetrain_context": context()}));
+        let mut record = record(&json!({"vesc_drivetrain_context": context()}));
         record.target = Some(RequestTarget::VescCanController {
             controller_id: VescControllerId::new(3),
         });
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn captured_vesc_context_rejects_unknown_schema_source_and_zero_revision() {
-        let mut wrong_schema = record(json!({"vesc_drivetrain_context": context()}));
+        let mut wrong_schema = record(&json!({"vesc_drivetrain_context": context()}));
         wrong_schema
             .semantic_telemetry
             .as_mut()
@@ -344,13 +344,13 @@ mod tests {
         let mut source = context();
         source["source"] = json!("controller_reported");
         assert_eq!(
-            record(json!({"vesc_drivetrain_context": source})).captured_vesc_drivetrain(),
+            record(&json!({"vesc_drivetrain_context": source})).captured_vesc_drivetrain(),
             CapturedVescDrivetrainEvidence::Invalid(CapturedVescDrivetrainError::UnsupportedSource)
         );
         let mut revision = context();
         revision["revision"] = json!(0);
         assert_eq!(
-            record(json!({"vesc_drivetrain_context": revision})).captured_vesc_drivetrain(),
+            record(&json!({"vesc_drivetrain_context": revision})).captured_vesc_drivetrain(),
             CapturedVescDrivetrainEvidence::Invalid(CapturedVescDrivetrainError::InvalidRevision)
         );
     }
@@ -365,7 +365,7 @@ mod tests {
             let mut context = context();
             context["connection_attempt"] = attempt;
             assert_eq!(
-                record(json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
+                record(&json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
                 CapturedVescDrivetrainEvidence::Invalid(
                     CapturedVescDrivetrainError::InvalidAttempt
                 )
@@ -400,7 +400,7 @@ mod tests {
             let mut context = context();
             context[field] = json!(value);
             assert_eq!(
-                record(json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
+                record(&json!({"vesc_drivetrain_context": context})).captured_vesc_drivetrain(),
                 CapturedVescDrivetrainEvidence::Invalid(expected)
             );
         }
@@ -410,8 +410,8 @@ mod tests {
     fn captured_vesc_context_rejects_malformed_types_and_duplicate_contract_fields() {
         let mut malformed = context();
         malformed["revision"] = json!(3.5);
-        let mut records = vec![record(json!({"vesc_drivetrain_context": malformed}))];
-        let mut duplicate = record(json!({}));
+        let mut records = vec![record(&json!({"vesc_drivetrain_context": malformed}))];
+        let mut duplicate = record(&json!({}));
         duplicate.semantic_telemetry.as_mut().unwrap().snapshot_json = format!(
             "{{\"vesc_drivetrain_context\":{},\"vesc_drivetrain_context\":{}}}",
             context(),
@@ -426,12 +426,12 @@ mod tests {
                 .to_string()
                 .replace("\"generation\":7", "\"generation\":7,\"generation\":8"),
         ] {
-            let mut duplicate = record(json!({}));
+            let mut duplicate = record(&json!({}));
             duplicate.semantic_telemetry.as_mut().unwrap().snapshot_json =
                 format!("{{\"vesc_drivetrain_context\":{duplicate_context}}}");
             records.push(duplicate);
         }
-        let mut invalid_json = record(json!({}));
+        let mut invalid_json = record(&json!({}));
         invalid_json
             .semantic_telemetry
             .as_mut()

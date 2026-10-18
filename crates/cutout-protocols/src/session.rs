@@ -848,6 +848,8 @@ pub struct VescNotificationDecoder {
     configured_board_profile: Option<VescBoardProfile>,
     user_drivetrain: Option<VescUserDrivetrain>,
     learned_board_profile: Option<VescBoardProfile>,
+    #[cfg(feature = "capture-replay")]
+    last_calculated_speed_geometry: Option<cutout_core::VescSpeedGeometry>,
     last_poll_ms: Option<u64>,
     now_ms: u64,
     polling: bool,
@@ -905,6 +907,8 @@ impl VescNotificationDecoder {
             configured_board_profile: Some(board_profile),
             user_drivetrain: None,
             learned_board_profile: None,
+            #[cfg(feature = "capture-replay")]
+            last_calculated_speed_geometry: None,
             last_poll_ms: None,
             now_ms: 0,
             polling: false,
@@ -1051,6 +1055,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
         self.refloat_stream = RefloatStreamDecoder::new();
+        #[cfg(feature = "capture-replay")]
+        {
+            self.last_calculated_speed_geometry = None;
+        }
         self.last_poll_ms = None;
         self.now_ms = 0;
         self.polling = false;
@@ -1783,7 +1791,14 @@ impl VescNotificationDecoder {
                     });
                 for reply in &replies {
                     self.observe_vesc_reply(reply, monotonic_ms);
-                    push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
+                    let geometry =
+                        push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
+                    #[cfg(feature = "capture-replay")]
+                    if let Some(geometry) = geometry {
+                        self.last_calculated_speed_geometry = Some(geometry);
+                    }
+                    #[cfg(not(feature = "capture-replay"))]
+                    let _ = geometry;
                 }
                 if emit_ingest {
                     output.push(SessionOutput::NotificationIngest(
@@ -1891,7 +1906,8 @@ fn push_vesc_reply(
     monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
     output: &mut Vec<SessionOutput>,
-) {
+) -> Option<cutout_core::VescSpeedGeometry> {
+    let mut calculated_geometry = None;
     match reply {
         VescReadOnlyReply::FirmwareInfo {
             major,
@@ -1907,9 +1923,11 @@ fn push_vesc_reply(
             }),
         ))),
         VescReadOnlyReply::Values(values) => {
-            output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                vesc_values_to_delta(values, monotonic_ms, board_profile),
-            )));
+            let delta = vesc_values_to_delta(values, monotonic_ms, board_profile);
+            calculated_geometry = delta
+                .speed
+                .and_then(|_| board_profile.and_then(VescBoardProfile::speed_geometry));
+            output.push(SessionOutput::Event(DeviceEvent::Telemetry(delta)));
             output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(values)),
             )));
@@ -1926,6 +1944,7 @@ fn push_vesc_reply(
         | VescReadOnlyReply::AppConfig(_)
         | VescReadOnlyReply::ConfigurationStored => {}
     }
+    calculated_geometry
 }
 
 fn push_refloat_reply(
@@ -2822,15 +2841,16 @@ impl ReadOnlySession<VescGenericModel> {
 
     #[cfg(feature = "capture-replay")]
     pub(crate) fn replay_device_geometry(&self) -> Option<cutout_core::VescSpeedGeometry> {
-        let profile = self.decoder.learned_board_profile?;
-        if !profile.calculates_speed {
-            return None;
-        }
-        cutout_core::VescSpeedGeometry::new(
-            profile.motor_pole_pairs,
-            profile.gear_ratio_denominator,
-            profile.wheel_circumference,
-        )
+        self.decoder
+            .learned_board_profile
+            .and_then(VescBoardProfile::speed_geometry)
+    }
+
+    #[cfg(feature = "capture-replay")]
+    pub(crate) fn replay_calculated_speed_geometry(
+        &self,
+    ) -> Option<cutout_core::VescSpeedGeometry> {
+        self.decoder.last_calculated_speed_geometry
     }
 
     /// Current connection's query progress, separate from passive application evidence.

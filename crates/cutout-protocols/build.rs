@@ -37,26 +37,48 @@ fn main() {
 /// under the protocol registry directory. Generated output, host paths, environment values,
 /// timestamps, enabled features, and compiler identity are not part of this source fingerprint.
 ///
+/// Packaged crates without this complete workspace scope leave the fingerprint unavailable;
+/// they never substitute a partial digest. The candidate workspace must contain this exact
+/// protocol crate, so unrelated parent directories cannot supply sibling source inputs.
+///
 /// SHA256 input starts with the versioned domain below, followed by inputs sorted by their
 /// slash-separated workspace-relative names. Each input is framed as an eight-byte big-endian
 /// name length, name bytes, an eight-byte big-endian content length, and exact file bytes.
 fn emit_replay_decoder_fingerprint(manifest_dir: &Path) {
-    let workspace = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("protocol crate must be under workspace crates directory");
+    let Some(workspace) = manifest_dir.parent().and_then(Path::parent) else {
+        return;
+    };
+    let Ok(actual_crate) = fs::canonicalize(manifest_dir) else {
+        return;
+    };
+    if fs::canonicalize(workspace.join("crates/cutout-protocols")).ok() != Some(actual_crate) {
+        return;
+    }
     let mut inputs = BTreeSet::from([
         "Cargo.toml".to_owned(),
         "Cargo.lock".to_owned(),
         "crates/cutout-core/Cargo.toml".to_owned(),
         "crates/cutout-protocols/Cargo.toml".to_owned(),
         "crates/cutout-protocols/build.rs".to_owned(),
+        "crates/cutout-core/src/lib.rs".to_owned(),
+        "crates/cutout-protocols/src/lib.rs".to_owned(),
+        "crates/cutout-protocols/registry/models.json".to_owned(),
     ]);
-    for (directory, rust_only) in [
+    let directories = [
         ("crates/cutout-core/src", true),
         ("crates/cutout-protocols/src", true),
         ("crates/cutout-protocols/registry", false),
-    ] {
+    ];
+    if inputs
+        .iter()
+        .any(|relative| !workspace.join(relative).is_file())
+        || directories
+            .iter()
+            .any(|(directory, _)| !workspace.join(directory).is_dir())
+    {
+        return;
+    }
+    for (directory, rust_only) in directories {
         collect_replay_decoder_inputs(workspace, directory, rust_only, &mut inputs);
     }
 
