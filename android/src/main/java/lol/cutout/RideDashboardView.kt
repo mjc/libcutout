@@ -47,6 +47,8 @@ class RideDashboardView(
     private var emptyStatusView: TextView? = null
     private var speedView: TextView? = null
     private var speedUnitView: TextView? = null
+    private var gpsSpeedView: TextView? = null
+    private var phoneSpeedReadback: MobilePhoneLocationReadbackDto? = null
     private var gaugeView: HeadroomGauge? = null
     private var footpadView: TextView? = null
     private var readingValues = mutableMapOf<String, TextView>()
@@ -141,6 +143,12 @@ class RideDashboardView(
         }
         updateSurface(speed, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery,
             vescVoltageText, motorCurrentText, boardAngleText, vescTemperatureText, footpadText)
+    }
+
+    /** Apply the independent Rust-normalized phone GPS speed readback. */
+    fun renderPhoneSpeed(value: MobilePhoneLocationReadbackDto) {
+        phoneSpeedReadback = value
+        updatePhoneSpeed()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -307,7 +315,10 @@ class RideDashboardView(
 
     /** Large system fonts get the same essential readings in a native scrollable surface. */
     private fun createAccessibleReadings(parent: LinearLayout) {
-        parent.addView(speedReading(), LinearLayout.LayoutParams(-1, -2))
+        parent.addView(
+            speedReading(withGps = displayKind == DisplayKind.EUC),
+            LinearLayout.LayoutParams(-1, -2),
+        )
         parent.addView(ui.space(12))
         when (displayKind) {
             DisplayKind.EUC -> {
@@ -371,8 +382,9 @@ class RideDashboardView(
             val slotWidthDp = contentWidth / resources.displayMetrics.density * 0.5f
             val speedPointSize = minOf(170f, slotWidthDp * 0.22f).toInt().coerceAtLeast(28)
             val speed = speedReading(
-                maxTextWidthPx = contentWidth / 2 - ui.dp(44),
+                maxTextWidthPx = contentWidth / 2 - ui.dp(40),
                 maxPointSizeSp = speedPointSize,
+                withGps = false,
             )
             row.addView(speed, LinearLayout.LayoutParams(0, -1, 1f))
             row.addView(createGauge(), LinearLayout.LayoutParams(0, -1, 1f))
@@ -386,8 +398,9 @@ class RideDashboardView(
             val speedPointSize = minOf(170f, contentWidth / resources.displayMetrics.density * 0.44f)
                 .toInt().coerceAtLeast(28)
             val speed = speedReading(
-                maxTextWidthPx = contentWidth - ui.dp(44),
+                maxTextWidthPx = contentWidth - ui.dp(64),
                 maxPointSizeSp = speedPointSize,
+                withGps = true,
             )
             primary.addView(speed, LinearLayout.LayoutParams(-1, 0, 0.42f))
             primary.addView(ui.space(4))
@@ -425,9 +438,13 @@ class RideDashboardView(
         else { root.addView(hero, LinearLayout.LayoutParams(-1, 0, 0.7f)); root.addView(metricGrid(), LinearLayout.LayoutParams(-1, 0, 1.3f)) }
     }
 
-    private fun speedReading(maxTextWidthPx: Int = ui.dp(280), maxPointSizeSp: Int = 170): LinearLayout = ui.row().apply {
+    private fun speedReading(
+        maxTextWidthPx: Int = ui.dp(280),
+        maxPointSizeSp: Int = 170,
+        withGps: Boolean = false,
+    ): LinearLayout = ui.row().apply {
         gravity = Gravity.CENTER
-        val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
+        val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = !withGps }
         val speed = ui.text(context.getString(R.string.unavailable), maxPointSizeSp.toFloat(), true).apply {
             setSingleLine(true); maxLines = 1; maxWidth = maxTextWidthPx.coerceAtLeast(ui.dp(1))
             setHorizontallyScrolling(false)
@@ -438,7 +455,22 @@ class RideDashboardView(
         readout.addView(speed, LinearLayout.LayoutParams(-2, -2))
         val unit = ui.text(" ${context.getString(R.string.speed_unit)}", 18f, true, ui.muted)
         speedUnitView = unit
-        readout.addView(unit)
+        if (withGps) {
+            val unitAndGps = ui.column().apply { gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false }
+            unitAndGps.addView(unit)
+            gpsSpeedView = ui.text("GPS --", 12f, true, ui.muted).apply {
+                maxLines = 1
+                setSingleLine(true)
+                setHorizontallyScrolling(false)
+                tag = "ride.gps.speed"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            }
+            unitAndGps.addView(checkNotNull(gpsSpeedView))
+            readout.addView(unitAndGps)
+        } else {
+            gpsSpeedView = null
+            readout.addView(unit)
+        }
         addView(readout, LinearLayout.LayoutParams(-2, -2))
     }
 
@@ -579,6 +611,27 @@ class RideDashboardView(
         val batteryCell = readingValues["battery"]?.parent?.parent as? View
         batteryCell?.contentDescription = if (batteryReading == null) context.getString(R.string.battery)
             else "${context.getString(R.string.battery)} $battery%"
+        updatePhoneSpeed()
+    }
+
+    private fun updatePhoneSpeed() {
+        val view = gpsSpeedView ?: return
+        val readback = phoneSpeedReadback
+        val reading = readback?.snapshot?.gpsSpeed
+        val value = reading?.let { format(it.value.value.toDouble() * 0.0022369362920544, 1) }
+            ?: context.getString(R.string.unavailable)
+        view.text = "GPS $value"
+        val detailKey = when (readback?.freshness) {
+            MobilePhoneLocationFreshnessDto.FRESH -> "gps.detail.fresh"
+            MobilePhoneLocationFreshnessDto.STALE -> "gps.detail.stale"
+            else -> "gps.detail.unavailable"
+        }
+        val label = ui.label("euc.metric.gps_speed")
+        val unit = if (reading == null) "" else context.getString(R.string.speed_unit)
+        val valueText = if (reading == null) ui.label("metric.availability.unavailable")
+            else "$value $unit, ${ui.label(detailKey)}"
+        view.contentDescription = "$label: $valueText"
+        view.setTextColor(ui.muted)
     }
 
     private fun setQuantity(key: String, value: String) {

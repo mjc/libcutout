@@ -6,9 +6,12 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.SystemClock
 import uniffi.cutout_mobile_ffi.*
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** Applies Rust-selected location acquisition to Android's native provider. */
 class RideLocationRuntime(
@@ -19,6 +22,11 @@ class RideLocationRuntime(
     private val appContext = context.applicationContext
     private val locationManager = appContext.getSystemService(LocationManager::class.java)
     private val thread = HandlerThread("CutoutRideLocation").apply { start() }
+    private val main = Handler(Looper.getMainLooper())
+    private val phoneLocationState = MobilePhoneLocationState()
+    private val phoneSpeedObservers = CopyOnWriteArrayList<(MobilePhoneLocationReadbackDto) -> Unit>()
+    @Volatile private var phoneSpeedReadback = phoneLocationState.currentReadbackAt(elapsedRealtimeMillis())
+    private var cancelPhoneSpeedStaleTimer: Runnable? = null
     @Volatile private var nativeProviderUnavailable = false
     @Volatile private var lastAcquisition: MobileRideMapLocationAcquisitionDto? = null
     @Volatile private var nativeAuthorizationEvidence: MobileRideMapLocationAuthorizationDto? = null
@@ -28,12 +36,17 @@ class RideLocationRuntime(
     private var coarseGranted = false
     private var closed = false
     private val presentationObservation = rideMap.observe { value ->
-        rideOpen = when (value.snapshot?.state) {
+        val openNow = when (value.snapshot?.state) {
             MobileRideLifecycleStateDto.ACTIVE,
             MobileRideLifecycleStateDto.PAUSED,
             MobileRideLifecycleStateDto.INTERRUPTED -> true
             else -> false
         }
+        if (openNow && !rideOpen) {
+            phoneLocationState.clear()
+            publishPhoneSpeedReadback()
+        }
+        rideOpen = openNow
     }
 
     private val listener = object : LocationListener {
@@ -120,9 +133,42 @@ class RideLocationRuntime(
                 courseAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees.toDouble() else null,
             )
         }
+        // Keep the dashboard readback independent from route-point admission. A stationary
+        // sample may be useful as a GPS speed readout even when Rust records no distance point.
+        samples.forEach { phoneLocationState.ingestAt(it, receiptMonotonic) }
+        if (samples.isNotEmpty()) publishPhoneSpeedReadback()
         rideMap.submitLocationCallback(samples, receiptMonotonic, receiptWallClock) { result ->
             if (result.isFailure) rideMap.reportLocationFailure(result.exceptionOrNull()?.message ?: "Location sample was not recorded")
             completed?.invoke(result)
+        }
+    }
+
+    /** Observe normalized phone speed without substituting the wheel-selected Ride speed. */
+    fun observePhoneSpeed(observer: (MobilePhoneLocationReadbackDto) -> Unit): AutoCloseable {
+        phoneSpeedObservers += observer
+        main.post {
+            if (observer in phoneSpeedObservers) observer(phoneSpeedReadback)
+        }
+        return AutoCloseable { phoneSpeedObservers -= observer }
+    }
+
+    private fun publishPhoneSpeedReadback() {
+        main.post {
+            if (closed) return@post
+            cancelPhoneSpeedStaleTimer?.let(main::removeCallbacks)
+            cancelPhoneSpeedStaleTimer = null
+            val readback = phoneLocationState.currentReadbackAt(elapsedRealtimeMillis())
+            phoneSpeedReadback = readback
+            phoneSpeedObservers.forEach { it(readback) }
+            val receivedAt = readback.receivedAtMonotonicMs
+            if (readback.freshness == MobilePhoneLocationFreshnessDto.FRESH && receivedAt != null) {
+                val staleAt = receivedAt + readback.staleAfterMs + 1UL
+                val now = elapsedRealtimeMillis()
+                val delay = (staleAt - minOf(staleAt, now)).coerceAtLeast(1UL).toLong()
+                val timer = Runnable { publishPhoneSpeedReadback() }
+                cancelPhoneSpeedStaleTimer = timer
+                main.postDelayed(timer, delay)
+            }
         }
     }
 
@@ -198,6 +244,8 @@ class RideLocationRuntime(
     override fun close() {
         if (closed) return
         closed = true
+        cancelPhoneSpeedStaleTimer?.let(main::removeCallbacks)
+        cancelPhoneSpeedStaleTimer = null
         stopProviders()
         presentationObservation.close()
         thread.quitSafely()

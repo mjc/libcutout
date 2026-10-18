@@ -24,6 +24,8 @@ import uniffi.cutout_mobile_ffi.MobileVehicleKindDto
 import uniffi.cutout_mobile_ffi.MobileVescRideOperatingModeDto
 import uniffi.cutout_mobile_ffi.MobileVescRideStopReasonDto
 import uniffi.cutout_mobile_ffi.MobileVescRideWarningDto
+import uniffi.cutout_mobile_ffi.MobilePhoneLocationSampleDto
+import uniffi.cutout_mobile_ffi.MobilePhoneLocationState
 import uniffi.cutout_mobile_ffi.RideOperatingState
 
 /** Presentation-only state copies over the existing Rust replay; no wire claim is made. */
@@ -199,6 +201,54 @@ open class RideDashboardProjectionTest {
     }
 
     @Test
+    fun phoneGpsSpeedUsesRustReadbackWithoutReplacingWheelSpeed() = withActivity { activity ->
+        val replay = productionReplayPresentation()
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+        ride.render(replay)
+        val wheelSpeed = tagged<TextView>(ride, "ride.hero.speed")
+        val originalWheelSpeed = wheelSpeed.text.toString()
+        val gauge = tagged<View>(ride, "euc.ride.headroom")
+        val gpsSpeed = tagged<TextView>(ride, "ride.gps.speed")
+
+        val state = MobilePhoneLocationState()
+        val sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs = 1_700_000_000_000UL,
+            sourceTimestampUnixSeconds = null,
+            latitudeDegrees = 39.7392358,
+            longitudeDegrees = -104.990251,
+            altitudeMeters = 1_609.344,
+            horizontalAccuracyMeters = 1.0,
+            verticalAccuracyMeters = 1.0,
+            speedMetersPerSecond = 4.47040025,
+            speedAccuracyMetersPerSecond = 0.2,
+            courseDegrees = 271.5,
+            courseAccuracyDegrees = 3.0,
+        )
+        state.ingestAt(sample, 1_000UL)
+        val fresh = state.currentReadbackAt(2_000UL)
+        ride.renderPhoneSpeed(fresh)
+        val normalizedGpsMph = checkNotNull(fresh.snapshot.gpsSpeed).value.value.toDouble() * 0.0022369362920544
+        check(gpsSpeed.text.toString() == String.format(Locale.getDefault(), "GPS %.1f", normalizedGpsMph)) {
+            "GPS speed did not use Rust's normalized phone speed"
+        }
+        check(gpsSpeed.contentDescription.toString().contains(CutoutUi(activity).label("gps.detail.fresh")))
+        check(tagged<TextView>(ride, "ride.hero.speed") === wheelSpeed)
+        check(wheelSpeed.text.toString() == originalWheelSpeed) { "Phone speed replaced Rust-selected wheel speed" }
+        check(tagged<View>(ride, "euc.ride.headroom") === gauge)
+
+        val stale = state.currentReadbackAt(3_001UL)
+        ride.renderPhoneSpeed(stale)
+        check(gpsSpeed.text.toString() == "GPS 10.0") { "Stale GPS value should remain visible with stale status" }
+        check(gpsSpeed.contentDescription.toString().contains(CutoutUi(activity).label("gps.detail.stale")))
+
+        state.clear()
+        ride.renderPhoneSpeed(state.currentReadbackAt(4_000UL))
+        check(gpsSpeed.text.toString() == "GPS ${activity.getString(lol.cutout.R.string.unavailable)}")
+        check(gpsSpeed.contentDescription.toString().contains(CutoutUi(activity).label("gps.detail.unavailable")))
+    }
+
+    @Test
     fun largeTextUsesScrollableSingleColumnReadingsAndKeepsRustValuesAfterResize() = withActivity { activity ->
         val configuration = Configuration(activity.resources.configuration).apply { fontScale = 2f }
         val accessibleContext = activity.createConfigurationContext(configuration)
@@ -217,6 +267,27 @@ open class RideDashboardProjectionTest {
             }.text.toString()
         }
         check(values.values.all(String::isNotBlank)) { "Large-text EUC projection omitted an essential reading" }
+        val gpsState = MobilePhoneLocationState()
+        gpsState.ingestAt(
+            MobilePhoneLocationSampleDto(
+                wallClockUnixMs = 1_700_000_000_000UL,
+                sourceTimestampUnixSeconds = null,
+                latitudeDegrees = 39.7392358,
+                longitudeDegrees = -104.990251,
+                altitudeMeters = 1_609.344,
+                horizontalAccuracyMeters = 1.0,
+                verticalAccuracyMeters = 1.0,
+                speedMetersPerSecond = 4.47040025,
+                speedAccuracyMetersPerSecond = 0.2,
+                courseDegrees = 271.5,
+                courseAccuracyDegrees = 3.0,
+            ),
+            1_000UL,
+        )
+        ride.renderPhoneSpeed(gpsState.currentReadbackAt(1_000UL))
+        check(tagged<TextView>(ride, "ride.gps.speed").text.toString().startsWith("GPS ")) {
+            "Large-text EUC hero omitted the independent phone speed readback"
+        }
         check(scroll.childCount == 1 && scroll.getChildAt(0) is LinearLayout) {
             "Large-text Ride should use the scrollable single-column readings surface"
         }
