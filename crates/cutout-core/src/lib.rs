@@ -23,6 +23,10 @@ use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
+#[cfg(feature = "serde")]
+mod pevcap_vesc_context;
+#[cfg(feature = "serde")]
+pub use pevcap_vesc_context::*;
 mod capture_research;
 pub use capture_research::*;
 mod capture_annotations;
