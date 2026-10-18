@@ -66,6 +66,8 @@ configurations.configureEach {
 }
 
 dependencies {
+    implementation("androidx.core:core:1.15.0")
+    implementation("org.maplibre.gl:android-sdk-opengl:13.7.1")
     implementation("net.java.dev.jna:jna:${providers.environmentVariable("CUTOUT_JNA_VERSION").get()}@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
