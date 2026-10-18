@@ -74,6 +74,7 @@ class NativeProductionSurfaceScreenshotTest {
                 val panel = DevicePickerPanel(context, {}, {}, {}, {})
                 panel.render(BlePresentation(devices = devices), permitted = true, enabled = true, hasScanned = true)
                 activity.setContentView(panel)
+                controller.visible()
                 NativeSurfaceCapture.save(panel, "picker-${mode(dark)}")
 
                 val ride = RideDashboardView(context, {}, {})

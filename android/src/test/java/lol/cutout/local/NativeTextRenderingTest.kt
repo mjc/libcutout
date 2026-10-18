@@ -44,8 +44,9 @@ class NativeTextRenderingTest {
                     setBackgroundColor(Color.TRANSPARENT)
                 }
                 context.setContentView(text)
+                controller.visible()
                 drawView(text, canvas, 0, index * rowHeight, width, rowHeight)
-                assertInk(bitmap, 0, index * rowHeight, width, rowHeight, "TextView $value")
+                assertInk(bitmap, 0, index * rowHeight, width, rowHeight, "TextView $value (attached=${text.isAttachedToWindow}, scroll=${text.scrollX}, layout=${text.layout?.width})")
             }
 
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
