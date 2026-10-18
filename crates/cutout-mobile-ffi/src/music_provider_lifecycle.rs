@@ -25,7 +25,8 @@ use cutout_music::{
 };
 
 use crate::{
-    CoreMusicPlaybackState, CoreMusicSnapshot, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
+    CoreMusicCapabilities, CoreMusicCommand, CoreMusicPlaybackState, CoreMusicSnapshot,
+    MobileMusicCapabilitiesDto, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
     MobileMusicProviderDto, MobileMusicRideEventKindDto, MobileMusicSnapshotDto,
     MobileRideMapCoreErrorDto,
 };
@@ -1161,6 +1162,23 @@ impl MobileMusicProviderLifecycle {
             })
     }
 
+    /// Checks the current provider-reported capabilities in Rust and admits transport work
+    /// through this same lifecycle owner. A native adapter must not dispatch when this refuses.
+    #[must_use]
+    pub fn begin_supported_transport_effect(
+        &self,
+        owner: MobileMusicTransportOwner,
+        command: MobileMusicCommandDto,
+        capabilities: MobileMusicCapabilitiesDto,
+        now_ms: u64,
+    ) -> Option<MobileMusicTransportEffect> {
+        let capabilities = CoreMusicCapabilities::from(capabilities);
+        if !capabilities.supports(CoreMusicCommand::from(command)) {
+            return None;
+        }
+        self.begin_transport_effect(owner, command, now_ms)
+    }
+
     /// Admits only explicit local app opening using the shared transport lifecycle.
     #[must_use]
     pub fn begin_soundcloud_command(
@@ -1581,7 +1599,50 @@ mod tests {
         MobileMusicTransportCompletionState, MobileMusicTransportOutcome,
         MobileMusicTransportOwner,
     };
-    use crate::MobileMusicCommandDto;
+    use crate::{MobileMusicCapabilitiesDto, MobileMusicCommandDto};
+
+    #[test]
+    fn rust_refuses_transport_when_native_session_does_not_advertise_action() {
+        let lifecycle = MobileMusicProviderLifecycle::new();
+        let provider = lifecycle
+            .begin_provider_session()
+            .expect("provider session");
+        let owner = MobileMusicTransportOwner::Provider {
+            provider_generation: provider,
+        };
+        let no_actions = MobileMusicCapabilitiesDto {
+            previous: false,
+            play: false,
+            pause: false,
+            next: false,
+            open_provider: false,
+        };
+        assert!(lifecycle
+            .begin_supported_transport_effect(
+                owner,
+                MobileMusicCommandDto::Play,
+                no_actions,
+                1,
+            )
+            .is_none());
+        let play_only = MobileMusicCapabilitiesDto {
+            play: true,
+            ..no_actions
+        };
+        assert!(
+            lifecycle
+                .begin_supported_transport_effect(owner, MobileMusicCommandDto::Play, play_only, 2,)
+                .is_some()
+        );
+        assert!(lifecycle
+            .begin_supported_transport_effect(
+                owner,
+                MobileMusicCommandDto::Pause,
+                play_only,
+                3,
+            )
+            .is_none());
+    }
 
     #[test]
     fn binding_projects_one_shared_lifecycle() {
