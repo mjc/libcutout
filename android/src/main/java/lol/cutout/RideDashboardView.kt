@@ -283,7 +283,7 @@ class RideDashboardView(
                 tag = "ride.accessible.readings.scroll"
             }
             val readings = ui.column().apply { setPadding(0, ui.dp(12), 0, ui.dp(24)) }
-            scroll.addView(readings, ScrollView.LayoutParams(-1, -2))
+            scroll.addView(readings, FrameLayout.LayoutParams(-1, -2))
             root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
             createAccessibleReadings(readings)
             return

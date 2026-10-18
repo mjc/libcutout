@@ -317,8 +317,9 @@ class SettingsPanel(
                 })
             }
             numericEdit = input
+            input.minimumHeight = ui.dp(52)
             input.contentDescription = ui.label(descriptor.labelKey)
-            line.addView(input, LinearLayout.LayoutParams(0, ui.dp(52), 1f))
+            line.addView(input, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             val decrement = ui.action("−") { step(shape, false) }
                 .apply { contentDescription = context.getString(R.string.setting_decrease, ui.label(descriptor.labelKey), "") }
             val increment = ui.action("+") { step(shape, true) }
@@ -508,11 +509,11 @@ class SettingsPanel(
                 incrementButton?.contentDescription = context.getString(
                     R.string.setting_increase, ui.label(descriptor.labelKey), valueText(draft ?: current),
                 )
-                applyButton?.contentDescription = "${ui.label("controls.apply.accessibility").replace("%@", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
+                applyButton?.contentDescription = "${formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
             }
             if (control is MobileSettingControlDto.Choices) {
                 choiceButton?.contentDescription = "${ui.label(descriptor.labelKey)}: ${valueText(draft ?: current)}"
-                applyButton?.contentDescription = "${ui.label("controls.apply.accessibility").replace("%@", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
+                applyButton?.contentDescription = "${formatLabel("controls.apply.accessibility", ui.label(descriptor.labelKey))}: ${valueText(draft)}"
                 choiceButton?.text = valueText(draft ?: current)
                 choiceButton?.isEnabled = interactable && control.choices.any { it.writable }
             }
@@ -627,6 +628,12 @@ class SettingsPanel(
             MobileSettingUnitDto.AMP_HOURS -> " Ah"
             else -> ""
         }
+    }
+
+    private fun formatLabel(key: String, vararg values: String): String {
+        var text = ui.label(key)
+        values.forEach { text = text.replaceFirst("%@", it) }
+        return text
     }
 
     private fun formatFixed(raw: Int, precision: Int) = BigDecimal.valueOf(raw.toLong(), precision).toPlainString()
