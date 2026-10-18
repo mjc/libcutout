@@ -25,11 +25,11 @@ let
     after = [ "check:xcode-ios" ];
   };
   nightlyRust = pkgs.rust-bin.nightly.latest.default;
-  androidNdk =
-    (pkgs.androidenv.composeAndroidPackages {
-      includeNDK = true;
-      ndkVersion = "29.0.14206865";
-    }).ndk-bundle;
+  androidPackages = pkgs.androidenv.composeAndroidPackages {
+    includeNDK = true;
+    ndkVersion = "29.0.14206865";
+  };
+  androidNdk = androidPackages.ndk-bundle;
   androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
   androidNdkHost = if pkgs.stdenv.isDarwin then "darwin-x86_64" else "linux-x86_64";
   androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android21-clang";
@@ -49,6 +49,7 @@ in
 
   packages = [
     androidNdk
+    androidPackages.platform-tools
     cutoutCargoFuzz
     pkgs.cargo-deny
     pkgs.cargo-fuzz
