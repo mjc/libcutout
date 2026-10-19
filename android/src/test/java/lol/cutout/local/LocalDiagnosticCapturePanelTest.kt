@@ -109,9 +109,9 @@ class LocalDiagnosticCapturePanelTest {
             assertSame("The action-marker disclosure belongs to Settings & actions", actionSection,
                 actionDisclosure.parent)
             val powerCycle = checkNotNull(panel.findViewWithTag<Button>("capture.label.power_cycle.action"))
-            assertEquals(View.GONE, powerCycle.parent.visibility)
+            assertEquals(View.GONE, (powerCycle.parent as View).visibility)
             assertTrue(actionDisclosure.performClick())
-            assertEquals(View.VISIBLE, powerCycle.parent.visibility)
+            assertEquals(View.VISIBLE, (powerCycle.parent as View).visibility)
             val elapsedText = checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.elapsed")).text.toString()
             val elapsedParts = elapsedText.split(":").map { it.toLong() }
             assertTrue("Elapsed time should include the Rust-provided monotonic start", elapsedParts[0] * 60 + elapsedParts[1] in 65L..67L)
