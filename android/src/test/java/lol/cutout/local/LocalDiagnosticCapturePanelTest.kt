@@ -128,7 +128,7 @@ class LocalDiagnosticCapturePanelTest {
             assertTrue(button.isSelected)
             assertEquals(lol.cutout.CutoutUi(activity).label("captures.receiving"), checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.status")).text)
             checkNotNull(panel.findViewWithTag<Button>("captures.technical")).performClick()
-            assertEquals("25", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.packets.value")).text)
+            assertEquals("25", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.packets.value")).text.toString())
             NativeSurfaceCapture.save(panel, "capture-active-labels-dark")
             assertTrue(panel.handleBack())
             assertNotNull(panel.findViewWithTag<View>("captures.active.open"))

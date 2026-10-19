@@ -119,7 +119,7 @@ class LocalDiagnosticCaptureClientTest {
                     check(snapshot.lifecycle.attempt?.stage == MobileCaptureStageDto.FINALIZING) {
                         "The admitted end timestamp must carry the Rust finalizing stage"
                     }
-                    finishTimestamp.compareAndSet(null, it)
+                    finishTimestamp.set(it)
                     finishPublished.countDown()
                 }
             }
