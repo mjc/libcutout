@@ -1,11 +1,12 @@
 <resources>
     <string name="pack_controller_readings">Controller readings</string>
-    <string name="pack_no_readback">No live pack readback</string>
-    <string name="pack_no_readback_detail">Connect and verify a device to view its reported pack data.</string>
+    <string name="pack_no_readback">No cell-level BMS data</string>
+    <string name="pack_no_readback_detail">Connect your wheel to view its battery readings.</string>
+    <string name="pack_waiting_detail">No individual battery readings have been received.</string>
     <string name="pack_unsupported">Pack data is not supported</string>
-    <string name="pack_unsupported_detail">The verified device profile does not report pack data.</string>
+    <string name="pack_unsupported_detail">This wheel does not report individual battery readings.</string>
     <string name="pack_unavailable">Pack data is unavailable</string>
-    <string name="pack_unavailable_detail">This device supports pack data, but no current readback is available.</string>
+    <string name="pack_unavailable_detail">No current battery readings have been received.</string>
     <string name="pack_unknown_topology">Pack layout is unknown</string>
     <string name="pack_unknown_topology_detail">Observed groups are not mapped to a verified series layout. Review the reported readings without treating them as physical cells.</string>
     <string name="pack_unverified_topology">%1$d reported groups · layout unverified</string>

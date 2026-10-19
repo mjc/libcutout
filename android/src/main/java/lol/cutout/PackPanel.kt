@@ -117,7 +117,7 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun renderMain(snapshot: MobileBmsSnapshotDto?) {
         when {
             !verified -> emptyState(context.getString(R.string.pack_no_readback), context.getString(R.string.pack_no_readback_detail))
-            snapshot == null -> emptyState(context.getString(R.string.pack_no_readback), context.getString(R.string.pack_no_readback_detail))
+            snapshot == null -> emptyState(context.getString(R.string.pack_no_readback), context.getString(R.string.pack_waiting_detail))
             snapshot.availability == MobileReadbackAvailabilityDto.UNSUPPORTED -> emptyState(context.getString(R.string.pack_unsupported), context.getString(R.string.pack_unsupported_detail))
             snapshot.groups.isEmpty() && snapshot.topology.confidence == MobileBmsTopologyConfidenceDto.UNVERIFIED && snapshot.topology.seriesGroupCount == null -> {
                 heading(topologyLabel(snapshot))
@@ -342,12 +342,7 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun groupVoltage(g: MobileBmsGroupSnapshotDto) = g.voltage?.value?.value?.let { number(it.toDouble() / 1000, 3) + " V" }
     private fun alertColor(level: MobileBmsAlertLevelDto) = when (level) { MobileBmsAlertLevelDto.CRITICAL -> ui.red; MobileBmsAlertLevelDto.WARNING -> ui.orange; else -> ui.foreground }
     private fun number(value: Double, places: Int) = String.format(Locale.getDefault(), "%.${places}f", value)
-    private fun currentText(value: BatteryCurrent): String = when (value) {
-        BatteryCurrent.Zero -> "0.0 A"
-        is BatteryCurrent.CurrentIn -> context.getString(R.string.pack_current_in, number(value.milliamps.toDouble() / 1000, 1))
-        is BatteryCurrent.CurrentOut -> context.getString(R.string.pack_current_out, number(value.milliamps.toDouble() / 1000, 1))
-        is BatteryCurrent.Unknown -> number(value.milliamps.toDouble() / 1000, 1) + " A ?"
-    }
+    private fun currentText(value: BatteryCurrent): String = TelemetryValueFormatting.current(context, value)
 }
 
 /** Lightweight chart view; values remain the exact bounded observations supplied by Rust. */

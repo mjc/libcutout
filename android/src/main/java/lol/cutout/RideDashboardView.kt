@@ -58,7 +58,7 @@ class RideDashboardView(
 
     init { setBackgroundColor(ui.background) }
 
-    fun render(value: BlePresentation) {
+    fun render(value: BlePresentation, chargeEstimate: MobileChargeEstimateStateDto? = null) {
         latestPresentation = value
         val identity = value.session?.identity
         identityTitle = identity?.model
@@ -88,6 +88,13 @@ class RideDashboardView(
             value.phase == NativePhase.DISCOVERING -> context.getString(R.string.discovering)
             value.phase == NativePhase.IDENTIFYING -> context.getString(R.string.identifying)
             else -> context.getString(R.string.disconnected)
+        }
+        if (snapshot?.operatingState == RideOperatingState.CHARGING) {
+            when (chargeEstimate?.kind) {
+                MobileChargeEstimateStateKindDto.FULL -> statusText = ui.label("charge.estimate.value.full")
+                MobileChargeEstimateStateKindDto.BALANCING -> statusText = ui.label("charge.estimate.value.balancing")
+                else -> Unit
+            }
         }
         val projection = snapshot?.let(::mobileRiderDashboardProjection)
         val metrics = projection?.dashboardMetrics.orEmpty()
@@ -125,9 +132,15 @@ class RideDashboardView(
             }
             metrics.forEach { metric -> when (metric) {
                 is MobileRiderDashboardMetricDescriptorDto.BatteryLevel -> add(context.getString(R.string.battery) to "$batteryText%")
-                // The standalone Rust charge-estimator DTO is not carried by Android's
-                // BlePresentation, so do not fabricate a display value here.
-                is MobileRiderDashboardMetricDescriptorDto.ChargeEstimate -> Unit
+                is MobileRiderDashboardMetricDescriptorDto.ChargeEstimate -> {
+                    val estimate = chargeEstimate
+                    val hasDuration = estimate?.kind == MobileChargeEstimateStateKindDto.AVAILABLE ||
+                        estimate?.kind == MobileChargeEstimateStateKindDto.COLLECTING_SAMPLES
+                    val label = ui.label(if (hasDuration) "ride.metric.charge" else "euc.status.charging")
+                    val value = estimate?.let(::chargeEstimateDisplayValue) ?: ui.label("euc.status.charging")
+                    val detail = estimate?.let(::chargeEstimateDisplayDetail).orEmpty()
+                    add(label to if (detail.isEmpty()) value else "$value · $detail")
+                }
                 is MobileRiderDashboardMetricDescriptorDto.PackVoltage -> add(context.getString(R.string.voltage) to voltageText)
                 is MobileRiderDashboardMetricDescriptorDto.Power -> add(context.getString(R.string.power) to powerText)
                 is MobileRiderDashboardMetricDescriptorDto.Thermal -> add(context.getString(R.string.temperature) to thermalText)
@@ -240,13 +253,7 @@ class RideDashboardView(
         else -> null
     }
 
-    private fun footpadText(footpad: MobileFootpadTelemetryDto): String = when (footpad.contactState) {
-        MobileFootpadContactState.NONE -> ui.label("footpad.contact.none")
-        MobileFootpadContactState.LEFT -> ui.label("footpad.contact.left")
-        MobileFootpadContactState.RIGHT -> ui.label("footpad.contact.right")
-        MobileFootpadContactState.BOTH -> ui.label("footpad.contact.both")
-        null -> String.format(Locale.getDefault(), ui.label("footpad.state").replace("%lld", "%d"), footpad.state.toInt())
-    }
+    private fun footpadText(footpad: MobileFootpadTelemetryDto): String = TelemetryValueFormatting.footpad(ui, footpad)
 
     private fun createSurface(showInstruments: Boolean, landscape: Boolean) {
         removeAllViews()
@@ -647,6 +654,79 @@ class RideDashboardView(
         AlertDialog.Builder(context).setTitle(context.getString(R.string.ride_readings))
             .setMessage(details.joinToString("\n") { "${it.first}    ${it.second}" })
             .setPositiveButton(context.getString(R.string.done), null).show()
+    }
+
+    private fun chargeEstimateDisplayValue(state: MobileChargeEstimateStateDto): String = when (state.kind) {
+        MobileChargeEstimateStateKindDto.FULL -> ui.label("charge.estimate.value.full")
+        MobileChargeEstimateStateKindDto.BALANCING -> ui.label("charge.estimate.value.balancing")
+        MobileChargeEstimateStateKindDto.AVAILABLE -> state.estimate?.expected?.let(::durationText)
+            ?: ui.label("metric.availability.unavailable")
+        MobileChargeEstimateStateKindDto.COLLECTING_SAMPLES -> ui.label("charge.estimate.value.collecting")
+        MobileChargeEstimateStateKindDto.STALE,
+        MobileChargeEstimateStateKindDto.UNAVAILABLE,
+        MobileChargeEstimateStateKindDto.FAILED -> ui.label("euc.status.charging")
+    }
+
+    private fun chargeEstimateDisplayDetail(state: MobileChargeEstimateStateDto): String = when (state.kind) {
+        MobileChargeEstimateStateKindDto.FULL -> ui.label("charge.estimate.value.full")
+        MobileChargeEstimateStateKindDto.BALANCING -> ui.label("charge.estimate.value.balancing")
+        MobileChargeEstimateStateKindDto.AVAILABLE -> state.estimate?.let { estimate ->
+            formatLabel(
+                "charge.estimate.detail.available",
+                ui.label(estimateKindKey(estimate.kind)),
+                ui.label(confidenceKey(estimate.confidence)),
+            )
+        } ?: ui.label("charge.estimate.detail.unavailable")
+        MobileChargeEstimateStateKindDto.COLLECTING_SAMPLES -> if (state.samples == 1.toUShort()) {
+            ui.label("charge.estimate.detail.collecting.singular")
+        } else formatLabel("charge.estimate.detail.collecting.plural", state.samples.toInt())
+        MobileChargeEstimateStateKindDto.STALE -> ui.label("charge.estimate.detail.stale")
+        MobileChargeEstimateStateKindDto.UNAVAILABLE -> state.unavailableReason?.let { reason ->
+            ui.label("charge.estimate.unavailable.${unavailableReasonSuffix(reason)}")
+        } ?: ui.label("charge.estimate.detail.unavailable")
+        MobileChargeEstimateStateKindDto.FAILED -> ui.label("charge.estimate.detail.failed")
+    }
+
+    private fun durationText(duration: MobileDurationDto): String {
+        val minutes = duration.milliseconds / 60_000UL
+        if (minutes == 0UL) return ui.label("charge.estimate.duration.under_minute")
+        val hours = minutes / 60UL
+        return if (hours == 0UL) formatLabel("charge.estimate.duration.minutes", minutes.toLong())
+        else formatLabel("charge.estimate.duration.hours_minutes", hours.toLong(), (minutes % 60UL).toLong())
+    }
+
+    private fun formatLabel(key: String, vararg args: Any): String {
+        val pattern = ui.label(key)
+            .replace(Regex("%([1-9]\\$)?lld"), "%${'$'}1d")
+            .replace(Regex("%([1-9]\\$)?@"), "%${'$'}1s")
+        return String.format(Locale.getDefault(), pattern, *args)
+    }
+
+    private fun estimateKindKey(kind: MobileEstimateKindDto): String = when (kind) {
+        MobileEstimateKindDto.AT_PRESENT_CURRENT -> "charge.estimate.kind.present_current"
+        MobileEstimateKindDto.PROFILE_BACKED_TIME_TO_FULL -> "charge.estimate.kind.profile_backed"
+        MobileEstimateKindDto.OBSERVED_TAPER_TIME_TO_FULL -> "charge.estimate.kind.observed_taper"
+        MobileEstimateKindDto.OBSERVED_PROGRESS_TIME_TO_FULL -> "charge.estimate.kind.observed_progress"
+    }
+
+    private fun confidenceKey(confidence: MobileEstimateConfidenceDto): String = when (confidence) {
+        MobileEstimateConfidenceDto.LOW -> "charge.estimate.confidence.low"
+        MobileEstimateConfidenceDto.MEDIUM -> "charge.estimate.confidence.medium"
+        MobileEstimateConfidenceDto.HIGH -> "charge.estimate.confidence.high"
+    }
+
+    private fun unavailableReasonSuffix(reason: MobileChargeEstimateUnavailableReasonDto): String = when (reason) {
+        MobileChargeEstimateUnavailableReasonDto.NOT_CHARGING -> "not_charging"
+        MobileChargeEstimateUnavailableReasonDto.CURRENT_MISSING -> "current_missing"
+        MobileChargeEstimateUnavailableReasonDto.CURRENT_DIRECTION_UNVERIFIED -> "current_direction_unverified"
+        MobileChargeEstimateUnavailableReasonDto.CURRENT_TOO_SMALL -> "current_too_small"
+        MobileChargeEstimateUnavailableReasonDto.BATTERY_LEVEL_MISSING -> "battery_level_missing"
+        MobileChargeEstimateUnavailableReasonDto.CAPACITY_MISSING -> "capacity_missing"
+        MobileChargeEstimateUnavailableReasonDto.UNSUPPORTED_PROFILE -> "unsupported_profile"
+        MobileChargeEstimateUnavailableReasonDto.UNSTABLE_CURRENT -> "unstable_current"
+        MobileChargeEstimateUnavailableReasonDto.STALE_INPUT -> "stale_input"
+        MobileChargeEstimateUnavailableReasonDto.TEMPERATURE_OUT_OF_MODEL -> "temperature_out_of_model"
+        MobileChargeEstimateUnavailableReasonDto.CONTRADICTORY_INPUTS -> "contradictory_inputs"
     }
 
     private fun format(value: Double, digits: Int): String = String.format(Locale.getDefault(), "%.$digits" + "f", value)
