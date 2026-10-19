@@ -53,12 +53,16 @@ class LocalRideHistoryRecoveryPanelTest {
             val savedRide = await { done -> runtime.save(done) }
             check(savedRide.summary.pointCount > 0UL) { "Fixture ride must be durably saved before history queries" }
             started = false
+            val fixtureId = MobileRideIdDto(rideIdBytes(checkNotNull(savedRide.rideId)))
+            assertShortRideFilterEvidence(runtime, fixtureId)
 
             val listed = CountDownLatch(1)
             controller.onChanged = { if (!controller.state.loading) listed.countDown() }
-            onMain { controller.refresh() }
+            // This one-point fixture is intentionally short; use the existing history filter
+            // that reveals short saved rides rather than changing production's default filter.
+            onMain { controller.setIncludeShortRides(true) }
             check(awaitWithMainLooper(listed, 10, TimeUnit.SECONDS)) { "Ride history did not load" }
-            val fixtureIdentity = rideIdBytes(savedRide.rideId ?: startedSnapshot.rideId).toList()
+            val fixtureIdentity = fixtureId.bytes.toList()
             val ride = controller.state.rides.firstOrNull { it.id.bytes.toList() == fixtureIdentity }
                 ?: error("The Rust-recorded fixture ride did not appear in history")
 
@@ -142,10 +146,12 @@ class LocalRideHistoryRecoveryPanelTest {
             val savedRide = await { done -> runtime.save(done) }
             check(savedRide.summary.pointCount > 0UL) { "Fixture ride must be durably saved before history queries" }
             started = false
+            val fixtureId = MobileRideIdDto(rideIdBytes(checkNotNull(savedRide.rideId)))
+            assertShortRideFilterEvidence(runtime, fixtureId)
 
             val loaded = CountDownLatch(1)
             controller.onChanged = { if (!controller.state.loading) loaded.countDown() }
-            onMain { controller.refresh() }
+            onMain { controller.setIncludeShortRides(true) }
             check(awaitWithMainLooper(loaded, 10, TimeUnit.SECONDS)) { "History query did not complete" }
             check(controller.state.rides.isNotEmpty()) { "Fixture must create a retained history row" }
 
@@ -251,6 +257,35 @@ class LocalRideHistoryRecoveryPanelTest {
         start { result = it; latch.countDown() }
         check(awaitWithMainLooper(latch, 15, TimeUnit.SECONDS)) { "Ride-history fixture operation did not complete" }
         return checkNotNull(result).getOrThrow()
+    }
+
+    private fun assertShortRideFilterEvidence(runtime: RideMapRuntime, rideId: MobileRideIdDto) {
+        val filters = await { completed ->
+            runtime.withDatabase({ database ->
+                val stored = database.findRide(rideId)
+                val hiddenByDefault = database.findRideFiltered(
+                    rideId,
+                    MobileRideHistoryFilterDto(null, null, null, false),
+                )
+                val includedWhenRequested = database.findRideFiltered(
+                    rideId,
+                    MobileRideHistoryFilterDto(null, null, null, true),
+                )
+                Triple(stored, hiddenByDefault, includedWhenRequested)
+            }, completed)
+        }
+        check(filters.first?.id?.bytes?.contentEquals(rideId.bytes) == true) {
+            "Saved fixture must exist in the Rust database before filtered history is checked"
+        }
+        check(checkNotNull(filters.first).summary.distanceMillimetres <= 152_400UL) {
+            "The fixture's persisted distance must stay at or below Rust's strict 500-foot cutoff"
+        }
+        check(filters.second == null) {
+            "The one-point fixture should be excluded by Rust's default over-500-foot filter"
+        }
+        check(filters.third?.id?.bytes?.contentEquals(rideId.bytes) == true) {
+            "Rust's explicit include-short-rides filter should expose the saved fixture"
+        }
     }
 
     private fun onMain(block: () -> Unit) {
