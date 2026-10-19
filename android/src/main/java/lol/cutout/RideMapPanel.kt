@@ -618,12 +618,12 @@ class RideMapPanel(
     fun onHostLowMemory() = mapView.onHostLowMemory()
     fun showCurrentLocation(latitude: Double, longitude: Double) = mapView.showCurrentLocation(latitude, longitude)
     fun updatePhoneLocation(sample: uniffi.cutout_mobile_ffi.MobilePhoneLocationSampleDto?) = chargingPage.updateLocation(sample)
-    fun saveUiState(): android.os.Bundle = android.os.Bundle().apply {
+    internal fun saveUiState(): android.os.Bundle = android.os.Bundle().apply {
         putString("mode", mode.name)
     }
 
     /** Restores only the selected Map tab; ride, location, and charging state remain Rust-owned. */
-    fun restoreUiState(saved: android.os.Bundle?) {
+    internal fun restoreUiState(saved: android.os.Bundle?) {
         val restored = saved?.getString("mode")?.let { name ->
             Mode.values().firstOrNull { it.name == name }
         } ?: return

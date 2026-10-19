@@ -1,17 +1,13 @@
 package lol.cutout.local
 
 import android.app.Activity
-import android.content.Context
 import android.content.DialogInterface
 import android.view.View
 import android.widget.Button
-import android.widget.FrameLayout
 import lol.cutout.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.maplibre.android.camera.CameraPosition
-import org.maplibre.android.geometry.LatLng
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
@@ -36,7 +32,7 @@ class LocalLiveMapWorkflowTest {
         val charging = AndroidChargingClient(activity, runtime)
         var permissionRequests = 0
         val panel = RideMapPanel(activity, runtime, charging, { permissionRequests++ }, {},
-            mapSurfaceFactory = { Surface(it) })
+            mapSurfaceFactory = { TestRideMapSurface(it) })
         activity.setContentView(panel)
         try {
             assertTrue(await<Boolean> { done -> runtime.withCore({ it.isReady() }, done) })
@@ -79,24 +75,4 @@ class LocalLiveMapWorkflowTest {
         return checkNotNull(result.get()).getOrThrow()
     }
 
-    private class Surface(context: Context) : FrameLayout(context), RideMapSurface {
-        override val view: View get() = this
-        override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
-        override var onChargingSpotSelected: ((String) -> Unit)? = null
-        override fun show(projection: MobileRideMapRouteProjectionDto) = Unit
-        override fun showCurrentLocation(latitude: Double, longitude: Double) = Unit
-        override fun clearRoute() = Unit
-        override fun currentMapCenter(): LatLng? = null
-        override fun currentCameraPosition(): CameraPosition? = null
-        override fun restoreCameraPosition(position: CameraPosition?) = Unit
-        override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) = Unit
-        override fun recenter() = Unit
-        override fun setActive(value: Boolean) = Unit
-        override fun onHostStart() = Unit
-        override fun onHostResume() = Unit
-        override fun onHostPause() = Unit
-        override fun onHostStop() = Unit
-        override fun onHostDestroy() = Unit
-        override fun onHostLowMemory() = Unit
-    }
 }
