@@ -12,12 +12,36 @@ import lol.cutout.CameraPanel
 import lol.cutout.CameraPanelState
 import lol.cutout.CameraConnectionState
 import lol.cutout.CameraRequestState
+import lol.cutout.CameraAutoReadGate
 import lol.cutout.MainActivity
 import org.junit.Test
 import uniffi.cutout_mobile_ffi.*
 
 /** Camera UI and codec-boundary checks without a network, camera, or device action. */
 open class CameraPanelTest {
+    @Test
+    fun automaticReadAdmissionIsOneShotPerActiveWifiIdentity() {
+        val gate = CameraAutoReadGate<Any>()
+        val firstNetwork = Any()
+        val secondNetwork = Any()
+        check(!gate.claim(active = false, wifiReady = true, isReading = false, hasEvidence = false, network = firstNetwork))
+        check(!gate.claim(active = true, wifiReady = false, isReading = false, hasEvidence = false, network = firstNetwork))
+        check(gate.claim(active = true, wifiReady = true, isReading = false, hasEvidence = false, network = firstNetwork))
+        check(!gate.claim(active = true, wifiReady = true, isReading = false, hasEvidence = false, network = firstNetwork)) {
+            "Repeated path callbacks for one Wi-Fi network must not enqueue another automatic read"
+        }
+        check(!gate.claim(active = true, wifiReady = true, isReading = true, hasEvidence = false, network = secondNetwork)) {
+            "An in-flight read must not admit another automatic request"
+        }
+        check(gate.claim(active = true, wifiReady = true, isReading = false, hasEvidence = false, network = secondNetwork)) {
+            "A newly observed Wi-Fi network should receive its own automatic read attempt"
+        }
+        gate.reset()
+        check(gate.claim(active = true, wifiReady = true, isReading = false, hasEvidence = false, network = firstNetwork)) {
+            "Re-entering the active route should permit one fresh read"
+        }
+    }
+
     @Test
     fun routeStartsTruthfullyDisconnectedAndDoesNotOfferManualOriginEntry() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -110,6 +134,45 @@ open class CameraPanelTest {
         }
     }
 
+    @Test
+    fun replacingMediaResultsReturnsPaginationToFirstPage() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Activity
+        val state = CutoutSessionStateHandle()
+        val client = AndroidCameraClient(activity.applicationContext, { state })
+        try {
+            instrumentation.runOnMainSync {
+                val media = (0 until 101).map { index -> mediaEntry(index) }
+                val evidence = MobileNovatekReadOnlySnapshotDto(
+                    "R3", "rtsp://192.168.1.254/movie", "", emptyList(), true, media,
+                )
+                val panel = CameraPanel(activity, client)
+                activity.setContentView(panel)
+                panel.render(CameraPanelState(wifiReady = true, connection = CameraConnectionState.CONNECTED, evidence = evidence))
+                panel.findViewWithTag<Button>("camera.files.load-more")?.performClick()
+                check(descendants(panel).filterIsInstance<TextView>().any { it.text == "camera-file-100.mp4" }) {
+                    "The second media page should include the 101st camera record"
+                }
+
+                val replacement = media.toMutableList().apply { this[0] = mediaEntry(0, name = "refreshed-file-0.mp4") }
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = evidence.copy(media = replacement),
+                ))
+                check(descendants(panel).filterIsInstance<TextView>().none { it.text == "camera-file-100.mp4" }) {
+                    "A replacement media result must reset the visible list to page one"
+                }
+                check(descendants(panel).filterIsInstance<TextView>().any { it.text == "refreshed-file-0.mp4" })
+            }
+        } finally {
+            client.close()
+            state.close()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     private fun panelState(
         evidence: MobileNovatekReadOnlySnapshotDto,
         recording: CameraRequestState?,
@@ -117,6 +180,10 @@ open class CameraPanelTest {
     ) = CameraPanelState(
         wifiReady = true, connection = CameraConnectionState.CONNECTED, evidence = evidence,
         recordingRequest = recording, stillRequest = still,
+    )
+
+    private fun mediaEntry(index: Int, name: String = "camera-file-$index.mp4") = MobileNovatekMediaEntryDto(
+        name, "/$name", 100uL, index.toULong(), "00:00:$index", 0u,
     )
 
     private fun descendants(view: View): Sequence<View> = sequence {

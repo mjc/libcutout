@@ -60,6 +60,19 @@ data class CameraPanelState(
 enum class CameraConnectionState { NOT_CONFIGURED, WIFI_REQUIRED, DISCOVERING, CONNECTED, UNSUPPORTED }
 enum class CameraRequestState { IN_FLIGHT, ACKNOWLEDGED, REFUSED, UNKNOWN, TIMED_OUT, FAILED }
 
+/** Claims one automatic read per observed Wi-Fi network for the current active route. */
+internal class CameraAutoReadGate<T : Any> {
+    private var attemptedNetwork: T? = null
+
+    fun claim(active: Boolean, wifiReady: Boolean, isReading: Boolean, hasEvidence: Boolean, network: T?): Boolean {
+        if (!active || !wifiReady || isReading || hasEvidence || network == null || network == attemptedNetwork) return false
+        attemptedNetwork = network
+        return true
+    }
+
+    fun reset() { attemptedNetwork = null }
+}
+
 /** Android transport and decoder effects around the Rust-owned Novatek and RTSP boundaries. */
 class AndroidCameraClient(
     private val context: Context,
@@ -77,6 +90,8 @@ class AndroidCameraClient(
     private val networkManager = context.getSystemService(ConnectivityManager::class.java)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wifiNetwork: Network? = null
+    private val autoReadGate = CameraAutoReadGate<Network>()
+    private var hasNetworkObservation = false
     @Volatile private var connectedNetwork: Network? = null
     private var active = false
     private var readingGeneration = 0L
@@ -375,7 +390,13 @@ class AndroidCameraClient(
     }
 
     private fun applyNetwork(network: Network?, wifi: Boolean) {
-        val changed = connectedNetwork != null && connectedNetwork != network || view.evidence != null && !wifi
+        val usableNetwork = network.takeIf { wifi }
+        val expectedConnection = if (wifi) CameraConnectionState.NOT_CONFIGURED else CameraConnectionState.WIFI_REQUIRED
+        val networkChanged = connectedNetwork != usableNetwork
+        val wifiChanged = view.wifiReady != wifi
+        val changed = connectedNetwork != null && connectedNetwork != usableNetwork || view.evidence != null && !wifi
+        if (hasNetworkObservation && !networkChanged && !wifiChanged) return
+        hasNetworkObservation = true
         if (changed) {
             readingGeneration++
             stopPreviewOnWorker()
@@ -385,20 +406,24 @@ class AndroidCameraClient(
         } else {
             sessionState().advanceCameraDiscoveryGeneration()
         }
-        connectedNetwork = network.takeIf { wifi }
+        connectedNetwork = usableNetwork
         wifiNetwork = connectedNetwork
-        update(view.copy(wifiReady = wifi, connection = if (wifi) CameraConnectionState.NOT_CONFIGURED else CameraConnectionState.WIFI_REQUIRED,
+        update(view.copy(wifiReady = wifi, connection = expectedConnection,
             evidence = if (changed) null else view.evidence, preview = sessionState().cameraSnapshot(),
-            isReading = false, error = null))
+            isReading = if (changed) false else view.isReading, error = if (changed) null else view.error))
+        if (!wifi) autoReadGate.reset()
+        else if (autoReadGate.claim(active, wifi, view.isReading, view.evidence != null, usableNetwork)) loadEvidence()
     }
 
     private fun stopOnWorker() {
         readingGeneration++
+        autoReadGate.reset()
         stopPreviewOnWorker()
         networkCallback?.let { runCatching { networkManager.unregisterNetworkCallback(it) } }
         networkCallback = null
         connectedNetwork = null
         wifiNetwork = null
+        hasNetworkObservation = false
         val state = sessionState()
         state.invalidateCameraLifecycle()
         state.clearNovatekSession()

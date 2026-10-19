@@ -40,7 +40,9 @@ class CameraPanel(
     private val mediaTitle = ui.text(ui.label("camera.evidence.media_title"), 17f, true)
     private val mediaRows = ui.column()
     private val loadMedia = ui.action(ui.label("camera.evidence.media_title")) { client.loadMedia() }
-    private val loadMoreMedia = ui.action(ui.label("camera.evidence.media_load_more")) { mediaPage++ ; renderMedia(currentState.evidence!!) }
+    private val loadMoreMedia = ui.action(ui.label("camera.evidence.media_load_more")) { mediaPage++ ; renderMedia(currentState.evidence!!) }.apply {
+        tag = "camera.files.load-more"
+    }
     private val filesCard = ui.column()
     private var active = false
     private var observation: AutoCloseable? = null
@@ -50,6 +52,7 @@ class CameraPanel(
     private var currentState = client.current()
     private var lastConnected = false
     private var mediaPage = 1
+    private var lastMediaResult: List<MobileNovatekMediaEntryDto>? = null
     private val holderCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
             client.setPreviewSurface(holder.surface)
@@ -239,6 +242,10 @@ class CameraPanel(
 
     private fun renderMedia(evidence: MobileNovatekReadOnlySnapshotDto) {
         val media = evidence.media.orEmpty()
+        if (lastMediaResult != media) {
+            mediaPage = 1
+            lastMediaResult = media.toList()
+        }
         mediaRows.removeAllViews()
         mediaPage = mediaPage.coerceAtLeast(1)
         loadMedia.visibility = if (evidence.media != null) View.GONE else View.VISIBLE
