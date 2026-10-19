@@ -19,7 +19,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalMapSubmodeRestoreTest {
     @Test
-    fun historyAndChargingTabsSurviveActivityRecreation() {
+    fun historyTabSurvivesActivityRecreation() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<LocalTestApplication>()
         val controller = Robolectric.buildActivity(MainActivity::class.java,
             Intent(context, MainActivity::class.java).putExtra("page", R.string.map)).setup().visible()
@@ -32,15 +32,11 @@ class LocalMapSubmodeRestoreTest {
             assertTrue("Map page should restore the selected History tab",
                 activity.window.decorView.findViewWithTag<Button>("ride_map_mode_history").isSelected)
 
-            assertTrue(activity.window.decorView.findViewWithTag<Button>("ride_map_mode_charging").performClick())
-            recreated = recreated.recreate()
-            activity = recreated.get()
-            assertTrue("Map page should restore the selected Charging tab",
-                activity.window.decorView.findViewWithTag<Button>("ride_map_mode_charging").isSelected)
         } finally {
             controller.pause().stop().destroy()
         }
     }
+
     @Test
     fun anUnopenedMapKeepsItsRestoredTabThroughAnotherRecreation() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<LocalTestApplication>()

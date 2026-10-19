@@ -1,11 +1,15 @@
 package lol.cutout
 
 import android.app.Application
+import android.content.Context
 import android.os.Looper
 import uniffi.cutout_mobile_ffi.*
 
 /** Process-owned native adapters; every screen uses the same Rust recording and storage owners. */
 open class CutoutApplication : Application() {
+    /** Override the renderer at the native app boundary in tests; production uses MapLibre. */
+    open fun createRideMapSurface(context: Context): RideMapSurface = RideRouteMapView(context)
+
     private val rideOwner = lazy { RideMapRuntime(this) }
     val rides: RideMapRuntime get() = rideOwner.value
     private val locationOwner = lazy { RideLocationRuntime(this, rides) { rideServiceActive } }
