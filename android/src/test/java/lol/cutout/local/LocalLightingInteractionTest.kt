@@ -17,6 +17,7 @@ import android.widget.SeekBar
 import android.os.SystemClock
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.customview.widget.ExploreByTouchHelper
+import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.AndroidMelkLightingClient
 import lol.cutout.CutoutUi
 import lol.cutout.LightingPanel
@@ -53,14 +54,14 @@ class LocalLightingInteractionTest {
             submitPreset = client::savePreset,
             submitCandidateSelection = selectedCandidates::add,
         )
-        fun renderOnMain(value: LightingPresentation) {
-            activity.runOnUiThread { panel.render(value) }
-            shadowOf(activity.mainLooper).idle()
-        }
+        // Settle the real initial client callback, then keep injected Rust presentation states isolated.
+        client.observe(null)
+        shadowOf(activity.mainLooper).idle()
         activity.setContentView(panel)
         try {
             val emptyScan = presentation(MobileMelkLightingSessionStateDto.Scanning)
-            renderOnMain(emptyScan)
+            panel.render(emptyScan)
+            shadowOf(activity.mainLooper).idle()
             checkNotNull(panel.findViewWithTag<View>("lighting.choose-accessory")).performClick()
 
             val dialog = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
@@ -69,7 +70,8 @@ class LocalLightingInteractionTest {
             assertEquals(0, adapter.count)
 
             val candidate = MobileMelkLightingSessionCandidateDto("stable-id", "MELK light", -48)
-            renderOnMain(emptyScan.copy(candidates = listOf(candidate)))
+            panel.render(emptyScan.copy(candidates = listOf(candidate)))
+            shadowOf(activity.mainLooper).idle()
             assertSame("The open pairing surface and its adapter should be retained", dialog,
                 ShadowAlertDialog.getLatestAlertDialog())
             assertSame(adapter, list.adapter)
@@ -81,18 +83,21 @@ class LocalLightingInteractionTest {
             assertTrue(row.contentDescription.toString().contains("-48 dBm"))
 
             val secondCandidate = MobileMelkLightingSessionCandidateDto("second-id", "Other light", -52)
-            renderOnMain(emptyScan.copy(candidates = listOf(candidate, secondCandidate)))
+            panel.render(emptyScan.copy(candidates = listOf(candidate, secondCandidate)))
+            shadowOf(activity.mainLooper).idle()
             val visibleCandidateRow = adapter.getView(0, null, list)
             val firstStableId = adapter.getItemId(0)
             val secondStableId = adapter.getItemId(1)
             assertTrue("Candidate adapter IDs must remain unique", firstStableId != secondStableId)
-            renderOnMain(emptyScan.copy(candidates = listOf(secondCandidate, candidate)))
+            panel.render(emptyScan.copy(candidates = listOf(secondCandidate, candidate)))
+            shadowOf(activity.mainLooper).idle()
             list.performItemClick(visibleCandidateRow, 0, adapter.getItemId(0))
             assertEquals("A live reorder must not redirect an already-bound row tap", listOf("stable-id"), selectedCandidates)
 
             val collisionA = MobileMelkLightingSessionCandidateDto("Aa", "First", -48)
             val collisionB = MobileMelkLightingSessionCandidateDto("BB", "Second", -49)
-            renderOnMain(emptyScan.copy(candidates = listOf(collisionA, collisionB)))
+            panel.render(emptyScan.copy(candidates = listOf(collisionA, collisionB)))
+            shadowOf(activity.mainLooper).idle()
             assertTrue("Distinct Rust identifiers with colliding String hashes keep unique row IDs",
                 adapter.getItemId(0) != adapter.getItemId(1))
 
@@ -115,6 +120,8 @@ class LocalLightingInteractionTest {
 
     @Test
     fun accessibilityHueAndSaturationActionsCommitRatherThanLeaveOnlyPreviewState() {
+        // Robolectric copies the WindowSession touch mode into ViewRootImpl when the Activity is created.
+        InstrumentationRegistry.getInstrumentation().setInTouchMode(false)
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
         Shadows.shadowOf(activity.getSystemService(AccessibilityManager::class.java)).apply {
@@ -139,6 +146,8 @@ class LocalLightingInteractionTest {
                 ))
             },
         )
+        client.observe(null)
+        shadowOf(activity.mainLooper).idle()
         val accessibilityHost = RecordingAccessibilityFrameLayout(activity).apply { addView(panel) }
         activity.setContentView(accessibilityHost)
         try {
@@ -181,12 +190,23 @@ class LocalLightingInteractionTest {
             assertTrue("Virtual controls have distinct touch-exploration regions", hueBounds.right <= saturationBounds.left)
             assertTrue(hueNode.isFocusable)
             assertTrue(saturationNode.isFocusable)
+            assertFalse("The attached native root is in keyboard-navigation mode", wheel.isInTouchMode)
 
-            assertTrue("Hue can receive native virtual keyboard focus", provider.performAction(
-                1, AccessibilityNodeInfoCompat.ACTION_FOCUS, null,
-            ))
+            val hueLabel = CutoutUi(activity).label("lighting.hue")
+            fun keyboardFocusLabel(): CharSequence? = provider.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?.let { AccessibilityNodeInfoCompat.wrap(it).contentDescription }
+            if (keyboardFocusLabel() != hueLabel) {
+                val accepted = provider.performAction(1, AccessibilityNodeInfoCompat.ACTION_FOCUS, null)
+                assertTrue(
+                    "Hue receives native virtual keyboard focus " +
+                        "(attached=${wheel.isAttachedToWindow}, focusable=${wheel.isFocusable}, " +
+                        "focusableInTouchMode=${wheel.isFocusableInTouchMode}, inTouchMode=${wheel.isInTouchMode}, " +
+                        "currentFocus=${keyboardFocusLabel()})",
+                    accepted,
+                )
+            }
             assertEquals(CutoutUi(activity).label("lighting.hue"),
-                provider.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { AccessibilityNodeInfoCompat.wrap(it).contentDescription })
+                keyboardFocusLabel())
             assertTrue("DPAD navigation advances between virtual controls", wheel.dispatchKeyEvent(
                 KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT),
             ))
@@ -254,7 +274,9 @@ class LocalLightingInteractionTest {
             assertFalse("Virtual slider scroll adjustment must also commit", writes.last().second)
             assertTrue(provider.performAction(2, AccessibilityNodeInfoCompat.ACTION_CLEAR_ACCESSIBILITY_FOCUS, null))
 
-            assertTrue(provider.performAction(1, AccessibilityNodeInfoCompat.ACTION_FOCUS, null))
+            if (keyboardFocusLabel() != hueLabel) {
+                assertTrue(provider.performAction(1, AccessibilityNodeInfoCompat.ACTION_FOCUS, null))
+            }
             assertTrue(provider.performAction(2, AccessibilityNodeInfoCompat.ACTION_ACCESSIBILITY_FOCUS, null))
             assertTrue("Detach setup holds keyboard focus", provider.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) != null)
             assertTrue("Detach setup holds accessibility focus", provider.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) != null)
@@ -264,6 +286,7 @@ class LocalLightingInteractionTest {
             assertEquals("Detaching clears accessibility virtual focus", null,
                 provider.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY))
         } finally {
+            InstrumentationRegistry.getInstrumentation().setInTouchMode(true)
             client.stop()
             host.pause().stop().destroy()
         }
