@@ -7,6 +7,7 @@ import android.widget.TextView
 import android.widget.EditText
 import android.widget.SeekBar
 import android.view.MotionEvent
+import android.os.Bundle
 import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
@@ -22,6 +23,46 @@ import uniffi.cutout_mobile_ffi.*
 
 /** Native presentation checks for the separate MELK controller route. No device writes are made. */
 open class LightingPanelTest {
+    @Test
+    fun effectsSeparatesPowerAndPatternsCardsAndRestoresNativePageSelection() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val requested = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true),
+                    emptyList(), "synthetic-light", null, null, false, requested, null, emptyList(),
+                    permissionMissing = false,
+                )
+                val panel = LightingPanel(activity, client) {}
+                panel.render(snapshot)
+                activity.setContentView(panel)
+                checkNotNull(panel.findViewWithTag<View>("lighting.tab.effects")).performClick()
+
+                val powerCard = checkNotNull(panel.findViewWithTag<View>("lighting.effects.power-card"))
+                val patternsCard = checkNotNull(panel.findViewWithTag<View>("lighting.effects.patterns-card"))
+                val power = checkNotNull(panel.findViewWithTag<Switch>("lighting.power"))
+                val speed = checkNotNull(panel.findViewWithTag<SeekBar>("lighting.effect.speed"))
+                check(ancestorWithTag(power, "lighting.effects.power-card") === powerCard)
+                check(ancestorWithTag(speed, "lighting.effects.patterns-card") === patternsCard)
+                check(powerCard !== patternsCard) {
+                    "Swift Effects places Power and the effect controls in separate cards"
+                }
+
+                val saved = panel.saveUiState()
+                val restoredPanel = LightingPanel(activity, client) {}
+                restoredPanel.render(snapshot)
+                restoredPanel.restoreUiState(saved)
+                check(checkNotNull(restoredPanel.findViewWithTag<View>("lighting.tab.effects")).isSelected)
+                checkNotNull(restoredPanel.findViewWithTag<View>("lighting.effects.power-card"))
+                checkNotNull(restoredPanel.findViewWithTag<View>("lighting.effects.patterns-card"))
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
     @Test
     fun presetSummariesDescribeSolidEffectAndAccessoryMusicPlayback() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -350,6 +391,15 @@ open class LightingPanelTest {
     private fun children(view: View): Sequence<View> = sequence {
         yield(view)
         if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(children(view.getChildAt(index)))
+    }
+
+    private fun ancestorWithTag(view: View, expected: String): View? {
+        var current: View? = view
+        while (current != null) {
+            if (current.tag == expected) return current
+            current = current.parent as? View
+        }
+        return null
     }
 
     private fun descendants(view: View): Sequence<View> = children(view)
