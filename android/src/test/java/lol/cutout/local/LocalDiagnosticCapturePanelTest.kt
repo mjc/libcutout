@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.res.Configuration
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ScrollView
 import android.app.AlertDialog
@@ -14,6 +15,7 @@ import lol.cutout.CutoutApplication
 import lol.cutout.DiagnosticCapturePanel
 import lol.cutout.DiagnosticCaptureArtifact
 import lol.cutout.AndroidCaptureCandidateProjection
+import lol.cutout.BlePresentation
 import lol.cutout.R
 import org.junit.Assert.*
 import org.junit.Test
@@ -77,13 +79,13 @@ class LocalDiagnosticCapturePanelTest {
             )
             panel.renderCapture(DiagnosticCapturePresentation(ready = true, lifecycle = lifecycle))
             panel.renderDiscovery(BlePresentation(captureCandidates = listOf(candidate)))
+            fun currentDialog() = DiagnosticCapturePanel::class.java.getDeclaredField("researchDialog")
+                .apply { isAccessible = true }.get(panel) as? AlertDialog
             try {
                 val choose = DiagnosticCapturePanel::class.java.getDeclaredMethod(
                     "chooseDevice", MobileCaptureLifecycleSnapshotDto::class.java,
                 ).apply { isAccessible = true }
                 choose.invoke(panel, lifecycle)
-                fun currentDialog() = DiagnosticCapturePanel::class.java.getDeclaredField("researchDialog")
-                    .apply { isAccessible = true }.get(panel) as? AlertDialog
                 val chooser = checkNotNull(currentDialog())
                 val row = checkNotNull(chooser.window?.decorView?.findViewWithTag<View>("captures.select.opaque-record-only"))
                 assertTrue(row.contentDescription.toString().contains(candidate.displayName))
