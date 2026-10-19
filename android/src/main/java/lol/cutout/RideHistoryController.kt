@@ -49,11 +49,12 @@ internal fun shouldFitHistoryRoute(previousIdentity: ByteArray?, currentIdentity
 internal fun historyVehicleOptions(
     options: List<Pair<String, String>>,
     selectedIdentity: String?,
+    unavailableLabel: String,
 ): List<Pair<String, String>> {
     val byIdentity = linkedMapOf<String, String>()
-    options.forEach { (identity, label) -> byIdentity.putIfAbsent(identity, label) }
+    options.forEach { (identity, label) -> byIdentity.putIfAbsent(identity, label.ifBlank { unavailableLabel }) }
     if (selectedIdentity != null && selectedIdentity !in byIdentity) {
-        byIdentity[selectedIdentity] = ""
+        byIdentity[selectedIdentity] = unavailableLabel
     }
     return byIdentity.toList().sortedWith(
         compareBy<Pair<String, String>> { it.second.lowercase(Locale.ROOT) }
