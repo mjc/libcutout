@@ -225,6 +225,8 @@ class AndroidBleClient(
         cancelPendingRetryOnOwner()
         stopScanOnOwner()
 
+        endRideSessionOnOwner()
+
         fun clearSelectionAfterTeardown(disconnectAttempt: Boolean) {
             if (revision != selectionRevision) {
                 complete(Result.failure(IllegalStateException("Saved device changed during forget")))
@@ -440,9 +442,7 @@ class AndroidBleClient(
         pendingConnectId = null
         restoreSuppressed = true
         cancelPendingRetryOnOwner()
-        rideReconnectPlatformIdentifier = null
-        rideStartedConnectionToken = null
-        AndroidRideSessionEffects.reduceAndSettlePlatformEffects(state, MobileRideSessionInputDto.UserDisconnected)
+        endRideSessionOnOwner()
         val existing = connection
         if (existing != null) existing.finishTransport(failed = false)
         else {
@@ -451,6 +451,12 @@ class AndroidBleClient(
                 telemetry = null, settings = null, bms = null, connectionCandidate = null)
             publish()
         }
+    }
+
+    private fun endRideSessionOnOwner() {
+        rideReconnectPlatformIdentifier = null
+        rideStartedConnectionToken = null
+        AndroidRideSessionEffects.reduceAndSettlePlatformEffects(state, MobileRideSessionInputDto.UserDisconnected)
     }
 
     /** Starts the Swift-style diagnostic-only route; it never promotes this link to protocol control. */
