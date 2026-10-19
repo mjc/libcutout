@@ -234,7 +234,8 @@ class RideHistoryPanel(
             rows.addView(ui.text(context.getString(R.string.ride_map_recent), 20f, true),
                 LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) })
             state.rides.forEachIndexed { index, ride ->
-                val row = rideRow(ride)
+                val isSelected = state.listPreviewRide?.id?.bytes?.contentEquals(ride.id.bytes) == true
+                val row = rideRow(ride, isSelected)
                 row.setOnClickListener { controller.select(ride) }
                 rows.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
                     if (index > 0) topMargin = ui.dp(8)
@@ -254,16 +255,32 @@ class RideHistoryPanel(
         }
     }
 
-    private fun rideRow(ride: MobileRideRecordDto): LinearLayout {
+    private fun rideRow(ride: MobileRideRecordDto, isSelected: Boolean): LinearLayout {
+        val selectionLabel = ui.label(if (isSelected) "ride_map.history_selected" else "ride_map.history_not_selected")
         val card = ui.column().apply {
             tag = "ride_history_${ride.id.bytes.contentHashCode()}"
             setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
-            background = ui.rounded(14)
+            background = ui.rounded(12, if (isSelected) ui.card else ui.background, outlined = false).apply {
+                setStroke(ui.dp(1), if (isSelected) ui.brand else Color.argb(
+                    128,
+                    Color.red(ui.stroke),
+                    Color.green(ui.stroke),
+                    Color.blue(ui.stroke),
+                ))
+            }
             isClickable = true
             isFocusable = true
+            this.isSelected = isSelected
             minimumHeight = ui.dp(76)
             contentDescription = "${recordedAt(ride.createdAtMilliseconds)}. ${vehicleLabel(ride)}. " +
-                "${distance(ride)}. ${elapsed(ride)}. ${moving(ride)}"
+                "${distance(ride)}. ${elapsed(ride)}. ${moving(ride)}. $selectionLabel"
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = android.widget.Button::class.java.name
+                    info.isSelected = isSelected
+                }
+            }
         }
         val identity = ui.column().apply {
             addView(ui.text(recordedAt(ride.createdAtMilliseconds), 17f, true))
@@ -407,7 +424,8 @@ class RideHistoryPanel(
         when {
             state.musicError != null || history?.status == MobileMusicHistoryStatusDto.UNAVAILABLE ->
                 rows.addView(ui.text(context.getString(R.string.ride_map_music_unavailable), 14f, false, ui.muted), spaced())
-            events.isEmpty() -> rows.addView(ui.text(context.getString(musicStateString(retainedState)), 14f, false, ui.muted), spaced())
+            !shouldShowRideMusicTimeline(retainedState, events.size) ->
+                rows.addView(ui.text(context.getString(musicStateString(retainedState)), 14f, false, ui.muted), spaced())
             else -> events.forEach { event ->
                 val item = event.title?.takeIf(String::isNotBlank) ?: context.getString(R.string.ride_map_music_event_no_title)
                 val artist = event.artist?.takeIf(String::isNotBlank)
@@ -584,3 +602,7 @@ class RideHistoryPanel(
 }
 
 internal fun usesStackedHistoryFilters(fontScale: Float): Boolean = fontScale >= 1.3f
+
+/** Mirrors Swift's MusicHistoryPresentation: only human-readable or unclassified events form a timeline. */
+internal fun shouldShowRideMusicTimeline(state: MobileMusicHistoryStateDto?, eventCount: Int): Boolean =
+    eventCount > 0 && (state == null || state == MobileMusicHistoryStateDto.HUMAN_READABLE)

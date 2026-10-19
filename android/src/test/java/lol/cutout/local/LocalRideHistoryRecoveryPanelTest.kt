@@ -115,6 +115,19 @@ class LocalRideHistoryRecoveryPanelTest {
             check(surface.lastProjection?.points?.isNotEmpty() == true) {
                 "Recovery should display the bounded full-extent Rust route projection"
             }
+
+            onMain {
+                check(panel!!.handleBack()) { "Detail Back should return to the history list" }
+                panel!!.render()
+                val row = checkNotNull(panel!!.findViewWithTag<View>("ride_history_${ride.id.bytes.contentHashCode()}")) {
+                    "The selected Rust ride should remain visible after returning from detail"
+                }
+                check(row.isSelected) { "The current list preview should remain selected after detail closes" }
+                val selectedLabel = lol.cutout.CutoutUi(context).label("ride_map.history_selected")
+                check(row.contentDescription?.endsWith(selectedLabel) == true) {
+                    "Accessibility should announce the selected history row"
+                }
+            }
         } finally {
             panel?.dispose()
             if (started) runCatching { await { done -> runtime.discard(done) } }
