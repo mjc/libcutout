@@ -81,7 +81,12 @@ class SetupPanel(
     private val accountDelete = ui.action(context.getString(R.string.setup_account_delete), primary = true) {
         android.app.AlertDialog.Builder(context)
             .setTitle(R.string.setup_account_confirm_title)
-            .setMessage(R.string.setup_account_confirm_message)
+            .setMessage(listOf(
+                ui.label("setup.account.confirm_message"),
+                ui.label("setup.account.before_delete"),
+                ui.label("setup.account.local_data"),
+                ui.label("setup.account.retention"),
+            ).joinToString("\n\n"))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.setup_account_confirm_delete) { _, _ -> deleteAccount() }
             .show()
