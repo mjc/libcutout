@@ -14,7 +14,7 @@ class VescDebugPanel(context: Context) : ScrollView(context) {
     private val ui = CutoutUi(context)
     private val page = ui.column()
     private val title = ui.title(ui.label("vesc.debug.title"))
-    private val subtitle = ui.text("", 15f, color = ui.muted)
+    private val subtitle = ui.text("", 15f, color = ui.muted).apply { tag = "vesc.debug.subtitle" }
     private val metrics = ui.column()
     private val metricValues = linkedMapOf<String, TextView>()
     private val metricDetails = linkedMapOf<String, TextView>()
@@ -61,7 +61,8 @@ class VescDebugPanel(context: Context) : ScrollView(context) {
         render(BlePresentation())
     }
 
-    fun render(presentation: BlePresentation) {
+    /** Capture lifecycle is optional so this panel remains usable during connection-only renders. */
+    fun render(presentation: BlePresentation, capture: DiagnosticCapturePresentation? = null) {
         val session = presentation.session
         val snapshot = presentation.telemetry.takeIf {
             session?.connection?.readiness == MobileConnectionReadinessDto.VERIFIED &&
@@ -76,7 +77,7 @@ class VescDebugPanel(context: Context) : ScrollView(context) {
             else -> R.string.disconnected
         })
         title.text = session?.identity?.model?.takeIf(String::isNotBlank) ?: ui.label("vesc.debug.title")
-        subtitle.text = phase
+        subtitle.text = captureStatus(capture) ?: phase
         metrics.visibility = if (snapshot == null) View.GONE else View.VISIBLE
         rows.forEach { (key, row) -> row.first.visibility = if (key == "session" || snapshot != null) View.VISIBLE else View.GONE }
         row("session", phase)
@@ -107,4 +108,24 @@ class VescDebugPanel(context: Context) : ScrollView(context) {
     private fun number(value: Double, digits: Int) = String.format(Locale.getDefault(), "%.${digits}f", value)
     private fun detail(key: String, value: String) = String.format(Locale.getDefault(),
         ui.label(key).replace("%1\$@", "%1\$s").replace("%@", "%s"), value)
+
+    /** Mirrors the capture-priority subtitle passed to Swift's VESC debug screen. */
+    private fun captureStatus(capture: DiagnosticCapturePresentation?): String? {
+        val attempt = capture?.lifecycle?.attempt ?: return null
+        if (capture.writerStatus?.failed == true || attempt.stage in setOf(
+                MobileCaptureStageDto.SAVE_FAILED, MobileCaptureStageDto.FAILED,
+            )) return ui.label("captures.save_failed")
+        return when (attempt.stage) {
+            MobileCaptureStageDto.STARTING -> ui.label("captures.starting")
+            MobileCaptureStageDto.SAVING, MobileCaptureStageDto.FINALIZING -> ui.label("captures.saving")
+            MobileCaptureStageDto.RECORDING -> if (capture.notificationCount > 0UL)
+                ui.label("captures.receiving") else ui.label("captures.waiting")
+            MobileCaptureStageDto.SAVE_FAILED, MobileCaptureStageDto.FAILED -> ui.label("captures.save_failed")
+            MobileCaptureStageDto.SAVED -> {
+                val fileName = capture.fileName ?: capture.sessionArtifacts.lastOrNull()?.file?.name
+                if (fileName == null) ui.label("capture.status.stored")
+                else String.format(Locale.getDefault(), ui.label("capture.status.saved").replace("%@", "%s"), fileName)
+            }
+        }
+    }
 }
