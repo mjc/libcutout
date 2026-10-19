@@ -47,6 +47,8 @@ open class CutoutApplication : Application() {
     val camera: AndroidCameraClient get() = cameraOwner.value
     private val chargingOwner = lazy { AndroidChargingClient(this, rides) }
     val charging: AndroidChargingClient get() = chargingOwner.value
+    private val captureSubmissionOwner = lazy { AndroidCaptureSubmissionClient(this, rides, charging) }
+    val captureSubmissions: AndroidCaptureSubmissionClient get() = captureSubmissionOwner.value
     private val bluetoothOwner = lazy {
         AndroidBleClient(this) { presentation, state ->
             phoneAlarms.onSessionObservation(presentation, state)
@@ -74,6 +76,7 @@ open class CutoutApplication : Application() {
     }
 
     override fun onTerminate() {
+        if (captureSubmissionOwner.isInitialized()) captureSubmissions.close()
         if (locationOwner.isInitialized()) locations.close()
         if (cameraOwner.isInitialized()) camera.close()
         if (musicOwner.isInitialized()) music.close()

@@ -5,6 +5,9 @@ import android.content.Context
 import lol.cutout.AndroidDiagnosticCaptureClient
 import lol.cutout.CutoutApplication
 import lol.cutout.R
+import lol.cutout.AndroidCaptureSubmissionClient
+import lol.cutout.CaptureSubmissionPresentation
+import lol.cutout.CaptureSubmissionController
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -127,6 +130,30 @@ class LocalDiagnosticCaptureClientTest {
             }.getOrThrow()
             check(savedReadback == activeReadback)
 
+            // Freeze and cancel through the real production submission boundary, entirely locally.
+            val nativeSubmission = CaptureSubmissionClientHandle(database)
+            val submissionOwner = AndroidCaptureSubmissionClient({ nativeSubmission }, { allowRegistration ->
+                check(!allowRegistration) { "Reading/preparing/cancelling must not register an account" }
+                null
+            }, AndroidCaptureSubmissionClient::errorKey)
+            val submission = submissionOwner.controller(savedSource)
+            val subscription = submission.observe {}
+            try {
+                submission.prepare()
+                awaitSubmission(submission) { !it.working && it.status?.phase == MobileCaptureSubmissionPhaseDto.PREPARED }
+                val operation = checkNotNull(submission.current().status).operationId
+                check(submission.current().status!!.categories.settingsObservations)
+                submission.cancel()
+                awaitSubmission(submission) { !it.working && !it.cancelling && it.status?.phase == MobileCaptureSubmissionPhaseDto.CANCELLED }
+                check(submission.current().status?.operationId == operation)
+                val reopened = CaptureSubmissionClientHandle(database)
+                try {
+                    val persisted = kotlinx.coroutines.runBlocking { reopened.status(savedSource) }
+                    check(persisted?.phase == MobileCaptureSubmissionPhaseDto.CANCELLED)
+                    check(persisted?.operationId == operation)
+                } finally { reopened.close() }
+            } finally { subscription.close(); submissionOwner.close(); nativeSubmission.close() }
+
             exported = await { done -> client.export(capture.liveCaptureId, done) }.getOrThrow()
             check(exported?.parentFile?.canonicalFile == File(context.cacheDir, "diagnostic-exports").canonicalFile)
             check(exported?.isFile == true && exported!!.length() > 0L)
@@ -179,6 +206,13 @@ class LocalDiagnosticCaptureClientTest {
     }
 
     private val historyLoaded = CountDownLatch(1)
+
+    private fun awaitSubmission(model: CaptureSubmissionController, condition: (CaptureSubmissionPresentation) -> Boolean) {
+        val ready = CountDownLatch(1)
+        val observer = model.observe { if (condition(it)) ready.countDown() }
+        try { check(awaitCallback(ready, 15, TimeUnit.SECONDS)) { "Submission state did not arrive: ${model.current()}" } }
+        finally { observer.close() }
+    }
 
     private fun <T> await(start: ((Result<T>) -> Unit) -> Unit): Result<T> {
         val latch = CountDownLatch(1)
