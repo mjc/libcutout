@@ -614,15 +614,22 @@ continuing. These checks live in `cutout-dev` and are covered by its Rust tests.
 To check an existing Debug or Release bundle directly, use
 `devenv shell -- cargo cutout ios verify-app /path/to/CutoutApp.app`.
 
-The phone task builds, installs, and launches on a connected unlocked device using
-the `ios-device-deploy` SecretSpec scope. Configure its
+The phone deployment task builds, verifies, and installs on a connected device
+using the `ios-device-deploy` SecretSpec scope. A normal deployment does not
+launch the app, so install and launch remain separate checks; installation can
+complete while the phone is locked. Configure the task's
 `CUTOUT_IOS_DEVELOPMENT_TEAM` and `CUTOUT_SPOTIFY_CLIENT_ID` in the OS keychain
 with `devenv shell -- secretspec set --profile development NAME --provider keyring`
 (`NAME` is one variable at a time); certificates and
 provisioning profiles remain managed by Xcode. `CUTOUT_IOS_APP_BUNDLE_ID` is
-forwarded when set. For custom launch arguments, use `secretspec run --scope
-ios-device-deploy --profile development -- cargo cutout ios deploy -- --launch-smoke`. The project
-does not commit personal signing values.
+forwarded when set. To explicitly launch after installation, use
+`secretspec run --scope ios-device-deploy --profile development -- cargo cutout ios deploy --launch`;
+an accepted launch command does not establish visible UI while the phone is
+locked. For custom launch arguments, pass them
+after `--launch --`; for example, append `-- --launch-smoke` to
+`cargo cutout ios deploy --launch`. The existing
+`cargo cutout ios deploy -- --launch-smoke` form also explicitly requests
+launch. The project does not commit personal signing values.
 The physical iOS UI test runner resolves the same scope before building and
 checks that the app embeds the configured Spotify client ID.
 
