@@ -355,6 +355,7 @@ struct DeviceTuneRouteView: View {
     let model: CutoutAppModel
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
+    @State private var drivetrainEditor: VescDrivetrainEditor?
 
     var body: some View {
         Group {
@@ -363,14 +364,14 @@ struct DeviceTuneRouteView: View {
                     snapshot: snapshot,
                     submitSetting: submitSetting,
                     submitAction: submitAction
-                ) { alarmsSection }
+                ) { additionalControls }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
                         ContentUnavailableView(
                             localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
-                        alarmsSection
+                        additionalControls
                     }
                     .padding(24)
                 }
@@ -380,6 +381,30 @@ struct DeviceTuneRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .tint(PevColors.yellow)
         .accessibilityIdentifier("settings.screen.tune")
+        .sheet(item: $drivetrainEditor) { editor in
+            VescDrivetrainEditorView(editor: editor)
+        }
+    }
+
+    @ViewBuilder
+    private var additionalControls: some View {
+        if model.phase == .live, let editor = model.makeVescDrivetrainEditor() {
+            Button {
+                drivetrainEditor = editor
+            } label: {
+                HStack {
+                    Label(localizedAppText("vesc.drivetrain.title"), systemImage: "gearshape")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(PevColors.muted)
+                }
+                .padding(16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("vesc.drivetrain.open")
+        }
+        alarmsSection
     }
 
     private var alarmsSection: some View {

@@ -4301,6 +4301,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testStandardEskateDrivetrainFormValidatesAndRestoresFractionalReduction() throws {
+        executionTimeAllowance = 300
         let (_, choice, energy) = try launchStandardEskateRide()
         app.buttons["vesc.drivetrain.open"].tap()
         let editor = app.descendants(matching: .any)["vesc.drivetrain.editor"]
@@ -4347,6 +4348,32 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed, app.debugDescription)
         XCTAssertFalse(app.buttons["vesc.drivetrain.open"].exists)
+
+        tapNavigationTab("tune", title: "Tune")
+        let edit = app.buttons["vesc.drivetrain.open"]
+        guard edit.waitForExistence(timeout: 5) else {
+            XCTFail("Configured geometry must remain editable after fresh speed arrives")
+            return
+        }
+        edit.tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed)
+        let reduction = app.textFields["vesc.drivetrain.reduction"]
+        XCTAssertEqual(reduction.value as? String, "2.5")
+        reduction.tap()
+        reduction.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "3")
+        scrollElementFrameIntoViewport(
+            save, in: editor, maxScrolls: 8,
+            occludedBy: app.keyboards.firstMatch.exists ? app.keyboards.firstMatch : nil
+        )
+        save.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), app.debugDescription)
+        tapNavigationTab("ride", title: "Ride")
+        let corrected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "5.0, mph, available,"), object: speed
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [corrected], timeout: 5), .completed, app.debugDescription)
     }
 
     func testStandardEskateRidePreservesReadingsAtAccessibilityDynamicType() throws {
