@@ -1,7 +1,9 @@
 package lol.cutout
 
 import android.content.Context
+import android.app.Activity
 import android.content.Intent
+import android.content.ContextWrapper
 import android.net.Uri
 import android.text.format.DateFormat
 import android.view.Gravity
@@ -288,14 +290,14 @@ class MusicSettingsPanel(
         onRequestListenerAccess()
     }
     private val connectAction = musicFormAction(context, ui, ui.label("music.connect_provider"), tag = "music.connect-provider") {
-        client.connectOrRetrySelectedProvider()
+        client.connectOrRetrySelectedProvider(context.musicActivity())
     }
     private val openProviderAction = musicFormAction(context, ui, "", tag = "music.open-provider") {
         client.openProviderFromSettings()
     }
     private val spotifyDisconnect = musicFormAction(context, ui, context.getString(R.string.music_spotify_disconnect), tag = "music.disconnect-spotify", destructive = true) {
         android.app.AlertDialog.Builder(context)
-            .setMessage(R.string.music_spotify_disconnect_confirm)
+            .setMessage(ui.label("music.spotify.disconnect.message"))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.music_spotify_disconnect) { _, _ -> client.disconnectSpotify() }
             .show()
@@ -349,7 +351,10 @@ class MusicSettingsPanel(
     fun render(value: AndroidMusicPresentation) {
         status.text = when {
             value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD -> context.getString(R.string.music_soundcloud_ready)
-            !value.listenerAccessGranted -> context.getString(R.string.music_access_required)
+            value.selectedProvider == MobileMusicProviderDto.SPOTIFY && !value.spotifyConfigured -> context.getString(R.string.spotify_unavailable_build)
+            value.selectedProvider == MobileMusicProviderDto.SPOTIFY && value.spotifyAuthorizing -> context.getString(R.string.spotify_connecting)
+            value.selectedProvider == MobileMusicProviderDto.SPOTIFY && value.spotifyNeedsAuthorization -> context.getString(R.string.spotify_auth_required)
+            value.selectedProvider != MobileMusicProviderDto.SPOTIFY && !value.listenerAccessGranted -> context.getString(R.string.music_access_required)
             value.snapshot?.state in setOf(MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED) ->
                 value.snapshot?.item?.title?.takeIf(String::isNotBlank)
                     ?: context.getString(value.snapshot?.state?.settingsStateLabel() ?: R.string.music_state_not_connected)
@@ -361,17 +366,31 @@ class MusicSettingsPanel(
             else -> context.getString(value.snapshot?.state?.settingsStateLabel() ?: R.string.music_state_not_connected)
         }
         status.contentDescription = status.text
-        accessAction.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
-        accessExplanation.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
+        val requiresNotificationListener = value.selectedProvider != MobileMusicProviderDto.SPOTIFY &&
+            value.selectedProvider != MobileMusicProviderDto.SOUND_CLOUD
+        accessAction.visibility = if (!requiresNotificationListener || value.listenerAccessGranted) View.GONE else View.VISIBLE
+        accessExplanation.visibility = if (!requiresNotificationListener || value.listenerAccessGranted) View.GONE else View.VISIBLE
         // Android session control is unavailable until the user grants notification access.
         // Showing Connect here would only retry an action that cannot succeed yet.
         val profile = musicProviderProfile(value.selectedProvider)
         val handoffOnly = profile.`interface` == MobileMusicProviderInterface.APP_HANDOFF_ONLY
-        connectAction.visibility = if (handoffOnly || !value.listenerAccessGranted || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
+        val canConnect = when (value.selectedProvider) {
+            MobileMusicProviderDto.SPOTIFY -> value.spotifyConfigured &&
+                (!value.spotifyAuthorized || value.spotifyNeedsAuthorization || !value.spotifyAuthorizing)
+            MobileMusicProviderDto.SOUND_CLOUD -> false
+            MobileMusicProviderDto.APPLE_MUSIC -> value.listenerAccessGranted
+        }
+        connectAction.visibility = if (handoffOnly || !canConnect || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
+        connectAction.isEnabled = !value.spotifyAuthorizing
         val providerTitle = value.selectedProvider.providerTitle(context)
         val reconnect = value.snapshot?.state in setOf(MobileMusicPlaybackStateDto.STALE, MobileMusicPlaybackStateDto.DISCONNECTED)
-        connectAction.text = ui.label(if (reconnect) "music.reconnect_provider" else "music.connect_provider")
-            .replace("%@", providerTitle)
+        connectAction.text = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+            when {
+                value.spotifyCredentialRestoreRetryAvailable -> ui.label("music.spotify.retry_saved_authorization")
+                value.spotifyAuthorized || value.spotifyNeedsAuthorization -> context.getString(R.string.spotify_reauthorize)
+                else -> context.getString(R.string.spotify_connect)
+            }
+        } else ui.label(if (reconnect) "music.reconnect_provider" else "music.connect_provider").replace("%@", providerTitle)
         openProviderAction.text = ui.label("music.open_named_provider").replace("%@", providerTitle)
         spotifyDisconnect.visibility = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) View.VISIBLE else View.GONE
         spotifyDisconnect.isEnabled = !value.spotifyDisconnectPending
@@ -379,7 +398,7 @@ class MusicSettingsPanel(
         soundCloudChoose.visibility = if (value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.VISIBLE else View.GONE
         providerError.text = when {
             value.spotifyDisconnectPending -> context.getString(R.string.music_spotify_disconnect_pending)
-            !value.listenerAccessGranted && value.selectedProvider != MobileMusicProviderDto.SOUND_CLOUD -> ""
+            requiresNotificationListener && !value.listenerAccessGranted -> ""
             else -> value.spotifyDisconnectError ?: value.error.orEmpty()
         }
         providerError.visibility = if (providerError.text.isNullOrBlank()) View.GONE else View.VISIBLE
@@ -450,6 +469,12 @@ private fun MobileMusicProviderDto.providerTitle(context: Context): String = whe
     MobileMusicProviderDto.APPLE_MUSIC -> context.getString(R.string.music_apple_music)
     MobileMusicProviderDto.SPOTIFY -> context.getString(R.string.music_spotify)
     MobileMusicProviderDto.SOUND_CLOUD -> context.getString(R.string.music_soundcloud)
+}
+
+private fun Context.musicActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.musicActivity()
+    else -> null
 }
 
 private fun MobileMusicRideEventKindDto.timelineTitle(context: Context): String = when (this) {

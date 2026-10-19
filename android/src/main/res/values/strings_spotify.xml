@@ -1,0 +1,18 @@
+<resources>
+    <string name="spotify_not_configured">Spotify is unavailable because this build has no Spotify client ID.</string>
+    <string name="spotify_auth_stale">This Spotify authorization attempt is no longer active. Try again.</string>
+    <string name="spotify_auth_invalid">Spotify returned an invalid authorization response.</string>
+    <string name="spotify_auth_failed">Spotify authorization could not be completed.</string>
+    <string name="spotify_auth_required">Connect Spotify to continue.</string>
+    <string name="spotify_request_invalid">Spotify request could not be prepared.</string>
+    <string name="spotify_auth_cancelled">Spotify connection was canceled.</string>
+    <string name="spotify_connect">Connect Spotify</string>
+    <string name="spotify_reauthorize">Reconnect Spotify</string>
+    <string name="spotify_connecting">Connecting to Spotify…</string>
+    <string name="spotify_needs_connection">Connect Spotify to see playback.</string>
+    <string name="spotify_unavailable_build">Spotify playback is unavailable in this build.</string>
+    <string name="spotify_saved_credentials_unavailable">Saved Spotify authorization could not be restored. Reconnect Spotify or disconnect it.</string>
+    <string name="spotify_disconnect_failed">Spotify could not finish disconnecting. Try again.</string>
+    <string name="spotify_playback_forbidden">Spotify cannot provide playback for this account or device.</string>
+    <string name="spotify_rate_limited">Spotify asked CutOut to wait before checking playback again.</string>
+</resources>

@@ -10,6 +10,11 @@ require(nativeAbi in setOf("arm64-v8a", "x86_64")) { "Unsupported Cutout JNI ABI
 
 val repository = rootDir.parentFile
 layout.buildDirectory.set(repository.resolve("target/android-tests/build"))
+// This is a public Spotify OAuth client identifier, never a client secret.
+val spotifyClientId = providers.environmentVariable("CUTOUT_SPOTIFY_CLIENT_ID")
+    .orElse(providers.environmentVariable("SPOTIFY_CLIENT_ID"))
+    .orElse("")
+    .get()
 
 android {
     namespace = "lol.cutout"
@@ -22,6 +27,8 @@ android {
         targetSdk = compileSdk
         versionCode = 1
         versionName = "1.0"
+        manifestPlaceholders["appAuthRedirectScheme"] = "cutout-spotify"
+        buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"${spotifyClientId.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         ndk { abiFilters += nativeAbi }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -45,6 +52,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging { jniLibs.useLegacyPackaging = true }
+    buildFeatures { buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 kotlin { compilerOptions.jvmTarget.set(JvmTarget.JVM_17) }
@@ -69,6 +77,7 @@ configurations.configureEach {
 }
 
 dependencies {
+    implementation("net.openid:appauth:0.11.1")
     implementation("androidx.customview:customview:1.0.0")
     implementation("androidx.core:core:1.15.0")
     implementation("org.maplibre.gl:android-sdk-opengl:13.7.1")

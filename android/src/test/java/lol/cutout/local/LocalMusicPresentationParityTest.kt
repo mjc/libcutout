@@ -168,6 +168,14 @@ class LocalMusicPresentationParityTest {
                 val disconnect = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.disconnect-spotify"))
                 assertEquals(CutoutUi(context).red, disconnect.currentTextColor)
 
+                panel.render(presentation().copy(
+                    spotifyNeedsAuthorization = true,
+                    spotifyCredentialRestoreRetryAvailable = true,
+                ))
+                assertEquals(CutoutUi(context).label("music.spotify.retry_saved_authorization"), connect.text.toString())
+                panel.render(presentation().copy(spotifyNeedsAuthorization = true))
+                assertEquals(base.getString(R.string.spotify_reauthorize), connect.text.toString())
+
                 panel.render(presentation().copy(snapshot = presentation().snapshot!!.copy(state = MobileMusicPlaybackStateDto.STALE)))
                 assertTrue("Stale sessions offer reconnect using the shared label", connect.text.toString().startsWith("Reconnect "))
                 panel.render(presentation())

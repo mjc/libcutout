@@ -3,6 +3,8 @@ package lol.cutout
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.app.Activity
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadata
@@ -39,6 +41,11 @@ data class AndroidMusicPresentation(
     val lastRecordedSequence: ULong? = null,
     val spotifyDisconnectPending: Boolean = false,
     val spotifyDisconnectError: String? = null,
+    val spotifyConfigured: Boolean = BuildConfig.SPOTIFY_CLIENT_ID.isNotBlank(),
+    val spotifyAuthorized: Boolean = false,
+    val spotifyAuthorizing: Boolean = false,
+    val spotifyNeedsAuthorization: Boolean = false,
+    val spotifyCredentialRestoreRetryAvailable: Boolean = false,
 )
 
 /** Receives lifecycle notifications from the OS-managed notification-listener service. */
@@ -63,6 +70,40 @@ class AndroidMusicClient(
 ) : Closeable, RideMapStopAdmissionFence {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
+    private val spotifyApi = AndroidSpotifyWebApi(appContext, BuildConfig.SPOTIFY_CLIENT_ID)
+    private val spotifyHttpSession = MobileSpotifyHttpSession()
+    private val spotifyPlayerStateRequests = AndroidSpotifyPlayerStateRequests(lifecycle)
+    private val spotifyPlayerStateExpiryCheck = Runnable {
+        val ticket = spotifyPollTicket ?: return@Runnable
+        val monitor = monitorGeneration ?: return@Runnable
+        val provider = providerGeneration ?: return@Runnable
+        if (!isCurrentSpotifyWork(monitor, provider) || !spotifyPlayerStateRequests.isCurrent(ticket)) return@Runnable
+        when (spotifyPlayerStateRequests.expire(ticket, SystemClock.elapsedRealtime().toULong())) {
+            MobileMusicRequestExpiration.PENDING -> main.postDelayed(
+                spotifyPlayerStateExpiryCheck,
+                PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS,
+            )
+            MobileMusicRequestExpiration.EXPIRED -> {
+                clearSpotifyPollTicket(ticket)
+                publishStaleSpotifySnapshotIfDue()
+                publish(latestPresentation.copy(error = appContext.getString(R.string.music_session_unavailable)))
+                scheduleSpotifyPoll(monitor, MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE)
+            }
+            MobileMusicRequestExpiration.STALE -> {
+                clearSpotifyPollTicket(ticket)
+                scheduleSpotifyPoll(monitor, MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE)
+            }
+        }
+    }
+    private val spotifyFreshnessCheck = Runnable {
+        val monitor = monitorGeneration ?: return@Runnable
+        if (closed || selectedProvider != MobileMusicProviderDto.SPOTIFY ||
+            lifecycle.classifyMonitor(monitor) != MobileMusicProviderCallbackMatch.CURRENT) return@Runnable
+        publishStaleSpotifySnapshotIfDue()
+        if (!lifecycle.isPlayerStateStale(SystemClock.elapsedRealtime().toULong())) {
+            main.postDelayed(spotifyFreshnessCheck, PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS)
+        }
+    }
     private val artworkWorker = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
         { task -> Thread(task, "CutoutMusicArtwork").apply { isDaemon = true } },
@@ -97,6 +138,45 @@ class AndroidMusicClient(
     private var soundCloudSnapshot: (() -> MobileMusicSnapshotDto)? = null
     private var soundCloudError: (() -> String?)? = null
     private var monitorGeneration: MobileMusicMonitorId? = null
+    private var spotifyAuthorizationId: MobileMusicAuthorizationId? = null
+    private var spotifyAuthorizationMonitor: MobileMusicMonitorId? = null
+    private var spotifyCredentialRestoreRetryAttempted = false
+    private var spotifyCredentialRestoreOperation = 0L
+    private var spotifyPlayback: MobileSpotifyPlayback? = null
+    private var spotifyPollTicket: SpotifyPlayerStateTicket? = null
+    private var spotifyPollPending = false
+    private var spotifyPollInFlight = false
+    private var resumedActivities = 0
+    private val activityLifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityCreated(activity: Activity, state: android.os.Bundle?) = Unit
+        override fun onActivityStarted(activity: Activity) = Unit
+        override fun onActivityPaused(activity: Activity) {
+            if (resumedActivities > 0) resumedActivities--
+            if (resumedActivities == 0 && selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                retireSpotifyPoll()
+                spotifyApi.retireProviderWork()
+                lifecycle.suspend()
+                activeSessionListener?.let { listener ->
+                    runCatching { manager?.removeOnActiveSessionsChangedListener(listener) }
+                }
+                activeSessionListener = null
+                detachSession()
+                monitorGeneration = null
+            }
+        }
+        override fun onActivityResumed(activity: Activity) {
+            val wasBackground = resumedActivities == 0
+            resumedActivities++
+            if (wasBackground && selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                lifecycle.resume()
+                refreshSpotify()
+            }
+        }
+        override fun onActivityStopped(activity: Activity) = Unit
+        override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) = Unit
+        override fun onActivityDestroyed(activity: Activity) = Unit
+    }
+    private val spotifyPollRunnable = Runnable { pollSpotifyPlayback() }
     private var selectedProvider = musicProviderFromStorage(preferences.getString(PROVIDER_KEY, null))
     private var defaultHistoryPolicy = historyPolicyFromStorage(preferences.getString(HISTORY_POLICY_KEY, null))
     private var spotifyHistoryReadbackRevision = 0L
@@ -111,6 +191,7 @@ class AndroidMusicClient(
 
     init {
         rides.setFutureRideMusicHistoryPolicy(defaultHistoryPolicy)
+        (appContext as? Application)?.registerActivityLifecycleCallbacks(activityLifecycleCallbacks)
     }
 
     fun observe(observer: (AndroidMusicPresentation) -> Unit): Closeable {
@@ -137,31 +218,71 @@ class AndroidMusicClient(
         if (selectedProvider == provider) return
         val previousProvider = selectedProvider
         selectedProvider = provider
+        if (previousProvider == MobileMusicProviderDto.SPOTIFY) {
+            spotifyCredentialRestoreOperation++
+            cancelSpotifyAuthorization()
+        }
         preferences.edit().putString(PROVIDER_KEY, musicProviderProfile(provider).storageKey).apply()
+        stopMonitoring()
         if (previousProvider == MobileMusicProviderDto.SOUND_CLOUD && provider != MobileMusicProviderDto.SOUND_CLOUD) {
             soundCloudStop?.invoke()
         }
         retireProvider()
         publish(latestPresentation.copy(selectedProvider = provider, snapshot = null, artwork = null, error = null,
-            listenerAccessGranted = hasNotificationListenerAccess()))
-        if (provider == MobileMusicProviderDto.SOUND_CLOUD || hasNotificationListenerAccess()) refreshSessions()
+            listenerAccessGranted = hasNotificationListenerAccess(),
+            spotifyConfigured = spotifyApi.isConfigured,
+            spotifyAuthorized = spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes,
+            spotifyAuthorizing = false,
+            spotifyCredentialRestoreRetryAvailable = false))
+        if (provider == MobileMusicProviderDto.SPOTIFY || provider == MobileMusicProviderDto.SOUND_CLOUD || hasNotificationListenerAccess()) refreshSessions()
     }
 
     /** Explicit recovery action: reconnect an existing MediaSession or open the selected
      * provider when no session exists. Android provider authentication stays in that app. */
-    fun connectOrRetrySelectedProvider() {
+    fun connectOrRetrySelectedProvider(activity: Activity? = null) {
         main.post {
             if (closed) return@post
+            if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                if (spotifyApi.hasCredentialRestoreFailure && !spotifyCredentialRestoreRetryAttempted) {
+                    publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_saved_credentials_unavailable)))
+                    val operation = ++spotifyCredentialRestoreOperation
+                    spotifyApi.retryCredentialRestore { result -> main.post {
+                        if (closed || selectedProvider != MobileMusicProviderDto.SPOTIFY ||
+                            operation != spotifyCredentialRestoreOperation) return@post
+                        spotifyCredentialRestoreRetryAttempted = true
+                        if (result.isSuccess) {
+                            spotifyCredentialRestoreRetryAttempted = false
+                            refreshSpotify()
+                        } else publish(latestPresentation.copy(
+                            error = appContext.getString(R.string.spotify_saved_credentials_unavailable),
+                            spotifyCredentialRestoreRetryAvailable = false,
+                        ))
+                    } }
+                    return@post
+                }
+                if (!spotifyApi.isConfigured) {
+                    publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_not_configured)))
+                    return@post
+                }
+                if (!spotifyApi.isAuthorized || !spotifyApi.hasPlaybackScopes || latestPresentation.spotifyNeedsAuthorization) {
+                    if (activity == null) {
+                        publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_auth_required)))
+                    } else authorizeSpotify(activity)
+                    return@post
+                }
+                preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false).apply()
+                resumeObservations()
+                publish(latestPresentation.copy(error = null, spotifyDisconnectError = null))
+                refreshSessions()
+                refreshHistory()
+                return@post
+            }
             if (!hasNotificationListenerAccess()) {
                 // Media access is an OS permission. A recovery tap must never
                 // launch a provider or try to grant it on the rider's behalf.
                 refreshSessions()
                 refreshHistory()
                 return@post
-            }
-            if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
-                preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false).apply()
-                resumeObservations()
             }
             publish(latestPresentation.copy(error = null, spotifyDisconnectError = null))
             // Refresh first so a stale controller is detached on this same
@@ -171,6 +292,99 @@ class AndroidMusicClient(
             if (currentController == null) openSelectedProvider()
             refreshHistory()
         }
+    }
+
+    /** Explicit Connect/Reauthorize action. Rust owns this authorization and monitor attempt. */
+    fun authorizeSpotify(activity: Activity) {
+        main.post {
+            if (closed || selectedProvider != MobileMusicProviderDto.SPOTIFY) return@post
+            spotifyCredentialRestoreOperation++
+            if (!spotifyApi.isConfigured) {
+                publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_not_configured)))
+                return@post
+            }
+            if (spotifyAuthorizationId != null) return@post
+            stopMonitoring()
+            lifecycle.requestMonitor(MobileMusicProviderMonitorRequest.AUTHORIZE)
+            val monitor = lifecycle.beginMonitor()
+            if (monitor == null || monitor.start != MobileMusicProviderMonitorStart.AUTHORIZE) {
+                monitor?.let { lifecycle.finishMonitor(it.generation) }
+                publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_auth_failed)))
+                return@post
+            }
+            val authorization = lifecycle.beginAuthorizationEffect(
+                MobileMusicProviderAuthorizationKind.AUTHORIZING,
+                SystemClock.elapsedRealtime().toULong(),
+            )
+            if (authorization == null) {
+                lifecycle.finishMonitor(monitor.generation)
+                publish(latestPresentation.copy(error = appContext.getString(R.string.spotify_auth_failed)))
+                return@post
+            }
+            spotifyAuthorizationId = authorization.id
+            spotifyAuthorizationMonitor = monitor.generation
+            publish(latestPresentation.copy(spotifyAuthorizing = true, error = null))
+            spotifyApi.authorize(activity, authorization.id.value) { result ->
+                if (result.isFailure) main.post {
+                    if (spotifyAuthorizationId == authorization.id) finishSpotifyAuthorization(
+                        authorization.id, result.exceptionOrNull() ?: IllegalStateException(),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Called only by the non-exported AppAuth PendingIntent result Activity. */
+    fun completeSpotifyAuthorization(intent: Intent) {
+        val rawId = intent.getLongExtra(AndroidSpotifyWebApi.EXTRA_TRANSACTION_ID, -1L)
+        val id = spotifyAuthorizationId ?: return
+        if (rawId < 0 || id.value != rawId.toULong() ||
+            lifecycle.classifyAuthorization(id) != MobileMusicProviderAuthorizationMatch.AUTHORIZING
+        ) return
+        spotifyApi.completeAuthorization(intent, id.value) { result ->
+            main.post {
+                if (closed || spotifyAuthorizationId != id) return@post
+                val error = result.exceptionOrNull()
+                finishSpotifyAuthorization(id, error)
+            }
+        }
+    }
+
+    private fun finishSpotifyAuthorization(id: MobileMusicAuthorizationId, error: Throwable?) {
+        val monitor = spotifyAuthorizationMonitor
+        spotifyAuthorizationId = null
+        spotifyAuthorizationMonitor = null
+        val authorizationResult = lifecycle.finishAuthorization(id)
+        monitor?.let(lifecycle::finishMonitor)
+        val active = authorizationResult == MobileMusicProviderAuthorizationMatch.AUTHORIZING
+        val canceled = error is AndroidSpotifyWebApi.SpotifyAuthorizationCancelled
+        val authorized = active && error == null && spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes
+        if (authorized) {
+            preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false).apply()
+            resumeObservations()
+        }
+        publish(latestPresentation.copy(
+            spotifyAuthorizing = false,
+            spotifyAuthorized = authorized,
+            spotifyCredentialRestoreRetryAvailable = false,
+            error = when {
+                !active -> appContext.getString(R.string.spotify_auth_stale)
+                canceled -> null
+                error != null -> appContext.getString(R.string.spotify_auth_failed)
+                !authorized -> appContext.getString(R.string.spotify_auth_invalid)
+                else -> null
+            },
+        ))
+        if (authorized) refreshSessions()
+    }
+
+    private fun cancelSpotifyAuthorization() {
+        val id = spotifyAuthorizationId ?: return
+        spotifyApi.retireAuthorization(id.value)
+        lifecycle.invalidateAuthorization()
+        spotifyAuthorizationMonitor?.let(lifecycle::finishMonitor)
+        spotifyAuthorizationId = null
+        spotifyAuthorizationMonitor = null
     }
 
     /** Explicit Android equivalent of Swift's provider open action. */
@@ -203,6 +417,8 @@ class AndroidMusicClient(
      * through the shared Rust database owner. A failed deletion remains visible and retryable. */
     fun disconnectSpotify(completed: (Result<Unit>) -> Unit = {}) {
         main.post {
+            spotifyCredentialRestoreOperation++
+            cancelSpotifyAuthorization()
             if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
                 preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, true).apply()
                 spotifyHistoryReadbackRevision++
@@ -212,6 +428,7 @@ class AndroidMusicClient(
                     snapshot = null,
                     artwork = null,
                     error = null,
+                    spotifyNeedsAuthorization = false,
                     spotifyDisconnectPending = true,
                     spotifyDisconnectError = null,
                     history = latestPresentation.history?.copy(events = latestPresentation.history?.events.orEmpty().filter {
@@ -225,8 +442,17 @@ class AndroidMusicClient(
                     finishSpotifyDisconnect(drained, completed)
                     return@drainObservations
                 }
-                rides.withCore({ core -> core.deleteSpotifyMusicHistory() }) { result ->
-                    finishSpotifyDisconnect(result, completed)
+                spotifyApi.clearCredentials { cleared ->
+                    main.post {
+                        if (cleared.isFailure) {
+                            finishSpotifyDisconnect(cleared, completed)
+                            return@post
+                        }
+                        lifecycle.invalidateAuthorization()
+                        rides.withCore({ core -> core.deleteSpotifyMusicHistory() }) { result ->
+                            finishSpotifyDisconnect(result, completed)
+                        }
+                    }
                 }
             }
         }
@@ -234,11 +460,15 @@ class AndroidMusicClient(
 
     private fun finishSpotifyDisconnect(result: Result<Unit>, completed: (Result<Unit>) -> Unit) {
         result.onSuccess {
+            spotifyPlayback = null
             spotifyHistoryReadbackRevision++
             publish(latestPresentation.copy(
                 spotifyDisconnectPending = false,
                 spotifyDisconnectError = null,
                 historyError = null,
+                spotifyAuthorized = false,
+                spotifyNeedsAuthorization = false,
+                    spotifyCredentialRestoreRetryAvailable = false,
                 history = latestPresentation.history?.copy(events = latestPresentation.history?.events.orEmpty().filter {
                     it.provider != MobileMusicProviderDto.SPOTIFY
                 }),
@@ -252,8 +482,8 @@ class AndroidMusicClient(
             if (selectedProvider != MobileMusicProviderDto.SPOTIFY) acceptingObservations = true
             publish(latestPresentation.copy(
                 spotifyDisconnectPending = false,
-                spotifyDisconnectError = error.message ?: error.toString(),
-                historyError = error.message ?: error.toString(),
+                spotifyDisconnectError = appContext.getString(R.string.spotify_disconnect_failed),
+                historyError = appContext.getString(R.string.spotify_disconnect_failed),
             ))
             completed(Result.failure(error))
         }
@@ -403,6 +633,10 @@ class AndroidMusicClient(
     /** Called after the user enables access or returns from system Settings. */
     fun refreshSessions() {
         if (closed) return
+        if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+            refreshSpotify()
+            return
+        }
         if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
             if (monitorGeneration != null) stopMonitoring()
             detachSession()
@@ -460,6 +694,443 @@ class AndroidMusicClient(
         }
     }
 
+    private fun refreshSpotify() {
+        if (!observationLifecycleReady) return
+        if (spotifyAuthorizationId != null) {
+            publish(latestPresentation.copy(
+                spotifyConfigured = spotifyApi.isConfigured,
+                spotifyAuthorized = spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes,
+                spotifyAuthorizing = true,
+            ))
+            return
+        }
+        val authorized = spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes
+        if (preferences.getBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false)) {
+            stopMonitoring()
+            detachSession()
+            publish(newPresentation(null, hasNotificationListenerAccess()).copy(
+                spotifyConfigured = spotifyApi.isConfigured,
+                spotifyAuthorized = authorized,
+                spotifyAuthorizing = spotifyAuthorizationId != null,
+            ))
+            return
+        }
+        val localController = try {
+            if (hasNotificationListenerAccess()) manager?.getActiveSessions(notificationListener)
+                ?.firstOrNull { it.packageName == SPOTIFY_PACKAGE }
+            else null
+        } catch (_: SecurityException) { null }
+        val localFirst = runCatching {
+            spotifyPlaybackTransport(localController != null, spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes)
+        }.getOrDefault(MobileMusicPlaybackTransport.UNAVAILABLE)
+        if (localFirst == MobileMusicPlaybackTransport.APP_REMOTE && localController != null) {
+            retireSpotifyPoll()
+            spotifyApi.retireProviderWork()
+            if (monitorGeneration == null) startMonitoring()
+            if (currentController?.sessionToken != localController.sessionToken || providerGeneration == null) {
+                attachSession(localController)
+            }
+            publish(latestPresentation.copy(
+                selectedProvider = MobileMusicProviderDto.SPOTIFY,
+                listenerAccessGranted = true,
+                spotifyConfigured = spotifyApi.isConfigured,
+                spotifyAuthorized = spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes,
+                spotifyAuthorizing = false,
+                spotifyNeedsAuthorization = false,
+                error = null,
+            ))
+            return
+        }
+        if (currentController?.packageName == SPOTIFY_PACKAGE) detachSession()
+        if (!spotifyApi.isConfigured) {
+            stopMonitoring()
+            publish(newPresentation(null, hasNotificationListenerAccess(), appContext.getString(R.string.spotify_not_configured)).copy(
+                spotifyConfigured = false,
+                spotifyAuthorized = false,
+                spotifyAuthorizing = spotifyAuthorizationId != null,
+            ))
+            return
+        }
+        if (spotifyApi.hasCredentialRestoreFailure) {
+            stopMonitoring()
+            publish(newPresentation(null, hasNotificationListenerAccess(), appContext.getString(R.string.spotify_saved_credentials_unavailable)).copy(
+                spotifyConfigured = true,
+                spotifyAuthorized = false,
+                spotifyAuthorizing = false,
+                spotifyNeedsAuthorization = true,
+                spotifyCredentialRestoreRetryAvailable = !spotifyCredentialRestoreRetryAttempted,
+            ))
+            return
+        }
+        if (!authorized) {
+            stopMonitoring()
+            publish(newPresentation(null, hasNotificationListenerAccess()).copy(
+                spotifyConfigured = true,
+                spotifyAuthorized = false,
+                spotifyAuthorizing = spotifyAuthorizationId != null,
+                error = if (spotifyAuthorizationId == null) appContext.getString(R.string.spotify_auth_required) else null,
+            ))
+            return
+        }
+        if (monitorGeneration == null) {
+            lifecycle.requestMonitor(MobileMusicProviderMonitorRequest.OBSERVE)
+            val effect = lifecycle.beginMonitor()
+            if (effect == null || effect.start != MobileMusicProviderMonitorStart.OBSERVE) {
+                effect?.let { lifecycle.finishMonitor(it.generation) }
+                publish(latestPresentation.copy(
+                    spotifyConfigured = true,
+                    spotifyAuthorized = true,
+                    error = appContext.getString(R.string.music_provider_unavailable),
+                ))
+                return
+            }
+            monitorGeneration = effect.generation
+            providerGeneration = lifecycle.beginProviderSession()
+            if (providerGeneration == null) {
+                stopMonitoring()
+                publish(latestPresentation.copy(error = appContext.getString(R.string.music_provider_unavailable)))
+                return
+            }
+        }
+        if (providerGeneration == null) {
+            providerGeneration = lifecycle.beginProviderSession()
+            if (providerGeneration == null) {
+                stopMonitoring()
+                publish(latestPresentation.copy(error = appContext.getString(R.string.music_provider_unavailable)))
+                return
+            }
+        }
+        publish(latestPresentation.copy(
+            selectedProvider = MobileMusicProviderDto.SPOTIFY,
+            listenerAccessGranted = hasNotificationListenerAccess(),
+            spotifyConfigured = true,
+            spotifyAuthorized = true,
+            spotifyAuthorizing = false,
+            error = null,
+        ))
+        if (!spotifyPollInFlight && !spotifyPollPending) pollSpotifyPlayback()
+    }
+
+    private fun pollSpotifyPlayback() {
+        if (closed || selectedProvider != MobileMusicProviderDto.SPOTIFY || monitorGeneration == null ||
+            providerGeneration == null || !spotifyApi.isAuthorized || !spotifyApi.hasPlaybackScopes ||
+            preferences.getBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false)
+        ) return
+        val monitor = monitorGeneration ?: return
+        if (lifecycle.classifyMonitor(monitor) != MobileMusicProviderCallbackMatch.CURRENT) return
+        spotifyPollPending = false
+        if (spotifyPollInFlight) return
+        val now = SystemClock.elapsedRealtime().toULong()
+        val request = try { spotifyHttpSession.playbackRequest(now) } catch (error: Throwable) {
+            publish(latestPresentation.copy(error = spotifyErrorMessage(error)))
+            scheduleSpotifyPoll(monitor, MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE, spotifyRetryDelay(error))
+            return
+        }
+        val ticket = spotifyPlayerStateRequests.begin(now) ?: run {
+            scheduleSpotifyPoll(monitor, MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE, PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS)
+            return
+        }
+        spotifyPollTicket = ticket
+        main.removeCallbacks(spotifyPlayerStateExpiryCheck)
+        main.postDelayed(spotifyPlayerStateExpiryCheck, PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS)
+        spotifyPollInFlight = true
+        val provider = providerGeneration ?: return
+        spotifyApi.execute(request.url, request.method) { result ->
+            if (result.isFailure) {
+                main.post { completeSpotifyPoll(monitor, provider, ticket, result.exceptionOrNull()) }
+                return@execute
+            }
+            val response = result.getOrThrow()
+            if (response.status == 401) {
+                runCatching {
+                    spotifyHttpSession.receiveResponse(response.status.toUShort(), response.retryAfter,
+                        response.body.size.toULong(), SystemClock.elapsedRealtime().toULong())
+                }
+                spotifyApi.execute(request.url, request.method, forceRefresh = true) { renewed ->
+                    main.post {
+                        if (renewed.isFailure) completeSpotifyPoll(monitor, provider, ticket, renewed.exceptionOrNull())
+                        else consumeSpotifyPlaybackResponse(monitor, provider, ticket, renewed.getOrThrow())
+                    }
+                }
+            } else {
+                main.post { consumeSpotifyPlaybackResponse(monitor, provider, ticket, response) }
+            }
+        }
+    }
+
+    private fun consumeSpotifyPlaybackResponse(
+        monitor: MobileMusicMonitorId,
+        provider: MobileMusicProviderSessionId,
+        ticket: SpotifyPlayerStateTicket,
+        response: SpotifyHttpResponse,
+    ) {
+        if (!isCurrentSpotifyWork(monitor, provider) || !spotifyPlayerStateRequests.isCurrent(ticket)) {
+            if (spotifyPollTicket == ticket) clearSpotifyPollTicket(ticket)
+            return
+        }
+        val now = SystemClock.elapsedRealtime().toULong()
+        try {
+            val hasBody = spotifyHttpSession.receiveResponse(
+                response.status.toUShort(), response.retryAfter, response.body.size.toULong(), now,
+            )
+            if (hasBody) {
+                val playback = MobileSpotifyPlayback.parse(response.body)
+                replaceSpotifyPlayback(playback)
+                val state = if (playback.isPlaying()) MobileMusicPlaybackStateDto.PLAYING else MobileMusicPlaybackStateDto.PAUSED
+                val snapshot = playback.snapshot(state, now)
+                val artwork = playback.artworkUrl()?.let { spotifyArtwork(it, provider, playback.itemIdentifier()) }
+                submitSpotifyObservation(snapshot, artwork)
+            } else {
+                spotifyPlayback = spotifyPlayback?.withoutActiveDevice()?.also { spotifyPlayback?.close() }
+                val snapshot = spotifyPlayback?.snapshot(MobileMusicPlaybackStateDto.STOPPED, now) ?: unavailableSnapshot()
+                submitSpotifyObservation(snapshot, null)
+            }
+            val accepted = spotifyPlayerStateRequests.complete(ticket, now)
+            if (accepted == MobileMusicRequestCompletion.ACCEPTED) {
+                spotifyPlayerStateRequests.markObserved(now)
+                scheduleSpotifyFreshnessCheck()
+                clearSpotifyPollTicket(ticket)
+                publish(latestPresentation.copy(spotifyAuthorized = true, spotifyNeedsAuthorization = false, error = null))
+                completeSpotifyPoll(monitor, provider, ticket, null, alreadyCompleted = true)
+            } else {
+                clearSpotifyPollTicket(ticket)
+            }
+        } catch (error: Throwable) {
+            completeSpotifyPoll(monitor, provider, ticket, error)
+        }
+    }
+
+    private fun completeSpotifyPoll(
+        monitor: MobileMusicMonitorId,
+        provider: MobileMusicProviderSessionId,
+        ticket: SpotifyPlayerStateTicket,
+        error: Throwable?,
+        alreadyCompleted: Boolean = false,
+    ) {
+        if (monitorGeneration != monitor || providerGeneration != provider || closed ||
+            (spotifyPollTicket != ticket && !alreadyCompleted)) return
+        if (!alreadyCompleted) {
+            val completion = spotifyPlayerStateRequests.complete(ticket, SystemClock.elapsedRealtime().toULong())
+            clearSpotifyPollTicket(ticket)
+            if (completion == MobileMusicRequestCompletion.STALE) return
+        }
+        val needsAuthorization = error is MobileSpotifyPlaybackException.Unauthorized ||
+            error is AndroidSpotifyWebApi.SpotifyAuthenticationFailure
+        publish(latestPresentation.copy(
+            spotifyAuthorized = spotifyApi.isAuthorized && spotifyApi.hasPlaybackScopes,
+            spotifyNeedsAuthorization = needsAuthorization,
+            error = error?.let(::spotifyErrorMessage),
+        ))
+        if (error != null) publishStaleSpotifySnapshotIfDue()
+        if (!needsAuthorization) {
+            val state = when (error) {
+                is MobileSpotifyPlaybackException.Forbidden -> MobileMusicProviderWorkState.REQUIRES_USER_ACTION
+                is MobileSpotifyPlaybackException.RateLimited,
+                null -> if (error == null) MobileMusicProviderWorkState.REMOTE_POLLING else MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE
+                else -> MobileMusicProviderWorkState.CREDENTIALS_AVAILABLE
+            }
+            scheduleSpotifyPoll(monitor, state, spotifyRetryDelay(error))
+        }
+    }
+
+    private fun clearSpotifyPollTicket(ticket: SpotifyPlayerStateTicket) {
+        if (spotifyPollTicket != ticket) return
+        spotifyPollTicket = null
+        spotifyPollInFlight = false
+        main.removeCallbacks(spotifyPlayerStateExpiryCheck)
+    }
+
+    private fun retireSpotifyPoll() {
+        main.removeCallbacks(spotifyPollRunnable)
+        main.removeCallbacks(spotifyPlayerStateExpiryCheck)
+        main.removeCallbacks(spotifyFreshnessCheck)
+        spotifyPollPending = false
+        spotifyPollTicket?.let { spotifyPlayerStateRequests.retire(it, SystemClock.elapsedRealtime().toULong()) }
+        spotifyPollTicket = null
+        spotifyPollInFlight = false
+    }
+
+    private fun publishStaleSpotifySnapshotIfDue() {
+        val now = SystemClock.elapsedRealtime().toULong()
+        if (lifecycle.isPlayerStateStale(now)) {
+            val stale = spotifyPlayback?.snapshot(MobileMusicPlaybackStateDto.STALE, now)
+                ?: latestPresentation.snapshot?.copy(
+                    state = MobileMusicPlaybackStateDto.STALE,
+                    capabilities = MobileMusicCapabilitiesDto(false, false, false, false, false),
+                )
+                ?: return
+            publish(latestPresentation.copy(snapshot = stale))
+        }
+    }
+
+    private fun scheduleSpotifyFreshnessCheck() {
+        main.removeCallbacks(spotifyFreshnessCheck)
+        main.postDelayed(spotifyFreshnessCheck, PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS)
+    }
+
+    private fun scheduleSpotifyPoll(monitor: MobileMusicMonitorId, work: MobileMusicProviderWorkState, minDelayMs: Long = 0L) {
+        if (closed || monitorGeneration != monitor) return
+        val effect = lifecycle.nextMonitorPoll(monitor, work, SystemClock.elapsedRealtime().toULong()) ?: return
+        val delay = maxOf((effect.deadlineMs.toLong() - SystemClock.elapsedRealtime()).coerceAtLeast(0), minDelayMs)
+        spotifyPollPending = true
+        main.removeCallbacks(spotifyPollRunnable)
+        main.postDelayed(spotifyPollRunnable, delay)
+    }
+
+    private fun isCurrentSpotifyWork(monitor: MobileMusicMonitorId, provider: MobileMusicProviderSessionId): Boolean =
+        !closed && selectedProvider == MobileMusicProviderDto.SPOTIFY && monitorGeneration == monitor &&
+            providerGeneration == provider && lifecycle.classifyMonitor(monitor) == MobileMusicProviderCallbackMatch.CURRENT &&
+            lifecycle.classifyProviderSession(provider) == MobileMusicProviderCallbackMatch.CURRENT
+
+    private fun spotifyErrorMessage(error: Throwable): String = when {
+        error is AndroidSpotifyWebApi.SpotifyAuthorizationCancelled -> appContext.getString(R.string.spotify_auth_cancelled)
+        error is AndroidSpotifyWebApi.SpotifyAuthenticationFailure || error is MobileSpotifyPlaybackException.Unauthorized -> appContext.getString(R.string.spotify_auth_required)
+        error is AndroidSpotifyWebApi.SpotifyCredentialPersistenceFailure -> appContext.getString(R.string.spotify_saved_credentials_unavailable)
+        error is MobileSpotifyPlaybackException.Forbidden -> appContext.getString(R.string.spotify_playback_forbidden)
+        error is MobileSpotifyPlaybackException.RateLimited -> appContext.getString(R.string.spotify_rate_limited)
+        error is MobileSpotifyPlaybackException.InvalidPayload -> appContext.getString(R.string.music_session_unavailable)
+        error.message == appContext.getString(R.string.spotify_auth_required) -> appContext.getString(R.string.spotify_auth_required)
+        else -> appContext.getString(R.string.music_session_unavailable)
+    }
+
+    private fun spotifyRetryDelay(error: Throwable?): Long =
+        (error as? MobileSpotifyPlaybackException.RateLimited)?.retryAfterMilliseconds?.toLong()?.coerceAtMost(86_400_000L) ?: 0L
+
+    private fun replaceSpotifyPlayback(value: MobileSpotifyPlayback) {
+        if (spotifyPlayback !== value) spotifyPlayback?.close()
+        spotifyPlayback = value
+    }
+
+    private fun spotifyArtwork(url: String, provider: MobileMusicProviderSessionId, item: String?): Bitmap? {
+        val parsed = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+        if (parsed.scheme != "https" || parsed.host == null) return null
+        val id = artworkRequest.incrementAndGet()
+        return try {
+            artworkWorker.execute {
+                val bitmap = runCatching { loadBoundedArtwork(parsed) }.getOrNull() ?: return@execute
+                main.post {
+                    if (!closed && providerGeneration == provider && artworkRequest.get() == id &&
+                        spotifyPlayback?.itemIdentifier() == item
+                    ) publish(latestPresentation.copy(artwork = bitmap))
+                }
+            }
+            null
+        } catch (_: RuntimeException) { null }
+    }
+
+    private fun submitSpotifyObservation(snapshot: MobileMusicSnapshotDto, artwork: Bitmap?) {
+        if (!acceptingObservations) return
+        val request = lifecycle.beginMusicObservation()
+        when (val admission = request.admission()) {
+            is MobileMusicObservationAdmission.Admitted -> {
+                queuedObservations.incrementAndGet()
+                try {
+                    observationWorker.execute {
+                        try {
+                            processObservation(request, admission.lease, snapshot, artwork, System.currentTimeMillis().toULong())
+                        } catch (_: Exception) {
+                            request.failRequiredEffects()
+                        } finally {
+                            request.release(); request.close(); queuedObservations.decrementAndGet()
+                        }
+                    }
+                } catch (_: RuntimeException) {
+                    request.failRequiredEffects(); request.release(); request.close(); queuedObservations.decrementAndGet()
+                }
+            }
+            MobileMusicObservationAdmission.Full, MobileMusicObservationAdmission.Exhausted -> request.close()
+        }
+    }
+
+    private fun commandSpotify(command: MobileMusicCommandDto, completed: (Result<Unit>) -> Unit) {
+        if (command == MobileMusicCommandDto.OPEN_PROVIDER) {
+            completeAction(openSelectedSystemProvider(), completed)
+            return
+        }
+        retireSpotifyPoll()
+        val provider = providerGeneration
+        val snapshot = latestPresentation.snapshot
+        if (provider == null || snapshot == null || !spotifyApi.isAuthorized || !spotifyApi.hasPlaybackScopes) {
+            completeAction(Result.failure(IllegalStateException(appContext.getString(R.string.spotify_auth_required))), completed)
+            return
+        }
+        val now = SystemClock.elapsedRealtime().toULong()
+        val effect = lifecycle.beginSupportedTransportEffect(
+            MobileMusicTransportOwner.Provider(provider), command, snapshot.capabilities, now,
+        ) ?: run {
+            completeAction(Result.failure(IllegalStateException(appContext.getString(R.string.music_command_unavailable))), completed)
+            return
+        }
+        val request = try {
+            val device = spotifyPlayback?.deviceId()
+                ?: throw IllegalStateException(appContext.getString(R.string.music_command_unavailable))
+            spotifyHttpSession.commandRequest(command, device, now)
+        } catch (error: Throwable) {
+            lifecycle.finishTransport(provider, effect.id, MobileMusicTransportOutcome.FAILED)
+            completeAction(Result.failure(error), completed)
+            return
+        }
+        spotifyApi.execute(request.url, request.method) { result ->
+            if (result.isFailure) {
+                finishSpotifyCommand(
+                    provider, effect.id,
+                    Result.failure(result.exceptionOrNull() ?: IllegalStateException(appContext.getString(R.string.music_provider_unavailable))),
+                    completed,
+                )
+                return@execute
+            }
+            val response = result.getOrThrow()
+            if (response.status == 401) {
+                runCatching { spotifyHttpSession.receiveResponse(response.status.toUShort(), response.retryAfter,
+                    response.body.size.toULong(), SystemClock.elapsedRealtime().toULong()) }
+                spotifyApi.execute(request.url, request.method, forceRefresh = true) { renewed ->
+                    if (renewed.isFailure) finishSpotifyCommand(
+                        provider, effect.id,
+                        Result.failure(renewed.exceptionOrNull() ?: IllegalStateException(appContext.getString(R.string.music_provider_unavailable))),
+                        completed,
+                    )
+                    else finishSpotifyHttpCommand(provider, effect.id, renewed.getOrThrow(), completed)
+                }
+            } else finishSpotifyHttpCommand(provider, effect.id, response, completed)
+        }
+    }
+
+    private fun finishSpotifyHttpCommand(
+        provider: MobileMusicProviderSessionId,
+        requestId: MobileMusicTransportRequestId,
+        response: SpotifyHttpResponse,
+        completed: (Result<Unit>) -> Unit,
+    ) {
+        val result = runCatching {
+            spotifyHttpSession.receiveResponse(
+                response.status.toUShort(), response.retryAfter, response.body.size.toULong(),
+                SystemClock.elapsedRealtime().toULong(),
+            )
+            Unit
+        }
+        finishSpotifyCommand(provider, requestId, result, completed)
+        if (result.isSuccess) main.post {
+            if (!closed && providerGeneration == provider && monitorGeneration != null) pollSpotifyPlayback()
+        }
+    }
+
+    private fun finishSpotifyCommand(
+        provider: MobileMusicProviderSessionId,
+        requestId: MobileMusicTransportRequestId,
+        result: Result<Unit>,
+        completed: (Result<Unit>) -> Unit,
+    ) {
+        val current = providerGeneration == provider && !closed && selectedProvider == MobileMusicProviderDto.SPOTIFY
+        lifecycle.finishTransport(
+            provider, requestId,
+            if (current && result.isSuccess) MobileMusicTransportOutcome.ACCEPTED else MobileMusicTransportOutcome.FAILED,
+        )
+        main.post {
+            if (current) completeAction(result, completed)
+            else completed(Result.failure(IllegalStateException(appContext.getString(R.string.music_provider_unavailable))))
+        }
+    }
+
     private fun refreshSessionsWithoutStarting() {
         try {
             val sessions = manager?.getActiveSessions(notificationListener).orEmpty()
@@ -507,6 +1178,11 @@ class AndroidMusicClient(
         val request = lifecycle.beginMusicObservation()
         when (val admission = request.admission()) {
             is MobileMusicObservationAdmission.Admitted -> {
+                if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                    spotifyPlayerStateRequests.markObserved(SystemClock.elapsedRealtime().toULong())
+                    retireSpotifyPoll()
+                    scheduleSpotifyFreshnessCheck()
+                }
                 queuedObservations.incrementAndGet()
                 try {
                     observationWorker.execute {
@@ -864,6 +1540,16 @@ class AndroidMusicClient(
     }
 
     fun command(command: MobileMusicCommandDto, completed: (Result<Unit>) -> Unit = {}) {
+        if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+            main.post {
+                val local = currentController?.takeIf { it.packageName == SPOTIFY_PACKAGE }
+                if (local != null) {
+                    if (command == MobileMusicCommandDto.OPEN_PROVIDER) completeAction(openSelectedSystemProvider(), completed)
+                    else completeAction(observeController(local, command), completed)
+                } else commandSpotify(command, completed)
+            }
+            return
+        }
         if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
             if (command == MobileMusicCommandDto.OPEN_PROVIDER) {
                 completeAction(openSoundCloud(), completed)
@@ -1007,6 +1693,8 @@ class AndroidMusicClient(
     override fun close() {
         if (closed) return
         closed = true
+        cancelSpotifyAuthorization()
+        (appContext as? Application)?.unregisterActivityLifecycleCallbacks(activityLifecycleCallbacks)
         activeSessionListener?.let { listener -> runCatching { manager?.removeOnActiveSessionsChangedListener(listener) } }
         activeSessionListener = null
         detachSession()
@@ -1020,6 +1708,11 @@ class AndroidMusicClient(
         soundCloudStop = null
         soundCloudCommand = null
         lifecycle.cancelMonitor()
+        retireSpotifyPoll()
+        spotifyPlayback?.close()
+        spotifyPlayback = null
+        spotifyHttpSession.close()
+        spotifyApi.close()
         artworkWorker.shutdownNow()
         observationWorker.shutdownNow()
         historyWorker.shutdownNow()
@@ -1048,16 +1741,23 @@ class AndroidMusicClient(
         private const val ARTWORK_READ_TIMEOUT_MS = 3_000
         private const val MAX_FIELD_LENGTH = 256
         private const val OBSERVATION_POLL_INTERVAL_MS = 10L
+        private const val PLAYER_STATE_EXPIRY_CHECK_INTERVAL_MS = 5_000L
     }
 
     private fun stopMonitoring() {
+        retireSpotifyPoll()
+        spotifyApi.retireProviderWork()
         activeSessionListener?.let { listener -> runCatching { manager?.removeOnActiveSessionsChangedListener(listener) } }
         activeSessionListener = null
         monitorGeneration?.let(lifecycle::finishMonitor)
         monitorGeneration = null
+        detachSession()
         lifecycle.cancelMonitor()
     }
 }
+
+internal fun spotifyPlaybackTransport(localSessionAvailable: Boolean, webApiAuthorized: Boolean): MobileMusicPlaybackTransport =
+    musicPlaybackTransport(localSessionAvailable, webApiAuthorized)
 
 private fun historyPolicyFromStorage(value: String?): MobileMusicHistoryPolicyDto = when (value) {
     "opaque_item" -> MobileMusicHistoryPolicyDto.OPAQUE_ITEM
