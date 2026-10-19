@@ -115,7 +115,7 @@ internal class CaptureLabelControls(
             button.stateDescription = if (isActive) activeTitle else idleTitle
             button.isSelected = isActive
             button.isEnabled = canAnnotate && !pending
-            button.setTextColor(if (isActive) ui.orange else ui.brand)
+            button.setTextColor(if (!button.isEnabled) ui.muted else if (isActive) ui.orange else ui.brand)
         }
     }
 }
