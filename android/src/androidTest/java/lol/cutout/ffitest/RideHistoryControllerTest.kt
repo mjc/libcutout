@@ -5,6 +5,8 @@ import android.content.res.Configuration
 import android.graphics.Rect
 import androidx.test.platform.app.InstrumentationRegistry
 import android.view.View
+import android.view.Gravity
+import android.graphics.drawable.RippleDrawable
 import android.widget.FrameLayout
 import android.widget.TextView
 import java.util.concurrent.CountDownLatch
@@ -145,6 +147,17 @@ open class RideHistoryControllerTest {
                             (0 until label.layout.lineCount).all { label.layout.getEllipsisCount(it) == 0 }) {
                             "History filter label was blank, unlaid out, or ellipsized at font scale $fontScale: ${label.text}"
                         }
+                        check((label.gravity and Gravity.HORIZONTAL_GRAVITY_MASK) == Gravity.START) {
+                            "History filter labels should align with the leading edge at font scale $fontScale"
+                        }
+                        check(label.compoundDrawablesRelative[2] != null) {
+                            "History filter labels should expose a trailing menu chevron at font scale $fontScale"
+                        }
+                    }
+                    check(listOf(date, vehicle, clear).all { control ->
+                        (control.background as? RippleDrawable)?.getDrawable(0) == null
+                    }) {
+                        "Filter controls should keep the parent filter surface visible instead of drawing nested card fills"
                     }
                     check(date.height >= minTargetHeight && vehicle.height >= minTargetHeight && clear.height >= minTargetHeight) {
                         "History filter target fell below 44dp at font scale $fontScale: ${date.height}/${vehicle.height}/${clear.height}px"
