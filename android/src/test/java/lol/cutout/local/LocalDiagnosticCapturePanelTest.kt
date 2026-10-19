@@ -103,6 +103,15 @@ class LocalDiagnosticCapturePanelTest {
             checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
             assertEquals("Bench capture", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.kind")).text)
             assertEquals("Falcon", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.device")).text)
+            assertNotNull("Swift's Settings & actions section is present", panel.findViewWithTag<View>("capture.settings.actions.title"))
+            val actionSection = checkNotNull(panel.findViewWithTag<View>("captures.action-markers.section"))
+            val actionDisclosure = checkNotNull(panel.findViewWithTag<Button>("captures.labels.more"))
+            assertSame("The action-marker disclosure belongs to Settings & actions", actionSection,
+                actionDisclosure.parent)
+            val powerCycle = checkNotNull(panel.findViewWithTag<Button>("capture.label.power_cycle.action"))
+            assertEquals(View.GONE, powerCycle.parent.visibility)
+            assertTrue(actionDisclosure.performClick())
+            assertEquals(View.VISIBLE, powerCycle.parent.visibility)
             val elapsedText = checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.elapsed")).text.toString()
             val elapsedParts = elapsedText.split(":").map { it.toLong() }
             assertTrue("Elapsed time should include the Rust-provided monotonic start", elapsedParts[0] * 60 + elapsedParts[1] in 65L..67L)

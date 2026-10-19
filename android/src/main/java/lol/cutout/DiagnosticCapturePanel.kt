@@ -202,7 +202,7 @@ class DiagnosticCapturePanel(
                     }
                 }
             }
-            section("") {
+            section("", "captures.observed-activity.section") {
                 checkNotNull(labels).let { controls ->
                     (controls.parent as? ViewGroup)?.removeView(controls)
                     controls.render(captureState)
@@ -211,7 +211,7 @@ class DiagnosticCapturePanel(
             }
             content.addView(ui.space(14))
             val canAnnotate = attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)
-            section("") {
+            section("Settings & actions", "capture.settings.actions.section") {
                 addView(ui.action(ui.label("capture.settings.worksheet.title")) {
                     val expected = attempt.generation.copy()
                     researchDialog?.dismiss()
@@ -231,6 +231,11 @@ class DiagnosticCapturePanel(
                 addView(ui.space(8))
                 (settingsSummary.parent as? ViewGroup)?.removeView(settingsSummary)
                 addView(settingsSummary, LinearLayout.LayoutParams(-1, -2))
+                addView(ui.space(8))
+                checkNotNull(labels).let { controls ->
+                    (controls.actionMarkersSection.parent as? ViewGroup)?.removeView(controls.actionMarkersSection)
+                    addView(controls.actionMarkersSection, LinearLayout.LayoutParams(-1, -2))
+                }
             }
             content.addView(ui.space(14))
             section("") {
@@ -298,10 +303,14 @@ class DiagnosticCapturePanel(
         if (detail == null && artifactDetail == null) onTitleChanged(navigationTitle)
     }
 
-    private fun section(title: String, build: LinearLayout.() -> Unit) {
+    private fun section(title: String, tag: String? = null, build: LinearLayout.() -> Unit) {
         val block = ui.column().apply {
+            this.tag = tag
             if (title.isNotEmpty()) {
-                addView(ui.text(title, 20f, true).apply { isAccessibilityHeading = true })
+                addView(ui.text(title, 20f, true).apply {
+                    isAccessibilityHeading = true
+                    this.tag = if (tag == "capture.settings.actions.section") "capture.settings.actions.title" else null
+                })
                 addView(ui.space(9))
             }
             addView(ui.column().apply {
