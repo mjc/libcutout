@@ -33,6 +33,8 @@ mod capture_submission;
 pub use capture_submission::*;
 mod battery_current;
 pub use battery_current::*;
+mod controller_battery;
+pub use controller_battery::*;
 mod battery_page;
 pub use battery_page::*;
 mod ffi;

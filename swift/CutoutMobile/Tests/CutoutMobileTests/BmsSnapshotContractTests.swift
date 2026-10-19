@@ -200,6 +200,26 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
     }
 
+    func testNoDataUsesSharedLiveEvidenceWithoutPromotingSnapshotConfidence() {
+        let topology = BmsTopology(
+            layoutLabel: "controller only", seriesGroupCount: nil,
+            parallelCount: nil, packCount: 1, bmsCount: 0, confidence: .unverified)
+        let snapshot = BmsSnapshot(
+            topology: topology, energyPercent: BatteryLevel(value: 45),
+            voltage: Voltage(value: 96_000), current: .zero)
+        let live = snapshot.noDataPresentation(
+            rideState: EucRideScreenState(
+                phase: .live, displayState: RideDisplayState()))
+        XCTAssertEqual(live.controllerEstimateMetricValue.displayText, "45")
+        XCTAssertEqual(live.controllerConfidence, .unknown)
+        XCTAssertEqual(live.controllerEstimateDetail, .unavailable)
+        XCTAssertEqual(live.rideSagMetricValue, .unavailable)
+        let retained = snapshot.noDataPresentation(rideState: nil)
+        XCTAssertEqual(retained.controllerConfidence, .medium)
+        XCTAssertEqual(retained.controllerEstimateDetail, .recentSag)
+        XCTAssertEqual(retained.rideSagMetricValue, .unavailable)
+    }
+
     func testNoDataMetricsAreOwnedByTheBmsSnapshot() {
         let topology = BmsTopology(
             layoutLabel: "test pack",
