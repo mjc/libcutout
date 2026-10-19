@@ -9,7 +9,7 @@ import lol.cutout.AndroidChargingCredentials
 import lol.cutout.ChargingCredentialRecord
 import lol.cutout.ChargingSecretCipher
 import lol.cutout.AndroidChargingClient
-import lol.cutout.RideMapRuntime
+import lol.cutout.CutoutApplication
 import uniffi.cutout_mobile_ffi.MobileChargingIdentityDto
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -23,15 +23,15 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = LocalTestApplication::class)
 class LocalChargingCredentialsTest {
     @Test
     fun captureCredentialReadsPreserveMissingAndDeletionFencesWithoutRegistration() {
         val root = Files.createTempDirectory("cutout-capture-credentials").toFile()
-        val context = RuntimeEnvironment.getApplication()
+        val context = RuntimeEnvironment.getApplication() as CutoutApplication
         val store = AndroidChargingCredentials(context, TestAesGcmCipher(), File(root, "identity.bin"))
         val token = "a1".repeat(32)
-        val runtime = RideMapRuntime(context, "capture-credential-${java.util.UUID.randomUUID()}.sqlite")
+        val runtime = context.rides
         val client = AndroidChargingClient(context, runtime, store)
         fun read(allowRegistration: Boolean = false): MobileChargingIdentityDto? {
             if (!allowRegistration) return kotlinx.coroutines.runBlocking { client.existingCredentialForCaptureSubmission() }
@@ -66,7 +66,7 @@ class LocalChargingCredentialsTest {
             store.finishDeletion()
             assertEquals(null, read())
             assertEquals(ChargingCredentialRecord.Deleted, store.load())
-        } finally { client.close(); runtime.close(); root.deleteRecursively() }
+        } finally { client.close(); root.deleteRecursively() }
     }
 
     @Test
