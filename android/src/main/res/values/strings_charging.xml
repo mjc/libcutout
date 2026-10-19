@@ -41,6 +41,7 @@
     <string name="charging_suggest_power_confirm">Add this Rust-provided suggestion? %1$s. Confirm it before saving.</string>
     <string name="charging_suggest_use">Use suggestion</string>
     <string name="charging_choose_connector">Choose connector</string>
+    <string name="charging_connector_suggested">Suggested: %1$s</string>
     <string name="charging_other_connector">Other connector</string>
     <string name="charging_other_connector_name">Connector name</string>
     <string name="charging_done">Done</string>

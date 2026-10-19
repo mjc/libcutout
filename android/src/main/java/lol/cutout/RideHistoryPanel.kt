@@ -194,6 +194,19 @@ class RideHistoryPanel(
         searchRunnable = null
     }
 
+    internal fun saveUiState(out: android.os.Bundle) {
+        searchRunnable?.let(::removeCallbacks)
+        searchRunnable = null
+        controller.saveUiState(out, search.text.toString())
+    }
+
+    internal fun restoreUiState(saved: android.os.Bundle?) {
+        controller.restoreUiState(saved)
+        val restoredSearch = controller.searchText
+        if (search.text.toString() != restoredSearch) search.setText(restoredSearch)
+        fittedRouteRideIdentity = saved?.getByteArray("fitted-ride")?.copyOf()
+    }
+
     private fun renderList(state: RideHistoryState) {
         state.listPreviewRoute?.let(mapView::show) ?: mapView.clearRoute()
         rows.removeAllViews()

@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.FrameLayout
+import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.AndroidChargingClient
 import lol.cutout.ChargingMapPanel
@@ -22,6 +23,53 @@ import kotlin.math.roundToInt
 
 /** Layout regression coverage for the production map panel with only the renderer injected. */
 open class RideMapPanelLayoutTest {
+    @org.junit.Test
+    fun activityBundleRestoresHistoryModeAndIndependentLiveAndHistoryCameras() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val runtime = RideMapRuntime(context)
+        val charging = AndroidChargingClient(context, runtime)
+        val panels = mutableListOf<RideMapPanel>()
+        val surfaces = mutableListOf<TestRideMapSurface>()
+        var saved: Bundle? = null
+        try {
+            instrumentation.runOnMainSync {
+                fun newPanel() = RideMapPanel(
+                    context = context,
+                    runtime = runtime,
+                    chargingClient = charging,
+                    onRequestLocation = {},
+                    onExport = {},
+                    mapSurfaceFactory = { TestRideMapSurface(it).also(surfaces::add) },
+                ).also(panels::add)
+
+                val first = newPanel()
+                val liveCamera = camera(39.74, -104.99, 12.0)
+                val historyCamera = camera(39.78, -105.02, 15.0)
+                surfaces.last().cameraPosition = liveCamera
+                first.findViewWithTag<Button>("ride_map_mode_history").performClick()
+                surfaces.last().cameraPosition = historyCamera
+                saved = first.saveUiState()
+                first.onHostDestroy()
+                panels.remove(first)
+
+                val restored = newPanel()
+                restored.restoreUiState(saved)
+                check(closeCamera(surfaces.last().cameraPosition, historyCamera)) {
+                    "Activity restoration did not restore the history camera"
+                }
+                restored.findViewWithTag<Button>("ride_map_mode_live").performClick()
+                check(closeCamera(surfaces.last().cameraPosition, liveCamera)) {
+                    "Switching back to Live did not restore its independent camera"
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { panels.forEach(RideMapPanel::onHostDestroy) }
+            charging.close()
+            runtime.close()
+        }
+    }
+
     @org.junit.Test
     fun liveAndHistoryMapHeightUsesSwiftViewportClamp() {
         check(RideMapViewportSizing.mapHeightPx(500, 1f) == 230) // 46% of available height.
@@ -124,6 +172,7 @@ open class RideMapPanelLayoutTest {
         var chargingPopup: View? = null
         var chargingSpots: List<MobileChargingSpotDto> = emptyList()
         var recenterCount = 0
+        var cameraPosition: CameraPosition? = null
         override val view: View get() = this
         override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
         override var onChargingSpotSelected: ((String) -> Unit)? = null
@@ -131,8 +180,8 @@ open class RideMapPanelLayoutTest {
         override fun showCurrentLocation(latitude: Double, longitude: Double) = Unit
         override fun clearRoute() = Unit
         override fun currentMapCenter(): LatLng? = null
-        override fun currentCameraPosition(): CameraPosition? = null
-        override fun restoreCameraPosition(position: CameraPosition?) = Unit
+        override fun currentCameraPosition(): CameraPosition? = cameraPosition
+        override fun restoreCameraPosition(position: CameraPosition?) { cameraPosition = position }
         override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) { chargingSpots = spots }
         override fun showChargingPopup(view: View?) { chargingPopup = view }
         override fun recenter() { recenterCount++ }
@@ -143,5 +192,17 @@ open class RideMapPanelLayoutTest {
         override fun onHostStop() = Unit
         override fun onHostDestroy() = Unit
         override fun onHostLowMemory() = Unit
+    }
+
+    private fun camera(latitude: Double, longitude: Double, zoom: Double) = CameraPosition.Builder()
+        .target(LatLng(latitude, longitude)).zoom(zoom).tilt(0.0).bearing(0.0).build()
+
+    private fun closeCamera(actual: CameraPosition?, expected: CameraPosition): Boolean {
+        val camera = actual ?: return false
+        val target = camera.target ?: return false
+        val expectedTarget = expected.target ?: return false
+        return kotlin.math.abs(target.latitude - expectedTarget.latitude) < 1e-7 &&
+            kotlin.math.abs(target.longitude - expectedTarget.longitude) < 1e-7 &&
+            kotlin.math.abs(camera.zoom - expected.zoom) < 1e-7
     }
 }

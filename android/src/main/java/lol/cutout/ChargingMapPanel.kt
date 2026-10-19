@@ -18,6 +18,25 @@ import android.widget.ScrollView
 import org.maplibre.android.geometry.LatLng
 import uniffi.cutout_mobile_ffi.*
 
+/** Fences asynchronous editor receipts to the editor that submitted the mutation. */
+internal class ChargingEditorCallbackFence {
+    private var generation = 0L
+    private var disposed = false
+
+    fun capture(): Long = generation
+
+    fun invalidate() {
+        generation++
+    }
+
+    fun dispose() {
+        disposed = true
+        generation++
+    }
+
+    fun accepts(ticket: Long): Boolean = !disposed && generation == ticket
+}
+
 /** Charging directory UI. All spot facts and mutations come from the Rust-backed local database. */
 class ChargingMapPanel(
     context: Context,
@@ -31,6 +50,7 @@ class ChargingMapPanel(
     private val locationClient = AndroidMapLocationClient(context, onFix = { fix ->
         if (active) {
             mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
+            refreshEditorLocation()
             if (centerWhenFixArrives) {
                 centerWhenFixArrives = false
                 mapView.recenter()
@@ -42,6 +62,7 @@ class ChargingMapPanel(
         syncMessage = context.getString(R.string.charging_location_unavailable)
         render()
     })
+    private val editorContextResolver = ChargingEditorContextResolver(context, client)
     private val content = ui.column()
     private val controller = ChargingMapController(client)
     private val modeSelector = ChargingDisplayModeSelector(
@@ -68,6 +89,7 @@ class ChargingMapPanel(
     private var lastViewport: MobileGeoBoundsDto? = null
     private var editorReturnMode = Mode.MAP
     private var editor: ChargingSpotEditorPanel? = null
+    private val editorCallbackFence = ChargingEditorCallbackFence()
     private var modalDialog: Dialog? = null
     private var modalBodyContainer: FrameLayout? = null
     private var modalFeedback: android.widget.TextView? = null
@@ -114,12 +136,18 @@ class ChargingMapPanel(
     }
 
     fun updateLocation(sample: MobilePhoneLocationSampleDto?) {
-        if (sample != null) locationClient.observe(sample)
+        if (sample != null) {
+            locationClient.observe(sample)
+            refreshEditorLocation()
+        }
     }
 
     fun dispose() {
+        editorCallbackFence.dispose()
         modalDialog?.dismiss()
         modalDialog = null
+        retireEditor()
+        editorContextResolver.close()
         mapView.showChargingPopup(null)
         locationClient.close()
         controller.onChanged = null
@@ -127,11 +155,53 @@ class ChargingMapPanel(
         mapView.onChargingSpotSelected = null
     }
 
+    internal fun savePresentationState(out: android.os.Bundle) {
+        out.putString("directory-mode", directoryMode.name)
+        out.putString("cost", controller.filter.cost?.name)
+        out.putString("connector", controller.filter.connector?.let(::connectorStateKey))
+        out.putBoolean("has-voltage", controller.filter.voltageVolts != null)
+        controller.filter.voltageVolts?.let { out.putInt("voltage", it.toInt()) }
+        out.putString("venue", controller.filter.venue?.name)
+        controller.state.selected?.id?.let { out.putString("selected-spot", it) }
+        lastViewport?.let { bounds ->
+            out.putDouble("viewport-min-lat", bounds.minimumLatitudeDegrees)
+            out.putDouble("viewport-max-lat", bounds.maximumLatitudeDegrees)
+            out.putDouble("viewport-min-lon", bounds.minimumLongitudeDegrees)
+            out.putDouble("viewport-max-lon", bounds.maximumLongitudeDegrees)
+        }
+    }
+
+    internal fun restorePresentationState(saved: android.os.Bundle?) {
+        if (saved == null) return
+        directoryMode = when (saved.getString("directory-mode")) {
+            Mode.LIST.name -> Mode.LIST
+            else -> Mode.MAP
+        }
+        mode = directoryMode
+        controller.restoreFilter(MobileChargingFilterDto(
+            cost = saved.getString("cost")?.let { value -> MobileChargingCostDto.values().firstOrNull { it.name == value } },
+            connector = saved.getString("connector")?.let(::connectorFromStateKey),
+            voltageVolts = if (saved.getBoolean("has-voltage")) saved.getInt("voltage").toUShort() else null,
+            venue = saved.getString("venue")?.let { value -> MobileChargingVenueDto.values().firstOrNull { it.name == value } },
+        ))
+        val viewport = MobileGeoBoundsDto(
+            saved.getDouble("viewport-min-lat", Double.NaN),
+            saved.getDouble("viewport-max-lat", Double.NaN),
+            saved.getDouble("viewport-min-lon", Double.NaN),
+            saved.getDouble("viewport-max-lon", Double.NaN),
+        )
+        if (viewport.minimumLatitudeDegrees.isFinite() && viewport.maximumLatitudeDegrees.isFinite() &&
+            viewport.minimumLongitudeDegrees.isFinite() && viewport.maximumLongitudeDegrees.isFinite()
+        ) lastViewport = viewport
+        render()
+        saved.getString("selected-spot")?.let(controller::select)
+    }
+
     fun activate() {
         active = true
         render()
         locationClient.refresh()
-        if (directoryMode == Mode.MAP) {
+        if (directoryMode == Mode.MAP || directoryMode == Mode.LIST) {
             (lastViewport ?: controller.currentBounds())?.let { bounds ->
                 lastViewport = bounds
                 controller.load(bounds)
@@ -356,7 +426,7 @@ class ChargingMapPanel(
                         else -> directoryMode
                     }
                     if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
-                    if (sheetMode == Mode.EDITOR) editor = null
+                    if (sheetMode == Mode.EDITOR) retireEditor()
                     if (sheetMode == Mode.DETAILS) controller.select(null)
                     render()
                 }
@@ -382,7 +452,7 @@ class ChargingMapPanel(
             else -> directoryMode
         }
         if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
-        if (expected == Mode.EDITOR) editor = null
+        if (expected == Mode.EDITOR) retireEditor()
         if (expected == Mode.DETAILS) controller.select(null)
         val dialog = modalDialog
         modalDialog = null
@@ -524,17 +594,26 @@ class ChargingMapPanel(
         val input = conflict.input ?: return
         editorStatus = null
         editorReturnMode = Mode.REVIEW
+        retireEditor()
+        val editorTicket = editorCallbackFence.capture()
         editor = ChargingSpotEditorPanel(context, null, input.coordinate,
-            onCancel = { editor = null; mode = Mode.REVIEW; render() },
-            onSave = { updated ->
-                controller.replaceBlocked(conflict, updated) { result ->
+            onCancel = cancel@{
+                if (!isCurrentEditor(editorTicket)) return@cancel
+                retireEditor(); mode = Mode.REVIEW; render()
+            },
+            onSave = submit@{ updated ->
+                if (!isCurrentEditor(editorTicket)) return@submit
+                controller.replaceBlocked(conflict, updated) complete@{ result ->
+                    if (!isCurrentEditor(editorTicket)) return@complete
                     result.fold(
-                        onSuccess = { editor = null; mode = Mode.REVIEW; render() },
+                        onSuccess = { retireEditor(); mode = Mode.REVIEW; render() },
                         onFailure = { editorStatus = it.message ?: context.getString(R.string.charging_validation); render() },
                     )
                 }
             },
             initialInput = input,
+            initialLocation = freshEditorLocation(),
+            contextResolver = editorContextResolver,
         )
         mode = Mode.EDITOR
         render()
@@ -731,21 +810,26 @@ class ChargingMapPanel(
         val actual = coordinate ?: spot?.input?.coordinate ?: return
         editorStatus = null
         editorReturnMode = if (spot == null) directoryMode else Mode.DETAILS
+        retireEditor()
+        val editorTicket = editorCallbackFence.capture()
         editor = ChargingSpotEditorPanel(
             context = context,
             spot = spot,
             initialCoordinate = actual,
-            onCancel = {
-                editor = null
+            onCancel = cancel@{
+                if (!isCurrentEditor(editorTicket)) return@cancel
+                retireEditor()
                 mode = if (spot == null) editorReturnMode else Mode.DETAILS
                 directoryMode = if (mode == Mode.MAP || mode == Mode.LIST) mode else directoryMode
                 render()
             },
-            onSave = { input ->
-                controller.save(spot, input) { result ->
+            onSave = submit@{ input ->
+                if (!isCurrentEditor(editorTicket)) return@submit
+                controller.save(spot, input) completed@{ result ->
+                    if (!isCurrentEditor(editorTicket)) return@completed
                     result.fold(
                         onSuccess = { saved ->
-                            editor = null
+                            retireEditor()
                             if (saved == null) {
                                 mode = editorReturnMode
                                 syncMessage = context.getString(R.string.charging_saved_queued)
@@ -753,25 +837,58 @@ class ChargingMapPanel(
                             render()
                         },
                         onFailure = { error ->
-                            if (error is MobileChargingException.Conflict) showConflict(spot)
+                            if (error is MobileChargingException.Conflict) showConflict(spot, editorTicket)
                             else editorStatus = error.message ?: context.getString(R.string.charging_validation)
                             render()
                         },
                     )
                 }
             },
+            initialLocation = freshEditorLocation(),
+            contextResolver = editorContextResolver,
         )
         mode = Mode.EDITOR
         render()
     }
 
-    private fun showConflict(spot: MobileChargingSpotDto?) {
+    private fun freshEditorLocation(): MobileMapCoordinateDto? = locationClient.freshFix()?.let {
+        MobileMapCoordinateDto(it.latitudeDegrees, it.longitudeDegrees)
+    }
+
+    private fun connectorStateKey(connector: MobileChargingConnectorDto): String = when (connector) {
+        is MobileChargingConnectorDto.Other -> "other:${connector.label}"
+        else -> "catalog:${ChargingConnectorArtwork.catalog.indexOf(connector)}"
+    }
+
+    private fun connectorFromStateKey(key: String): MobileChargingConnectorDto? = when {
+        key.startsWith("other:") -> MobileChargingConnectorDto.Other(key.removePrefix("other:"))
+        key.startsWith("catalog:") -> key.removePrefix("catalog:").toIntOrNull()
+            ?.let(ChargingConnectorArtwork.catalog::getOrNull)
+        else -> null
+    }
+
+    private fun refreshEditorLocation() {
+        editor?.updateFreshLocation(freshEditorLocation())
+    }
+
+    private fun isCurrentEditor(ticket: Long): Boolean = editor != null && editorCallbackFence.accepts(ticket)
+
+    private fun retireEditor() {
+        editorCallbackFence.invalidate()
+        editor?.dispose()
+        editor = null
+    }
+
+    private fun showConflict(spot: MobileChargingSpotDto?, editorTicket: Long) {
         if (spot == null) return
         AlertDialog.Builder(context)
             .setMessage(R.string.charging_conflict)
             .setNegativeButton(R.string.charging_cancel, null)
             .setPositiveButton(R.string.charging_reload) { _, _ ->
-                controller.reloadSpot(spot.id) { result -> result.onSuccess { fresh -> if (fresh != null) openEditor(fresh) } }
+                if (!isCurrentEditor(editorTicket)) return@setPositiveButton
+                controller.reloadSpot(spot.id) { result ->
+                    if (isCurrentEditor(editorTicket)) result.onSuccess { fresh -> if (fresh != null) openEditor(fresh) }
+                }
             }.show()
     }
 

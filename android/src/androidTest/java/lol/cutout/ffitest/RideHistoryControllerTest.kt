@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import android.view.View
 import android.view.Gravity
 import android.graphics.drawable.RippleDrawable
+import android.os.SystemClock
 import android.widget.FrameLayout
 import android.widget.TextView
 import java.util.concurrent.CountDownLatch
@@ -25,8 +26,11 @@ import uniffi.cutout_mobile_ffi.MobileChargingSpotDto
 import uniffi.cutout_mobile_ffi.MobileGeoBoundsDto
 import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
 import uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionDto
+import uniffi.cutout_mobile_ffi.MobilePhoneLocationSampleDto
 import lol.cutout.RideMapRuntime
 import org.junit.Test
+import java.nio.ByteBuffer
+import java.util.UUID
 
 open class RideHistoryControllerTest {
     @Test
@@ -210,12 +214,33 @@ open class RideHistoryControllerTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val runtime = RideMapRuntime(context)
         val controller = RideHistoryController(runtime)
+        var fixtureRideStarted = false
+        var fixtureRideStopped = false
         val loaded = CountDownLatch(1)
         controller.onChanged = {
             if (!controller.state.loading) loaded.countDown()
         }
 
         try {
+            val started = awaitResult { runtime.startGpsRide(completed = it) }
+            fixtureRideStarted = true
+            val receivedWallClock = System.currentTimeMillis().toULong()
+            val receivedMonotonic = SystemClock.elapsedRealtime().toULong()
+            val outcomes = awaitResult { done ->
+                runtime.submitLocationCallback(
+                    samples = listOf(testLocation(receivedWallClock, 39.7394158, -104.9902510)),
+                    receiptMonotonicMs = receivedMonotonic,
+                    receiptWallClockUnixMs = receivedWallClock,
+                    completed = done,
+                )
+            }
+            check(outcomes.isNotEmpty()) { "Rust did not report a decision for fixture GPS samples" }
+            val stopped = awaitResult { runtime.stop(it) }
+            fixtureRideStopped = true
+            check(stopped.summary.pointCount > 0UL) {
+                "Seeded fixture ride has no nonempty route projection input"
+            }
+
             InstrumentationRegistry.getInstrumentation().runOnMainSync { controller.refresh() }
             check(awaitCallback(loaded, 10, TimeUnit.SECONDS)) { "Rust ride history query did not complete" }
             check(controller.state.error == null) { "Rust ride history query failed: ${controller.state.error}" }
@@ -245,9 +270,9 @@ open class RideHistoryControllerTest {
                 controller.setSearch("")
             }
             check(awaitCallback(allTime, 10, TimeUnit.SECONDS)) { "All-time history query did not complete" }
-            val selectedRide = controller.state.rides.firstOrNull()
-            if (selectedRide != null) {
-                val rideKey = selectedRide.id.bytes.toList()
+            val rideKey = rideIdBytes(started.rideId).toList()
+            val selectedRide = controller.state.rides.firstOrNull { it.id.bytes.toList() == rideKey }
+                ?: error("Seeded Rust GPS ride was missing from history")
                 val opened = CountDownLatch(1)
                 controller.onChanged = { if (controller.state.selected != null && !controller.state.loading) opened.countDown() }
                 InstrumentationRegistry.getInstrumentation().runOnMainSync { controller.select(selectedRide) }
@@ -266,14 +291,111 @@ open class RideHistoryControllerTest {
                 check(controller.searchText.isEmpty() && !controller.last30Days && controller.includeShortRides) {
                     "Refreshing history changed its active filters"
                 }
-            } else {
-                check(controller.searchText.isEmpty() && !controller.last30Days && controller.includeShortRides) {
-                    "Refreshing empty history changed its active filters"
+
+                val saved = android.os.Bundle()
+                controller.saveUiState(saved)
+                val restoredController = RideHistoryController(runtime)
+                val restored = CountDownLatch(1)
+                restoredController.onChanged = {
+                    if (restoredController.state.selected?.id?.bytes?.toList() == rideKey &&
+                        !restoredController.state.loading
+                    ) restored.countDown()
                 }
-            }
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    restoredController.restoreUiState(saved)
+                    restoredController.refresh()
+                }
+                check(awaitCallback(restored, 10, TimeUnit.SECONDS)) {
+                    "Restoring Map presentation did not resolve the selected ride in the shared Rust database"
+                }
+                check(restoredController.searchText.isEmpty() && !restoredController.last30Days &&
+                    restoredController.includeShortRides
+                ) { "Restoring Map presentation changed the saved history filters" }
+
+                val fullRoute = checkNotNull(restoredController.state.route)
+                check(fullRoute.points.isNotEmpty()) {
+                    "The seeded ride should project at least one Rust-owned GPS route point"
+                }
+                val firstPoint = fullRoute.points.firstOrNull()
+                val bounds = firstPoint?.let { point ->
+                    MobileGeoBoundsDto(
+                        (point.latitudeDegrees - 0.01).coerceAtLeast(-90.0),
+                        (point.latitudeDegrees + 0.01).coerceAtMost(90.0),
+                        (point.longitudeDegrees - 0.01).coerceAtLeast(-180.0),
+                        (point.longitudeDegrees + 0.01).coerceAtMost(180.0),
+                    )
+                } ?: MobileGeoBoundsDto(-90.0, 90.0, -180.0, 180.0)
+                val previousRoute = restoredController.state.route
+                val viewportDone = CountDownLatch(1)
+                restoredController.onChanged = {
+                    if (restoredController.state.route !== previousRoute &&
+                        restoredController.state.routeRideId?.bytes?.toList() == rideKey
+                    ) viewportDone.countDown()
+                }
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    restoredController.projectSelectedViewport(bounds)
+                }
+                check(awaitCallback(viewportDone, 10, TimeUnit.SECONDS)) {
+                    "Selected ride did not receive its Rust viewport route projection"
+                }
+                val viewportRoute = checkNotNull(restoredController.state.route)
+                check(viewportRoute.points.isNotEmpty()) {
+                    "A viewport containing the seeded route point should return a nonempty projection"
+                }
+                check(viewportRoute.points.all { point ->
+                    point.latitudeDegrees in bounds.minimumLatitudeDegrees..bounds.maximumLatitudeDegrees &&
+                        point.longitudeDegrees in bounds.minimumLongitudeDegrees..bounds.maximumLongitudeDegrees
+                }) { "Viewport projection returned route points outside its requested bounds" }
+
+                val staleViewport = MobileGeoBoundsDto(1.0, 2.0, 1.0, 2.0)
+                val workerDrained = CountDownLatch(1)
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    restoredController.projectSelectedViewport(staleViewport)
+                    restoredController.closeDetail()
+                    runtime.withDatabase({ Unit }) { workerDrained.countDown() }
+                }
+                check(awaitCallback(workerDrained, 10, TimeUnit.SECONDS)) { "Queued stale viewport query did not drain" }
+                check(restoredController.state.selected == null && restoredController.state.route == null) {
+                    "A viewport projection queued for a closed detail replaced its cleared state"
+                }
         } finally {
+            if (fixtureRideStarted) {
+                if (!fixtureRideStopped) runCatching { awaitResult { runtime.stop(it) } }
+                if (fixtureRideStopped) runCatching { awaitResult { runtime.discard(it) } }
+            }
             runtime.close()
         }
+    }
+
+    private fun testLocation(
+        wallClockUnixMs: ULong,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+    ) = MobilePhoneLocationSampleDto(
+        wallClockUnixMs = wallClockUnixMs,
+        sourceTimestampUnixSeconds = null,
+        latitudeDegrees = latitudeDegrees,
+        longitudeDegrees = longitudeDegrees,
+        altitudeMeters = 1_609.0,
+        horizontalAccuracyMeters = 3.0,
+        verticalAccuracyMeters = null,
+        speedMetersPerSecond = null,
+        speedAccuracyMetersPerSecond = null,
+        courseDegrees = null,
+        courseAccuracyDegrees = null,
+    )
+
+    private fun rideIdBytes(value: String): ByteArray {
+        val id = UUID.fromString(value)
+        return ByteBuffer.allocate(16).putLong(id.mostSignificantBits).putLong(id.leastSignificantBits).array()
+    }
+
+    private fun <T> awaitResult(start: ((Result<T>) -> Unit) -> Unit): T {
+        val latch = CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicReference<Result<T>?>()
+        start { value -> result.set(value); latch.countDown() }
+        check(awaitCallback(latch, 15, TimeUnit.SECONDS)) { "Ride fixture operation did not complete" }
+        return checkNotNull(result.get()).getOrThrow()
     }
 
     /** Local Robolectric wrappers override this to drain their paused main looper. */
