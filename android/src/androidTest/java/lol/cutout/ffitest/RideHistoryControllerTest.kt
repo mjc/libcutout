@@ -147,7 +147,7 @@ open class RideHistoryControllerTest {
                             (0 until label.layout.lineCount).all { label.layout.getEllipsisCount(it) == 0 }) {
                             "History filter label was blank, unlaid out, or ellipsized at font scale $fontScale: ${label.text}"
                         }
-                        check((label.gravity and Gravity.HORIZONTAL_GRAVITY_MASK) == Gravity.START) {
+                        check((label.gravity and Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == Gravity.START) {
                             "History filter labels should align with the leading edge at font scale $fontScale"
                         }
                         check(label.compoundDrawablesRelative[2] != null) {

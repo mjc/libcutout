@@ -54,6 +54,7 @@ class CaptureSettingsWorksheet(
     fun show(): AlertDialog {
         check(dialog == null) { "Capture settings worksheet can only be shown once" }
         val body = ui.column().apply {
+            setBackgroundColor(ui.background)
             setPadding(ui.dp(20), ui.dp(8), ui.dp(20), ui.dp(12))
             addView(ui.text(ui.label("capture.settings.worksheet.title"), 23f, true).apply { isAccessibilityHeading = true })
             addView(ui.space(12))
@@ -110,6 +111,7 @@ class CaptureSettingsWorksheet(
             .create()
         dialog = result
         result.setOnShowListener {
+            result.window?.setBackgroundDrawable(ui.rounded(24, ui.background, outlined = false))
             saveButton = result.getButton(AlertDialog.BUTTON_POSITIVE).apply {
                 tag = "capture.settings.save"
                 setTextColor(Color.BLACK)
@@ -231,7 +233,11 @@ class CaptureSettingsWorksheet(
     private fun addFieldGroup(host: LinearLayout, title: String, fields: List<MobileCaptureResearchFieldDto>) {
         host.addView(ui.text(title, 20f, true).apply { isAccessibilityHeading = true })
         host.addView(ui.space(4))
-        fields.forEach { addFieldRow(host, it) }
+        host.addView(ui.column().apply {
+            background = ui.rounded(18)
+            setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(6))
+            fields.forEach { addFieldRow(this, it) }
+        })
         host.addView(ui.space(12))
     }
 

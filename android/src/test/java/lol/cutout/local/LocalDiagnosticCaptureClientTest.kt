@@ -115,8 +115,8 @@ class LocalDiagnosticCaptureClientTest {
             val capture = checkNotNull(client.current().captures.firstOrNull {
                 it.recording?.platformIdentifier == platformId
             })
-            check(capture.eventCount == 3UL) {
-                "expected link-up, notification, and link-down events; got ${capture.eventCount}"
+            check(capture.eventCount == 4UL) {
+                "expected link-up, notification, settings observation, and link-down events; got ${capture.eventCount}"
             }
 
             val savedSource = MobileCaptureSubmissionSourceDto.LiveCapture(capture.liveCaptureId)

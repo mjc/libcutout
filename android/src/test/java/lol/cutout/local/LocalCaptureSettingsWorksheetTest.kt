@@ -77,28 +77,37 @@ class LocalCaptureSettingsWorksheetTest {
 
     @Test
     fun failedSaveKeepsTheEnteredDraftAndAllowsRetry() {
-        val profile = captureResearchCatalogs().firstOrNull { catalog -> catalog.fields.isNotEmpty() }
-        assertNotNull("Rust should expose research profiles", profile)
+        val profile = captureResearchCatalogs().firstOrNull { catalog ->
+            catalog.fields.any { it.control is MobileSettingControlDto.Number }
+        }
+        assertNotNull("Rust should expose a profile with an entered numeric value", profile)
         val selectedProfile = checkNotNull(profile)
-        val field = selectedProfile.fields.first()
+        val field = selectedProfile.fields.first { it.control is MobileSettingControlDto.Number }
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
         val callbacks = mutableListOf<(Result<MobileCaptureSettingsObservationDto>) -> Unit>()
-        val dialog = CaptureSettingsWorksheet(activity) { _, done -> callbacks += done }.show()
+        var submittedDraft: MobileCaptureSettingsDraftDto? = null
+        val dialog = CaptureSettingsWorksheet(activity) { draft, done ->
+            submittedDraft = draft
+            callbacks += done
+        }.show()
         try {
             findTagged<Spinner>(dialog, "capture.settings.profile")
                 .setSelection(captureResearchCatalogs().indexOfFirst { it.profileId == selectedProfile.profileId } + 1)
             shadowOf(Looper.getMainLooper()).idle()
-            val valueView = findTaggedOrNull<EditText>(dialog, "capture.settings.value.${field.id}")
-            if (valueView != null) valueView.setText("17")
+            val valueView = findTagged<EditText>(dialog, "capture.settings.value.${field.id}")
+            valueView.setText("17")
+            shadowOf(Looper.getMainLooper()).idle()
             val button = findTagged<Button>(dialog, "capture.settings.save")
             button.performClick()
             assertEquals(1, callbacks.size)
+            val initial = checkNotNull(submittedDraft).values.single { it.settingId == field.id }
+            assertEquals(MobileCaptureObservedValueDto.Entered("17"), initial.value)
             callbacks.removeAt(0)(Result.failure(IllegalStateException("temporary failure")))
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(dialog.isShowing)
             assertTrue(findTagged<android.widget.TextView>(dialog, "capture.settings.error").text.isNotEmpty())
-            assertEquals("17", valueView?.text?.toString())
+            assertEquals("17", valueView.text.toString())
             assertTrue(button.isEnabled)
             button.performClick()
             assertEquals("a failed attempt can be retried", 1, callbacks.size)

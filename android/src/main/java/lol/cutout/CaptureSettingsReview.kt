@@ -32,6 +32,7 @@ internal class CaptureSettingsReview(
                 dialog = shown
                 shown.setOnDismissListener { request++; dialog = null }
                 shown.show()
+                shown.window?.setBackgroundDrawable(ui.rounded(24, ui.background, outlined = false))
                 reload()
             }
     }
@@ -41,7 +42,7 @@ internal class CaptureSettingsReview(
         loading = true; error = null; loadFailed = false; observations = emptyList(); decoded = emptyList()
         render()
         load { result ->
-            if (dialog == null || request != token) return@load
+            if (dialog?.isShowing != true || request != token) return@load
             result.fold({ saved ->
                 observations = saved
                 if (saved.isEmpty()) { loading = false; render() }
@@ -56,7 +57,7 @@ internal class CaptureSettingsReview(
         loading = true; error = null; decoded = emptyList(); render()
         val requests = observations.map { MobileCaptureResearchReadbackRequestDto(it.profile.profileId, it.observedAtMs) }
         readback(requests) { result ->
-            if (dialog == null || token != request) return@readback
+            if (dialog?.isShowing != true || token != request) return@readback
             loading = false
             result.onSuccess { decoded = it }.onFailure { error = ui.label("capture.settings.read_error") }
             render()
