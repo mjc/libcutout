@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "captures.observed_activity" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Observed activity"}}}},
+    "captures.more_actions" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"More action markers"}}}},
     "euc.ride.temperature" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } }
