@@ -148,9 +148,9 @@ def validate_device(device: dict[str, str], expected_serial: str | None) -> None
         raise ValueError("Physical serial does not match CUTOUT_ANDROID_SERIAL; nothing installed")
 
 
-def validate_emulator(device: dict[str, str], selector: str, avd: str, expected_avd: str) -> None:
+def validate_emulator(device: dict[str, str], selector: str, avd: str, expected_avd: str, expected_api: str) -> None:
     if (not re.fullmatch(r"emulator-[0-9]+", selector) or device["emulator"] != "1"
-            or device["abi"] != "x86_64" or int(device["api"]) < 33
+            or device["abi"] != "x86_64" or int(device["api"]) < 33 or device["api"] != expected_api
             or not device["serial"] or avd != expected_avd):
         raise ValueError(f"Expected the owned x86_64 Android 33+ emulator {expected_avd}: {device}, {avd}")
 
@@ -487,7 +487,7 @@ class Run:
                     time.sleep(2)
                 device = self.identity()
                 avd = self.adb(["emu", "avd", "name"], "avd-name").splitlines()[0].strip()
-                validate_emulator(device, self.selector, avd, avd_name)
+                validate_emulator(device, self.selector, avd, avd_name, self.env["CUTOUT_ANDROID_API"])
                 self.receipt["device"] = dict(device, transport=self.selector, avd=avd)
                 self.receipt["install_status"] = "running"
                 # Exact identity is rechecked after build, boot and immediately before install.
@@ -537,12 +537,14 @@ def main() -> int:
     parser.add_argument("mode", choices=("host", "build", "device", "app", "local", "emulator"))
     parser.add_argument("--device", default=os.environ.get("CUTOUT_ANDROID_DEVICE"))
     parser.add_argument("--expected-serial", default=os.environ.get("CUTOUT_ANDROID_SERIAL"))
-    parser.add_argument("--abi", choices=tuple(ANDROID_TARGETS), default="arm64-v8a",
+    parser.add_argument("--abi", choices=tuple(ANDROID_TARGETS),
                         help="JNI ABI for build mode; emulator mode always selects x86_64")
     parser.add_argument("--artifacts", help="Reuse APKs from a matching source/ABI/hash receipt without rebuilding")
     parser.add_argument("--test-class", default=EMULATOR_TESTS,
                         help="Emulator instrumentation classes (comma separated)")
     args = parser.parse_args()
+    if args.abi and args.mode != "build":
+        parser.error("--abi is supported only by build mode")
     if args.mode == "emulator" and (args.device or args.expected_serial):
         parser.error("Emulator mode owns its target; unset physical-device selectors")
     if args.artifacts and args.mode not in ("device", "app", "emulator"):
@@ -575,7 +577,7 @@ def main() -> int:
             elif args.mode == "emulator":
                 run.emulator(args.artifacts, args.test_class)
             elif args.mode == "build":
-                run.build(args.abi)
+                run.build(args.abi or "arm64-v8a")
             else:
                 run.host()
             run.receipt["status"] = "passed"

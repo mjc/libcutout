@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 import tempfile
+import io
 from unittest.mock import patch
 import zipfile
 
@@ -60,16 +61,23 @@ class DeviceSelectionTests(unittest.TestCase):
 class EmulatorSelectionTests(unittest.TestCase):
     def test_emulator_requires_its_explicit_transport_avd_and_guest_abi(self):
         valid = {"serial": "EMULATOR", "abi": "x86_64", "api": "35", "emulator": "1"}
-        runner.validate_emulator(valid, "emulator-5554", "cutout-api35-x86_64", "cutout-api35-x86_64")
-        for override in ({"abi": "arm64-v8a"}, {"api": "32"}, {"emulator": ""}, {"serial": ""}):
+        runner.validate_emulator(valid, "emulator-5554", "cutout-api35-x86_64", "cutout-api35-x86_64", "35")
+        for override in ({"abi": "arm64-v8a"}, {"api": "32"}, {"api": "34"}, {"emulator": ""}, {"serial": ""}):
             with self.subTest(override=override), self.assertRaises(ValueError):
-                runner.validate_emulator(dict(valid, **override), "emulator-5554", "owned", "owned")
+                runner.validate_emulator(dict(valid, **override), "emulator-5554", "owned", "owned", "35")
         for selector, avd in (("PHONE", "owned"), ("emulator-5554", "other")):
             with self.subTest(selector=selector, avd=avd), self.assertRaises(ValueError):
-                runner.validate_emulator(valid, selector, avd, "owned")
+                runner.validate_emulator(valid, selector, avd, "owned", "35")
         # An emulator remains forbidden in physical-device mode.
         with self.assertRaises(ValueError):
             runner.validate_device(valid, None)
+
+    def test_nonbuild_modes_cannot_silently_ignore_an_explicit_abi(self):
+        for mode in ("device", "app", "emulator", "host", "local"):
+            with self.subTest(mode=mode), patch("sys.argv", ["runner", mode, "--abi", "x86_64"]), \
+                    patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit) as result:
+                runner.main()
+            self.assertEqual(result.exception.code, 2)
 
     def test_reuse_requires_both_unchanged_apks_matching_source_and_abi(self):
         with tempfile.TemporaryDirectory() as temporary:
