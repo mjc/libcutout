@@ -1,9 +1,11 @@
 package lol.cutout
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
+import android.net.Uri
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -30,6 +32,17 @@ class MusicCompactPlayer(
         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
     }
     private val controls = ui.row()
+    private val contentLink = TextView(context).apply {
+        text = "↗"
+        textSize = 17f
+        setTextColor(ui.brand)
+        gravity = Gravity.CENTER
+        minWidth = ui.dp(44)
+        minHeight = ui.dp(44)
+        tag = "music.spotify-content-link"
+        contentDescription = context.getString(R.string.music_spotify_content_link)
+        visibility = View.GONE
+    }
     private val track = ui.row().apply {
         gravity = Gravity.CENTER_VERTICAL
         tag = "music.expand"
@@ -54,6 +67,7 @@ class MusicCompactPlayer(
         }
         track.addView(metadata, LayoutParams(0, -1, 1f))
         addView(track, LayoutParams(0, -1, 1f))
+        addView(contentLink, LayoutParams(-2, -1))
         addView(controls, LayoutParams(-2, -1))
     }
 
@@ -65,8 +79,15 @@ class MusicCompactPlayer(
         itemArtist.text = snapshot?.item?.artist.orEmpty()
         itemArtist.visibility = if (itemArtist.text.isNullOrBlank()) View.GONE else View.VISIBLE
         artwork.setImageBitmap(state.artwork)
+        val spotifyUrl = snapshot?.takeIf { it.provider == MobileMusicProviderDto.SPOTIFY }
+            ?.item?.identifier?.let { runCatching { spotifyContentUrl(it) }.getOrNull() }
+            ?.takeIf { value -> runCatching { Uri.parse(value).let { it.scheme == "https" && it.host == "open.spotify.com" } }.getOrDefault(false) }
+        contentLink.visibility = if (spotifyUrl == null) View.GONE else View.VISIBLE
+        contentLink.setOnClickListener {
+            spotifyUrl?.let { value -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value))) } }
+        }
         controls.removeAllViews()
-        if (state.listenerAccessGranted) {
+        if (state.listenerAccessGranted || state.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
             val caps = snapshot?.capabilities
             if (caps != null) {
                 if (snapshot?.state == MobileMusicPlaybackStateDto.PLAYING) {

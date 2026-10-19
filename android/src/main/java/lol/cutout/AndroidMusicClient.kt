@@ -37,6 +37,8 @@ data class AndroidMusicPresentation(
     val history: MobileMusicHistoryDto? = null,
     val historyError: String? = null,
     val lastRecordedSequence: ULong? = null,
+    val spotifyDisconnectPending: Boolean = false,
+    val spotifyDisconnectError: String? = null,
 )
 
 /** Receives lifecycle notifications from the OS-managed notification-listener service. */
@@ -89,9 +91,15 @@ class AndroidMusicClient(
     private var currentController: MediaController? = null
     private var currentControllerCallback: MediaController.Callback? = null
     private var providerGeneration: MobileMusicProviderSessionId? = null
+    private var soundCloudCommand: ((MobileSoundCloudCommand, (Result<Unit>) -> Unit) -> Unit)? = null
+    private var soundCloudStop: (() -> Unit)? = null
+    private var soundCloudObservation: Closeable? = null
+    private var soundCloudSnapshot: (() -> MobileMusicSnapshotDto)? = null
+    private var soundCloudError: (() -> String?)? = null
     private var monitorGeneration: MobileMusicMonitorId? = null
     private var selectedProvider = musicProviderFromStorage(preferences.getString(PROVIDER_KEY, null))
     private var defaultHistoryPolicy = historyPolicyFromStorage(preferences.getString(HISTORY_POLICY_KEY, null))
+    private var spotifyHistoryReadbackRevision = 0L
     @Volatile var latestPresentation = AndroidMusicPresentation(
         selectedProvider = selectedProvider,
         historyPolicy = defaultHistoryPolicy,
@@ -127,12 +135,116 @@ class AndroidMusicClient(
     /** Provider choice is an explicit app preference; it never launches that provider. */
     fun selectProvider(provider: MobileMusicProviderDto) {
         if (selectedProvider == provider) return
+        val previousProvider = selectedProvider
         selectedProvider = provider
         preferences.edit().putString(PROVIDER_KEY, musicProviderProfile(provider).storageKey).apply()
+        if (previousProvider == MobileMusicProviderDto.SOUND_CLOUD && provider != MobileMusicProviderDto.SOUND_CLOUD) {
+            soundCloudStop?.invoke()
+        }
         retireProvider()
         publish(latestPresentation.copy(selectedProvider = provider, snapshot = null, artwork = null, error = null,
             listenerAccessGranted = hasNotificationListenerAccess()))
-        if (hasNotificationListenerAccess()) refreshSessions()
+        if (provider == MobileMusicProviderDto.SOUND_CLOUD || hasNotificationListenerAccess()) refreshSessions()
+    }
+
+    /** Re-enables Android media-session observation for the chosen provider. This does not
+     * authorize a provider account; Android exposes its own authenticated MediaSession. */
+    fun connectOrRetrySelectedProvider() {
+        main.post {
+            if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false).apply()
+                resumeObservations()
+            }
+            publish(latestPresentation.copy(error = null, spotifyDisconnectError = null))
+            refreshSessions()
+            refreshHistory()
+        }
+    }
+
+    /** Explicit Android equivalent of Swift's provider open action. */
+    fun openProviderFromSettings(completed: (Result<Unit>) -> Unit = {}) = openSelectedProvider(completed)
+
+    /** Publishes SoundCloud's Rust presentation projection to the shared compact player only. */
+    fun presentSoundCloudSnapshot(snapshot: MobileMusicSnapshotDto, error: String? = null) {
+        main.post {
+            if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD && !closed) {
+                publish(latestPresentation.copy(snapshot = snapshot, artwork = null, error = error))
+            }
+        }
+    }
+
+    /** Joins the app-owned native SoundCloud player to the existing compact presentation. */
+    fun bindSoundCloudPlayer(player: AndroidSoundCloudPlayer) {
+        soundCloudObservation?.close()
+        soundCloudSnapshot = player::musicSnapshot
+        soundCloudError = { player.latest.error }
+        soundCloudStop = player::stop
+        soundCloudCommand = { command, completed ->
+            player.command(command, completed)
+        }
+        soundCloudObservation = player.observe { value ->
+            presentSoundCloudSnapshot(player.musicSnapshot(), value.error)
+        }
+    }
+
+    /** Opts out of Spotify observation, retires its callbacks, then deletes Spotify ride history
+     * through the shared Rust database owner. A failed deletion remains visible and retryable. */
+    fun disconnectSpotify(completed: (Result<Unit>) -> Unit = {}) {
+        main.post {
+            if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
+                preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, true).apply()
+                spotifyHistoryReadbackRevision++
+                stopMonitoring()
+                retireProvider()
+                publish(latestPresentation.copy(
+                    snapshot = null,
+                    artwork = null,
+                    error = null,
+                    spotifyDisconnectPending = true,
+                    spotifyDisconnectError = null,
+                    history = latestPresentation.history?.copy(events = latestPresentation.history?.events.orEmpty().filter {
+                        it.provider != MobileMusicProviderDto.SPOTIFY
+                    }),
+                ))
+            }
+            acceptingObservations = false
+            drainObservations { drained ->
+                if (drained.isFailure) {
+                    finishSpotifyDisconnect(drained, completed)
+                    return@drainObservations
+                }
+                rides.withCore({ core -> core.deleteSpotifyMusicHistory() }) { result ->
+                    finishSpotifyDisconnect(result, completed)
+                }
+            }
+        }
+    }
+
+    private fun finishSpotifyDisconnect(result: Result<Unit>, completed: (Result<Unit>) -> Unit) {
+        result.onSuccess {
+            spotifyHistoryReadbackRevision++
+            publish(latestPresentation.copy(
+                spotifyDisconnectPending = false,
+                spotifyDisconnectError = null,
+                historyError = null,
+                history = latestPresentation.history?.copy(events = latestPresentation.history?.events.orEmpty().filter {
+                    it.provider != MobileMusicProviderDto.SPOTIFY
+                }),
+            ))
+            if (selectedProvider != MobileMusicProviderDto.SPOTIFY) {
+                acceptingObservations = true
+                refreshHistory()
+            }
+            completed(Result.success(Unit))
+        }.onFailure { error ->
+            if (selectedProvider != MobileMusicProviderDto.SPOTIFY) acceptingObservations = true
+            publish(latestPresentation.copy(
+                spotifyDisconnectPending = false,
+                spotifyDisconnectError = error.message ?: error.toString(),
+                historyError = error.message ?: error.toString(),
+            ))
+            completed(Result.failure(error))
+        }
     }
 
     /** The persisted Swift-equivalent preference used for rides created in the future. */
@@ -149,6 +261,7 @@ class AndroidMusicClient(
 
     /** Refreshes active-ride privacy policy and its authoritative timeline from Rust/SQLite. */
     fun refreshHistory() {
+        val revision = ++spotifyHistoryReadbackRevision
         rides.withCore({ core ->
             val snapshot = core.currentSnapshot(SystemClock.elapsedRealtime().toULong())
             val active = snapshot?.state == MobileRideLifecycleStateDto.ACTIVE ||
@@ -159,10 +272,10 @@ class AndroidMusicClient(
         }) { result ->
             result.onSuccess { (policy, command) ->
                 if (command == null) {
-                    publish(latestPresentation.copy(historyPolicy = policy, history = null, historyError = null))
-                } else pollHistory(command, policy)
+                    if (revision == spotifyHistoryReadbackRevision) publish(latestPresentation.copy(historyPolicy = policy, history = null, historyError = null))
+                } else pollHistory(command, policy, revision)
             }.onFailure { error ->
-                publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
+                if (revision == spotifyHistoryReadbackRevision) publish(latestPresentation.copy(historyError = error.message ?: error.toString()))
             }
         }
     }
@@ -238,11 +351,19 @@ class AndroidMusicClient(
 
     /** Runs [completed] after every callback admitted before this call has settled in Rust. */
     fun drainObservations(completed: () -> Unit) {
+        drainObservations { result -> if (result.isSuccess) completed() }
+    }
+
+    fun drainObservations(completed: (Result<Unit>) -> Unit) {
         try {
-            observationWorker.execute { main.post(completed) }
+            observationWorker.execute { main.post { completed(Result.success(Unit)) } }
         } catch (_: RuntimeException) {
             // A rejected barrier means the owner is closing; do not claim pending work settled.
-            main.post { publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_failed))) }
+            main.post {
+                val error = IllegalStateException(appContext.getString(R.string.music_observation_failed))
+                publish(latestPresentation.copy(error = error.message))
+                completed(Result.failure(error))
+            }
         }
     }
 
@@ -270,6 +391,15 @@ class AndroidMusicClient(
     /** Called after the user enables access or returns from system Settings. */
     fun refreshSessions() {
         if (closed) return
+        if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+            if (monitorGeneration != null) stopMonitoring()
+            detachSession()
+            publish(newPresentation(null, hasNotificationListenerAccess()).copy(
+                snapshot = soundCloudSnapshot?.invoke(),
+                error = soundCloudError?.invoke(),
+            ))
+            return
+        }
         if (!observationLifecycleReady) return
         val hasAccess = hasNotificationListenerAccess()
         if (!hasAccess) {
@@ -277,14 +407,15 @@ class AndroidMusicClient(
             publish(newPresentation(null, false, appContext.getString(R.string.music_access_required)))
             return
         }
+        if (selectedProvider == MobileMusicProviderDto.SPOTIFY && preferences.getBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false)) {
+            stopMonitoring()
+            detachSession()
+            publish(newPresentation(null, true))
+            return
+        }
         if (monitorGeneration == null) startMonitoring()
         try {
             val sessions = manager?.getActiveSessions(notificationListener).orEmpty()
-            if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
-                detachSession()
-                publish(newPresentation(soundcloudUnavailableSnapshot(SystemClock.elapsedRealtime().toULong()), true))
-                return
-            }
             val matching = sessions.firstOrNull { providerForPackage(it.packageName) == selectedProvider }
             attachSession(matching)
         } catch (error: SecurityException) {
@@ -320,10 +451,6 @@ class AndroidMusicClient(
     private fun refreshSessionsWithoutStarting() {
         try {
             val sessions = manager?.getActiveSessions(notificationListener).orEmpty()
-            if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
-                publish(newPresentation(soundcloudUnavailableSnapshot(SystemClock.elapsedRealtime().toULong()), true))
-                return
-            }
             attachSession(sessions.firstOrNull { providerForPackage(it.packageName) == selectedProvider })
         } catch (_: SecurityException) {
             publish(newPresentation(null, false, appContext.getString(R.string.music_access_required)))
@@ -524,7 +651,7 @@ class AndroidMusicClient(
         }
     }
 
-    private fun pollHistory(command: MobileRideMapMusicHistoryCommand, policy: MobileMusicHistoryPolicyDto) {
+    private fun pollHistory(command: MobileRideMapMusicHistoryCommand, policy: MobileMusicHistoryPolicyDto, revision: Long) {
         try {
             historyWorker.execute {
                 try {
@@ -539,10 +666,8 @@ class AndroidMusicClient(
                         }
                     }
                     main.post {
-                        publish(latestPresentation.copy(
-                            historyPolicy = policy,
-                            history = history,
-                            historyError = null,
+                        if (revision == spotifyHistoryReadbackRevision) publish(latestPresentation.copy(
+                            historyPolicy = policy, history = history, historyError = null,
                         ))
                     }
                 } catch (error: Exception) {
@@ -728,9 +853,20 @@ class AndroidMusicClient(
 
     fun command(command: MobileMusicCommandDto, completed: (Result<Unit>) -> Unit = {}) {
         if (selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
-            completeAction(if (command == MobileMusicCommandDto.OPEN_PROVIDER) openSoundCloud() else Result.failure(
-                IllegalStateException(appContext.getString(R.string.music_command_unavailable)),
-            ), completed)
+            if (command == MobileMusicCommandDto.OPEN_PROVIDER) {
+                completeAction(openSoundCloud(), completed)
+                return
+            }
+            val mapped = when (command) {
+                MobileMusicCommandDto.PLAY -> MobileSoundCloudCommand.PLAY
+                MobileMusicCommandDto.PAUSE -> MobileSoundCloudCommand.PAUSE
+                MobileMusicCommandDto.PREVIOUS -> MobileSoundCloudCommand.PREVIOUS
+                MobileMusicCommandDto.NEXT -> MobileSoundCloudCommand.NEXT
+                MobileMusicCommandDto.OPEN_PROVIDER -> error("handled above")
+            }
+            val effect = soundCloudCommand
+            if (effect == null) completeAction(Result.failure(IllegalStateException(appContext.getString(R.string.music_command_unavailable))), completed)
+            else effect(mapped) { result -> completeAction(result, completed) }
             return
         }
         val controller = currentController
@@ -865,6 +1001,12 @@ class AndroidMusicClient(
         monitorGeneration?.let(lifecycle::finishMonitor)
         monitorGeneration = null
         bridgeObservation.close()
+        soundCloudObservation?.close()
+        soundCloudObservation = null
+        soundCloudSnapshot = null
+        soundCloudError = null
+        soundCloudStop = null
+        soundCloudCommand = null
         lifecycle.cancelMonitor()
         artworkWorker.shutdownNow()
         observationWorker.shutdownNow()
@@ -874,6 +1016,7 @@ class AndroidMusicClient(
     private fun has(actions: Long, action: Long) = actions and action != 0L
 
     private fun providerForPackage(packageName: String): MobileMusicProviderDto? = when (packageName) {
+        appContext.packageName -> null // SoundCloud's native MediaSession is presentation only, never ride history.
         SPOTIFY_PACKAGE -> MobileMusicProviderDto.SPOTIFY
         APPLE_MUSIC_PACKAGE -> MobileMusicProviderDto.APPLE_MUSIC
         else -> null
@@ -886,12 +1029,21 @@ class AndroidMusicClient(
         private const val PREFERENCES_NAME = "music_provider_preferences"
         private const val PROVIDER_KEY = "selected_provider"
         private const val HISTORY_POLICY_KEY = "music_history_policy_default"
+        private const val SPOTIFY_MONITORING_OPT_OUT_KEY = "spotify_monitoring_opt_out"
         private const val MAX_ARTWORK_EDGE = 512
         private const val MAX_ARTWORK_BYTES = 2 * 1024 * 1024
         private const val ARTWORK_CONNECT_TIMEOUT_MS = 2_000
         private const val ARTWORK_READ_TIMEOUT_MS = 3_000
         private const val MAX_FIELD_LENGTH = 256
         private const val OBSERVATION_POLL_INTERVAL_MS = 10L
+    }
+
+    private fun stopMonitoring() {
+        activeSessionListener?.let { listener -> runCatching { manager?.removeOnActiveSessionsChangedListener(listener) } }
+        activeSessionListener = null
+        monitorGeneration?.let(lifecycle::finishMonitor)
+        monitorGeneration = null
+        lifecycle.cancelMonitor()
     }
 }
 

@@ -95,6 +95,24 @@ open class MusicCompactPlayerTest {
         check(expanded == 1 && hidden == 1)
     }
 
+    @org.junit.Test
+    fun compactPlayerShowsOnlyRustValidatedSpotifyLinks() = withPlayer { _, _, _, player ->
+        val base = presentation()
+        val valid = base.copy(snapshot = base.snapshot?.copy(
+            provider = MobileMusicProviderDto.SPOTIFY,
+            item = base.snapshot?.item?.copy(identifier = "spotify:episode:512ojhOuo1ktJprKbVcKyQ"),
+        ))
+        player.render(valid)
+        val link = checkNotNull(player.findViewWithTag<View>("music.spotify-content-link"))
+        check(link.visibility == View.VISIBLE) { "A Rust-approved Spotify episode URI should expose its content link" }
+
+        val invalid = valid.copy(snapshot = valid.snapshot?.copy(
+            item = valid.snapshot?.item?.copy(identifier = "https://evil.example/track"),
+        ))
+        player.render(invalid)
+        check(link.visibility == View.GONE) { "An arbitrary URL must not become a Spotify content link" }
+    }
+
     private fun presentation(
         state: MobileMusicPlaybackStateDto = MobileMusicPlaybackStateDto.PLAYING,
         capabilities: MobileMusicCapabilitiesDto = MobileMusicCapabilitiesDto(false, false, false, false, false),

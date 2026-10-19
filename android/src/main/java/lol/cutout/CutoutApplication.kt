@@ -20,6 +20,7 @@ open class CutoutApplication : Application() {
     private val musicLifecycleOwner = lazy { MobileMusicProviderLifecycle() }
     private val musicOwner = lazy {
         AndroidMusicClient(this, musicLifecycleOwner.value, rides).also { client ->
+            client.bindSoundCloudPlayer(soundCloudMusic)
             rides.setStopAdmissionFence(client)
             rides.bindMusicObservationLifecycle(musicLifecycleOwner.value) { result ->
                 result.onSuccess { client.markObservationLifecycleReady() }
@@ -27,7 +28,18 @@ open class CutoutApplication : Application() {
         }
     }
     val music: AndroidMusicClient get() = musicOwner.value
-    private val cameraOwner = lazy { AndroidCameraClient(this, ::sessionStateForNativeOwner) }
+    private val mediaAdmissionOwner = lazy { MediaPlaybackForegroundAdmission(this) }
+    val mediaPlaybackAdmission: MediaPlaybackForegroundAdmission get() = mediaAdmissionOwner.value
+    val existingMediaPlaybackAdmission: MediaPlaybackForegroundAdmission? get() = if (mediaAdmissionOwner.isInitialized()) mediaPlaybackAdmission else null
+    private val soundCloudOwner = lazy {
+        AndroidSoundCloudPlayer(this, beforePlayback = mediaPlaybackAdmission::request)
+    }
+    val soundCloudMusic: AndroidSoundCloudPlayer get() = soundCloudOwner.value
+    val existingSoundCloudMusic: AndroidSoundCloudPlayer? get() = if (soundCloudOwner.isInitialized()) soundCloudMusic else null
+    private val cameraOwner = lazy {
+        AndroidCameraClient(this, ::sessionStateForNativeOwner,
+            currentCaptureIdentity = { bluetooth.diagnostics.activeCameraCaptureIdentity() })
+    }
     val camera: AndroidCameraClient get() = cameraOwner.value
     private val chargingOwner = lazy { AndroidChargingClient(this, rides) }
     val charging: AndroidChargingClient get() = chargingOwner.value
@@ -61,9 +73,13 @@ open class CutoutApplication : Application() {
         if (locationOwner.isInitialized()) locations.close()
         if (cameraOwner.isInitialized()) camera.close()
         if (musicOwner.isInitialized()) music.close()
+        if (soundCloudOwner.isInitialized()) soundCloudMusic.close()
+        if (mediaAdmissionOwner.isInitialized()) mediaPlaybackAdmission.close()
         if (phoneAlarmOwner.isInitialized()) phoneAlarms.close()
         if (chargingOwner.isInitialized()) charging.close()
-        if (rideOwner.isInitialized()) rides.close()
+        if (bluetoothOwner.isInitialized()) bluetooth.close {
+            if (rideOwner.isInitialized()) rides.close()
+        } else if (rideOwner.isInitialized()) rides.close()
         if (lightingOwner.isInitialized()) lighting.stop()
         super.onTerminate()
     }

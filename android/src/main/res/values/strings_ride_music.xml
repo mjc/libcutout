@@ -45,4 +45,23 @@
     <string name="music_timeline_item_changed">Changed track</string>
     <string name="music_timeline_stopped">Stopped</string>
     <string name="music_timeline_disconnected">Provider disconnected</string>
+    <string name="music_connect_provider">Connect or retry</string>
+    <string name="music_open_named_provider">Open %1$s</string>
+    <string name="music_spotify_disconnect">Disconnect Spotify</string>
+    <string name="music_spotify_disconnect_confirm">Stop Spotify monitoring and delete Spotify ride listening history? Android account access is managed by Spotify.</string>
+    <string name="music_spotify_disconnect_retry">Spotify cleanup failed. Retry disconnect to finish deleting Spotify ride history.</string>
+    <string name="music_spotify_disconnect_pending">Disconnecting Spotify and deleting its ride listening history…</string>
+    <string name="music_spotify_content_link">Open in Spotify</string>
+    <string name="music_soundcloud_brand">SoundCloud</string>
+    <string name="music_soundcloud_search">Search SoundCloud</string>
+    <string name="music_soundcloud_searching">Searching…</string>
+    <string name="music_soundcloud_elapsed">%1$d:%2$02d</string>
+    <string name="music_soundcloud_track_link">Open track on SoundCloud</string>
+    <string name="music_soundcloud_select_track">Play %1$s by %2$s</string>
+    <string name="music_soundcloud_request_failed">SoundCloud could not complete that request. Try again.</string>
+    <string name="music_soundcloud_authorization_failed">SoundCloud access could not be obtained.</string>
+    <string name="music_soundcloud_invalid_response">SoundCloud returned an unsupported response.</string>
+    <string name="music_soundcloud_play_failed">SoundCloud playback failed. Choose the track again to retry.</string>
+    <string name="music_soundcloud_choose_music">Choose music</string>
+    <string name="music_soundcloud_ready">Search for a playable track, then choose it to start the queue.</string>
 </resources>

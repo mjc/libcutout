@@ -50,6 +50,7 @@ data class CameraPanelState(
     val stillRequest: CameraRequestState? = null,
     val downloadingPath: String? = null,
     val downloaded: Map<String, File> = emptyMap(),
+    val downloadProvenance: Map<String, MobileCameraMediaProvenanceDto> = emptyMap(),
     val thumbnailPath: String? = null,
     val thumbnails: Map<String, ByteArray> = emptyMap(),
     val operationError: String? = null,
@@ -312,7 +313,11 @@ class AndroidCameraClient(
             }
             val result = state.completeNovatekMediaDownload(MobileNovatekMediaDownloadCompletionInput(request.operationId, actualSize.toULong(), association))
             val downloaded = view.downloaded.toMutableMap().apply { put(media.path, destination) }
-            update(view.copy(downloadingPath = null, downloaded = downloaded, operationError = null))
+            val provenance = view.downloadProvenance.toMutableMap().apply {
+                result.provenance?.let { put(media.path, it) } ?: remove(media.path)
+            }
+            update(view.copy(downloadingPath = null, downloaded = downloaded,
+                downloadProvenance = provenance, operationError = null))
             if (capture != null && result.provenance != null) onMediaReference?.invoke(capture, result.provenance!!, destination)
         } catch (error: Exception) {
             temporary.delete(); destination.delete()
