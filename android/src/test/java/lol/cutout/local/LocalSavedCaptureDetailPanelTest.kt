@@ -1,8 +1,10 @@
 package lol.cutout.local
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import lol.cutout.CaptureSubmissionController
 import lol.cutout.CaptureSubmissionPresentation
@@ -108,7 +110,39 @@ class LocalSavedCaptureDetailPanelTest {
         }
     }
 
-    private fun fixture() = MobileLiveCaptureHistoryEntryDto(
+    @Test
+    fun longVerifiedModelWrapsWithoutCollapsingMetricLabelAtLargeFontScale() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val base = host.get()
+        val largeConfiguration = Configuration(base.resources.configuration).apply { fontScale = 1.5f }
+        val largeContext = base.createConfigurationContext(largeConfiguration)
+        val modelName = "Verified Demo Model, high capacity Falcon long-range battery platform edition"
+        val panel = SavedCaptureDetailPanel(
+            largeContext, fixture(modelName),
+            onExport = { _, done -> done(Result.failure(IllegalStateException("unused"))) },
+            onShare = {},
+            submissionController = FakeSubmissionController(),
+            onSettings = {},
+        )
+        base.setContentView(panel)
+        try {
+            NativeSurfaceCapture.save(panel, "capture-saved-detail-large-text")
+            val row = checkNotNull(panel.findViewWithTag<LinearLayout>("captures.detail.model"))
+            val label = checkNotNull(panel.findViewWithTag<TextView>("captures.detail.model.label"))
+            val value = checkNotNull(panel.findViewWithTag<TextView>("captures.detail.model.value"))
+            assertTrue(label.measuredWidth > 0)
+            assertTrue(value.measuredWidth > 0)
+            assertTrue(value.lineCount > 1)
+            assertTrue(label.left >= 0 && label.right <= row.width)
+            assertTrue(value.left >= 0 && value.right <= row.width)
+            assertEquals(modelName, value.text.toString())
+        } finally {
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
+    private fun fixture(modelName: String = "Verified Demo Model") = MobileLiveCaptureHistoryEntryDto(
         liveCaptureId = "db-capture-1",
         interrupted = false,
         integrity = MobileCaptureIntegrityDto.Incomplete(2UL),
@@ -118,7 +152,7 @@ class LocalSavedCaptureDetailPanelTest {
             advertisedName = "Demo wheel",
             platformIdentifier = "opaque-platform-id",
             startedAt = MobileWallClockUnixMillisDto(1_729_000_000_000UL),
-            model = MobileVerifiedStringDto("Verified Demo Model", MobileVerificationStatusDto.HARDWARE_VERIFIED),
+            model = MobileVerifiedStringDto(modelName, MobileVerificationStatusDto.HARDWARE_VERIFIED),
         ),
         platformIdentifier = "opaque-platform-id",
         startedAtMilliseconds = 1_729_000_000_000UL,
