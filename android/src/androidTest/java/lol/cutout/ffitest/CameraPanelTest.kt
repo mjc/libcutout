@@ -4,12 +4,17 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
+import android.app.Activity
+import android.content.Intent
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.AndroidCameraClient
 import lol.cutout.CameraPanel
 import lol.cutout.CameraPanelState
+import lol.cutout.CameraConnectionState
+import lol.cutout.CameraRequestState
+import lol.cutout.MainActivity
 import org.junit.Test
-import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
+import uniffi.cutout_mobile_ffi.*
 
 /** Camera UI and codec-boundary checks without a network, camera, or device action. */
 open class CameraPanelTest {
@@ -58,6 +63,61 @@ open class CameraPanelTest {
             "Unknown codec identifiers must not be guessed as H.264"
         }
     }
+
+    @Test
+    fun connectedCameraHidesReadActionAndDisablesCommandsWhileEitherRequestIsInflight() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Activity
+        val state = CutoutSessionStateHandle()
+        val client = AndroidCameraClient(activity.applicationContext, { state })
+        try {
+            instrumentation.runOnMainSync {
+                val evidence = MobileNovatekReadOnlySnapshotDto(
+                    "R3", "rtsp://192.168.1.254/movie", "", listOf(
+                        MobileNovatekCommandStatusDto(2001u.toUShort(), 0u.toUShort()),
+                        MobileNovatekCommandStatusDto(1001u.toUShort(), 0u.toUShort()),
+                    ), true, emptyList(),
+                )
+                val panel = CameraPanel(activity, client)
+                activity.setContentView(panel)
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED, evidence = evidence,
+                    recordingRequest = CameraRequestState.IN_FLIGHT,
+                ))
+                check(panel.findViewWithTag<Button>("camera.connect")?.visibility == View.GONE) {
+                    "A connected session must not offer the initial evidence-read action again"
+                }
+                check(panel.findViewWithTag<Button>("camera.recording.request-start")?.isEnabled == false)
+                check(panel.findViewWithTag<Button>("camera.recording.request-stop")?.isEnabled == false)
+                check(panel.findViewWithTag<Button>("camera.still.request")?.isEnabled == false)
+
+                panel.render(panelState(evidence, CameraRequestState.ACKNOWLEDGED, CameraRequestState.IN_FLIGHT))
+                check(panel.findViewWithTag<Button>("camera.recording.request-start")?.isEnabled == false)
+                check(panel.findViewWithTag<Button>("camera.recording.request-stop")?.isEnabled == false)
+                check(panel.findViewWithTag<Button>("camera.still.request")?.isEnabled == false)
+
+                panel.render(panelState(evidence, null, null))
+                check(panel.findViewWithTag<Button>("camera.recording.request-start")?.isEnabled == true)
+                check(panel.findViewWithTag<Button>("camera.recording.request-stop")?.isEnabled == true)
+                check(panel.findViewWithTag<Button>("camera.still.request")?.isEnabled == true)
+            }
+        } finally {
+            client.close()
+            state.close()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun panelState(
+        evidence: MobileNovatekReadOnlySnapshotDto,
+        recording: CameraRequestState?,
+        still: CameraRequestState?,
+    ) = CameraPanelState(
+        wifiReady = true, connection = CameraConnectionState.CONNECTED, evidence = evidence,
+        recordingRequest = recording, stillRequest = still,
+    )
 
     private fun descendants(view: View): Sequence<View> = sequence {
         yield(view)

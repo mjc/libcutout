@@ -31,6 +31,7 @@ class CameraPanel(
     private val captureTitle = ui.text(ui.label("camera.truth.title"), 17f, true)
     private val truthRows = ui.column()
     private val recordingControls = ui.row()
+    private val recordingStatus = ui.text("", 13f, color = ui.muted)
     private val stillButton = ui.action(ui.label("camera.still.request")) { client.requestStillCapture() }
     private val stillStatus = ui.text("", 13f, color = ui.muted)
     private val previewSurface = SurfaceView(context)
@@ -85,6 +86,7 @@ class CameraPanel(
         captureCard.addView(truthRows)
         captureCard.addView(ui.space(10))
         captureCard.addView(recordingControls)
+        captureCard.addView(recordingStatus)
         captureCard.addView(stillButton)
         captureCard.addView(stillStatus)
         previewSurface.setBackgroundColor(android.graphics.Color.BLACK)
@@ -153,6 +155,7 @@ class CameraPanel(
         connect.text = ui.label(if (state.isReading) "camera.origin.reading" else "camera.origin.read")
         connect.tag = "camera.connect"
         connect.isEnabled = active && state.wifiReady && !state.isReading
+        connect.visibility = if (state.connection == CameraConnectionState.CONNECTED) View.GONE else View.VISIBLE
         statusDetail.visibility = if (state.connection == CameraConnectionState.CONNECTED) View.GONE else View.VISIBLE
         error.visibility = if (state.error == null) View.GONE else View.VISIBLE
         val evidence = state.evidence
@@ -176,18 +179,30 @@ class CameraPanel(
 
         val supportsRecording = evidence.configuration.any { it.commandId.toInt() == 2001 && it.status.toInt() == 0 }
         recordingControls.removeAllViews()
+        val commandInFlight = state.recordingRequest == CameraRequestState.IN_FLIGHT ||
+            state.stillRequest == CameraRequestState.IN_FLIGHT
         if (supportsRecording) {
             recordingControls.addView(ui.action(ui.label(if (state.recordingRequest == CameraRequestState.IN_FLIGHT)
-                "camera.recording.requesting" else "camera.recording.request_start"), true) { client.requestRecording(true) },
+                "camera.recording.requesting" else "camera.recording.request_start"), true) { client.requestRecording(true) }.apply {
+                tag = "camera.recording.request-start"; isEnabled = !commandInFlight
+            },
                 LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { marginEnd = ui.dp(8) })
-            recordingControls.addView(ui.action(ui.label("camera.recording.request_stop")) { client.requestRecording(false) },
+            recordingControls.addView(ui.action(ui.label("camera.recording.request_stop")) { client.requestRecording(false) }.apply {
+                tag = "camera.recording.request-stop"; isEnabled = !commandInFlight
+            },
                 LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+            recordingStatus.text = requestLabel(state.recordingRequest, "camera.recording.request_start_sent")
+            recordingStatus.visibility = if (state.recordingRequest == null) View.GONE else View.VISIBLE
         } else {
             recordingControls.addView(ui.text(ui.label("camera.recording.unavailable"), 14f, color = ui.muted))
+            recordingStatus.visibility = View.GONE
         }
         val supportsStill = evidence.configuration.any { it.commandId.toInt() == 1001 && it.status.toInt() == 0 }
         stillButton.visibility = if (supportsStill) View.VISIBLE else View.GONE
-        stillStatus.text = requestLabel(state.stillRequest, "camera.still.request_sent")
+        stillButton.text = ui.label(if (state.stillRequest == CameraRequestState.IN_FLIGHT) "camera.still.requesting" else "camera.still.request")
+        stillButton.tag = "camera.still.request"
+        stillButton.isEnabled = !commandInFlight
+        stillStatus.text = requestLabel(state.stillRequest, "camera.still.request_sent", "camera.still.requesting")
         stillStatus.visibility = if (state.stillRequest == null) View.GONE else View.VISIBLE
 
         val preview = state.preview?.preview ?: MobileCameraPreviewStateDto.STOPPED
@@ -303,8 +318,10 @@ class CameraPanel(
         else -> "camera.recording.unknown"
     })
 
-    private fun requestLabel(state: CameraRequestState?, acknowledged: String): String = ui.label(when (state) {
-        CameraRequestState.IN_FLIGHT -> "camera.recording.requesting"
+    private fun requestLabel(
+        state: CameraRequestState?, acknowledged: String, requesting: String = "camera.recording.requesting",
+    ): String = ui.label(when (state) {
+        CameraRequestState.IN_FLIGHT -> requesting
         CameraRequestState.ACKNOWLEDGED -> acknowledged
         CameraRequestState.REFUSED -> "camera.command.refused"
         CameraRequestState.UNKNOWN -> "camera.command.unknown"
