@@ -26,7 +26,7 @@ class LocalPhoneAlarmVehicleNameTest {
         val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
         val app = context as CutoutApplication
         val runtime = app.rides
-        val database = await { done -> runtime.withDatabase({ it }, done) }.getOrThrow()
+        val database = await { done -> runtime.withDatabase({ it }, done) }
         val oldIdentity = "phone-alarm-name-${UUID.randomUUID()}"
         val currentIdentity = "phone-alarm-name-${UUID.randomUUID()}"
         val oldName = "Stale saved name"
@@ -34,7 +34,7 @@ class LocalPhoneAlarmVehicleNameTest {
         await { done -> runtime.withDatabase({ db ->
             db.saveDeviceName(oldIdentity, oldName, 1UL)
             db.saveDeviceName(currentIdentity, currentName, 2UL)
-        }, done) }.getOrThrow()
+        }, done) }
 
         val replay = productionReplayPresentation()
         val state = CutoutSessionStateHandle.withDatabase(database)
@@ -87,7 +87,7 @@ class LocalPhoneAlarmVehicleNameTest {
             val renamed = "Renamed saved wheel"
             await { done -> runtime.withDatabase({ db ->
                 db.saveDeviceName(currentIdentity, renamed, 3UL)
-            }, done) }.getOrThrow()
+            }, done) }
             val reopenedName = CountDownLatch(1)
             val reopenedObserver = client.addObserver { value ->
                 if (value.deviceLabel == renamed) reopenedName.countDown()
