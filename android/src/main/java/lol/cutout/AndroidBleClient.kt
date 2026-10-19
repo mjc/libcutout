@@ -322,33 +322,33 @@ class AndroidBleClient(private val context: Context) {
         private fun effect(output: MobileSessionOutputDto) {
             when (output.kind) {
                 MobileSessionOutputKindDto.SUBSCRIBE -> subscribe(output.channel)
-                MobileSessionOutputKindDto.WRITE -> write(output.channel, output.bytes, output.operationId)
+                MobileSessionOutputKindDto.WRITE -> write(output)
                 MobileSessionOutputKindDto.DISCONNECT -> fail("Device requested disconnect")
                 else -> Unit // Semantic outputs are already projected by Rust into the paired snapshot.
             }
         }
 
-        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null) {
+        private fun write(output: MobileSessionOutputDto) =
+            write(output.channel, output.bytes, output.operationId, output = output)
+
+        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null, output: MobileSessionOutputDto? = null) {
             val characteristic = characteristic(channel)
             if (characteristic == null || bytes.isEmpty()) {
-                session.writeReceipt(operationId, NativeReceipt.REJECTED)
+                if (output != null) session.writeReceipt(output, NativeReceipt.REJECTED)
+                else session.writeReceipt(operationId, NativeReceipt.REJECTED)
                 fail("Missing or ambiguous Bluetooth write channel"); return
             }
-            val chunks = attChunks(bytes, session.writeLimit.toInt())
-            val receipt = NativeWriteReceipt(chunks.size) { session.writeReceipt(operationId, it) }
-            chunks.forEachIndexed { index, chunk ->
-                queue.enqueue(GattOperationQueue.Operation(key("write", characteristic), {
-                    if (!session.writeIsCurrent(operationId)) NativeStart.REJECTED else {
-                        val type = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
-                            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        val required = if (type == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE else BluetoothGattCharacteristic.PROPERTY_WRITE
-                        if (characteristic.properties and required == 0) NativeStart.REJECTED
-                        else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, type) == BluetoothStatusCodes.SUCCESS)
-                            NativeStart.PENDING else NativeStart.REJECTED
-                    }
-                }, { receipt.observe(index, it) }))
+            val submit: (ByteArray) -> NativeStart = { chunk ->
+                val type = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                val required = if (type == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE else BluetoothGattCharacteristic.PROPERTY_WRITE
+                if (characteristic.properties and required == 0) NativeStart.REJECTED
+                else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, type) == BluetoothStatusCodes.SUCCESS)
+                    NativeStart.PENDING else NativeStart.REJECTED
             }
+            if (output != null) session.enqueueWrite(output, queue, key("write", characteristic), submit)
+            else session.enqueueWrite(bytes, operationId, queue, key("write", characteristic), submit = submit)
         }
 
         private fun probe() {

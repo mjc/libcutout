@@ -69,6 +69,60 @@ class PevSession(
         publish()
     }
 
+    fun writeReceipt(output: MobileSessionOutputDto, receipt: NativeReceipt) {
+        val query = output.applicationQuery
+        if (query == null) writeReceipt(output.operationId, receipt)
+        else queryReceipt(query, 0, 1, receipt)
+    }
+
+    private fun queryReceipt(
+        query: MobileApplicationQueryWriteDto,
+        index: Int,
+        count: Int,
+        receipt: NativeReceipt,
+    ) {
+        if (!isCurrent) return
+        val status = when (receipt) {
+            NativeReceipt.QUEUED -> MobileApplicationQueryTransportStatusDto.QUEUED
+            NativeReceipt.SUBMITTED -> MobileApplicationQueryTransportStatusDto.SUBMITTED
+            NativeReceipt.REJECTED -> MobileApplicationQueryTransportStatusDto.REJECTED
+            NativeReceipt.CANCELLED -> MobileApplicationQueryTransportStatusDto.CANCELLED
+        }
+        state.markApplicationQueryTransport(token, query.queryId, index.toUShort(), count.toUShort(), status, now())
+        publish()
+    }
+
+    /** Shared production submission path; Android supplies only the native write call. */
+    fun enqueueWrite(
+        output: MobileSessionOutputDto,
+        queue: GattOperationQueue,
+        key: String,
+        submit: (ByteArray) -> NativeStart,
+    ) = enqueueWrite(output.bytes, output.operationId, queue, key, output.applicationQuery, submit)
+
+    fun enqueueWrite(
+        bytes: ByteArray,
+        operationId: ULong?,
+        queue: GattOperationQueue,
+        key: String,
+        applicationQuery: MobileApplicationQueryWriteDto? = null,
+        submit: (ByteArray) -> NativeStart,
+    ) {
+        val chunks = attChunks(bytes, writeLimit.toInt())
+        val receipt = if (applicationQuery == null)
+            NativeWriteReceipt(chunks.size) { writeReceipt(operationId, it) } else null
+        chunks.forEachIndexed { index, chunk ->
+            queue.enqueue(GattOperationQueue.Operation(key, {
+                val admitted = if (applicationQuery == null) writeIsCurrent(operationId)
+                    else state.applicationQueryTransportIsCurrent(token, applicationQuery.queryId, now())
+                if (!admitted) NativeStart.REJECTED else submit(chunk)
+            }, {
+                if (applicationQuery == null) checkNotNull(receipt).observe(index, it)
+                else queryReceipt(applicationQuery, index, chunks.size, it)
+            }))
+        }
+    }
+
     fun nextWakeup(canPoll: Boolean): ULong? =
         if (isCurrent) state.deviceSessionNextWakeupAt(token, canPoll) else null
 
