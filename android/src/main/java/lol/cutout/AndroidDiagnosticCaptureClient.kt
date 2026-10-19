@@ -29,6 +29,9 @@ data class DiagnosticCapturePresentation(
     val loading: Boolean = false,
     val activeLabels: List<MobileCaptureLabelDto> = emptyList(),
     val settingsObservations: List<MobileCaptureSettingsObservationDto> = emptyList(),
+    val startedElapsedMillis: ULong? = null,
+    val finishedElapsedMillis: ULong? = null,
+    val deviceKind: String? = null,
 )
 
 data class DiagnosticCaptureArtifact(
@@ -106,6 +109,9 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 fileName = active?.let { File(it.path).name },
                 deviceName = active?.advertisedName,
                 note = active?.description,
+                startedElapsedMillis = active?.startedElapsedMillis,
+                finishedElapsedMillis = active?.finishedElapsedMillis,
+                deviceKind = active?.description,
             ))
         }
         refreshHistory()
@@ -189,6 +195,9 @@ class AndroidDiagnosticCaptureClient internal constructor(
         generation: MobileCaptureGenerationDto,
         completed: (Result<List<MobileCaptureSettingsObservationDto>>) -> Unit,
     ) = withActiveResearchWriter(generation, { it.settingsObservations() }) { result ->
+        result.onSuccess { observations ->
+            publish(presentation.copy(settingsObservations = observations))
+        }
         main.post { completed(result) }
     }
 
@@ -328,6 +337,9 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 fileName = File(started.path).name,
                 deviceName = advertisedName,
                 note = description,
+                startedElapsedMillis = startedElapsedMillis,
+                finishedElapsedMillis = null,
+                deviceKind = description,
                 activeLabels = emptyList(),
                 settingsObservations = emptyList(),
                 error = null,
@@ -470,9 +482,17 @@ class AndroidDiagnosticCaptureClient internal constructor(
         if (active.finalizationStarted) { completed?.let(active.finishWaiters::add); return }
         active.finalizationStarted = true
         // Keep duration tied to the admitted end of capture, not async flush/database work.
-        active.finishedElapsedMillis = SystemClock.elapsedRealtime().toULong()
+        if (active.finishedElapsedMillis == null) {
+            active.finishedElapsedMillis = SystemClock.elapsedRealtime().toULong()
+        }
         completed?.let(active.finishWaiters::add)
         state().retireCaptureWriter(active.generation)
+        publish(presentation.copy(
+            lifecycle = state().captureLifecycleSnapshot(),
+            startedElapsedMillis = active.startedElapsedMillis,
+            finishedElapsedMillis = active.finishedElapsedMillis,
+            deviceKind = active.description,
+        ))
         val publication = MobileCaptureHistoryPublicationDto(
             origin = active.origin,
             advertisedName = active.advertisedName,
@@ -554,10 +574,15 @@ class AndroidDiagnosticCaptureClient internal constructor(
         sessionArtifacts: List<DiagnosticCaptureArtifact> = presentation.sessionArtifacts,
         activeLabels: List<MobileCaptureLabelDto> = if (writer == null) emptyList() else presentation.activeLabels,
         settingsObservations: List<MobileCaptureSettingsObservationDto> = if (writer == null) emptyList() else presentation.settingsObservations,
+        startedElapsedMillis: ULong? = writer?.startedElapsedMillis,
+        finishedElapsedMillis: ULong? = writer?.finishedElapsedMillis,
+        deviceKind: String? = writer?.description,
     ) = publish(presentation.copy(
         lifecycle = lifecycle, error = error, writerStatus = writerStatus, notificationCount = notificationCount,
         fileName = fileName, deviceName = deviceName, note = note,
         sessionArtifacts = sessionArtifacts, activeLabels = activeLabels, settingsObservations = settingsObservations,
+        startedElapsedMillis = startedElapsedMillis, finishedElapsedMillis = finishedElapsedMillis,
+        deviceKind = deviceKind,
     ))
 
     private fun publish(next: DiagnosticCapturePresentation) {
