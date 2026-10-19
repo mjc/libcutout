@@ -30,6 +30,7 @@ class LocalChargingCredentialsTest {
         val root = Files.createTempDirectory("cutout-capture-credentials").toFile()
         val context = RuntimeEnvironment.getApplication()
         val store = AndroidChargingCredentials(context, TestAesGcmCipher(), File(root, "identity.bin"))
+        val token = "a1".repeat(32)
         val runtime = RideMapRuntime(context, "capture-credential-${java.util.UUID.randomUUID()}.sqlite")
         val client = AndroidChargingClient(context, runtime, store)
         fun read(allowRegistration: Boolean = false): MobileChargingIdentityDto? {
@@ -46,9 +47,9 @@ class LocalChargingCredentialsTest {
             store.beginRegistration()
             assertEquals(null, read())
             assertEquals(ChargingCredentialRecord.RegistrationStarted, store.load())
-            store.saveIdentity("existing-identity", "existing-test-token")
-            assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), read())
-            assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), read(true))
+            store.saveIdentity("existing-identity", token)
+            assertEquals(MobileChargingIdentityDto("existing-identity", token), read())
+            assertEquals(MobileChargingIdentityDto("existing-identity", token), read(true))
             val workerEntered = CountDownLatch(1)
             val releaseWorker = CountDownLatch(1)
             val workerFinished = CountDownLatch(1)
@@ -56,12 +57,12 @@ class LocalChargingCredentialsTest {
             try {
                 check(awaitWithMainLooper(workerEntered, 10, TimeUnit.SECONDS))
                 val independentRead = java.util.concurrent.CompletableFuture.supplyAsync { read() }
-                assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), independentRead.get(3, TimeUnit.SECONDS))
+                assertEquals(MobileChargingIdentityDto("existing-identity", token), independentRead.get(3, TimeUnit.SECONDS))
                 assertEquals("Credential read must complete before the charging network worker is released", 1L, releaseWorker.count)
             } finally { releaseWorker.countDown(); check(awaitWithMainLooper(workerFinished, 10, TimeUnit.SECONDS)) }
             store.markDeletionPending()
             assertEquals(null, read())
-            assertEquals(ChargingCredentialRecord.DeletionPending("existing-identity", "existing-test-token"), store.load())
+            assertEquals(ChargingCredentialRecord.DeletionPending("existing-identity", token), store.load())
             store.finishDeletion()
             assertEquals(null, read())
             assertEquals(ChargingCredentialRecord.Deleted, store.load())

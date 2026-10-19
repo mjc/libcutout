@@ -2,6 +2,7 @@ package lol.cutout.local
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -14,6 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowAlertDialog
@@ -44,7 +46,7 @@ class LocalCaptureSubmissionPanelTest {
             val confirmation = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
             assertTrue(confirmation.findViewById<TextView>(android.R.id.message).text.toString().contains("event order and timing"))
             NativeSurfaceCapture.save(panel, "capture-submission-disclosure-dark")
-            confirmation.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(confirmation)
             assertEquals("operation-1", controller.sentOperation)
         } finally {
             panel.dispose()
@@ -63,8 +65,7 @@ class LocalCaptureSubmissionPanelTest {
             assertTrue(text(panel).contains("not received a durable receipt yet"))
             checkNotNull(panel.findViewWithTag<View>("capture.submission.send")).performClick()
             assertEquals(null, controller.sentOperation)
-            checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
-                .getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(checkNotNull(ShadowAlertDialog.getLatestAlertDialog()))
             assertEquals("operation-1", controller.sentOperation)
 
             controller.update(CaptureSubmissionPresentation(
@@ -79,7 +80,7 @@ class LocalCaptureSubmissionPanelTest {
             assertEquals(null, controller.deletedOperation)
             val confirmation = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
             assertTrue(confirmation.findViewById<TextView>(android.R.id.message).text.toString().contains("original recording stays on this device"))
-            confirmation.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(confirmation)
             assertEquals("operation-1", controller.deletedOperation)
         } finally {
             panel.dispose()
@@ -101,7 +102,7 @@ class LocalCaptureSubmissionPanelTest {
                 operationId = "operation-2",
             )))
             assertTrue(!staleSend.isShowing)
-            staleSend.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(staleSend)
             assertEquals(null, controller.sentOperation)
 
             controller.update(CaptureSubmissionPresentation(status = status(MobileCaptureSubmissionPhaseDto.SENT)))
@@ -111,7 +112,7 @@ class LocalCaptureSubmissionPanelTest {
                 operationId = "operation-3",
             )))
             assertTrue(!staleDelete.isShowing)
-            staleDelete.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(staleDelete)
             assertEquals(null, controller.deletedOperation)
 
             controller.update(CaptureSubmissionPresentation(status = status(MobileCaptureSubmissionPhaseDto.PREPARED)))
@@ -119,7 +120,7 @@ class LocalCaptureSubmissionPanelTest {
             val stalePhase = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
             controller.update(CaptureSubmissionPresentation(status = status(MobileCaptureSubmissionPhaseDto.FAILED)))
             assertTrue(!stalePhase.isShowing)
-            stalePhase.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(stalePhase)
             assertEquals(null, controller.sentOperation)
         } finally {
             panel.dispose()
@@ -147,8 +148,7 @@ class LocalCaptureSubmissionPanelTest {
             assertTrue(text(panel).contains("has not been confirmed removed"))
             checkNotNull(panel.findViewWithTag<View>("capture.submission.delete.retry")).performClick()
             assertEquals(null, controller.deletedOperation)
-            checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
-                .getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            clickPositive(checkNotNull(ShadowAlertDialog.getLatestAlertDialog()))
             assertEquals("operation-1", controller.deletedOperation)
         } finally {
             panel.dispose()
@@ -199,5 +199,10 @@ class LocalCaptureSubmissionPanelTest {
     private fun text(view: View): String = buildString {
         if (view is TextView) append(view.text).append('\n')
         if (view is ViewGroup) for (index in 0 until view.childCount) append(text(view.getChildAt(index)))
+    }
+
+    private fun clickPositive(dialog: AlertDialog) {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
     }
 }
