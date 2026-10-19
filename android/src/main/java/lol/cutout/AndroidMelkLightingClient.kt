@@ -168,12 +168,34 @@ class AndroidMelkLightingClient(private val context: Context) {
         core.flushWrites(activeGatt != null); execute(core.drainActions()); if (!preview) publish()
     }
 
-    fun setEffectSpeed(value: Int) = mutate("Effect speed command was not accepted") {
-        val old = currentRequested(); val playback = old.playback as? MobileLightingPlaybackDto.Effect ?: return@mutate false
-        val accepted = core.setEffectSpeed(value.coerceIn(0,255).toUByte())
-        if (accepted) { pendingScope = "speed"; pendingState = old.copy(playback = MobileLightingPlaybackDto.Effect(playback.pattern, value.coerceIn(0,255).toUByte())); saveRequested(pendingState!!) }
-        accepted
+    /** Commit an effect-speed gesture only to the pattern that was active when it began. */
+    fun setEffectSpeed(value: Int, expectedPattern: Int?) = owner.post {
+        if (expectedPattern == null) return@post
+        val old = currentRequested()
+        val playback = old.playback as? MobileLightingPlaybackDto.Effect
+        if (playback == null || !effectSpeedTargets(expectedPattern, playback)) {
+            // A command or restore changed the selected effect while the user's finger was down.
+            // Discard this gesture instead of applying it to a different effect.
+            publish()
+            return@post
+        }
+        val speed = value.coerceIn(0, 255).toUByte()
+        if (!core.setEffectSpeed(speed)) {
+            publish(error = "Effect speed command was not accepted")
+            return@post
+        }
+        pendingScope = "speed"
+        pendingState = old.copy(playback = MobileLightingPlaybackDto.Effect(playback.pattern, speed))
+        saveRequested(pendingState!!)
+        core.flushWrites(activeGatt != null)
+        execute(core.drainActions())
+        publish()
     }
+
+    internal fun effectSpeedTargets(
+        expectedPattern: Int?,
+        playback: MobileLightingPlaybackDto.Effect?,
+    ): Boolean = expectedPattern != null && playback?.pattern?.toInt() == expectedPattern
 
     fun applyPlayback(playback: MobileLightingPlaybackDto) = owner.post {
         val old = currentRequested()

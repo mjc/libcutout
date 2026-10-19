@@ -15,6 +15,12 @@ import android.os.Bundle
 import android.widget.FrameLayout
 import android.os.Looper
 import android.widget.*
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import androidx.customview.widget.ExploreByTouchHelper
 import uniffi.cutout_mobile_ffi.*
 import java.util.Locale
 
@@ -24,6 +30,11 @@ class LightingPanel internal constructor(
     private val client: AndroidMelkLightingClient,
     private val onRequestBluetooth: () -> Unit,
     private val submitPreset: (String) -> Unit,
+    private val submitSolidColor: (Int, Int, Int, Boolean) -> Unit = client::setSolidColor,
+    private val submitBrightness: (Int) -> Unit = client::setBrightness,
+    private val submitMusicPlayback: (MobileLightingPlaybackDto) -> Unit = client::applyPlayback,
+    private val submitCandidateSelection: (String) -> Unit = client::selectCandidate,
+    private val submitEffectSpeed: (Int, Int?) -> Unit = client::setEffectSpeed,
 ) : ScrollView(context) {
     constructor(context: Context, client: AndroidMelkLightingClient, onRequestBluetooth: () -> Unit) :
         this(context, client, onRequestBluetooth, client::savePreset)
@@ -63,6 +74,9 @@ class LightingPanel internal constructor(
     private var presetNameEditor: EditText? = null
     private var presetSaveButton: Button? = null
     private var pendingPresetSave: PendingPresetSave? = null
+    private var pairingDialog: android.app.AlertDialog? = null
+    private var pairingCandidates: PairingCandidateAdapter? = null
+    private var pairingEmptyState: TextView? = null
 
     private data class PendingPresetSave(val name: String, val existingNames: Set<String>, val draftRevision: Long)
 
@@ -125,7 +139,18 @@ class LightingPanel internal constructor(
     fun setActive(value: Boolean) {
         if (active == value) return
         active = value
-        if (value) client.resume() else client.stopIfUnpaired()
+        if (value) client.resume() else {
+            pairingDialog?.dismiss()
+            client.stopIfUnpaired()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        pairingDialog?.dismiss()
+        controls.findViewWithTag<LightingColorWheelView>("lighting.color-wheel")?.clearVirtualFocusForDetach()
+        trackingColorWheel = false
+        trackingSliderCount = 0
+        super.onDetachedFromWindow()
     }
 
     /** Saves only native page selection; accessory state remains owned by the Rust-backed client. */
@@ -165,9 +190,10 @@ class LightingPanel internal constructor(
             connectionStatus.setTextColor(if (snapshot.state == MobileMelkLightingSessionStateDto.Ready) ui.green else if (snapshot.state is MobileMelkLightingSessionStateDto.Failed || value.error != null) ui.red else ui.muted)
             connectionActions.removeAllViews()
             if (value.permissionMissing) connectionActions.addView(ui.action(context.getString(R.string.lighting_enable_bluetooth), primary = true, onClick = onRequestBluetooth))
-            else if (snapshot.state != MobileMelkLightingSessionStateDto.Ready) connectionActions.addView(ui.action(ui.label("lighting.choose_accessory"), primary = true, onClick = { showPairing() }))
+            else if (snapshot.state != MobileMelkLightingSessionStateDto.Ready) connectionActions.addView(ui.action(ui.label("lighting.choose_accessory"), primary = true, onClick = { showPairing() }).apply { tag = "lighting.choose-accessory" })
             val error = value.error
             if (error != null) connectionActions.addView(ui.text(error, 13f, color = ui.orange).apply { setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(4)) })
+            updatePairingDialog(value)
             updatePagePicker()
             if (value.permissionMissing) { controls.removeAllViews(); return }
             if (!ready() || !hasActiveControlInteraction()) renderSelected()
@@ -242,17 +268,18 @@ class LightingPanel internal constructor(
         card.addView(powerControl(state))
         card.addView(ui.text(ui.label("lighting.solid_color"), 18f, true))
         val hsv = FloatArray(3).also { Color.RGBToHSV(state.red.toInt(), state.green.toInt(), state.blue.toInt(), it) }
-        val color = LightingColorWheelView(context, hsv[0], hsv[1], onInteractionChanged = { tracking ->
-            trackingColorWheel = tracking
-            if (!tracking) scheduleControlRefreshAfterInteraction()
-        }) { red, green, blue, final ->
-            client.setSolidColor(red, green, blue, preview = !final)
-        }.apply {
+        val wheel = LightingColorWheelView(context, hsv[0], hsv[1],
+            onInteractionChanged = { tracking ->
+                trackingColorWheel = tracking
+                if (!tracking) scheduleControlRefreshAfterInteraction()
+            },
+            onColor = { red, green, blue, final -> submitSolidColor(red, green, blue, !final) },
+        ).apply {
             tag = "lighting.color-wheel"
             contentDescription = ui.label("lighting.color_wheel"); isEnabled = ready()
             layoutParams = LinearLayout.LayoutParams(-1, ui.dp(248))
         }
-        card.addView(color)
+        card.addView(wheel)
         card.addView(ui.action(ui.label("lighting.set_white")) { client.setSolidColor(255, 255, 255) }.apply { isEnabled = ready(); tag = "lighting.set-white" })
         controls.addView(card)
     }
@@ -272,15 +299,21 @@ class LightingPanel internal constructor(
             addView(ui.text(ui.label("lighting.brightness"), 18f, true), LinearLayout.LayoutParams(0, -2, 1f))
             addView(ui.text(context.getString(R.string.lighting_percent, state.brightness.toInt()), 14f, color = ui.muted))
         })
+        var brightnessTouchTracking = false
         val slider = SeekBar(context).apply {
             max = 100; progress = state.brightness.toInt(); isEnabled = ready()
             contentDescription = ui.label("lighting.brightness"); tag = "lighting.brightness"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { if (fromUser) (seekBar?.parent as? LinearLayout)?.let { (it.getChildAt(0) as? LinearLayout)?.let { row -> (row.getChildAt(1) as? TextView)?.text = context.getString(R.string.lighting_percent, progress) } } }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) { trackSlider(true) }
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    (seekBar?.parent as? LinearLayout)?.let { (it.getChildAt(0) as? LinearLayout)?.let { row -> (row.getChildAt(1) as? TextView)?.text = context.getString(R.string.lighting_percent, progress) } }
+                    if (!brightnessTouchTracking && ready()) submitBrightness(progress)
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { brightnessTouchTracking = true; trackSlider(true) }
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    brightnessTouchTracking = false
                     trackSlider(false)
-                    if (ready()) seekBar?.let { client.setBrightness(it.progress) }
+                    if (ready()) seekBar?.let { submitBrightness(it.progress) }
                     scheduleControlRefreshAfterInteraction()
                 }
             })
@@ -332,12 +365,17 @@ class LightingPanel internal constructor(
         })
         val speed = (state.playback as? MobileLightingPlaybackDto.Effect)?.speed?.toInt() ?: 128
         card.addView(SeekBar(context).apply { max = 255; progress = 255 - speed; isEnabled = ready(); contentDescription = ui.label("lighting.effect.speed"); tag = "lighting.effect.speed"
+            val initialPattern = (state.playback as? MobileLightingPlaybackDto.Effect)?.pattern?.toInt()
+            var touchTracking = false
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) = Unit
-                override fun onStartTrackingTouch(s: SeekBar?) { trackSlider(true) }
+                override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) {
+                    if (user && !touchTracking && ready()) submitEffectSpeed(255 - p, initialPattern)
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) { touchTracking = true; trackSlider(true) }
                 override fun onStopTrackingTouch(s: SeekBar?) {
+                    touchTracking = false
                     trackSlider(false)
-                    if (ready()) s?.let { client.setEffectSpeed(255 - it.progress) }
+                    if (ready()) s?.let { submitEffectSpeed(255 - it.progress, initialPattern) }
                     scheduleControlRefreshAfterInteraction()
                 }
             }) })
@@ -388,13 +426,19 @@ class LightingPanel internal constructor(
         }
         card.addView(ui.text(ui.label("lighting.sensitivity"), 17f, true))
         val sensitivity = playback?.sensitivity?.toInt() ?: 50
+        var sensitivityTouchTracking = false
         card.addView(SeekBar(context).apply { max = 100; progress = sensitivity; isEnabled = ready(); contentDescription = ui.label("lighting.microphone_sensitivity"); tag = "lighting.music.sensitivity"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) = Unit
-                override fun onStartTrackingTouch(s: SeekBar?) { trackSlider(true) }
+                override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) {
+                    if (user && !sensitivityTouchTracking && ready()) {
+                        submitMusicPlayback(MobileLightingPlaybackDto.Music(selection.selectedItemPosition.toUByte(), p.toUByte()))
+                    }
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) { sensitivityTouchTracking = true; trackSlider(true) }
                 override fun onStopTrackingTouch(s: SeekBar?) {
+                    sensitivityTouchTracking = false
                     trackSlider(false)
-                    if (ready()) s?.let { client.applyPlayback(MobileLightingPlaybackDto.Music(selection.selectedItemPosition.toUByte(), it.progress.toUByte())) }
+                    if (ready()) s?.let { submitMusicPlayback(MobileLightingPlaybackDto.Music(selection.selectedItemPosition.toUByte(), it.progress.toUByte())) }
                     scheduleControlRefreshAfterInteraction()
                 }
             }) })
@@ -520,15 +564,123 @@ class LightingPanel internal constructor(
     private fun showPairing() {
         val presentation = current ?: return
         if (presentation.permissionMissing) { onRequestBluetooth(); return }
-        val candidates = presentation.candidates
-        val labels = candidates.map { (it.name?.takeIf(String::isNotBlank) ?: ui.label("lighting.pairing.unknown_name")) + "  ·  ${it.rssi} dBm" }.toTypedArray()
-        if (labels.isEmpty()) {
-            android.app.AlertDialog.Builder(context).setTitle(ui.label("lighting.pairing.nearby_title"))
-                .setMessage(ui.label("lighting.connection.ready_to_scan"))
-                .setPositiveButton(ui.label("lighting.choose_accessory")) { _, _ -> client.resume() }.setNegativeButton(android.R.string.cancel, null).show()
-        } else android.app.AlertDialog.Builder(context).setTitle(ui.label("lighting.pairing.nearby_title"))
-            .setItems(labels) { _, which -> client.selectCandidate(candidates[which].platformIdentifier) }
-            .setNegativeButton(android.R.string.cancel, null).show()
+        val rows = ListView(context).apply { tag = "lighting.pairing.candidates" }
+        val empty = ui.text("", 15f, color = ui.muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(ui.dp(24), ui.dp(24), ui.dp(24), ui.dp(24))
+        }
+        val content = FrameLayout(context).apply {
+            addView(rows, FrameLayout.LayoutParams(-1, ui.dp(320)))
+            addView(empty, FrameLayout.LayoutParams(-1, ui.dp(320)))
+        }
+        val adapter = PairingCandidateAdapter()
+        rows.adapter = adapter
+        rows.emptyView = empty
+        rows.setOnItemClickListener { _, view, _, _ ->
+            val latest = current ?: return@setOnItemClickListener
+            if (!canSelectCandidate(latest)) return@setOnItemClickListener
+            val identifier = (view as? PairingCandidateAdapter.CandidateRow)?.platformIdentifier
+                ?: return@setOnItemClickListener
+            if (latest.candidates.any { it.platformIdentifier == identifier }) {
+                submitCandidateSelection(identifier)
+            }
+        }
+        val dialog = android.app.AlertDialog.Builder(context)
+            .setTitle(ui.label("lighting.pairing.nearby_title"))
+            .setView(content)
+            .setPositiveButton(ui.label("lighting.retry"), null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.setOnDismissListener {
+            if (pairingDialog === dialog) {
+                pairingDialog = null
+                pairingCandidates = null
+                pairingEmptyState = null
+            }
+        }
+        pairingDialog = dialog
+        pairingCandidates = adapter
+        pairingEmptyState = empty
+        dialog.show()
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val latest = current ?: return@setOnClickListener
+            if (canReconnect(latest)) client.resume()
+        }
+        updatePairingDialog(presentation)
+    }
+
+    private fun canSelectCandidate(value: LightingPresentation): Boolean =
+        value.snapshot.state == MobileMelkLightingSessionStateDto.Idle ||
+            value.snapshot.state == MobileMelkLightingSessionStateDto.Scanning
+
+    private fun canReconnect(value: LightingPresentation): Boolean =
+        value.snapshot.state == MobileMelkLightingSessionStateDto.Disconnected ||
+            value.snapshot.state is MobileMelkLightingSessionStateDto.Failed
+
+    private fun updatePairingDialog(value: LightingPresentation) {
+        val dialog = pairingDialog?.takeIf { it.isShowing } ?: return
+        pairingCandidates?.replace(value.candidates, canSelectCandidate(value))
+        pairingEmptyState?.text = when {
+            value.snapshot.state == MobileMelkLightingSessionStateDto.Scanning -> ui.label("lighting.connection.scanning")
+            else -> ui.label("lighting.connection.ready_to_scan")
+        }
+        val retry = dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+        retry?.visibility = if (canReconnect(value)) View.VISIBLE else View.GONE
+        retry?.isEnabled = canReconnect(value)
+    }
+
+    private inner class PairingCandidateAdapter : android.widget.BaseAdapter() {
+        private var items = emptyList<MobileMelkLightingSessionCandidateDto>()
+        private var selectable = false
+        private val stableIds = mutableMapOf<String, Long>()
+        private var nextStableId = 1L
+
+        inner class CandidateRow(context: Context) : LinearLayout(context) {
+            var platformIdentifier: String? = null
+        }
+
+        fun replace(next: List<MobileMelkLightingSessionCandidateDto>, canSelect: Boolean) {
+            items = next.toList()
+            selectable = canSelect
+            notifyDataSetChanged()
+        }
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items.getOrNull(position)
+        override fun getItemId(position: Int): Long = items.getOrNull(position)?.platformIdentifier?.let { identifier ->
+            stableIds.getOrPut(identifier) { nextStableId++ }
+        } ?: Long.MIN_VALUE + position
+        override fun hasStableIds() = true
+        override fun areAllItemsEnabled() = false
+        override fun isEnabled(position: Int) = selectable && getItem(position) != null
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val candidate = checkNotNull(getItem(position))
+            val row = (convertView as? CandidateRow) ?: CandidateRow(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(56)
+                setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(8))
+                addView(ui.icon(CutoutSymbol.LIGHTING, ui.cyan, 22))
+                val text = ui.column().apply {
+                    addView(ui.text("", 16f, true))
+                    addView(ui.text("", 13f, color = ui.muted))
+                }
+                text.tag = "lighting.pairing.row-text"
+                addView(text, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(ui.icon(CutoutSymbol.CHEVRON, ui.muted, 16))
+            }
+            row.platformIdentifier = candidate.platformIdentifier
+            row.tag = "lighting.candidate.${candidate.platformIdentifier}"
+            row.isEnabled = isEnabled(position)
+            row.alpha = if (row.isEnabled) 1f else 0.56f
+            val text = row.findViewWithTag<LinearLayout>("lighting.pairing.row-text")
+            (text.getChildAt(0) as TextView).text = candidate.name?.takeIf(String::isNotBlank)
+                ?: ui.label("lighting.pairing.unknown_name")
+            (text.getChildAt(1) as TextView).text = context.getString(R.string.signal, candidate.rssi)
+            row.contentDescription = "${(text.getChildAt(0) as TextView).text}, ${(text.getChildAt(1) as TextView).text}"
+            return row
+        }
     }
 
     private fun showDetails() {
@@ -628,6 +780,8 @@ private class LightingColorWheelView(
     private val onInteractionChanged: (Boolean) -> Unit,
     private val onColor: (Int, Int, Int, Boolean) -> Unit,
 ) : View(context) {
+    private val hueLabel = CutoutUi(context).label("lighting.hue")
+    private val saturationLabel = CutoutUi(context).label("lighting.saturation")
     private val bitmapSize = 240
     private val bitmap: Bitmap = Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888).also { image ->
         val pixels = IntArray(bitmapSize * bitmapSize)
@@ -647,6 +801,161 @@ private class LightingColorWheelView(
     private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 3f * resources.displayMetrics.density }
     private var hue = initialHue
     private var saturation = initialSaturation
+    private var touchTracking = false
+    private var interactionReported = false
+
+    private fun updateInteractionState() {
+        val active = touchTracking ||
+            colorAxes.accessibilityFocusedVirtualViewId != ExploreByTouchHelper.INVALID_ID ||
+            colorAxes.keyboardFocusedVirtualViewId != ExploreByTouchHelper.INVALID_ID
+        if (interactionReported == active) return
+        interactionReported = active
+        onInteractionChanged(active)
+    }
+
+    fun clearVirtualFocusForDetach() {
+        val provider = accessibilityNodeProvider
+        val accessibilityFocus = colorAxes.accessibilityFocusedVirtualViewId
+        if (accessibilityFocus != ExploreByTouchHelper.INVALID_ID) {
+            provider?.performAction(
+                accessibilityFocus,
+                AccessibilityNodeInfoCompat.ACTION_CLEAR_ACCESSIBILITY_FOCUS,
+                null,
+            )
+        }
+        val keyboardFocus = colorAxes.keyboardFocusedVirtualViewId
+        if (keyboardFocus != ExploreByTouchHelper.INVALID_ID) colorAxes.clearKeyboardFocusForVirtualView(keyboardFocus)
+        touchTracking = false
+        updateInteractionState()
+    }
+
+    private val colorAxes = object : ExploreByTouchHelper(this) {
+        override fun getVirtualViewAt(x: Float, y: Float): Int {
+            if (!isEnabled || width <= 0 || height <= 0) return INVALID_ID
+            val diameter = minOf(width, height).toFloat()
+            val left = (width - diameter) / 2f
+            val top = (height - diameter) / 2f
+            if (x < left || x >= left + diameter || y < top || y >= top + diameter) return INVALID_ID
+            val dx = (x - (left + diameter / 2f)) / (diameter / 2f)
+            val dy = (y - (top + diameter / 2f)) / (diameter / 2f)
+            if (dx * dx + dy * dy > 1f) return INVALID_ID
+            return if (x < left + diameter / 2f) HUE_VIEW_ID else SATURATION_VIEW_ID
+        }
+
+        override fun getVisibleVirtualViews(virtualViewIds: MutableList<Int>) {
+            if (width > 0 && height > 0) {
+                virtualViewIds += HUE_VIEW_ID
+                virtualViewIds += SATURATION_VIEW_ID
+            }
+        }
+
+        override fun onPopulateNodeForVirtualView(virtualViewId: Int, node: AccessibilityNodeInfoCompat) {
+            node.className = SeekBar::class.java.name
+            node.contentDescription = if (virtualViewId == HUE_VIEW_ID) hueLabel else saturationLabel
+            node.text = if (virtualViewId == HUE_VIEW_ID) String.format(Locale.getDefault(), "%.0f°", hue)
+                else String.format(Locale.getDefault(), "%.0f%%", saturation * 100f)
+            node.isEnabled = this@LightingColorWheelView.isEnabled
+            node.isFocusable = true
+            node.isScrollable = true
+            node.isVisibleToUser = isShown
+            node.setBoundsInParent(axisBounds(virtualViewId))
+            node.rangeInfo = AccessibilityNodeInfoCompat.RangeInfoCompat.obtain(
+                AccessibilityNodeInfoCompat.RangeInfoCompat.RANGE_TYPE_FLOAT, 0f, 1f, axisValue(virtualViewId),
+            )
+            node.addAction(AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_SET_PROGRESS)
+            node.addAction(AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_SCROLL_FORWARD)
+            node.addAction(AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_SCROLL_BACKWARD)
+        }
+
+        override fun onPopulateNodeForHost(node: AccessibilityNodeInfoCompat) {
+            node.contentDescription = contentDescription
+            node.stateDescription = accessibilityValue()
+            node.hintText = CutoutUi(context).label("lighting.color_wheel.hint")
+        }
+
+        override fun onPopulateEventForVirtualView(virtualViewId: Int, event: AccessibilityEvent) {
+            event.contentDescription = if (virtualViewId == HUE_VIEW_ID) hueLabel else saturationLabel
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED
+            ) updateInteractionState()
+        }
+
+        override fun onVirtualViewKeyboardFocusChanged(virtualViewId: Int, hasFocus: Boolean) {
+            updateInteractionState()
+        }
+
+        override fun onPerformActionForVirtualView(virtualViewId: Int, action: Int, arguments: Bundle?): Boolean {
+            if (!isEnabled || (virtualViewId != HUE_VIEW_ID && virtualViewId != SATURATION_VIEW_ID)) return false
+            val current = axisValue(virtualViewId)
+            val next = when (action) {
+                AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_SET_PROGRESS.id -> arguments
+                    ?.getFloat(AccessibilityNodeInfoCompat.ACTION_ARGUMENT_PROGRESS_VALUE)
+                    ?.coerceIn(0f, 1f) ?: return false
+                AccessibilityNodeInfoCompat.ACTION_SCROLL_FORWARD -> (current + axisStep(virtualViewId)).coerceAtMost(1f)
+                AccessibilityNodeInfoCompat.ACTION_SCROLL_BACKWARD -> (current - axisStep(virtualViewId)).coerceAtLeast(0f)
+                else -> return false
+            }
+            if (next == current) return false
+            setAccessibleAxis(virtualViewId, next)
+            invalidateVirtualView(virtualViewId)
+            sendEventForVirtualView(virtualViewId, AccessibilityEvent.TYPE_VIEW_SELECTED)
+            sendEventForVirtualView(HOST_ID, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            return true
+        }
+
+    }
+
+    init {
+        isFocusable = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        ViewCompat.setAccessibilityDelegate(this, colorAxes)
+    }
+
+    override fun dispatchHoverEvent(event: MotionEvent): Boolean =
+        colorAxes.dispatchHoverEvent(event) || super.dispatchHoverEvent(event)
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        colorAxes.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
+
+    override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        colorAxes.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+    }
+
+    private fun axisBounds(id: Int): android.graphics.Rect {
+        val diameter = minOf(width, height)
+        val left = (width - diameter) / 2
+        val top = (height - diameter) / 2
+        val midpoint = left + diameter / 2
+        return if (id == HUE_VIEW_ID) android.graphics.Rect(left, top, midpoint, top + diameter)
+        else android.graphics.Rect(midpoint, top, left + diameter, top + diameter)
+    }
+
+    private fun axisValue(id: Int): Float = if (id == HUE_VIEW_ID) hue / 359f else saturation
+    private fun axisStep(id: Int): Float = if (id == HUE_VIEW_ID) 1f / 359f else 0.01f
+
+    private fun accessibilityValue(): String = String.format(
+        Locale.getDefault(),
+        "%s %d°, %s %d%%",
+        hueLabel,
+        hue.toInt(),
+        saturationLabel,
+        (saturation * 100f).toInt(),
+    )
+
+    private fun setAccessibleAxis(id: Int, value: Float) {
+        val selectedHue = if (id == HUE_VIEW_ID) value * 359f else hue
+        val selectedSaturation = if (id == SATURATION_VIEW_ID) value else saturation
+        setSelection(selectedHue, selectedSaturation)
+        val rgb = Color.HSVToColor(floatArrayOf(hue, saturation, 1f))
+        onColor(Color.red(rgb), Color.green(rgb), Color.blue(rgb), true)
+    }
+
+    fun setSelection(hueDegrees: Float, saturationValue: Float) {
+        hue = hueDegrees.coerceIn(0f, 359f)
+        saturation = saturationValue.coerceIn(0f, 1f)
+        invalidate()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -667,7 +976,10 @@ private class LightingColorWheelView(
         when (event.action) {
             android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE, android.view.MotionEvent.ACTION_UP -> {
                 val diameter = minOf(width, height).toFloat(); if (diameter <= 0f) return false
-                if (event.action == android.view.MotionEvent.ACTION_DOWN) onInteractionChanged(true)
+                if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                    touchTracking = true
+                    updateInteractionState()
+                }
                 val cx = width / 2f; val cy = height / 2f
                 val dx = event.x - cx; val dy = event.y - cy
                 val saturationValue = (kotlin.math.sqrt(dx * dx + dy * dy) / (diameter * .47f)).coerceIn(0f, 1f)
@@ -675,11 +987,20 @@ private class LightingColorWheelView(
                 saturation = saturationValue; invalidate()
                 val rgb = Color.HSVToColor(floatArrayOf(hue, saturation, 1f))
                 onColor(Color.red(rgb), Color.green(rgb), Color.blue(rgb), event.action == android.view.MotionEvent.ACTION_UP)
-                if (event.action == android.view.MotionEvent.ACTION_UP) onInteractionChanged(false)
+                if (event.action == android.view.MotionEvent.ACTION_UP) {
+                    touchTracking = false
+                    updateInteractionState()
+                }
                 return true
             }
-            android.view.MotionEvent.ACTION_CANCEL -> { onInteractionChanged(false); return true }
+            android.view.MotionEvent.ACTION_CANCEL -> { touchTracking = false; updateInteractionState(); return true }
         }
         return super.onTouchEvent(event)
+    }
+
+    private companion object {
+        const val HOST_VIEW_ID = -1
+        const val HUE_VIEW_ID = 1
+        const val SATURATION_VIEW_ID = 2
     }
 }
