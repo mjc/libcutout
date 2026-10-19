@@ -187,7 +187,7 @@ open class CameraPanelTest {
     }
 
     @Test
-    fun latePreviewSourceArrivalStartsThePreviewForAnAlreadyConnectedCamera() {
+    fun latePreviewSourceArrivalPromotesPreviewSurfaceAndControlsForAnAlreadyConnectedCamera() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val activity = instrumentation.startActivitySync(
             Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
