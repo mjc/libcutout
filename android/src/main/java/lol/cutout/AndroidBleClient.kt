@@ -72,6 +72,11 @@ class AndroidBleClient(
     private var selectionRevision = 0L
     private var scanCallback: ScanCallback? = null
     private var stopScanTimer: (() -> Unit)? = null
+    // Callback counters are per-scan and atomic; forwarding/candidate counts belong to the owner.
+    private var scanCallbackCount = java.util.concurrent.atomic.AtomicInteger()
+    private var scanResultCount = java.util.concurrent.atomic.AtomicInteger()
+    private var scanForwardedCount = 0
+    private var scanCandidateCount = 0
     private var publishTimer: (() -> Unit)? = null
     private var view = BlePresentation()
     @Volatile private var listener: ((BlePresentation) -> Unit)? = null
@@ -138,43 +143,64 @@ class AndroidBleClient(
     }
 
     fun scan() = postOnOwner {
-        if (!isEnabled()) { view = view.copy(problem = true); publish(); return@postOnOwner }
-        if (tryRestoreSelectedDeviceOnOwner()) { publish(); return@postOnOwner }
+        if (!hasPermissions()) {
+            Log.i("CutoutBle", "scan request blocked: Bluetooth permission unavailable")
+            view = view.copy(problem = true); publish(); return@postOnOwner
+        }
+        if (!isEnabled()) {
+            Log.i("CutoutBle", "scan request blocked: Bluetooth adapter unavailable")
+            view = view.copy(problem = true); publish(); return@postOnOwner
+        }
+        if (tryRestoreSelectedDeviceOnOwner()) {
+            Log.i("CutoutBle", "scan bypassed: restoring saved device")
+            publish(); return@postOnOwner
+        }
         stopScanOnOwner()
+        val callbackCount = java.util.concurrent.atomic.AtomicInteger()
+        val resultCount = java.util.concurrent.atomic.AtomicInteger()
+        scanCallbackCount = callbackCount
+        scanResultCount = resultCount
+        scanForwardedCount = 0
+        scanCandidateCount = 0
         found.clear()
         val callback = object : ScanCallback() {
             override fun onScanResult(type: Int, result: ScanResult) = accept(listOf(result))
             override fun onBatchScanResults(results: MutableList<ScanResult>) = accept(results.toList())
             private fun accept(results: List<ScanResult>) {
+                // Count delivery before queueing; a later stop may reject owner work.
+                callbackCount.incrementAndGet()
+                resultCount.addAndGet(results.size)
                 // ScanResult payloads are native observations. Do not retain mutable callback buffers.
-                val observations = results.take(128).map { result -> Triple(result.device,
-                    result.scanRecord?.deviceName, Pair(result.rssi,
-                        result.scanRecord?.serviceUuids?.map { DiscoveryServiceUuid(it.uuid.wireBytes()) } ?: emptyList())) }
+                val observations = results.take(128).map(::androidBleScanObservation)
                 postOnOwner {
-                    if (scanCallback !== this || !hasPermissions()) return@postOnOwner
-                    observations.forEach { (device, name, signal) ->
-                        val id = device.address
+                    if (scanCallback !== this) return@postOnOwner
+                    if (!hasPermissions()) return@postOnOwner
+                    var forwardedNow = 0
+                    observations.forEach { observation ->
+                        val id = observation.platformIdentifier
                         if (found.size >= 128 && id !in found) return@forEach
-                        state.observeDiscovery(DiscoveryObservation(id, name?.encodeToByteArray(),
-                            signal.second, emptyList(), signal.first.toShort()))
-                        found[id] = device to NearbyPev(id, name ?: context.getString(R.string.device_fallback),
-                            signal.first, false, advertisedName = name,
-                            advertisedServices = signal.second.map { it.bytes })
+                        state.observeDiscovery(observation.toRustObservation())
+                        found[id] = observation.device to observation.toNearbyPev(
+                            context.getString(R.string.device_fallback),
+                        )
+                        forwardedNow++
                     }
+                    scanForwardedCount += forwardedNow
                     // Rust owns candidate admission and ordering; signal changes do not
                     // independently reorder the native rows or promote Bluetooth noise.
-                    view = view.copy(devices = state.discoverySnapshot().pickerCandidates.mapNotNull { candidate ->
+                    val candidates = state.discoverySnapshot().pickerCandidates.mapNotNull { candidate ->
                         found[candidate.platformIdentifier]?.second?.copy(name = candidate.displayName,
                             suggested = candidate.isPickerCandidate, candidate = candidate)
-                    })
+                    }
+                    scanCandidateCount = candidates.size
+                    view = view.copy(devices = candidates)
                     publish()
                 }
             }
             override fun onScanFailed(code: Int) { postOnOwner {
                 if (scanCallback === this) {
-                    stopScanOnOwner()
+                    stopScanOnOwner(outcome = "failed code=$code")
                     view = view.copy(problem = true)
-                    Log.w("CutoutBle", "scan failed: $code")
                     publish()
                 }
             } }
@@ -185,11 +211,12 @@ class AndroidBleClient(
             scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setReportDelay(500).build(), callback)
             view = view.copy(scanning = true, devices = emptyList(), problem = false)
-            stopScanTimer = timers.after(20_000) { stopScanOnOwner(); publish() }
+            Log.i("CutoutBle", "scan started")
+            stopScanTimer = timers.after(20_000) { stopScanOnOwner(outcome = "timed out"); publish() }
         } catch (error: Exception) {
-            stopScanOnOwner()
+            stopScanOnOwner(outcome = "start failed (${error.javaClass.simpleName})")
             view = view.copy(problem = true)
-            Log.w("CutoutBle", "scan unavailable", error)
+            Log.w("CutoutBle", "scan unavailable (${error.javaClass.simpleName})")
         }
         publish()
     }
@@ -464,12 +491,16 @@ class AndroidBleClient(
 
     private fun now(): ULong = SystemClock.elapsedRealtime().toULong()
 
-    private fun stopScanOnOwner() {
+    private fun stopScanOnOwner(outcome: String = "stopped") {
         stopScanTimer?.invoke(); stopScanTimer = null
         val callback = scanCallback
         scanCallback = null
         if (callback != null) try { manager.adapter?.bluetoothLeScanner?.stopScan(callback) }
             catch (_: SecurityException) { }
+        if (callback != null) Log.i(
+            "CutoutBle",
+            "scan $outcome: callbacks=${scanCallbackCount.get()} results=${scanResultCount.get()} forwarded=$scanForwardedCount rust_candidates=$scanCandidateCount",
+        )
         view = view.copy(scanning = false)
     }
 
