@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/retina"]
 members = [
     "crates/cutout-core",
     "crates/cutout-music",
@@ -25,6 +26,9 @@ default-members = [
 
 [profile.release]
 strip = "none"
+
+[patch.crates-io]
+retina = { path = "vendor/retina" }
 
 [workspace.package]
 edition = "2024"
