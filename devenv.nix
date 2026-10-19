@@ -238,7 +238,13 @@ in
   tasks."test:mobile-ffi-runner".exec =
     "python3 -m unittest discover -s tests/mobile-ffi -p 'test_runner.py'";
   tasks."build:android-tests".exec = "python3 scripts/test-mobile-ffi.py build";
-  tasks."build:android-app".after = [ "build:android-tests" ];
+  tasks."build:android-app".exec = ''
+    if [[ -n "''${CUTOUT_SPOTIFY_CLIENT_ID:-}" || -n "''${SPOTIFY_CLIENT_ID:-}" ]]; then
+      python3 scripts/test-mobile-ffi.py build
+    else
+      secretspec run --profile development --scope android-app-build --reason "Build Cutout Android with Spotify authorization" -- python3 scripts/test-mobile-ffi.py build
+    fi
+  '';
   tasks."test:android-device".exec = "python3 scripts/test-mobile-ffi.py device";
   tasks."test:android-emulator".exec = "python3 scripts/test-mobile-ffi.py emulator";
   tasks."test:android-ui".exec = "python3 scripts/test-mobile-ffi.py local";

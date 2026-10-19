@@ -10,6 +10,39 @@ Rust music contract owns validation, transition classification, ride-history
 privacy, and persistence. SDK objects, tokens, artwork bytes, and callbacks
 stay in the iOS adapter.
 
+Both native clients use `cutout-music` for bounded Web API metadata parsing,
+capability projection, request construction and monotonic rate-limit deadlines.
+The native HTTP effect adds its access token to the Rust-authorized request;
+Rust never receives or persists that token. Commands target the device in the
+latest playback observation and do not transfer playback.
+
+## Android authorization and builds
+
+Android uses [AppAuth-Android 0.11.1](https://github.com/openid/AppAuth-Android/tree/0.11.1)
+for [browser-based authorization-code PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow) and
+token renewal. Register the same exact redirect URI,
+`cutout-spotify://spotify-login-callback`, in the Spotify app. The AppAuth
+redirect receiver forwards its result through a non-exported result Activity to
+the app-owned music adapter. Rust owns the explicit authorization transaction
+and provider lifetimes. Opening Music settings or restoring the app does not
+grant permission to start authorization.
+
+`devenv tasks run build:android-app` loads the existing public
+`CUTOUT_SPOTIFY_CLIENT_ID` through SecretSpec's `android-app-build` scope when no
+client ID is already supplied in the environment. The scope selects only that
+identifier. Gradle also accepts `SPOTIFY_CLIENT_ID` and generates the client ID
+in the ignored `BuildConfig` output. No OAuth client secret, access token or
+refresh token is a build input. The generic `build:android-tests` task remains
+usable without a configured provider; that app exposes Spotify's unavailable
+state until a client ID is supplied.
+
+The serialized AppAuth grant is encrypted with a non-exportable Android
+Keystore AES-GCM key and stored atomically in the app's no-backup directory.
+Credential read, write and deletion failures remain distinct from an absent
+grant. Explicit Spotify disconnect retires pending provider work and removes
+credentials before Rust deletes Spotify listening history. It preserves rides
+and other providers' history.
+
 ## Build and registration
 
 1. In the Spotify Developer Dashboard, register bundle identifier
