@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private val client get() = app.bluetooth
     private val ui by lazy { CutoutUi(this) }
     private var page = R.string.devices
+    private var restoredMapUiState: Bundle? = null
     private var setupReturnPage = R.string.devices
     private var musicReturnPage = R.string.more
     private var soundCloudReturnPage = R.string.music_settings
@@ -66,6 +67,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         page = savedInstanceState?.getInt("page") ?: intent.getIntExtra("page", R.string.devices)
+        restoredMapUiState = savedInstanceState?.getBundle("map-ui")
         setupReturnPage = savedInstanceState?.getInt("setup-return", R.string.devices) ?: R.string.devices
         musicReturnPage = savedInstanceState?.getInt("music-return", R.string.more) ?: R.string.more
         soundCloudReturnPage = savedInstanceState?.getInt("soundcloud-return", R.string.music_settings) ?: R.string.music_settings
@@ -173,6 +175,7 @@ class MainActivity : Activity() {
     override fun onLowMemory() { super.onLowMemory(); map?.onHostLowMemory() }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("page", page)
+        (map?.saveUiState() ?: restoredMapUiState)?.let { outState.putBundle("map-ui", it) }
         outState.putInt("setup-return", setupReturnPage); outState.putInt("music-return", musicReturnPage)
         outState.putInt("soundcloud-return", soundCloudReturnPage)
         outState.putBundle("settings-ui", settings.saveUiState())
@@ -260,6 +263,8 @@ class MainActivity : Activity() {
                             ?: latest.devices.firstOrNull { it.id == identifier }?.name
                     }, onOpenLocationSettings = ::openAppSettings)
                 map = panel; addPanel(id, panel)
+                panel.restoreUiState(restoredMapUiState)
+                restoredMapUiState = null
                 if (hostStarted) panel.onHostStart()
                 if (resumed) panel.onHostResume()
             }
