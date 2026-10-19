@@ -35,7 +35,7 @@ class LocalDiagnosticCaptureClientTest {
         var exported: File? = null
         try {
             val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
-            checkNotNull(client.start(
+            val generation = checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "Test device", "read-only test", token,
                 evidence = "unverified",
             ))
@@ -48,6 +48,22 @@ class LocalDiagnosticCaptureClientTest {
             )
 
             check(client.current().notificationCount == 1UL) { "The fixture notification was not admitted" }
+
+            val ride = await<List<MobileCaptureLabelDto>> { done ->
+                client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.RIDE), done)
+            }.getOrThrow()
+            check(ride == listOf(MobileCaptureLabelDto.RIDE))
+            val charging = await<List<MobileCaptureLabelDto>> { done ->
+                client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.CHARGING), done)
+            }.getOrThrow()
+            check(charging == listOf(MobileCaptureLabelDto.CHARGING)) { "Rust should close the exclusive ride marker" }
+            check(client.current().activeLabels == charging)
+            val stale = await<List<MobileCaptureLabelDto>> { done ->
+                client.changeLabel(MobileCaptureGenerationDto(generation.value + 1UL),
+                    MobileCaptureLabelActionDto.Stop(MobileCaptureLabelDto.CHARGING), done)
+            }
+            check(stale.exceptionOrNull() is MobileCaptureAnnotationException.NotRecording)
+            check(client.current().activeLabels == charging) { "A stale UI action must not alter the recording" }
 
             val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
             check(admitted) { "Rust refused a durable manual finish flush" }
@@ -74,6 +90,24 @@ class LocalDiagnosticCaptureClientTest {
             exported = await { done -> client.export(capture.liveCaptureId, done) }.getOrThrow()
             check(exported?.parentFile?.canonicalFile == File(context.cacheDir, "diagnostic-exports").canonicalFile)
             check(exported?.isFile == true && exported!!.length() > 0L)
+            val text = exported!!.readText()
+            for (label in listOf(MobileCaptureLabelDto.RIDE, MobileCaptureLabelDto.CHARGING)) {
+                val slug = captureLabelSlug(label)
+                check(text.contains("capture_label=${slug}_start")) { "Start marker must survive durable export" }
+                check(text.contains("capture_label=${slug}_stop")) { "Finishing must close every active interval" }
+            }
+            check(client.current().activeLabels.isEmpty())
+            val nextGeneration = checkNotNull(client.start(
+                MobileCaptureOriginDto.MANUAL, "$platformId-next", emptyList(), "Next device", null, token,
+                evidence = "unverified",
+            ))
+            check(nextGeneration != generation)
+            val previousCaptureAction = await<List<MobileCaptureLabelDto>> { done ->
+                client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.RIDE), done)
+            }
+            check(previousCaptureAction.exceptionOrNull() is MobileCaptureAnnotationException.NotRecording)
+            check(client.current().activeLabels.isEmpty()) { "Old controls must not annotate a replacement writer" }
+
         } finally {
             exported?.delete()
             try { await { done -> client.close { done(Result.success(Unit)) } } }
