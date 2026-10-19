@@ -120,17 +120,19 @@ class RideHistoryPanel(
 
     fun render() {
         dateFilter.text = context.getString(if (controller.last30Days) R.string.ride_map_last_30_days else R.string.ride_map_all_time)
+        val unavailableLabel = context.getString(R.string.ride_map_vehicle_name_unavailable)
         val vehicleOptions = historyVehicleOptions(
             controller.state.vehicles.map { option ->
                 option.platformIdentifier to (option.displayName?.takeIf(String::isNotBlank).orEmpty())
             },
             controller.vehicleIdentity,
+            unavailableLabel,
         )
         vehicleFilter.text = historyVehicleFilterLabel(
             controller.vehicleIdentity,
             vehicleOptions,
             context.getString(R.string.ride_map_all_vehicles),
-            context.getString(R.string.ride_map_vehicle_name_unavailable),
+            unavailableLabel,
         )
         clearFilters.isEnabled = controller.hasActiveFilters
         clearFilters.alpha = if (controller.hasActiveFilters) 1f else .48f
@@ -462,9 +464,10 @@ class RideHistoryPanel(
                     option.platformIdentifier to (option.displayName?.takeIf(String::isNotBlank).orEmpty())
                 },
                 controller.vehicleIdentity,
+                context.getString(R.string.ride_map_vehicle_name_unavailable),
             ).forEachIndexed { index, (identity, label) ->
                 menu.add(0, index + 1, index + 1,
-                    label.ifBlank { context.getString(R.string.ride_map_vehicle_name_unavailable) }).apply {
+                    label).apply {
                     isCheckable = true
                     isChecked = controller.vehicleIdentity == identity
                     setOnMenuItemClickListener {

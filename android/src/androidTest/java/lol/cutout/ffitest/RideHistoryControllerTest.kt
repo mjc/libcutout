@@ -2,6 +2,7 @@ package lol.cutout.ffitest
 
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Rect
 import androidx.test.platform.app.InstrumentationRegistry
 import android.view.View
 import android.widget.FrameLayout
@@ -80,9 +81,10 @@ open class RideHistoryControllerTest {
         val refreshed = historyVehicleOptions(
             listOf("board:z" to "Zeta", "board:a" to "Alpha", "board:z" to "Duplicate"),
             selection,
+            "Vehicle name unavailable",
         )
 
-        check(refreshed == listOf("board:a" to "Alpha", "board:retired" to "", "board:z" to "Zeta")) {
+        check(refreshed == listOf("board:a" to "Alpha", "board:retired" to "Vehicle name unavailable", "board:z" to "Zeta")) {
             "Vehicle options should be unique and stable, while retaining an active identity no longer in metadata"
         }
         check(historyVehicleFilterLabel(selection, refreshed, "All vehicles", "Vehicle name unavailable") ==
@@ -123,6 +125,14 @@ open class RideHistoryControllerTest {
                     val clear = checkNotNull(panel.findViewWithTag<View>("ride_map_clear_filters"))
                     val search = checkNotNull(panel.findViewWithTag<TextView>("ride_map_search"))
                     val minTargetHeight = (44 * density).toInt()
+                    val filtersBounds = Rect()
+                    val dateBounds = Rect()
+                    val vehicleBounds = Rect()
+                    val clearBounds = Rect()
+                    panel.offsetDescendantRectToMyCoords(filters, filtersBounds)
+                    panel.offsetDescendantRectToMyCoords(date, dateBounds)
+                    panel.offsetDescendantRectToMyCoords(vehicle, vehicleBounds)
+                    panel.offsetDescendantRectToMyCoords(clear, clearBounds)
 
                     check(filters.width <= width && filters.left >= 0 && filters.right <= width) {
                         "History filter group escaped the 320dp viewport at font scale $fontScale"
@@ -139,17 +149,18 @@ open class RideHistoryControllerTest {
                     check(date.height >= minTargetHeight && vehicle.height >= minTargetHeight && clear.height >= minTargetHeight) {
                         "History filter target fell below 44dp at font scale $fontScale: ${date.height}/${vehicle.height}/${clear.height}px"
                     }
-                    check(date.left >= filters.left && date.right <= filters.right &&
-                        vehicle.left >= filters.left && vehicle.right <= filters.right &&
-                        clear.left >= filters.left && clear.right <= filters.right) {
+                    check(dateBounds.left >= filtersBounds.left && dateBounds.right <= filtersBounds.right &&
+                        vehicleBounds.left >= filtersBounds.left && vehicleBounds.right <= filtersBounds.right &&
+                        clearBounds.left >= filtersBounds.left && clearBounds.right <= filtersBounds.right) {
                         "A history filter control extended beyond its container at font scale $fontScale"
                     }
                     if (fontScale >= 1.3f) {
-                        check(vehicle.top >= date.bottom && clear.top == date.top) {
+                        check(vehicleBounds.top >= dateBounds.bottom && clearBounds.top == dateBounds.top) {
                             "Accessibility filters should stack vehicle below date and keep clear beside date"
                         }
                     } else {
-                        check(date.top == vehicle.top && date.right <= vehicle.left && vehicle.right <= clear.left) {
+                        check(dateBounds.top == vehicleBounds.top && dateBounds.right <= vehicleBounds.left &&
+                            vehicleBounds.right <= clearBounds.left) {
                             "Normal-size history filters should remain in one non-overlapping row"
                         }
                     }
