@@ -40,6 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          unset ANDROID_SDK_ROOT
           test "$(uname -m)" = arm64
           # Reuse the repository's nixpkgs pin for the CLI as well as its tools.
           revision=$(python3 -c 'import json; print(json.load(open("devenv.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')
