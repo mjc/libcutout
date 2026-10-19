@@ -42,8 +42,11 @@ pub const PEVCAP_MAX_ADVERTISED_SERVICES: usize = 8;
 /// Maximum GATT fingerprints stored in the PEVCAP header.
 pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 16;
 
-/// Maximum annotations stored in the PEVCAP header.
-pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
+/// Maximum header annotations, including capture metadata and action boundaries.
+pub const PEVCAP_MAX_ANNOTATIONS: usize = 256;
+
+/// Maximum entries in each resolver evidence or warning list.
+pub const PEVCAP_MAX_RESOLVER_CONTEXT: usize = 8;
 
 /// Stable annotation key used for labeled capture sessions.
 pub const PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY: &str = "capture_label";
@@ -1340,10 +1343,10 @@ pub struct PevcapHeader {
     pub resolved_identity: Option<PevcapResolvedIdentity>,
 
     /// Resolver evidence recorded alongside the selected session.
-    pub resolver_evidence: ArrayVec<String, PEVCAP_MAX_ANNOTATIONS>,
+    pub resolver_evidence: ArrayVec<String, PEVCAP_MAX_RESOLVER_CONTEXT>,
 
     /// Resolver warnings recorded alongside the selected session.
-    pub resolver_warnings: ArrayVec<String, PEVCAP_MAX_ANNOTATIONS>,
+    pub resolver_warnings: ArrayVec<String, PEVCAP_MAX_RESOLVER_CONTEXT>,
 
     /// Version of the Cutout library that produced the capture.
     pub library_version: String,
@@ -1419,12 +1422,12 @@ impl PevcapHeader {
     ) -> Result<Self, PevcapHeaderError> {
         self.resolver_evidence = collect_bounded_strings(
             resolver_evidence,
-            PEVCAP_MAX_ANNOTATIONS,
+            PEVCAP_MAX_RESOLVER_CONTEXT,
             PevcapHeaderField::ResolverEvidence,
         )?;
         self.resolver_warnings = collect_bounded_strings(
             resolver_warnings,
-            PEVCAP_MAX_ANNOTATIONS,
+            PEVCAP_MAX_RESOLVER_CONTEXT,
             PevcapHeaderField::ResolverWarnings,
         )?;
         Ok(self)
@@ -4933,6 +4936,51 @@ mod tests {
         .expect("live Aero GATT inventory should fit in PEVCAP");
 
         assert_eq!(header.gatt_fingerprints.len(), 10);
+    }
+
+    #[test]
+    fn pevcap_header_keeps_resolver_context_at_eight_entries() {
+        let header = PevcapHeader::new(
+            wc(0),
+            "linux",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let accepted = header
+            .clone()
+            .with_resolver_context(&["evidence"; 8], &["warning"; 8])
+            .expect("eight resolver entries should fit");
+        assert_eq!(accepted.resolver_evidence.len(), 8);
+        assert_eq!(accepted.resolver_warnings.len(), 8);
+
+        for (evidence, warnings, field) in [
+            (
+                &["entry"; 9][..],
+                &[][..],
+                PevcapHeaderField::ResolverEvidence,
+            ),
+            (
+                &[][..],
+                &["entry"; 9][..],
+                PevcapHeaderField::ResolverWarnings,
+            ),
+        ] {
+            assert_eq!(
+                header.clone().with_resolver_context(evidence, warnings),
+                Err(PevcapHeaderError::TooManyItems {
+                    field,
+                    len: 9,
+                    max: 8
+                })
+            );
+        }
     }
 
     #[test]
