@@ -4,6 +4,10 @@
 
 mod charging;
 pub use charging::*;
+#[cfg(unix)]
+mod camera_network;
+#[cfg(unix)]
+pub use camera_network::*;
 mod rgb;
 pub use rgb::*;
 mod connection_attempt;
