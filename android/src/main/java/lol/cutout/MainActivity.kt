@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private var page = R.string.devices
     private var setupReturnPage = R.string.devices
     private var musicReturnPage = R.string.more
+    private var soundCloudReturnPage = R.string.music_settings
     private var latest = BlePresentation()
     private var scanned = false
     private var resumed = false
@@ -48,6 +49,9 @@ class MainActivity : Activity() {
     private var map: RideMapPanel? = null
     private var lighting: LightingPanel? = null
     private var pack: PackPanel? = null
+    private var soundCloud: AndroidSoundCloudPanel? = null
+    private var debug: VescDebugPanel? = null
+    private var captures: DiagnosticCapturePanel? = null
     private var setup: SetupPanel? = null
     private var camera: CameraPanel? = null
     private val observations = mutableListOf<AutoCloseable>()
@@ -61,6 +65,7 @@ class MainActivity : Activity() {
         page = savedInstanceState?.getInt("page") ?: intent.getIntExtra("page", R.string.devices)
         setupReturnPage = savedInstanceState?.getInt("setup-return", R.string.devices) ?: R.string.devices
         musicReturnPage = savedInstanceState?.getInt("music-return", R.string.more) ?: R.string.more
+        soundCloudReturnPage = savedInstanceState?.getInt("soundcloud-return", R.string.music_settings) ?: R.string.music_settings
         musicHidden = preferences.getBoolean("music.hidden", false)
         val root = ui.column().apply { setBackgroundColor(ui.background) }
         root.setOnApplyWindowInsetsListener { view, insets ->
@@ -120,12 +125,19 @@ class MainActivity : Activity() {
         }
         observations += app.music.observe { value ->
             compactPlayer.render(value); updateCompactPlayer(value)
+            if (resumed) maintainForegroundWork()
         }
+        observations += app.soundCloudMusic.observe { if (resumed) maintainForegroundWork() }
         render(client.latestPresentation)
         showPage(page)
     }
 
     override fun onStart() { super.onStart(); hostStarted = true; map?.onHostStart() }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.hasExtra("page")) showPage(intent.getIntExtra("page", page))
+    }
     override fun onResume() {
         super.onResume(); resumed = true
         client.observe(::render)
@@ -150,14 +162,16 @@ class MainActivity : Activity() {
         panels.values.filterIsInstance<MusicPanel>().forEach { it.dispose() }
         panels.values.filterIsInstance<MusicSettingsPanel>().forEach { it.dispose() }
         setup?.dispose()
+        captures?.dispose()
+        soundCloud?.dispose()
         onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
         super.onDestroy()
     }
     override fun onLowMemory() { super.onLowMemory(); map?.onHostLowMemory() }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); showPage(intent.getIntExtra("page", page)) }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("page", page)
         outState.putInt("setup-return", setupReturnPage); outState.putInt("music-return", musicReturnPage)
+        outState.putInt("soundcloud-return", soundCloudReturnPage)
         outState.putBundle("settings-ui", settings.saveUiState())
         super.onSaveInstanceState(outState)
     }
@@ -214,20 +228,26 @@ class MainActivity : Activity() {
         navigation[R.string.devices]?.visibility = if (connected) View.GONE else View.VISIBLE
         navigation[R.string.ride]?.visibility = if (connected) View.VISIBLE else View.GONE
         navigation[R.string.configuration]?.visibility = if (connected) View.VISIBLE else View.GONE
-        ride.render(value)
+        ride.render(value, value.chargeEstimate)
         picker.render(value, client.hasPermissions(), client.isEnabled(), scanned)
         settings.render(value.settings)
         pack?.render(value)
+        debug?.render(value)
         if (page == R.string.more && moreIdentity != latest.session?.identity?.toString()) renderMore()
         updateNavigation()
         if (resumed) maintainForegroundWork()
     }
 
     private fun addPanel(id: Int, panel: View) {
-        panel.tag = id; panel.visibility = View.GONE; panels[id] = panel
+        if (panel.tag == null) panel.tag = id
+        panel.visibility = View.GONE; panels[id] = panel
         content.addView(panel, FrameLayout.LayoutParams(-1, -1))
     }
-    private fun showPage(id: Int) {
+    private fun showPage(requestedId: Int) {
+        val id = if (requestedId == R.string.music && app.music.latestPresentation.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
+            soundCloudReturnPage = musicReturnPage
+            R.string.music_soundcloud_brand
+        } else requestedId
         if (page == R.string.devices && id != page) { client.stopScan(); scanned = false }
         if (!panels.containsKey(id)) when (id) {
             R.string.map -> {
@@ -249,9 +269,15 @@ class MainActivity : Activity() {
                 observations += app.lighting.addObserver { if (resumed) maintainForegroundWork() }
             }
             R.string.pack -> { val panel = PackPanel(this); pack = panel; panel.render(latest); addPanel(id, panel) }
+            R.string.vesc_debug -> { val panel = VescDebugPanel(this); debug = panel; panel.render(latest); addPanel(id, panel) }
+            R.string.captures -> {
+                val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission)
+                captures = panel; addPanel(id, panel)
+            }
             R.string.setup -> {
                 val panel = SetupPanel(this, app,
                     onMusic = { musicReturnPage = R.string.setup; showPage(R.string.music_settings) },
+                    onCaptures = { showPage(R.string.captures) },
                     onLocation = ::requestLocation, onNotifications = ::requestNotifications,
                     onOpenUrl = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) })
                 setup = panel; addPanel(id, panel)
@@ -261,7 +287,16 @@ class MainActivity : Activity() {
                 onHidePlayer = { setMusicHidden(true); showPage(musicReturnPage) },
                 onDone = { showPage(musicReturnPage) }))
             R.string.music_settings -> addPanel(id, MusicSettingsPanel(this, app.music,
-                onRequestListenerAccess = { startActivity(app.music.notificationListenerSettingsIntent()) }))
+                onRequestListenerAccess = { startActivity(app.music.notificationListenerSettingsIntent()) },
+                onChooseSoundCloud = { soundCloudReturnPage = R.string.music_settings; showPage(R.string.music_soundcloud_brand) }))
+            R.string.music_soundcloud_brand -> {
+                val panel = AndroidSoundCloudPanel(this, app.soundCloudMusic)
+                soundCloud = panel
+                addPanel(id, ScrollView(this).apply {
+                    setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(20))
+                    addView(panel, android.widget.FrameLayout.LayoutParams(-1, -2))
+                })
+            }
             else -> return
         }
         page = id
@@ -271,6 +306,7 @@ class MainActivity : Activity() {
         camera?.setActive(resumed && id == R.string.camera)
         if (id == R.string.more) renderMore()
         if (id == R.string.setup) setup?.reload()
+        if (id == R.string.captures) captures?.refresh()
         nestedToolbar.visibility = if (id in nestedPages) View.VISIBLE else View.GONE
         nestedTitle.text = getString(id)
         updateCompactPlayer(app.music.latestPresentation)
@@ -291,6 +327,7 @@ class MainActivity : Activity() {
         row(R.string.camera, CutoutSymbol.CAMERA)
         row(R.string.lighting, CutoutSymbol.LIGHTING)
         if (latest.session?.identity?.vehicleKind == MobileVehicleKindDto.ELECTRIC_UNICYCLE) row(R.string.pack, CutoutSymbol.PACK)
+        if (latest.session?.identity?.protocol == MobileProtocolFamilyDto.VESC) row(R.string.vesc_debug, CutoutSymbol.SETTINGS)
         container.addView(ui.space(24))
         val general = ui.column().apply { background = ui.rounded(18, outlined = false) }
         container.addView(general, LinearLayout.LayoutParams(-1, -2))
@@ -301,6 +338,8 @@ class MainActivity : Activity() {
         general.addView(ui.navigationRow(getString(R.string.setup), CutoutSymbol.GEAR) {
             setupReturnPage = R.string.more; showPage(R.string.setup)
         })
+        general.addView(ui.divider())
+        general.addView(ui.navigationRow(getString(R.string.captures), CutoutSymbol.SIGNAL) { showPage(R.string.captures) })
     }
 
     private fun navigateBack() {
@@ -308,9 +347,10 @@ class MainActivity : Activity() {
         if (page == R.string.pack && pack?.handleBack() == true) return
         when (page) {
             R.string.setup -> showPage(setupReturnPage)
+            R.string.music_soundcloud_brand -> showPage(soundCloudReturnPage)
             R.string.music_settings -> showPage(if (musicReturnPage == R.string.setup) R.string.setup else R.string.music)
             R.string.music -> showPage(musicReturnPage)
-            R.string.camera, R.string.lighting, R.string.pack -> showPage(R.string.more)
+            R.string.camera, R.string.lighting, R.string.pack, R.string.vesc_debug, R.string.captures -> showPage(R.string.more)
             R.string.more, R.string.configuration, R.string.map -> showPage(if (latest.session?.connection?.token != null) R.string.ride else R.string.devices)
             else -> finish()
         }
@@ -320,7 +360,7 @@ class MainActivity : Activity() {
         updateCompactPlayer(app.music.latestPresentation)
     }
     private fun updateCompactPlayer(value: AndroidMusicPresentation) {
-        compactPlayer.visibility = if (!musicHidden && value.snapshot?.item != null && page != R.string.music && page != R.string.music_settings) View.VISIBLE else View.GONE
+        compactPlayer.visibility = if (!musicHidden && value.snapshot?.item != null && page != R.string.music && page != R.string.music_settings && page != R.string.music_soundcloud_brand) View.VISIBLE else View.GONE
     }
     private fun updateNavigation() {
         val selectedId = if (page in nestedPages || page == R.string.more) R.string.more else page
@@ -363,10 +403,23 @@ class MainActivity : Activity() {
             startActivity(Intent.createChooser(send, getString(R.string.share_ride)))
         } catch (_: Exception) { Toast.makeText(this, R.string.export_failed, Toast.LENGTH_LONG).show() }
     }
+    private fun shareCapture(candidate: File) {
+        try {
+            val file = candidate.canonicalFile
+            val directory = File(cacheDir, "diagnostic-exports").canonicalFile
+            require(file.parentFile == directory && file.isFile)
+            val uri = FileProvider.getUriForFile(this, "$packageName.exports", file)
+            val send = Intent(Intent.ACTION_SEND).setType("application/octet-stream")
+                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .apply { clipData = ClipData.newRawUri(getString(R.string.captures), uri) }
+            startActivity(Intent.createChooser(send, getString(R.string.captures)))
+        } catch (_: Exception) { Toast.makeText(this, R.string.export_failed, Toast.LENGTH_LONG).show() }
+    }
     companion object {
         private const val BLUETOOTH_PERMISSION = 1
         private const val LOCATION_PERMISSION = 2
         private const val NOTIFICATION_PERMISSION = 3
-        private val nestedPages = setOf(R.string.setup, R.string.camera, R.string.lighting, R.string.pack, R.string.music, R.string.music_settings)
+        private val nestedPages = setOf(R.string.setup, R.string.camera, R.string.lighting, R.string.pack, R.string.music, R.string.music_settings, R.string.music_soundcloud_brand,
+            R.string.vesc_debug, R.string.captures)
     }
 }

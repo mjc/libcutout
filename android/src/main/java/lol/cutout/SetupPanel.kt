@@ -11,6 +11,7 @@ class SetupPanel(
     context: Context,
     private val app: CutoutApplication,
     private val onMusic: () -> Unit,
+    private val onCaptures: () -> Unit,
     private val onLocation: () -> Unit,
     private val onNotifications: () -> Unit,
     private val onOpenUrl: (String) -> Unit,
@@ -46,6 +47,7 @@ class SetupPanel(
         page.addView(ui.text(context.getString(R.string.setup_diagnostics), 17f, true))
         page.addView(diagnostics)
         page.addView(ui.text(context.getString(R.string.setup_diagnostics_detail), 14f, color = ui.muted))
+        page.addView(ui.action(context.getString(R.string.captures), onClick = onCaptures))
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.setup_location), onClick = onLocation))
         page.addView(ui.action(context.getString(R.string.setup_notifications), onClick = onNotifications))
