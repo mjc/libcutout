@@ -6,16 +6,23 @@ import lol.cutout.AndroidSpotifyCredentialStore
 import lol.cutout.AndroidSpotifyWebApi
 import lol.cutout.SpotifyCredentialCipher
 import net.openid.appauth.AuthState
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = LocalTestApplication::class)
 class LocalSpotifyWebApiGenerationTest {
     private class QueueExecutor : Executor {
         private val tasks = mutableListOf<Runnable>()
@@ -108,6 +115,75 @@ class LocalSpotifyWebApiGenerationTest {
             assertNull(store.load())
             assertFalse(api.isAuthorized)
         } finally { api.close() }
+    }
+
+    @Test fun authorizationObjectAndGrantRevisionAreCapturedAtomically() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File(context.cacheDir, "spotify-api-${System.nanoTime()}.enc")
+        val queue = QueueExecutor()
+        val store = AndroidSpotifyCredentialStore(file, TestCipher())
+        val api = AndroidSpotifyWebApi(context, "", store, credentialExecutor = queue)
+        val selectedState = AuthState()
+        val installRevision = api.currentGrantRevision()
+
+        try {
+            assertTrue(api.installAuthorizationState(selectedState, installRevision).isSuccess)
+            val (capturedState, capturedRevision) = api.currentAuthorizationSnapshot()
+
+            assertSame("the selected state and its identity come from the same grant", selectedState, capturedState)
+            assertEquals(installRevision, capturedRevision)
+
+            api.clearCredentials()
+            assertTrue("a late refresh cannot persist against the retired grant",
+                api.persistRefreshedState(capturedState!!, capturedRevision).isFailure)
+            queue.runAll()
+            assertNull(store.load())
+        } finally { api.close() }
+    }
+
+    @Test fun queuedDisconnectCannotDeleteAReplacementGrant() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File(context.cacheDir, "spotify-api-${System.nanoTime()}.enc")
+        val queue = QueueExecutor()
+        val store = AndroidSpotifyCredentialStore(file, TestCipher())
+        val api = AndroidSpotifyWebApi(context, "", store, credentialExecutor = queue)
+        var clearResult: Result<Unit>? = null
+
+        try {
+            api.clearCredentials { clearResult = it }
+            api.retireAuthorization(99uL)
+            val replacementRevision = api.currentGrantRevision()
+            val replacement = AuthState()
+            assertTrue("new authorization is installed before the queued clear executes",
+                api.installAuthorizationState(replacement, replacementRevision).isSuccess)
+            val encryptedReplacement = store.load()
+            assertTrue("replacement grant was durably written", encryptedReplacement != null)
+
+            queue.runAll()
+
+            assertTrue("the superseded clear reports stale", clearResult?.isFailure == true)
+            assertEquals("queued clear must preserve the replacement grant", encryptedReplacement, store.load())
+            assertSame(replacement, api.currentAuthorizationSnapshot().first)
+        } finally { api.close() }
+    }
+
+    @Test fun closingOwnerDoesNotCancelAlreadyRequestedCredentialClear() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File(context.cacheDir, "spotify-api-${System.nanoTime()}.enc")
+        val queue = QueueExecutor()
+        val store = AndroidSpotifyCredentialStore(file, TestCipher())
+        store.save("previous authorization")
+        val api = AndroidSpotifyWebApi(context, "", store, credentialExecutor = queue)
+        var clearResult: Result<Unit>? = null
+
+        api.clearCredentials { clearResult = it }
+        api.close()
+        assertTrue("closed owner rejects late authorization installation",
+            api.installAuthorizationState(AuthState(), api.currentGrantRevision()).isFailure)
+        queue.runAll()
+
+        assertTrue("closed owner still completes explicit durable cleanup", clearResult?.isSuccess == true)
+        assertNull(store.load())
     }
 
     @Test fun failedOldCredentialRestoreCannotOverwriteNewerGrantStatus() {

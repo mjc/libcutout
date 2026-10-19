@@ -73,7 +73,7 @@ class AndroidMusicClient(
     private val spotifyApi = AndroidSpotifyWebApi(appContext, BuildConfig.SPOTIFY_CLIENT_ID)
     private val spotifyHttpSession = MobileSpotifyHttpSession()
     private val spotifyPlayerStateRequests = AndroidSpotifyPlayerStateRequests(lifecycle)
-    private val spotifyPlayerStateExpiryCheck = Runnable {
+    private val spotifyPlayerStateExpiryCheck: Runnable = Runnable {
         val ticket = spotifyPollTicket ?: return@Runnable
         val monitor = monitorGeneration ?: return@Runnable
         val provider = providerGeneration ?: return@Runnable
@@ -95,7 +95,7 @@ class AndroidMusicClient(
             }
         }
     }
-    private val spotifyFreshnessCheck = Runnable {
+    private val spotifyFreshnessCheck: Runnable = Runnable {
         val monitor = monitorGeneration ?: return@Runnable
         if (closed || selectedProvider != MobileMusicProviderDto.SPOTIFY ||
             lifecycle.classifyMonitor(monitor) != MobileMusicProviderCallbackMatch.CURRENT) return@Runnable

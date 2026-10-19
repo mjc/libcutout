@@ -9,10 +9,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = LocalTestApplication::class)
 class LocalSpotifyCredentialStoreTest {
     private class TestCipher : SpotifyCredentialCipher {
         var keyAvailable = true

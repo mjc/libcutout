@@ -159,15 +159,20 @@ internal class AndroidSpotifyWebApi(
     }
 
     fun clearCredentials(completed: (Result<Unit>) -> Unit = {}) {
-        synchronized(authLock) {
-            authRevision.incrementAndGet()
+        val revision = synchronized(authLock) {
+            val value = authRevision.incrementAndGet()
             pendingStates.clear()
             authState = null
+            value
         }
         try {
             credentialExecutor.execute {
                 val result = synchronized(authLock) {
-                    runCatching { store.clear() }.onSuccess { credentialRestoreFailed = false }
+                    if (revision != authRevision.get()) {
+                        Result.failure(IllegalStateException(appContext.getString(R.string.spotify_auth_stale)))
+                    } else {
+                        runCatching { store.clear() }.onSuccess { credentialRestoreFailed = false }
+                    }
                 }
                 completed(result)
             }
@@ -201,13 +206,11 @@ internal class AndroidSpotifyWebApi(
             completed(Result.failure(IllegalArgumentException(appContext.getString(R.string.spotify_request_invalid))))
             return
         }
-        val state = synchronized(authLock) { authState }
+        val (state, revision) = currentAuthorizationSnapshot(forceRefresh)
         if (state == null || !state.isAuthorized) {
             completed(Result.failure(IllegalStateException(appContext.getString(R.string.spotify_auth_required))))
             return
         }
-        if (forceRefresh) state.setNeedsTokenRefresh(true)
-        val revision = authRevision.get()
         val workRevision = providerWorkRevision.get()
         state.performActionWithFreshTokens(service) { accessToken, _, authError ->
             if (closed || revision != authRevision.get()) {
@@ -247,6 +250,13 @@ internal class AndroidSpotifyWebApi(
 
     internal fun currentGrantRevision(): Long = authRevision.get()
 
+    /** Selects the credential object and its grant identity as one atomic observation. */
+    internal fun currentAuthorizationSnapshot(forceRefresh: Boolean = false): Pair<AuthState?, Long> = synchronized(authLock) {
+        val selected = authState
+        if (forceRefresh) selected?.setNeedsTokenRefresh(true)
+        selected to authRevision.get()
+    }
+
     private fun callbackIntent(id: ULong, cancelled: Boolean): PendingIntent {
         val intent = Intent(appContext, SpotifyAuthorizationResultActivity::class.java)
             .setAction("$AUTH_RESULT_ACTION${id}-$cancelled")
@@ -270,7 +280,6 @@ internal class AndroidSpotifyWebApi(
     override fun close() {
         synchronized(authLock) {
             closed = true
-            authRevision.incrementAndGet()
             pendingStates.clear()
             authState = null
         }
@@ -294,7 +303,7 @@ internal class AndroidSpotifyWebApi(
         val SCOPES = listOf("user-read-playback-state", "user-modify-playback-state")
 
         private fun httpRequest(url: String, method: String, accessToken: String, completed: (Result<SpotifyHttpResponse>) -> Unit) {
-            val executor = SpotifyHttpExecutor.instance
+            val executor = SpotifyHttpExecutor
             try {
                 executor.execute {
                     val result = runCatching {
@@ -310,7 +319,7 @@ internal class AndroidSpotifyWebApi(
                         try {
                             val status = connection.responseCode
                             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                            val body = stream?.use(::readBounded).orEmpty()
+                            val body = stream?.use(::readBounded) ?: ByteArray(0)
                             check(body.size <= MAX_RESPONSE_BYTES) { "Spotify response exceeded the local bound" }
                             SpotifyHttpResponse(status, connection.getHeaderField("Retry-After"), body)
                         } finally {
