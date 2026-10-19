@@ -29,7 +29,9 @@ class MusicPanel(
     private val artist = ui.text("", 16f, color = ui.muted)
     private val status = ui.text("", 13f, color = ui.muted)
     private val controls = ui.row().apply { gravity = Gravity.CENTER }
+    private val controlViews = linkedMapOf<MobileMusicCommandDto, View>()
     private val timeline = ui.column()
+    private var renderedTimelineKey: List<String>? = null
     private val spotifyLink = ui.action(context.getString(R.string.music_spotify_content_link)) {
         spotifyLinkUrl?.let(::openValidatedLink)
     }.apply { tag = "music.spotify-content-link"; visibility = View.GONE }
@@ -97,28 +99,34 @@ class MusicPanel(
         )
         artist.text = snapshot?.item?.artist.orEmpty()
         artist.visibility = if (artist.text.isNullOrBlank()) View.GONE else View.VISIBLE
-        status.text = value.error ?: value.selectedProvider.providerTitle(context)
+        status.text = value.error ?: value.snapshot?.state?.let { context.getString(it.settingsStateLabel()) }
+            ?: context.getString(R.string.music_state_not_connected)
+        status.contentDescription = status.text
         artwork.setImageBitmap(value.artwork)
-        controls.removeAllViews()
-        val caps = snapshot?.capabilities
-        if (value.listenerAccessGranted && caps != null) {
-            if (caps.previous) addControl("‹", context.getString(R.string.music_previous), MobileMusicCommandDto.PREVIOUS)
-            if (caps.pause && snapshot.state == MobileMusicPlaybackStateDto.PLAYING) {
-                addControl("Ⅱ", context.getString(R.string.music_pause), MobileMusicCommandDto.PAUSE)
-            } else if (caps.play) {
-                addControl("▶", context.getString(R.string.music_play), MobileMusicCommandDto.PLAY)
-            }
-            if (caps.next) addControl("›", context.getString(R.string.music_next), MobileMusicCommandDto.NEXT)
+        val visibleCommands = value.availableCommands(includePrevious = true, includeOpenProvider = false).toSet()
+        val controlsByCommand = listOf(
+            Triple(MobileMusicCommandDto.PREVIOUS, "‹", R.string.music_previous),
+            Triple(MobileMusicCommandDto.PAUSE, "Ⅱ", R.string.music_pause),
+            Triple(MobileMusicCommandDto.PLAY, "▶", R.string.music_play),
+            Triple(MobileMusicCommandDto.NEXT, "›", R.string.music_next),
+        )
+        controlViews.keys.toList().filterNot(visibleCommands::contains).forEach { controlViews[it]?.visibility = View.GONE }
+        controlsByCommand.filter { it.first in visibleCommands }.forEach { (command, glyph, label) ->
+            addControl(glyph, context.getString(label), command).visibility = View.VISIBLE
         }
+        val caps = snapshot?.capabilities
         providerAction.visibility = if (
             value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD || caps?.openProvider == true ||
             snapshot == null
         ) View.VISIBLE else View.GONE
-        timeline.removeAllViews()
         val events = value.history?.events.orEmpty().filter {
             it.kind != MobileMusicRideEventKindDto.PROVIDER_DISCONNECTED &&
                 !(it.kind == MobileMusicRideEventKindDto.STOPPED && it.itemIdentifier == null && it.title == null)
         }
+        val timelineKey = events.map { listOf(it.sequence.toString(), it.kind.name, it.itemIdentifier.orEmpty(), it.title.orEmpty(), it.artist.orEmpty()).joinToString("|") }
+        if (timelineKey != renderedTimelineKey) {
+            timeline.removeAllViews()
+            renderedTimelineKey = timelineKey
         if (events.isNotEmpty()) {
             timeline.addView(ui.space(12))
             timeline.addView(ui.text(context.getString(R.string.music_timeline_title), 15f, true), LayoutParams(-1, -2))
@@ -148,6 +156,7 @@ class MusicPanel(
                 timeline.addView(ui.divider())
             }
         }
+        }
         spotifyLinkUrl = contentLink(snapshot)
         spotifyLink.visibility = if (spotifyLinkUrl == null) View.GONE else View.VISIBLE
     }
@@ -166,10 +175,14 @@ class MusicPanel(
     }
 
 
-    private fun addControl(glyph: String, label: String, command: MobileMusicCommandDto) {
-        controls.addView(ui.action(glyph, primary = command == MobileMusicCommandDto.PLAY || command == MobileMusicCommandDto.PAUSE) {
+    private fun addControl(glyph: String, label: String, command: MobileMusicCommandDto): View {
+        controlViews[command]?.let { return it }
+        val view = ui.action(glyph, primary = command == MobileMusicCommandDto.PLAY || command == MobileMusicCommandDto.PAUSE) {
             client.command(command)
-        }.apply { contentDescription = label }, LayoutParams(0, -2, 1f))
+        }.apply { contentDescription = label; tag = "music.command.${command.name.lowercase()}" }
+        controls.addView(view, LayoutParams(0, -2, 1f))
+        controlViews[command] = view
+        return view
     }
 
     fun dispose() {
@@ -195,8 +208,10 @@ class MusicSettingsPanel(
     private val ui: CutoutUi = CutoutUi(context),
     private val onRequestListenerAccess: () -> Unit,
     private val onChooseSoundCloud: () -> Unit = {},
-) : LinearLayout(context) {
+) : ScrollView(context) {
+    private val page = ui.column()
     private val status = ui.text("", 14f, color = ui.muted)
+    private val accessExplanation = ui.text(context.getString(R.string.music_access_explanation), 13f, color = ui.muted)
     private val accessAction = ui.action(context.getString(R.string.music_enable_media_access), primary = true) {
         onRequestListenerAccess()
     }
@@ -220,32 +235,37 @@ class MusicSettingsPanel(
     private val providers = ui.column()
     private val historyPolicies = ui.column()
     private val historyStatus = ui.text("", 13f, color = ui.muted)
+    private val historyExplanation = ui.text("", 13f, color = ui.muted)
     private val forgetHistory = ui.action(context.getString(R.string.music_history_forget)) {
         client.deleteCurrentHistory()
     }.apply { tag = "music.history.forget" }
     private var observation: AutoCloseable? = client.observe(::render)
 
     init {
-        orientation = VERTICAL
+        isFillViewport = true
         tag = "music.settings.screen"
-        setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(20))
-        addView(ui.title(context.getString(R.string.music_settings)), LayoutParams(-1, -2))
-        addView(ui.space(8))
-        addView(status, LayoutParams(-1, -2))
-        addView(accessAction, LayoutParams(-1, -2))
-        addView(ui.space(12))
-        addView(connectAction, LayoutParams(-1, -2))
-        addView(openProviderAction, LayoutParams(-1, -2))
-        addView(spotifyDisconnect, LayoutParams(-1, -2))
-        addView(soundCloudChoose, LayoutParams(-1, -2))
-        addView(providerError, LayoutParams(-1, -2))
-        addView(ui.text(context.getString(R.string.music_provider_title), 13f, true, ui.muted), LayoutParams(-1, -2))
-        addView(providers, LayoutParams(-1, -2))
-        addView(ui.space(16))
-        addView(ui.text(context.getString(R.string.music_history_title), 13f, true, ui.muted), LayoutParams(-1, -2))
-        addView(historyPolicies, LayoutParams(-1, -2))
-        addView(historyStatus, LayoutParams(-1, -2))
-        addView(forgetHistory, LayoutParams(-1, -2))
+        page.setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(20))
+        page.addView(ui.title(context.getString(R.string.music_settings)), LayoutParams(-1, -2))
+        page.addView(ui.space(8))
+        page.addView(section(R.string.music_provider_title) {
+            addView(status, LayoutParams(-1, -2))
+            addView(accessExplanation, LayoutParams(-1, -2))
+            addView(accessAction, LayoutParams(-1, -2))
+            addView(connectAction, LayoutParams(-1, -2))
+            addView(openProviderAction, LayoutParams(-1, -2))
+            addView(spotifyDisconnect, LayoutParams(-1, -2))
+            addView(soundCloudChoose, LayoutParams(-1, -2))
+            addView(providerError, LayoutParams(-1, -2))
+            addView(providers, LayoutParams(-1, -2))
+        }, LayoutParams(-1, -2))
+        page.addView(ui.space(14))
+        page.addView(section(R.string.music_history_title) {
+            addView(historyPolicies, LayoutParams(-1, -2))
+            addView(historyStatus, LayoutParams(-1, -2))
+            addView(historyExplanation, LayoutParams(-1, -2))
+            addView(forgetHistory, LayoutParams(-1, -2))
+        }, LayoutParams(-1, -2))
+        addView(page, android.widget.FrameLayout.LayoutParams(-1, -2))
         client.refreshHistory()
     }
 
@@ -257,7 +277,10 @@ class MusicSettingsPanel(
             else -> context.getString(R.string.music_access_enabled)
         }
         accessAction.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
-        connectAction.visibility = if (value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
+        accessExplanation.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
+        // Android session control is unavailable until the user grants notification access.
+        // Showing Connect here would only retry an action that cannot succeed yet.
+        connectAction.visibility = if (!value.listenerAccessGranted || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
         openProviderAction.text = context.getString(R.string.music_open_named_provider, value.selectedProvider.providerTitle(context))
         spotifyDisconnect.visibility = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) View.VISIBLE else View.GONE
         spotifyDisconnect.isEnabled = !value.spotifyDisconnectPending
@@ -265,35 +288,36 @@ class MusicSettingsPanel(
         soundCloudChoose.visibility = if (value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.VISIBLE else View.GONE
         providerError.text = when {
             value.spotifyDisconnectPending -> context.getString(R.string.music_spotify_disconnect_pending)
+            !value.listenerAccessGranted && value.selectedProvider != MobileMusicProviderDto.SOUND_CLOUD -> ""
             else -> value.spotifyDisconnectError ?: value.error.orEmpty()
         }
         providerError.visibility = if (providerError.text.isNullOrBlank()) View.GONE else View.VISIBLE
-        providers.removeAllViews()
         listOf(
             MobileMusicProviderDto.APPLE_MUSIC to context.getString(R.string.music_apple_music),
             MobileMusicProviderDto.SPOTIFY to context.getString(R.string.music_spotify),
             MobileMusicProviderDto.SOUND_CLOUD to context.getString(R.string.music_soundcloud),
-        ).forEach { (provider, label) ->
+        ).forEachIndexed { index, (provider, label) ->
             val selected = value.selectedProvider == provider
-            providers.addView(ui.action(if (selected) "✓  $label" else label, primary = selected) {
-                client.selectProvider(provider)
-            }, LayoutParams(-1, -2))
+            val row = providers.getChildAt(index) as? android.widget.Button ?: ui.action(label) { client.selectProvider(provider) }
+            if (row.parent == null) providers.addView(row, LayoutParams(-1, -2))
+            row.text = if (selected) "✓  $label" else label
+            row.isSelected = selected
         }
-        historyPolicies.removeAllViews()
         val providerSupportsHistory = value.selectedProvider != MobileMusicProviderDto.SOUND_CLOUD
         listOf(
             MobileMusicHistoryPolicyDto.DISABLED to context.getString(R.string.music_history_disabled),
             MobileMusicHistoryPolicyDto.OPAQUE_ITEM to context.getString(R.string.music_history_opaque),
             MobileMusicHistoryPolicyDto.HUMAN_READABLE to context.getString(R.string.music_history_human_readable),
-        ).forEach { (policy, label) ->
+        ).forEachIndexed { index, (policy, label) ->
             val selected = value.historyPolicy == policy
-            historyPolicies.addView(ui.action(if (selected) "✓  $label" else label, primary = selected) {
+            val row = historyPolicies.getChildAt(index) as? android.widget.Button ?: ui.action(label) {
                 client.setHistoryPolicy(policy)
-            }.apply {
-                tag = "music.history.policy.${policy.name.lowercase()}"
-                isEnabled = providerSupportsHistory
-                alpha = if (providerSupportsHistory) 1f else 0.55f
-            }, LayoutParams(-1, -2))
+            }.apply { tag = "music.history.policy.${policy.name.lowercase()}" }
+            if (row.parent == null) historyPolicies.addView(row, LayoutParams(-1, -2))
+            row.text = if (selected) "✓  $label" else label
+            row.isSelected = selected
+            row.isEnabled = providerSupportsHistory
+            row.alpha = if (providerSupportsHistory) 1f else 0.55f
         }
         historyPolicies.isEnabled = providerSupportsHistory
         historyPolicies.alpha = if (providerSupportsHistory) 1f else 0.55f
@@ -308,12 +332,27 @@ class MusicSettingsPanel(
         if (!providerSupportsHistory) {
             historyStatus.text = context.getString(R.string.music_history_provider_unavailable)
         }
+        historyStatus.contentDescription = historyStatus.text
+        historyExplanation.text = context.getString(when (value.historyPolicy) {
+            MobileMusicHistoryPolicyDto.DISABLED -> R.string.music_history_disabled_explanation
+            MobileMusicHistoryPolicyDto.OPAQUE_ITEM -> R.string.music_history_opaque_explanation
+            MobileMusicHistoryPolicyDto.HUMAN_READABLE -> R.string.music_history_human_readable_explanation
+        }) + " " + context.getString(R.string.music_history_privacy)
+        historyExplanation.visibility = if (providerSupportsHistory) View.VISIBLE else View.GONE
         forgetHistory.visibility = if (value.history?.events?.isNotEmpty() == true) View.VISIBLE else View.GONE
     }
 
     fun dispose() {
         observation?.close()
         observation = null
+    }
+
+    private fun section(title: Int, content: LinearLayout.() -> Unit): LinearLayout = ui.column().apply {
+        background = ui.rounded(18)
+        setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10))
+        addView(ui.text(context.getString(title), 14f, true, ui.muted), LayoutParams(-1, -2))
+        addView(ui.space(6))
+        content()
     }
 
     override fun onAttachedToWindow() {
@@ -325,6 +364,18 @@ class MusicSettingsPanel(
         dispose()
         super.onDetachedFromWindow()
     }
+}
+
+internal fun MobileMusicPlaybackStateDto.settingsStateLabel(): Int = when (this) {
+    MobileMusicPlaybackStateDto.PLAYING -> R.string.music_state_playing
+    MobileMusicPlaybackStateDto.PAUSED -> R.string.music_state_paused
+    MobileMusicPlaybackStateDto.STOPPED -> R.string.music_state_stopped
+    MobileMusicPlaybackStateDto.BUFFERING -> R.string.music_state_buffering
+    MobileMusicPlaybackStateDto.INTERRUPTED -> R.string.music_state_interrupted
+    MobileMusicPlaybackStateDto.UNAUTHORIZED -> R.string.music_state_unauthorized
+    MobileMusicPlaybackStateDto.UNAVAILABLE -> R.string.music_state_unavailable
+    MobileMusicPlaybackStateDto.DISCONNECTED -> R.string.music_state_disconnected
+    MobileMusicPlaybackStateDto.STALE -> R.string.music_state_stale
 }
 
 private fun MobileMusicProviderDto.providerTitle(context: Context): String = when (this) {

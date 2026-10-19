@@ -84,7 +84,7 @@ class CutoutUi(val context: Context) {
     }
 }
 
-enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL, MAP, MORE, CAMERA, LIGHTING, PACK, MUSIC, POSITION, FIT_ROUTE }
+enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL, MAP, MORE, CAMERA, LIGHTING, PACK, MUSIC, POSITION, FIT_ROUTE, BELL }
 
 /** Small native stroke icons keep navigation independent of a platform emoji/font. */
 class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Drawable() {
@@ -95,6 +95,11 @@ class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Draw
         canvas.scale(bounds.width() / 24f, bounds.height() / 24f)
         fun path(vararg points: Float) { val path = Path(); path.moveTo(points[0], points[1]); for (i in 2 until points.size step 2) path.lineTo(points[i], points[i + 1]); canvas.drawPath(path, paint) }
         when (symbol) {
+            CutoutSymbol.BELL -> {
+                canvas.drawArc(6f, 3f, 18f, 15f, 180f, 180f, false, paint)
+                path(6f, 9f, 6f, 15f, 4f, 18f, 20f, 18f, 18f, 15f, 18f, 9f)
+                canvas.drawArc(9f, 18f, 15f, 22f, 0f, 180f, false, paint)
+            }
             CutoutSymbol.POSITION -> path(3f, 11f, 21f, 3f, 13f, 21f, 11f, 13f, 3f, 11f)
             CutoutSymbol.FIT_ROUTE -> { path(3f, 9f, 3f, 3f, 9f, 3f); path(15f, 3f, 21f, 3f, 21f, 9f); path(21f, 15f, 21f, 21f, 15f, 21f); path(9f, 21f, 3f, 21f, 3f, 15f) }
             CutoutSymbol.MAP -> { path(3f, 5f, 9f, 3f, 15f, 5f, 21f, 3f, 21f, 19f, 15f, 21f, 9f, 19f, 3f, 21f, 3f, 5f); path(9f, 3f, 9f, 19f); path(15f, 5f, 15f, 21f) }

@@ -51,11 +51,14 @@ import java.util.Locale
 class SettingsPanel(
     context: Context,
     private val ownerLifetimeId: String,
+    private val onOpenPhoneAlarms: () -> Unit = {},
     private val submitAction: (MobileConnectionAttemptTokenDto, MobileDeviceActionIdDto, () -> Unit) -> Unit = { _, _, refused -> refused() },
     private val submit: (MobileConnectionAttemptTokenDto, MobileSettingIdDto, MobileSettingValueDto, () -> Unit) -> Unit,
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
     private val page = ui.column()
+    private val catalog = ui.column()
+    private val actionsSection = ui.column()
     private val header = ui.title(ui.label("controls.tune.title"))
     private var renderedGeneration: ULong? = null
     private var renderedToken: MobileConnectionAttemptTokenDto? = null
@@ -79,6 +82,16 @@ class SettingsPanel(
         page.setPadding(ui.dp(24), ui.dp(24), ui.dp(24), ui.dp(32))
         page.addView(header)
         page.addView(ui.space(20))
+        page.addView(catalog)
+        page.addView(ui.space(20))
+        page.addView(ui.text(ui.label("controls.alarms.title"), 17f, true).apply { isAccessibilityHeading = true })
+        page.addView(ui.space(12))
+        page.addView(ui.navigationRow(ui.label("controls.alarms.title"), CutoutSymbol.BELL, onOpenPhoneAlarms).apply {
+            tag = "settings.open-alarms"
+            background = ui.rounded(22)
+        })
+        page.addView(ui.space(20))
+        page.addView(actionsSection)
         addView(page, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         render(null)
     }
@@ -88,7 +101,7 @@ class SettingsPanel(
         if (snapshot == null) {
             if (renderedGeneration != null) rebuild(emptyList(), emptyList(), null)
             emptyMessage.text = ui.label("settings.readback.unavailable")
-            if (emptyMessage.parent == null) page.addView(emptyMessage)
+            if (emptyMessage.parent == null) catalog.addView(emptyMessage)
             return
         }
         val descriptors = groups.flatMap { group ->
@@ -161,13 +174,12 @@ class SettingsPanel(
         rows.values.forEach { it.dismissTransientUi() }
         renderedGeneration = snapshot?.connection?.generation
         renderedToken = snapshot?.connection?.token
-        page.removeAllViews()
+        catalog.removeAllViews()
+        actionsSection.removeAllViews()
         rows.clear()
         actionRows.clear()
-        page.addView(header)
-        page.addView(ui.space(20))
         if (descriptors.isEmpty() && actions.isEmpty()) {
-            page.addView(emptyMessage)
+            catalog.addView(emptyMessage)
             return
         }
         groups.forEach { group ->
@@ -176,8 +188,8 @@ class SettingsPanel(
                 val title = ui.text(ui.label(groupKey(group)), 17f, true).apply {
                     isAccessibilityHeading = true
                 }
-                page.addView(title)
-                page.addView(ui.space(12))
+                catalog.addView(title)
+                catalog.addView(ui.space(12))
                 val card = ui.column().apply {
                     background = ui.rounded(22)
                     setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4))
@@ -188,15 +200,15 @@ class SettingsPanel(
                     rows[descriptor.id] = row
                     card.addView(row.root)
                 }
-                page.addView(card)
-                page.addView(ui.space(20))
+                catalog.addView(card)
+                catalog.addView(ui.space(20))
             }
         }
         if (actions.isNotEmpty()) {
-            page.addView(ui.text(ui.label("controls.actions"), 17f, true).apply {
+            actionsSection.addView(ui.text(ui.label("controls.actions"), 17f, true).apply {
                 isAccessibilityHeading = true
             })
-            page.addView(ui.space(12))
+            actionsSection.addView(ui.space(12))
             val card = ui.column().apply {
                 background = ui.rounded(22)
                 setPadding(ui.dp(16), ui.dp(4), ui.dp(16), ui.dp(4))
@@ -207,8 +219,8 @@ class SettingsPanel(
                 actionRows[descriptor.id] = row
                 card.addView(row.root)
             }
-            page.addView(card)
-            page.addView(ui.space(20))
+            actionsSection.addView(card)
+            actionsSection.addView(ui.space(20))
         }
     }
 

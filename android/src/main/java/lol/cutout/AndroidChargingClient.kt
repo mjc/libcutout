@@ -191,6 +191,27 @@ class AndroidChargingClient(
     fun refreshDirectory(completed: (Result<MobileChargingSyncSummaryDto>) -> Unit) =
         withDatabase({ it.refreshChargingDirectory() }, completed)
 
+    /** Reads the encrypted credential owner without triggering registration or network work. */
+    fun refreshAccountCredentialState(completed: (Result<MobileChargingSyncCredentialState>) -> Unit) {
+        if (closed) {
+            main.post { completed(Result.failure(IllegalStateException("Charging client is closed"))) }
+            return
+        }
+        try {
+            worker.execute {
+                val result = runCatching {
+                    check(!closed) { "Charging client is closed" }
+                    val current = credentialState(credentials.load())
+                    publish(status.copy(credentialState = current))
+                    current
+                }
+                main.post { completed(result) }
+            }
+        } catch (error: RejectedExecutionException) {
+            main.post { completed(Result.failure(error)) }
+        }
+    }
+
     fun submitReport(spotId: String, message: String, completed: (Result<MobileChargingReportReceiptDto>) -> Unit) {
         val pending = reportOperations.getOrCreate(spotId, message)
         withDatabase({

@@ -10,13 +10,14 @@ import android.widget.Switch
 import android.widget.TextView
 import uniffi.cutout_mobile_ffi.MobilePhoneAlarmPreferencesDto
 
-/** Setup-route presentation for the Rust-owned phone alarm settings. */
+/** Tune-route presentation for the Rust-owned phone alarm settings. */
 class PhoneAlarmPanel(
     context: Context,
     private val client: AndroidPhoneAlarmClient,
     private val onRequestNotificationPermission: () -> Unit,
 ) : LinearLayout(context) {
     private val ui = CutoutUi(context)
+    private val configured = ui.column().apply { tag = "phone-alarm.configured" }
     private val title = ui.text(context.getString(R.string.phone_alarm_title), 22f, true).apply {
         isAccessibilityHeading = true
     }
@@ -66,14 +67,14 @@ class PhoneAlarmPanel(
         addView(summary)
         addView(ui.space(24))
         addView(unavailable)
-        deviceTitle.visibility = GONE
         unavailable.visibility = GONE
-        addView(deviceTitle)
-        addView(ui.space(12))
+        addView(configured)
+        configured.addView(deviceTitle)
+        configured.addView(ui.space(12))
         addCard(listOf(enabled))
-        addView(ui.space(20))
-        addView(dutyTitle)
-        addView(ui.space(10))
+        configured.addView(ui.space(20))
+        configured.addView(dutyTitle)
+        configured.addView(ui.space(10))
         val dutyLine = ui.row().apply {
             addView(ui.text(context.getString(R.string.phone_alarm_pwm_duty), 16f), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             addView(dutyValue, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
@@ -84,14 +85,15 @@ class PhoneAlarmPanel(
             addView(dutyPlus, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         }
         addCard(listOf(dutyLine, controls, headroom, pwmExplanation))
-        addView(ui.space(20))
-        addView(sourceTitle)
-        addView(ui.space(10))
+        configured.addView(ui.space(20))
+        configured.addView(sourceTitle)
+        configured.addView(ui.space(10))
         addCard(listOf(sourceExplanation))
-        addView(ui.space(20))
-        addView(notificationsTitle)
-        addView(ui.space(10))
-        addCard(listOf(authorization, requestPermission, openSettings, error))
+        configured.addView(ui.space(20))
+        configured.addView(notificationsTitle)
+        configured.addView(ui.space(10))
+        addCard(listOf(authorization, requestPermission, openSettings))
+        addView(error)
         enabled.setOnCheckedChangeListener { _, checked ->
             if (rendering) return@setOnCheckedChangeListener
             if (checked && !latest.canSchedule) {
@@ -113,16 +115,7 @@ class PhoneAlarmPanel(
         try {
             val hasSettings = settings != null
             unavailable.visibility = if (hasSettings) GONE else VISIBLE
-            deviceTitle.visibility = if (hasSettings) VISIBLE else GONE
-            enabled.visibility = if (hasSettings) VISIBLE else GONE
-            dutyTitle.visibility = if (hasSettings) VISIBLE else GONE
-            dutyValue.visibility = if (hasSettings) VISIBLE else GONE
-            dutyMinus.visibility = if (hasSettings) VISIBLE else GONE
-            dutyPlus.visibility = if (hasSettings) VISIBLE else GONE
-            headroom.visibility = if (hasSettings) VISIBLE else GONE
-            pwmExplanation.visibility = if (hasSettings) VISIBLE else GONE
-            sourceTitle.visibility = if (hasSettings) VISIBLE else GONE
-            sourceExplanation.visibility = if (hasSettings) VISIBLE else GONE
+            configured.visibility = if (hasSettings) VISIBLE else GONE
             deviceTitle.text = value.deviceLabel.orEmpty()
             settings?.let { renderPreferences(it) }
             authorization.text = context.getString(authorizationString(value.authorization))
@@ -178,7 +171,7 @@ class PhoneAlarmPanel(
             if (index > 0) card.addView(ui.space(8))
             card.addView(child, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         }
-        addView(card, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        configured.addView(card, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
 
     override fun onAttachedToWindow() {

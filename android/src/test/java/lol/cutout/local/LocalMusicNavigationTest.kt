@@ -51,6 +51,73 @@ class LocalMusicNavigationTest {
         } finally { host.pause().stop().destroy() }
     }
 
+    @Test
+    fun hiddenMusicPlayerCanBeRestoredFromMoreWithoutOpeningAnotherPage() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<CutoutApplication>()
+        val preferences = context.getSharedPreferences("cutout.presentation", android.content.Context.MODE_PRIVATE)
+        val previous = preferences.getBoolean("music.hidden", false)
+        preferences.edit().putBoolean("music.hidden", true).commit()
+        val host = Robolectric.buildActivity(MainActivity::class.java,
+            Intent(context, MainActivity::class.java).putExtra("page", R.string.more)).setup().visible()
+        try {
+            val decor = host.get().window.decorView
+            val musicRow = checkNotNull(decor.findViewWithTag<View>("more.music"))
+            val restore = checkNotNull(decor.findViewWithTag<View>("music.restore"))
+            assertTrue(restore.isShown)
+            assertTrue(restore.performClick())
+            assertFalse(preferences.getBoolean("music.hidden", true))
+            assertEquals(View.GONE, restore.visibility)
+            assertSame(musicRow, decor.findViewWithTag<View>("more.music"))
+            assertFalse(restore.isShown)
+            assertTrue(descendants(decor).any {
+                it.isShown && it.isClickable && it.contentDescription?.toString() == context.getString(R.string.camera)
+            })
+        } finally {
+            host.pause().stop().destroy()
+            preferences.edit().putBoolean("music.hidden", previous).commit()
+        }
+    }
+
+    @Test
+    fun phoneAlarmsOpenFromTuneAndReturnToItsRetainedConfiguration() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<CutoutApplication>()
+        val host = Robolectric.buildActivity(MainActivity::class.java,
+            Intent(context, MainActivity::class.java).putExtra("page", R.string.configuration)).setup().visible()
+        try {
+            val activity = host.get()
+            val decor = activity.window.decorView
+            val open = checkNotNull(decor.findViewWithTag<View>("settings.open-alarms"))
+            assertTrue(open.isShown)
+            open.performClick()
+            assertTrue(checkNotNull(decor.findViewWithTag<View>("phone-alarm.configured")).visibility == View.GONE)
+            val back = descendants(decor).single {
+                it.isShown && it.isClickable && it.contentDescription?.toString() == activity.getString(R.string.back)
+            }
+            back.performClick()
+            assertTrue(open.isShown)
+            assertSame(open, decor.findViewWithTag<View>("settings.open-alarms"))
+        } finally { host.pause().stop().destroy() }
+    }
+
+    @Test
+    fun musicHistoryOptionsRemainReachableBelowTheInitialSettingsViewport() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<CutoutApplication>()
+        context.music.selectProvider(MobileMusicProviderDto.APPLE_MUSIC)
+        val host = Robolectric.buildActivity(MainActivity::class.java,
+            Intent(context, MainActivity::class.java).putExtra("page", R.string.music_settings)).setup().visible()
+        try {
+            val decor = host.get().window.decorView
+            val panel = checkNotNull(decor.findViewWithTag<android.widget.ScrollView>("music.settings.screen"))
+            val lastPolicy = checkNotNull(panel.findViewWithTag<View>("music.history.policy.human_readable"))
+            assertTrue(panel.canScrollVertically(1))
+            panel.fullScroll(View.FOCUS_DOWN)
+            val visible = android.graphics.Rect()
+            assertTrue(lastPolicy.getGlobalVisibleRect(visible))
+            assertTrue(visible.height() > 0)
+            assertTrue(panel.scrollY > 0)
+        } finally { host.pause().stop().destroy() }
+    }
+
     private fun descendants(view: View): Sequence<View> = sequence {
         yield(view)
         if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(descendants(view.getChildAt(index)))

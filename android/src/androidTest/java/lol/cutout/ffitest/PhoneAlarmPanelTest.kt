@@ -62,9 +62,17 @@ open class PhoneAlarmPanelTest {
                     authorization = AndroidPhoneAlarmAuthorization.NOT_REQUESTED,
                     permissionRequestAvailable = true,
                 ))
-                check(find<Button>(panel, "phone-alarm.permission.request").isShown)
+                check(!find<Button>(panel, "phone-alarm.permission.request").isShown)
+                check(!find<View>(panel, "phone-alarm.configured").isShown)
                 check(find<TextView>(panel) { it.text == activity.getString(R.string.phone_alarm_no_device) }.isShown)
 
+                panel.render(PhoneAlarmPresentation(
+                    preferences = MobilePhoneAlarmPreferencesDto("opaque-platform-id", true, 1u.toUByte(), 99u.toUByte()),
+                    authorization = AndroidPhoneAlarmAuthorization.NOT_REQUESTED,
+                    permissionRequestAvailable = true,
+                ))
+                check(find<Button>(panel, "phone-alarm.permission.request").isShown)
+                check(find<View>(panel, "phone-alarm.configured").isShown)
                 panel.render(PhoneAlarmPresentation(
                     preferences = MobilePhoneAlarmPreferencesDto("opaque-platform-id", true, 1u.toUByte(), 99u.toUByte()),
                     deviceLabel = activity.getString(R.string.phone_alarm_connected_device),

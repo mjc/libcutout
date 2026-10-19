@@ -2,4 +2,22 @@
     <string name="settings_stale_attempt">This connection changed. Reconnect before submitting this setting.</string>
     <string name="setting_decrease">Decrease %1$s: %2$s</string>
     <string name="setting_increase">Increase %1$s: %2$s</string>
+    <string name="setup_load_failed">Could not read the saved app settings.</string>
+    <string name="setup_retry">Retry setup settings</string>
+    <string name="setup_account_section">Community account</string>
+    <string name="setup_account_loading">Checking saved account…</string>
+    <string name="setup_account_no_account">No charging community account is saved on this device.</string>
+    <string name="setup_account_registration_uncertain">Account setup was interrupted. No saved account credential is available to delete.</string>
+    <string name="setup_account_active">Delete the server account and its private records. Your public charging points stay available, unchanged, under Anonymous.</string>
+    <string name="setup_account_deleting">Deleting account…</string>
+    <string name="setup_account_retry_description">Deletion is not confirmed. Contributions are paused. Retry to confirm the result.</string>
+    <string name="setup_account_deleted">Account deleted. Public charging points remain under Anonymous.</string>
+    <string name="setup_account_load_failed">Could not read the saved account status.</string>
+    <string name="setup_account_reload">Reload account status</string>
+    <string name="setup_account_delete">Delete Account</string>
+    <string name="setup_account_retry_delete">Retry account deletion</string>
+    <string name="setup_account_delete_failed">Account deletion could not be confirmed.</string>
+    <string name="setup_account_confirm_title">Delete Account?</string>
+    <string name="setup_account_confirm_message">Your account, private reports, and personal votes will be deleted. Your public charging points will be reassigned to Anonymous. Their content will not change.\n\nIf you want those public contributions removed, cancel and delete them manually before closing your account.\n\nLocal rides and Bluetooth captures stay on this device. This does not close accounts with music or leaderboard providers.\n\nConfirmation is available for 30 days. Expired confirmation records are removed on the next deletion request. Older service backups may retain account data for up to 30 days.</string>
+    <string name="setup_account_confirm_delete">Delete Account</string>
 </resources>

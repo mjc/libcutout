@@ -11,13 +11,59 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import uniffi.cutout_mobile_ffi.*
 
+/** Swift keeps a compact row for a live/transient session, or for a stopped item. */
+internal fun AndroidMusicPresentation.showsCompactPlayer(): Boolean {
+    val state = snapshot?.state ?: MobileMusicPlaybackStateDto.UNAVAILABLE
+    val hasItem = snapshot?.item != null
+    return when (state) {
+        MobileMusicPlaybackStateDto.PLAYING,
+        MobileMusicPlaybackStateDto.PAUSED,
+        MobileMusicPlaybackStateDto.BUFFERING,
+        MobileMusicPlaybackStateDto.INTERRUPTED -> true
+        MobileMusicPlaybackStateDto.STOPPED,
+        MobileMusicPlaybackStateDto.DISCONNECTED,
+        MobileMusicPlaybackStateDto.STALE -> hasItem
+        MobileMusicPlaybackStateDto.UNAVAILABLE -> hasItem && snapshot?.capabilities?.play == true
+        MobileMusicPlaybackStateDto.UNAUTHORIZED -> false
+    }
+}
+
+/** Applies the same playback-state gates Swift uses before showing provider commands. */
+internal fun AndroidMusicPresentation.availableCommands(
+    includePrevious: Boolean,
+    includeOpenProvider: Boolean,
+): List<MobileMusicCommandDto> {
+    val current = this.snapshot ?: return emptyList()
+    if (!listenerAccessGranted && selectedProvider != MobileMusicProviderDto.SOUND_CLOUD) return emptyList()
+    val caps = current.capabilities
+    val state = current.state
+    val commands = mutableListOf<MobileMusicCommandDto>()
+    if (includePrevious && state in setOf(MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED) && caps.previous) {
+        commands += MobileMusicCommandDto.PREVIOUS
+    }
+    when (state) {
+        MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.BUFFERING ->
+            if (caps.pause) commands += MobileMusicCommandDto.PAUSE
+        MobileMusicPlaybackStateDto.PAUSED, MobileMusicPlaybackStateDto.STOPPED,
+        MobileMusicPlaybackStateDto.DISCONNECTED, MobileMusicPlaybackStateDto.STALE,
+        MobileMusicPlaybackStateDto.UNAVAILABLE -> if (caps.play) commands += MobileMusicCommandDto.PLAY
+        MobileMusicPlaybackStateDto.INTERRUPTED, MobileMusicPlaybackStateDto.UNAUTHORIZED -> Unit
+    }
+    if (state in setOf(MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED) && caps.next) {
+        commands += MobileMusicCommandDto.NEXT
+    }
+    if (includeOpenProvider && commands.none { it == MobileMusicCommandDto.PLAY || it == MobileMusicCommandDto.PAUSE || it == MobileMusicCommandDto.NEXT } && caps.openProvider) {
+        commands += MobileMusicCommandDto.OPEN_PROVIDER
+    }
+    return commands
+}
+
 /** Compact live player; only commands advertised by the current Rust-projected snapshot render. */
 class MusicCompactPlayer(
     context: Context,
     private val client: AndroidMusicClient,
     private val ui: CutoutUi = CutoutUi(context),
     private val onOpenDetails: () -> Unit = {},
-    private val onDismiss: () -> Unit = {},
 ) : LinearLayout(context) {
     private val artwork = ImageView(context).apply {
         scaleType = ImageView.ScaleType.CENTER_CROP
@@ -32,6 +78,7 @@ class MusicCompactPlayer(
         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
     }
     private val controls = ui.row()
+    private val commandButtons = linkedMapOf<MobileMusicCommandDto, TextView>()
     private val contentLink = TextView(context).apply {
         text = "↗"
         textSize = 17f
@@ -78,6 +125,13 @@ class MusicCompactPlayer(
         )
         itemArtist.text = snapshot?.item?.artist.orEmpty()
         itemArtist.visibility = if (itemArtist.text.isNullOrBlank()) View.GONE else View.VISIBLE
+        val statusLabel = context.getString((snapshot?.state ?: MobileMusicPlaybackStateDto.UNAVAILABLE).settingsStateLabel())
+        track.contentDescription = listOfNotNull(
+            context.getString(R.string.music_expand),
+            snapshot?.item?.title?.takeIf(String::isNotBlank),
+            snapshot?.item?.artist?.takeIf(String::isNotBlank),
+            statusLabel,
+        ).joinToString(", ")
         artwork.setImageBitmap(state.artwork)
         val spotifyUrl = snapshot?.takeIf { it.provider == MobileMusicProviderDto.SPOTIFY }
             ?.item?.identifier?.let { runCatching { spotifyContentUrl(it) }.getOrNull() }
@@ -86,36 +140,17 @@ class MusicCompactPlayer(
         contentLink.setOnClickListener {
             spotifyUrl?.let { value -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value))) } }
         }
-        controls.removeAllViews()
-        if (state.listenerAccessGranted || state.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) {
-            val caps = snapshot?.capabilities
-            if (caps != null) {
-                if (snapshot?.state == MobileMusicPlaybackStateDto.PLAYING) {
-                    if (caps.pause) addCommand("Ⅱ", MobileMusicCommandDto.PAUSE)
-                } else if (caps.play) {
-                    addCommand("▶", MobileMusicCommandDto.PLAY)
-                }
-            }
-            if (caps?.next == true) addCommand("›", MobileMusicCommandDto.NEXT)
-            if (caps != null && !caps.play && !caps.pause && !caps.next && caps.openProvider) {
-                addCommand("↗", MobileMusicCommandDto.OPEN_PROVIDER)
-            }
-        }
-        controls.addView(TextView(context).apply {
-            text = "×"
-            textSize = 20f
-            setTextColor(ui.muted)
-            gravity = Gravity.CENTER
-            minWidth = ui.dp(48)
-            minHeight = ui.dp(44)
-            contentDescription = context.getString(R.string.music_hide)
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onDismiss() }
-        }, LayoutParams(-2, -1))
+        val visibleCommands = state.availableCommands(includePrevious = false, includeOpenProvider = true).toSet()
+        val symbols = mapOf(
+            MobileMusicCommandDto.PLAY to "▶", MobileMusicCommandDto.PAUSE to "Ⅱ",
+            MobileMusicCommandDto.NEXT to "›", MobileMusicCommandDto.OPEN_PROVIDER to "↗",
+        )
+        commandButtons.keys.toList().filterNot(visibleCommands::contains).forEach { commandButtons[it]?.visibility = View.GONE }
+        visibleCommands.forEach { command -> addCommand(symbols.getValue(command), command).visibility = View.VISIBLE }
     }
 
-    private fun addCommand(title: String, command: MobileMusicCommandDto) {
+    private fun addCommand(title: String, command: MobileMusicCommandDto): TextView {
+        commandButtons[command]?.let { return it }
         val label = when (command) {
             MobileMusicCommandDto.PLAY -> context.getString(R.string.music_play)
             MobileMusicCommandDto.PAUSE -> context.getString(R.string.music_pause)
@@ -138,5 +173,7 @@ class MusicCompactPlayer(
             contentDescription = label
         }
         controls.addView(button, LayoutParams(-2, -1))
+        commandButtons[command] = button
+        return button
     }
 }
