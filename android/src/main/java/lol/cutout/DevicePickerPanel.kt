@@ -147,7 +147,15 @@ class DevicePickerPanel(
             row.update(device)
         }
         reorderRowsIfNeeded(discovered.map { it.id })
-        updateRecovery(permissionNeeded, bluetoothOff, value.problem, hasScanned && discovered.isEmpty())
+        // An empty result is only actionable after the scan has finished. While
+        // scanning, the recovery action would call the host's scan toggle and
+        // stop the in-flight scan instead of retrying it.
+        updateRecovery(
+            permissionNeeded,
+            bluetoothOff,
+            value.problem,
+            hasScanned && !value.scanning && discovered.isEmpty(),
+        )
     }
 
     private fun reorderRowsIfNeeded(order: List<String>) {

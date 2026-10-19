@@ -40,6 +40,56 @@ open class DevicePickerPanelTest {
     }
 
     @Test
+    fun emptyRecoveryAppearsOnlyAfterScanCompletesAndErrorsRemainActionable() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var scans = 0
+        lateinit var panel: DevicePickerPanel
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            panel = DevicePickerPanel(context, { scans++ }, {}, {}, {})
+
+            // The host marks hasScanned when a scan starts. Do not show a
+            // retry action until that active scan has actually returned empty.
+            panel.render(
+                BlePresentation(scanning = true),
+                permitted = true,
+                enabled = true,
+                hasScanned = true,
+            )
+            val recovery = tagged<View>(panel, "picker_recovery")
+            check(recovery.visibility == View.GONE) {
+                "Empty recovery was shown while scanning; its action would stop the current scan"
+            }
+
+            panel.render(
+                BlePresentation(scanning = false),
+                permitted = true,
+                enabled = true,
+                hasScanned = true,
+            )
+            check(recovery.visibility == View.VISIBLE) {
+                "Completed empty scan did not expose the retry action"
+            }
+            check(tagged<Button>(panel, "picker_recovery_primary").performClick())
+            check(scans == 1) { "Completed-empty retry did not request another scan" }
+
+            // Scan failures retain their dedicated recovery path.
+            panel.render(
+                BlePresentation(scanning = false, problem = true),
+                permitted = true,
+                enabled = true,
+                hasScanned = true,
+            )
+            check(recovery.visibility == View.VISIBLE) {
+                "Scan error recovery disappeared after the empty-state change"
+            }
+            check(context.getString(lol.cutout.R.string.picker_try_again) ==
+                tagged<Button>(panel, "picker_recovery_primary").text.toString()) {
+                "Scan error no longer offers its normal retry action"
+            }
+        }
+    }
+
+    @Test
     fun noiseIsFilteredAndRowsSurviveSignalUpdates() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val nordic = candidate("nordic-device", "VESC", "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
