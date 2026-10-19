@@ -25,7 +25,7 @@ fun interface NativeTimer {
 }
 
 enum class NativeReceipt { QUEUED, SUBMITTED, REJECTED, CANCELLED }
-enum class NativeStart { PENDING, COMPLETE, REJECTED }
+enum class NativeStart { PENDING, COMPLETE, REJECTED, CANCELLED }
 
 /** Serial Android GATT operations, confined to the same owner as its connection. */
 class GattOperationQueue(
@@ -92,6 +92,10 @@ class GattOperationQueue(
             active = operation
             val result = try { operation.start() } catch (_: RuntimeException) { NativeStart.REJECTED }
             when (result) {
+                NativeStart.CANCELLED -> {
+                    active = null
+                    operation.receipt(NativeReceipt.CANCELLED)
+                }
                 NativeStart.REJECTED -> {
                     active = null
                     operation.receipt(NativeReceipt.REJECTED)

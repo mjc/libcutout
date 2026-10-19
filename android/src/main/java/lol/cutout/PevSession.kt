@@ -115,7 +115,11 @@ class PevSession(
             queue.enqueue(GattOperationQueue.Operation(key, {
                 val admitted = if (applicationQuery == null) writeIsCurrent(operationId)
                     else state.applicationQueryTransportIsCurrent(token, applicationQuery.queryId, now())
-                if (!admitted) NativeStart.REJECTED else submit(chunk)
+                when {
+                    admitted -> submit(chunk)
+                    applicationQuery != null -> NativeStart.CANCELLED
+                    else -> NativeStart.REJECTED
+                }
             }, {
                 if (applicationQuery == null) checkNotNull(receipt).observe(index, it)
                 else queryReceipt(applicationQuery, index, chunks.size, it)
