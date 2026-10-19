@@ -54,6 +54,7 @@ class LocalDiagnosticCapturePanelTest {
             assertTrue(stationary.performClick())
             assertEquals(1, requests)
             assertFalse(stationary.isEnabled)
+            assertEquals(lol.cutout.CutoutUi(activity).muted, stationary.currentTextColor)
             assertFalse(stationary.isSelected)
             stationary.performClick()
             assertEquals("An in-flight marker must not submit twice", 1, requests)
