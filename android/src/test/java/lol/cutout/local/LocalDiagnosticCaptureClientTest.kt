@@ -53,17 +53,19 @@ class LocalDiagnosticCaptureClientTest {
                 client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.RIDE), done)
             }.getOrThrow()
             check(ride == listOf(MobileCaptureLabelDto.RIDE))
-            val charging = await<List<MobileCaptureLabelDto>> { done ->
+            val capacity = await<List<MobileCaptureLabelDto>> { done ->
                 client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.CHARGING), done)
-            }.getOrThrow()
-            check(charging == listOf(MobileCaptureLabelDto.CHARGING)) { "Rust should close the exclusive ride marker" }
-            check(client.current().activeLabels == charging)
+            }
+            check(capacity.exceptionOrNull() is MobileCaptureAnnotationException.CapacityReached) {
+                "The required header and description leave no room for a second interval and its closing boundary"
+            }
+            check(client.current().activeLabels == ride) { "Capacity rejection must retain the admitted interval" }
             val stale = await<List<MobileCaptureLabelDto>> { done ->
                 client.changeLabel(MobileCaptureGenerationDto(generation.value + 1UL),
-                    MobileCaptureLabelActionDto.Stop(MobileCaptureLabelDto.CHARGING), done)
+                    MobileCaptureLabelActionDto.Stop(MobileCaptureLabelDto.RIDE), done)
             }
             check(stale.exceptionOrNull() is MobileCaptureAnnotationException.NotRecording)
-            check(client.current().activeLabels == charging) { "A stale UI action must not alter the recording" }
+            check(client.current().activeLabels == ride) { "A stale UI action must not alter the recording" }
 
             val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
             check(admitted) { "Rust refused a durable manual finish flush" }
@@ -91,11 +93,9 @@ class LocalDiagnosticCaptureClientTest {
             check(exported?.parentFile?.canonicalFile == File(context.cacheDir, "diagnostic-exports").canonicalFile)
             check(exported?.isFile == true && exported!!.length() > 0L)
             val text = exported!!.readText()
-            for (label in listOf(MobileCaptureLabelDto.RIDE, MobileCaptureLabelDto.CHARGING)) {
-                val slug = captureLabelSlug(label)
-                check(text.contains("capture_label=${slug}_start")) { "Start marker must survive durable export" }
-                check(text.contains("capture_label=${slug}_stop")) { "Finishing must close every active interval" }
-            }
+            val slug = captureLabelSlug(MobileCaptureLabelDto.RIDE)
+            check(text.contains("capture_label=${slug}_start")) { "Start marker must survive durable export" }
+            check(text.contains("capture_label=${slug}_stop")) { "Finishing must close every active interval" }
             check(client.current().activeLabels.isEmpty())
             val nextGeneration = checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, "$platformId-next", emptyList(), "Next device", null, token,
