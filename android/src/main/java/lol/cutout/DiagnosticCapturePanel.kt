@@ -164,6 +164,7 @@ class DiagnosticCapturePanel(
             }.apply {
                 tag = "captures.manual.start"
                 isEnabled = captureState.ready && lifecycle.canStart && bleState.phase == NativePhase.IDLE
+                alpha = if (isEnabled) 1f else .45f
             })
             if (!lifecycle.canStart) addView(ui.text(stageLabel(attempt?.stage), 14f, color = ui.muted))
         }
