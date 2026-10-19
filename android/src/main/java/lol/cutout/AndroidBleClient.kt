@@ -40,11 +40,34 @@ data class BlePresentation(
 
 /** Android effect boundary for the shared Rust-owned ride lifecycle. */
 internal object AndroidRideSessionEffects {
+    fun reduceAndSettlePlatformEffects(
+        state: CutoutSessionStateHandle,
+        input: MobileRideSessionInputDto,
+    ): MobileRideSessionSnapshotDto {
+        var decision = state.reduceRideSession(input)
+        repeat(3) {
+            val acknowledgement = when (val effect = decision.effect) {
+                is MobileRideSessionEffectDto.StartActivity ->
+                    MobileRideSessionInputDto.ActivityUnavailable(effect.identity)
+                is MobileRideSessionEffectDto.EndActivity ->
+                    MobileRideSessionInputDto.ActivityEnded(effect.identity)
+                else -> return decision.snapshot
+            }
+            decision = state.reduceRideSession(acknowledgement)
+        }
+        return decision.snapshot
+    }
+
     fun freshnessChecked(state: CutoutSessionStateHandle, nowMs: ULong): MobileRideSessionSnapshotDto =
         state.reduceRideSession(MobileRideSessionInputDto.FreshnessChecked(nowMs)).snapshot
 
+    fun acceptsFreshnessUpdates(snapshot: MobileRideSessionSnapshotDto): Boolean =
+        snapshot.phase == MobileRideSessionPhaseDto.Starting ||
+            snapshot.phase == MobileRideSessionPhaseDto.Active ||
+            snapshot.phase == MobileRideSessionPhaseDto.Reconnecting
+
     fun reconnectExhausted(state: CutoutSessionStateHandle): MobileRideSessionSnapshotDto =
-        state.reduceRideSession(MobileRideSessionInputDto.ReconnectExhausted).snapshot
+        reduceAndSettlePlatformEffects(state, MobileRideSessionInputDto.ReconnectExhausted)
 }
 
 /** Application-owned Android effects. Every Rust call and GATT operation uses one owner. */
@@ -419,7 +442,7 @@ class AndroidBleClient(
         cancelPendingRetryOnOwner()
         rideReconnectPlatformIdentifier = null
         rideStartedConnectionToken = null
-        state.reduceRideSession(MobileRideSessionInputDto.UserDisconnected)
+        AndroidRideSessionEffects.reduceAndSettlePlatformEffects(state, MobileRideSessionInputDto.UserDisconnected)
         val existing = connection
         if (existing != null) existing.finishTransport(failed = false)
         else {
@@ -672,7 +695,6 @@ class AndroidBleClient(
         val token = connection?.token
         if (token != null && connection.readiness == MobileConnectionReadinessDto.VERIFIED) {
             if (snapshot.identity?.platformIdentifier != token.platformIdentifier) {
-                state.reduceRideSession(MobileRideSessionInputDto.UserDisconnected)
                 startRideSessionOnOwner(token.platformIdentifier)
                 rideStartedConnectionToken = token
                 rideReconnectPlatformIdentifier = null
@@ -701,7 +723,7 @@ class AndroidBleClient(
                 rideReconnectPlatformIdentifier = null
                 current = state.rideSessionSnapshot()
             }
-            val observedAt = view.telemetry?.atMs?.value
+            val observedAt: ULong? = view.telemetry?.atMs?.milliseconds
             if (observedAt != null && current.lastTelemetryAtMs != observedAt) {
                 state.reduceRideSession(MobileRideSessionInputDto.TelemetryObserved(observedAt))
             }
@@ -710,19 +732,16 @@ class AndroidBleClient(
     }
 
     private fun startRideSessionOnOwner(platformIdentifier: String) {
-        val decision = state.reduceRideSession(MobileRideSessionInputDto.Start(platformIdentifier))
-        val startEffect = decision.effect as? MobileRideSessionEffectDto.StartActivity ?: return
-        // Android has no ActivityKit surface; retire that platform effect while retaining
-        // the shared Rust lifecycle phase and monotonic freshness contract.
-        state.reduceRideSession(MobileRideSessionInputDto.ActivityUnavailable(startEffect.identity))
+        AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+            state,
+            MobileRideSessionInputDto.Start(platformIdentifier),
+        )
     }
 
     /** One cancellable check at the deadline returned by Rust; Rust decides whether it is stale. */
     private fun scheduleRideFreshnessCheck(snapshot: MobileRideSessionSnapshotDto) {
         val lastTelemetryAt = snapshot.lastTelemetryAtMs
-        if (lastTelemetryAt == null || snapshot.phase == MobileRideSessionPhaseDto.Stale ||
-            snapshot.phase is MobileRideSessionPhaseDto.Ended
-        ) {
+        if (lastTelemetryAt == null || !AndroidRideSessionEffects.acceptsFreshnessUpdates(snapshot)) {
             rideFreshnessTimer?.invoke()
             rideFreshnessTimer = null
             rideFreshnessScheduledAt = null
