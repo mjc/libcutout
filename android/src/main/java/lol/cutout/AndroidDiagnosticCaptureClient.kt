@@ -27,6 +27,7 @@ data class DiagnosticCapturePresentation(
     val sessionArtifacts: List<DiagnosticCaptureArtifact> = emptyList(),
     val nextCursor: MobileLiveCaptureHistoryCursorDto? = null,
     val loading: Boolean = false,
+    val activeLabels: List<MobileCaptureLabelDto> = emptyList(),
 )
 
 data class DiagnosticCaptureArtifact(
@@ -129,6 +130,25 @@ class AndroidDiagnosticCaptureClient internal constructor(
         }
     }
 
+    /** Execute against the writer captured by this UI action; Rust admits the complete transition. */
+    fun changeLabel(
+        generation: MobileCaptureGenerationDto,
+        action: MobileCaptureLabelActionDto,
+        completed: (Result<List<MobileCaptureLabelDto>>) -> Unit,
+    ) {
+        val expectedGeneration = generation.value
+        if (!postOwner {
+            val result = runCatching {
+                val active = writer?.takeIf { it.generation.value == expectedGeneration && !it.finalizationStarted }
+                    ?: throw MobileCaptureAnnotationException.NotRecording()
+                active.builder.changeLabel(action).also { admitted ->
+                    publish(presentation.copy(activeLabels = admitted, writerStatus = active.builder.writerStatus()))
+                }
+            }
+            main.post { completed(result) }
+        }) main.post { completed(Result.failure(MobileCaptureAnnotationException.NotRecording())) }
+    }
+
     fun export(liveCaptureId: String, completed: (Result<File>) -> Unit) {
         try {
             enqueueIo {
@@ -222,6 +242,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 fileName = File(started.path).name,
                 deviceName = advertisedName,
                 note = description,
+                activeLabels = emptyList(),
                 error = null,
             ))
             return generation
@@ -438,10 +459,11 @@ class AndroidDiagnosticCaptureClient internal constructor(
         deviceName: String? = presentation.deviceName,
         note: String? = presentation.note,
         sessionArtifacts: List<DiagnosticCaptureArtifact> = presentation.sessionArtifacts,
+        activeLabels: List<MobileCaptureLabelDto> = if (writer == null) emptyList() else presentation.activeLabels,
     ) = publish(presentation.copy(
         lifecycle = lifecycle, error = error, writerStatus = writerStatus, notificationCount = notificationCount,
         fileName = fileName, deviceName = deviceName, note = note,
-        sessionArtifacts = sessionArtifacts,
+        sessionArtifacts = sessionArtifacts, activeLabels = activeLabels,
     ))
 
     private fun publish(next: DiagnosticCapturePresentation) {
