@@ -2,8 +2,9 @@
 
 use std::{
     fs::File,
+    future::Future,
     io::{self, BufWriter, Write},
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     num::NonZeroU32,
     path::Path,
     time::Duration,
@@ -508,22 +509,51 @@ impl RtspPreviewSession {
         uri: &str,
         expected_address: Ipv4Addr,
     ) -> Result<Self, RtspError> {
-        Self::connect_inner(uri, expected_address).await
+        Self::connect_for_origin_with_connector(uri, expected_address, |address| async move {
+            tokio::net::TcpStream::connect(address)
+                .await
+                .map_err(|error| RtspError::Session(error.to_string()))
+        })
+        .await
     }
 
-    async fn connect_inner(uri: &str, expected_address: Ipv4Addr) -> Result<Self, RtspError> {
+    /// Connects through a native-selected network while retaining origin validation.
+    ///
+    /// The connector runs only after URI validation and must return a stream to
+    /// that exact address and port. The entire connection and handshake share the
+    /// existing timeout. Native callers can bind an unconnected socket without
+    /// changing process-wide networking.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation and negotiation errors as [`Self::connect_for_origin`],
+    /// including a connector that returns a stream to a different peer.
+    pub async fn connect_for_origin_with_connector<F, C>(
+        uri: &str,
+        expected_address: Ipv4Addr,
+        connect: F,
+    ) -> Result<Self, RtspError>
+    where
+        F: FnOnce(SocketAddrV4) -> C,
+        C: Future<Output = Result<tokio::net::TcpStream, RtspError>>,
+    {
         tokio::time::timeout(
             RTSP_HANDSHAKE_TIMEOUT,
-            Self::connect_inner_unbounded(uri, expected_address),
+            Self::connect_inner_unbounded(uri, expected_address, connect),
         )
         .await
         .map_err(|_| RtspError::Session("RTSP handshake timed out".to_owned()))?
     }
 
-    async fn connect_inner_unbounded(
+    async fn connect_inner_unbounded<F, C>(
         uri: &str,
         expected_address: Ipv4Addr,
-    ) -> Result<Self, RtspError> {
+        connect: F,
+    ) -> Result<Self, RtspError>
+    where
+        F: FnOnce(SocketAddrV4) -> C,
+        C: Future<Output = Result<tokio::net::TcpStream, RtspError>>,
+    {
         let url = Url::parse(uri).map_err(|_| RtspError::InvalidUri)?;
         if url.scheme() != "rtsp"
             || url.host_str().is_none()
@@ -539,12 +569,24 @@ impl RtspPreviewSession {
         if expected_address != host {
             return Err(RtspError::OriginMismatch);
         }
-        NovatekHttpOrigin::new(host, url.port().unwrap_or(554))
-            .map_err(|_| RtspError::NonLocalUri)?;
+        let address = SocketAddrV4::new(host, url.port().unwrap_or(554));
+        NovatekHttpOrigin::new(host, address.port()).map_err(|_| RtspError::NonLocalUri)?;
 
-        let mut described = client::Session::describe(url, client::SessionOptions::default())
-            .await
-            .map_err(|error| RtspError::Session(error.to_string()))?;
+        let stream = connect(address).await?;
+        if stream
+            .peer_addr()
+            .map_err(|error| RtspError::Session(error.to_string()))?
+            != SocketAddr::V4(address)
+        {
+            return Err(RtspError::OriginMismatch);
+        }
+        let mut described = client::Session::describe_with_tcp_stream(
+            url,
+            client::SessionOptions::default().teardown(client::TeardownPolicy::ExistingConnection),
+            stream,
+        )
+        .await
+        .map_err(|error| RtspError::Session(error.to_string()))?;
         let video_stream_id = described
             .streams()
             .iter()
@@ -690,6 +732,138 @@ mod tests {
 
         assert!(matches!(result, Err(RtspError::Session(_))));
         server.join().expect("fake RTSP server completes");
+    }
+
+    #[tokio::test]
+    async fn rtsp_cleanup_never_reconnects_after_a_failed_teardown() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (connection, _) = listener.accept().await.unwrap();
+            let mut connection = BufReader::new(connection);
+            for method in ["DESCRIBE", "SETUP", "PLAY", "TEARDOWN"] {
+                let mut request = String::new();
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(connection.read_line(&mut line).await.unwrap(), 0);
+                    request.push_str(&line);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                assert!(request.starts_with(method), "{request}");
+                let cseq = request
+                    .lines()
+                    .find_map(|line| line.strip_prefix("CSeq: "))
+                    .unwrap();
+                let response = match method {
+                    "DESCRIBE" => {
+                        // This old live555 version triggers Retina Auto's fresh-connection
+                        // cleanup retries; the bound-socket policy must suppress them.
+                        let sdp = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Camera\r\nt=0 0\r\na=tool:LIVE555 Streaming Media v2013.04.08\r\na=control:*\r\nm=video 0 RTP/AVP 96\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;profile-level-id=640033;sprop-parameter-sets=Z2QAM6zoAoALWQ==,aO48MA==\r\na=control:trackID=1\r\n";
+                        format!(
+                            "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+                            sdp.len()
+                        )
+                    }
+                    "SETUP" => format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: camera\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+                    ),
+                    "PLAY" => format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: camera\r\nRange: npt=0.000-\r\nRTP-Info: url=trackID=1;seq=1;rtptime=1\r\n\r\n"
+                    ),
+                    _ => format!("RTSP/1.0 503 Unavailable\r\nCSeq: {cseq}\r\n\r\n"),
+                };
+                connection
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+            drop(connection);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), listener.accept())
+                    .await
+                    .is_err(),
+                "cleanup opened an unbound connection"
+            );
+        });
+        let session = RtspPreviewSession::connect_for_origin(
+            &format!("rtsp://{address}/live"),
+            Ipv4Addr::LOCALHOST,
+        )
+        .await
+        .unwrap();
+        drop(session);
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rtsp_connector_runs_only_after_origin_validation() {
+        let calls = std::cell::Cell::new(0);
+        for uri in [
+            "http://192.168.1.254/live",
+            "rtsp://example.com/live",
+            "rtsp://192.168.1.253/live",
+            "rtsp://name:password@192.168.1.254/live",
+        ] {
+            let result = RtspPreviewSession::connect_for_origin_with_connector(
+                uri,
+                Ipv4Addr::new(192, 168, 1, 254),
+                |_| {
+                    calls.set(calls.get() + 1);
+                    std::future::ready(Err(RtspError::Session("unexpected connection".to_owned())))
+                },
+            )
+            .await;
+            assert!(result.is_err());
+        }
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn rtsp_connector_cannot_redirect_to_a_different_peer() {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut peer, _) = listener.accept().await.unwrap();
+        let expected_port = if address.port() == 554 { 555 } else { 554 };
+        let result = RtspPreviewSession::connect_for_origin_with_connector(
+            &format!("rtsp://127.0.0.1:{expected_port}/live"),
+            Ipv4Addr::LOCALHOST,
+            |_| std::future::ready(Ok(stream)),
+        )
+        .await;
+        assert!(matches!(result, Err(RtspError::OriginMismatch)));
+        let mut bytes = [0u8; 1];
+        assert_eq!(
+            tokio::io::AsyncReadExt::read(&mut peer, &mut bytes)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rtsp_connector_uses_the_same_handshake_deadline() {
+        let result = RtspPreviewSession::connect_for_origin_with_connector(
+            "rtsp://127.0.0.1/live",
+            Ipv4Addr::LOCALHOST,
+            |_| std::future::pending::<Result<tokio::net::TcpStream, RtspError>>(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(RtspError::Session(message)) if message == "RTSP handshake timed out")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
