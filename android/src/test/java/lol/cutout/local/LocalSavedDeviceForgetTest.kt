@@ -108,7 +108,7 @@ class LocalSavedDeviceForgetTest {
                     "callbacks=${shadowScanner.getScanCallbacks().size}, " +
                     "CutoutBleLogs=${ShadowLog.getLogsForTag("CutoutBle").joinToString()}"
 
-            check(awaitWithMainLooper(scanStarted, 10, TimeUnit.SECONDS)) {
+            check(awaitBlePublication(scanStarted)) {
                 "The production Bluetooth scan did not start: ${scanDiagnostics()}"
             }
             val callback = shadowScanner.getScanCallbacks().singleOrNull()
@@ -118,7 +118,7 @@ class LocalSavedDeviceForgetTest {
             // Deliver through the registered Android callback so the real callback-to-Rust
             // observation path runs; do not rely on Robolectric's cached-result replay.
             callback!!.onScanResult(android.bluetooth.le.ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result)
-            check(awaitWithMainLooper(candidateReady, 10, TimeUnit.SECONDS)) {
+            check(awaitBlePublication(candidateReady)) {
                 "The production Bluetooth scan callback did not publish the Rust candidate: ${scanDiagnostics()}"
             }
 
@@ -166,6 +166,18 @@ class LocalSavedDeviceForgetTest {
             shadowOf(adapter).setEnabled(wasEnabled)
             shadowOf(app).denyPermissions(*missingPermissions.toTypedArray())
         }
+    }
+
+    /** BLE publication is debounced on a Handler; advance Robolectric's clock as well as draining main. */
+    private fun awaitBlePublication(latch: CountDownLatch): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        val main = shadowOf(android.os.Looper.getMainLooper())
+        while (latch.count > 0 && System.nanoTime() < deadline) {
+            main.idleFor(java.time.Duration.ofMillis(100))
+            latch.await(10, TimeUnit.MILLISECONDS)
+        }
+        main.idle()
+        return latch.count == 0L
     }
 
     private fun <T> await(start: ((Result<T>) -> Unit) -> Unit): T {
