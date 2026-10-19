@@ -19,12 +19,15 @@ import uniffi.cutout_mobile_ffi.*
 import java.util.Locale
 
 /** Standalone MELK RGB route. Connection identity, profile validation and command framing stay Rust-owned. */
-class LightingPanel(
+class LightingPanel internal constructor(
     context: Context,
     private val client: AndroidMelkLightingClient,
     private val onRequestBluetooth: () -> Unit,
-    private val submitPreset: (String) -> Unit = client::savePreset,
+    private val submitPreset: (String) -> Unit,
 ) : ScrollView(context) {
+    constructor(context: Context, client: AndroidMelkLightingClient, onRequestBluetooth: () -> Unit) :
+        this(context, client, onRequestBluetooth, client::savePreset)
+
     private val ui = CutoutUi(context)
     private val root = ui.column().apply { setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(30)) }
     private val connectionCard = ui.column().apply { setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14)); background = ui.rounded(20) }

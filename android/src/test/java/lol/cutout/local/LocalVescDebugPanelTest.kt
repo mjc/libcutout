@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.View
 import android.widget.TextView
 import lol.cutout.VescDebugPanel
+import lol.cutout.R
 import lol.cutout.DiagnosticCapturePresentation
 import lol.cutout.CutoutUi
 import lol.cutout.ffitest.productionReplayPresentation
