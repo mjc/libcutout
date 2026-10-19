@@ -29,7 +29,7 @@ class ChargingMapPanel(
     private enum class Mode { MAP, LIST, DETAILS, EDITOR, REVIEW }
     private val ui = CutoutUi(context)
     private val locationClient = AndroidMapLocationClient(context, onFix = { fix ->
-        mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
+        if (active) mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
     }, onUnavailable = {
         syncMessage = context.getString(R.string.charging_location_unavailable)
         render()
@@ -45,6 +45,8 @@ class ChargingMapPanel(
     }
     private var mode = Mode.MAP
     private var directoryMode = Mode.MAP
+    private var active = false
+    private var lastViewport: MobileGeoBoundsDto? = null
     private var editorReturnMode = Mode.MAP
     private var editor: ChargingSpotEditorPanel? = null
     private var modalDialog: Dialog? = null
@@ -91,8 +93,13 @@ class ChargingMapPanel(
         content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         content.addView(communityActions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         controller.onChanged = ::render
-        mapView.onViewportChanged = { bounds -> controller.load(bounds) }
-        mapView.onChargingSpotSelected = { id -> mode = Mode.DETAILS; controller.select(id); render() }
+        mapView.onViewportChanged = { bounds ->
+            lastViewport = bounds
+            if (active && directoryMode == Mode.MAP) controller.load(bounds)
+        }
+        mapView.onChargingSpotSelected = { id ->
+            if (active && directoryMode == Mode.MAP) controller.select(id)
+        }
         controller.loadBlockedOperations()
         render()
     }
@@ -104,6 +111,7 @@ class ChargingMapPanel(
     fun dispose() {
         modalDialog?.dismiss()
         modalDialog = null
+        mapView.showChargingPopup(null)
         locationClient.close()
         controller.onChanged = null
         mapView.onViewportChanged = null
@@ -111,23 +119,39 @@ class ChargingMapPanel(
     }
 
     fun activate() {
+        active = true
         render()
         locationClient.refresh()
+        if (directoryMode == Mode.MAP) {
+            (lastViewport ?: controller.currentBounds())?.let { bounds ->
+                lastViewport = bounds
+                controller.load(bounds)
+            }
+        }
         if (!syncRequestedOnActivation) {
             syncRequestedOnActivation = true
             synchronize(explicitRetry = false)
         }
     }
 
-    fun deactivate() { locationClient.cancel(); syncRequestedOnActivation = false }
+    fun deactivate() {
+        active = false
+        locationClient.cancel()
+        syncRequestedOnActivation = false
+        mapView.showChargingPopup(null)
+        mapView.showChargingSpots(emptyList(), null)
+    }
 
-    fun refreshLocation() { locationClient.refresh() }
+    fun refreshLocation() { if (active) locationClient.refresh() }
 
     fun handleBack(): Boolean = when (mode) {
         Mode.DETAILS -> { closeSheet(Mode.DETAILS); true }
         Mode.EDITOR -> { closeSheet(Mode.EDITOR); true }
         Mode.REVIEW -> { closeSheet(Mode.REVIEW); true }
-        else -> false
+        else -> if (directoryMode == Mode.MAP && controller.state.selected != null) {
+            controller.select(null)
+            true
+        } else false
     }
 
     private fun setMode(value: Mode) {
@@ -135,6 +159,12 @@ class ChargingMapPanel(
         mode = value
         directoryMode = value
         render()
+        if (active && value == Mode.MAP) {
+            (lastViewport ?: controller.currentBounds())?.let { bounds ->
+                lastViewport = bounds
+                controller.load(bounds)
+            }
+        }
     }
 
     private fun render() {
@@ -142,7 +172,14 @@ class ChargingMapPanel(
         styleModeButton(mapModeButton, directoryMode == Mode.MAP)
         styleModeButton(listModeButton, directoryMode == Mode.LIST)
         page.removeAllViews()
-        mapView.showChargingSpots(controller.state.spots, controller.state.selected?.id)
+        val showMapContent = active && directoryMode == Mode.MAP
+        mapView.showChargingSpots(
+            if (showMapContent) controller.state.spots else emptyList(),
+            if (showMapContent) controller.state.selected?.id else null,
+        )
+        mapView.showChargingPopup(
+            controller.state.selected?.takeIf { showMapContent && mode == Mode.MAP }?.let(::chargingPopup),
+        )
         status.text = listOfNotNull(
             controller.state.error,
             syncMessage,
@@ -539,28 +576,40 @@ class ChargingMapPanel(
 
     private fun detailContent(spot: MobileChargingSpotDto): ScrollView {
         val scroll = ScrollView(context)
-        val body = ui.column().apply { setPadding(0, ui.dp(8), 0, ui.dp(16)) }
+        val body = ui.column().apply { setPadding(ui.dp(24), ui.dp(8), ui.dp(24), ui.dp(16)) }
         scroll.addView(body, FrameLayout.LayoutParams(-1, -2))
         val input = spot.input
         input?.let { value ->
             body.addView(ui.text(value.accessNote, 20f, false), spaced(16))
             value.supplies.forEach { supply ->
-                val card = ui.column().apply {
-                    background = ui.rounded(14, if (ui.dark) Color.rgb(36, 34, 25) else Color.rgb(255, 249, 225), false)
-                    setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
-                    minimumHeight = ui.dp(56)
+                val supplyRow = ui.row()
+                firstKnownConnector(supply)?.let { connector ->
+                    val icon = android.widget.ImageView(context).apply {
+                        setImageResource(ChargingConnectorArtwork.drawable(connector))
+                        imageTintList = ColorStateList.valueOf(ui.brand)
+                        background = ui.rounded(14, Color.argb(26, 255, 204, 0), false)
+                        setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+                        contentDescription = null
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }
+                    supplyRow.addView(icon, LinearLayout.LayoutParams(ui.dp(56), ui.dp(56)).apply {
+                        marginEnd = ui.dp(14)
+                    })
                 }
-                card.addView(ui.text(supplyText(supply), 16f, true))
-                body.addView(card, spaced(16))
+                supplyRow.addView(ui.text(supplyText(supply), 16f, true).apply {
+                    typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                    contentDescription = supplyText(supply)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                body.addView(supplyRow, spaced(16))
             }
             value.venue?.takeIf { it != MobileChargingVenueDto.OTHER }?.let {
-                body.addView(ui.text("⌖  " + context.getString(venueString(it)), 15f, false, ui.muted), spaced(12))
+                addDetailLine(body, context.getString(venueString(it)), 12)
             }
             value.hours?.takeIf(String::isNotBlank)?.let {
-                body.addView(ui.text("◷  $it", 15f, false, ui.muted), spaced(12))
+                addDetailLine(body, it, 12)
             }
-            value.terms?.let { body.addView(ui.text(context.getString(R.string.charging_terms) + ": " + context.getString(termsString(it)), 15f, false, ui.muted), spaced(12)) }
-            value.price?.let { body.addView(ui.text(context.getString(R.string.charging_price) + ": " + priceSummary(it), 15f, false, ui.muted), spaced(12)) }
+            value.terms?.let { addLabeledDetail(body, R.string.charging_terms, context.getString(termsString(it))) }
+            value.price?.let { addLabeledDetail(body, R.string.charging_price, priceSummary(it)) }
         }
         controller.state.error?.let { body.addView(ui.text(it, 14f, false, ui.red), spaced(10)) }
         if (spot.pendingVote || controller.state.busySpotId == spot.id) {
@@ -577,18 +626,87 @@ class ChargingMapPanel(
         if (spot.remoteId != null && spot.status == MobileChargingStatusDto.PUBLISHED) {
             body.addView(ui.action(context.getString(R.string.charging_report)) { promptReport(spot) }, spaced(12))
         }
-        val votes = ui.row()
-        votes.addView(ui.action("${context.getString(R.string.charging_up_vote)} · ${spot.votesUp}") {
-            controller.vote(spot, MobileChargingVoteDto.UP) { }
-        }, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-        votes.addView(ui.action("${context.getString(R.string.charging_down_vote)} · ${spot.votesDown}") {
-            controller.vote(spot, MobileChargingVoteDto.DOWN) { }
-        }, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        body.addView(votes, spaced(12))
         return scroll
     }
 
+    private fun chargingPopup(spot: MobileChargingSpotDto): View {
+        val popup = ui.column().apply {
+            tag = "charging_selected_popup"
+            background = ui.rounded(16, ui.card, outlined = false)
+            elevation = ui.dp(5).toFloat()
+            setPadding(ui.dp(8), ui.dp(4), ui.dp(8), ui.dp(8))
+        }
+        val heading = ui.row()
+        val note = ui.text(spot.input?.accessNote?.takeIf(String::isNotBlank).orEmpty(), 13f, color = ui.muted).apply {
+            tag = "charging_selected_access_note"
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        heading.addView(note, LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(ui.action("×") { controller.select(null) }.apply {
+            tag = "charging_selected_close"
+            contentDescription = context.getString(R.string.charging_close)
+            minWidth = ui.dp(44)
+            minimumHeight = ui.dp(44)
+        }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+        popup.addView(heading)
+
+        val votes = ui.row()
+        votes.addView(voteButton(spot, MobileChargingVoteDto.UP),
+            LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+        votes.addView(voteButton(spot, MobileChargingVoteDto.DOWN),
+            LinearLayout.LayoutParams(0, ui.dp(44), 1f).apply { leftMargin = ui.dp(8) })
+        popup.addView(votes, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        if (spot.pendingVote || controller.state.busySpotId == spot.id) {
+            popup.addView(ui.text(context.getString(R.string.charging_vote_queued), 12f, false, ui.muted).apply {
+                tag = "charging_pending_vote"
+            }, LinearLayout.LayoutParams(-1, ui.dp(36)))
+        }
+        popup.addView(ui.action(context.getString(R.string.charging_details)) {
+            mode = Mode.DETAILS
+            render()
+        }.apply {
+            tag = "charging_details_open"
+            contentDescription = context.getString(R.string.charging_details)
+        }, LinearLayout.LayoutParams(-1, ui.dp(44)).apply { topMargin = ui.dp(4) })
+        return popup
+    }
+
+    private fun voteButton(spot: MobileChargingSpotDto, vote: MobileChargingVoteDto): View {
+        val selected = spot.vote == vote
+        val up = vote == MobileChargingVoteDto.UP
+        val label = context.getString(if (up) R.string.charging_up_vote else R.string.charging_down_vote)
+        val symbol = if (up) "↑" else "↓"
+        val count = if (up) spot.votesUp else spot.votesDown
+        return ui.action(if (spot.remoteId == null) symbol else "$symbol  $count") {
+            controller.vote(spot, vote) { }
+        }.apply {
+            tag = if (up) "charging_vote_up" else "charging_vote_down"
+            contentDescription = if (spot.remoteId == null) label else "$label, $count"
+            isEnabled = controller.state.busySpotId != spot.id
+            background = ui.rounded(22, ui.card, outlined = true).apply {
+                setStroke(ui.dp(if (selected) 2 else 1), if (selected) {
+                    if (up) ui.green else ui.red
+                } else ui.stroke)
+            }
+        }
+    }
+
+    private fun addDetailLine(parent: LinearLayout, value: String, top: Int) {
+        parent.addView(ui.text(value, 14f, false, ui.muted), spaced(top))
+    }
+
+    private fun addLabeledDetail(parent: LinearLayout, label: Int, value: String) {
+        val column = ui.column()
+        column.addView(ui.text(context.getString(label), 12f, false, ui.muted))
+        column.addView(ui.text(value, 14f, false), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+        parent.addView(column, spaced(12))
+    }
+
     private fun spaced(top: Int = 8) = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(top) }
+
+    private fun firstKnownConnector(supply: MobileChargingSupplyDto): MobileChargingConnectorDto? =
+        supply.connectors.firstOrNull { it != MobileChargingConnectorDto.Unknown }
 
     private fun addSpot() {
         val fix = locationClient.freshFix()
@@ -751,7 +869,7 @@ class ChargingMapPanel(
                 syncMessage = if (outcome is MobileChargingSyncOutcome.Finished && outcome.result == MobileChargingSyncResult.SYNCED)
                     context.getString(R.string.charging_sync_complete)
                 else context.getString(R.string.charging_sync_pending, summary.pendingCount.toInt())
-                controller.refreshCurrentViewport()
+                if (active) controller.refreshCurrentViewport()
             },
             onFailure = { syncMessage = it.message },
         )
@@ -766,7 +884,7 @@ class ChargingMapPanel(
                     value.result == MobileChargingSyncResult.SYNCED -> context.getString(R.string.charging_sync_complete)
                     else -> context.getString(R.string.charging_sync_pending, value.pendingCount.toInt())
                 }
-                controller.refreshCurrentViewport()
+                if (active) controller.refreshCurrentViewport()
             },
             onFailure = { syncMessage = it.message },
         )
@@ -823,7 +941,7 @@ class ChargingMapPanel(
         AlertDialog.Builder(context).setItems(labels.map(context::getString).toTypedArray()) { _, index -> picked(index) }.show()
     }
 
-    private fun currentBounds(): MobileGeoBoundsDto? = controller.currentBounds()
+    private fun currentBounds(): MobileGeoBoundsDto? = controller.currentBounds() ?: lastViewport
 
     private fun confirmDeleteAccount() {
         AlertDialog.Builder(context).setMessage(R.string.charging_account_delete_confirm)
@@ -846,11 +964,16 @@ class ChargingMapPanel(
         return listOf(cost, power).filter(String::isNotBlank).joinToString(" · ")
     }
 
-    private fun supplyText(value: MobileChargingSupplyDto) = listOfNotNull(
-        value.voltageVolts?.let { "$it V" },
-        value.connectors.joinToString(", ").takeIf(String::isNotBlank),
-        value.outletCount?.let { "$it outlets" },
-    ).joinToString(" · ")
+    private fun supplyText(value: MobileChargingSupplyDto): String {
+        val voltage = value.voltageVolts?.let { "$it V" } ?: ui.label("charging.spot.power.unknown")
+        val connectors = value.connectors.joinToString(", ") { ChargingConnectorArtwork.label(ui, it) }
+        val power = if (connectors.isBlank()) voltage else "$voltage · $connectors"
+        val outlets = value.outletCount?.let {
+            if (it == 1.toUShort()) context.getString(R.string.charging_outlet_one)
+            else context.getString(R.string.charging_outlet_many, it.toInt())
+        }
+        return listOfNotNull(outlets, power).joinToString(" · ")
+    }
 
     private fun priceSummary(price: MobileChargingPriceDto): String =
         "${java.math.BigDecimal(price.amountMinor.toString()).movePointLeft(price.minorUnitExponent.toInt()).toPlainString()} ${price.currency}"
@@ -869,5 +992,5 @@ class ChargingMapPanel(
         MobileChargingTermsDto.BOTH -> R.string.charging_terms_both
     }
 
-    private fun connectorText(value: MobileChargingConnectorDto): String = value.toString().substringAfterLast('.').replace('_', ' ')
+    private fun connectorText(value: MobileChargingConnectorDto): String = ChargingConnectorArtwork.label(ui, value)
 }

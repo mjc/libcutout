@@ -18,7 +18,10 @@ data class RideHistoryState(
     val vehicles: List<MobileRideHistoryVehicleOptionDto> = emptyList(),
     val nextCursor: MobileRideCursorDto? = null,
     val selected: MobileRideRecordDto? = null,
+    val listPreviewRide: MobileRideRecordDto? = null,
+    val listPreviewRoute: MobileRideMapRouteProjectionDto? = null,
     val route: MobileRideMapRouteProjectionDto? = null,
+    val routeRideId: MobileRideIdDto? = null,
     val musicHistory: MobileMusicHistoryDto? = null,
     val musicHistoryState: MobileMusicHistoryStateDto? = null,
     val musicError: String? = null,
@@ -35,6 +38,9 @@ internal fun <T> restoreRideSelection(
     rows.firstOrNull { identity(it).contentEquals(selected) }
 }
 
+internal fun historyRouteMatchesRide(projectedIdentity: ByteArray?, selectedIdentity: ByteArray): Boolean =
+    projectedIdentity?.contentEquals(selectedIdentity) == true
+
 /** Rust-backed bounded ride-history queries. Stale asynchronous page and detail results are ignored. */
 class RideHistoryController(private val runtime: RideMapRuntime, private val now: () -> Long = System::currentTimeMillis) {
     var state = RideHistoryState()
@@ -47,6 +53,8 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         private set
     var last30Days = true
         private set
+    val hasActiveFilters: Boolean
+        get() = searchText.isNotBlank() || !last30Days || vehicleIdentity != null || includeShortRides
     private var queryGeneration = 0L
     private var detailGeneration = 0L
 
@@ -56,9 +64,16 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         val generation = ++queryGeneration
         detailGeneration++
         val selected = state.selected.takeIf { preserveSelection }
+        val preview = state.listPreviewRide.takeIf { preserveSelection }
+        val retainedRide = selected ?: preview
         val retainedCount = if (preserveSelection) state.rides.size else 0
         state = state.copy(loading = true, loadingMore = false, error = null, selected = selected,
-            route = null, musicHistory = null, musicHistoryState = null, musicError = null)
+            listPreviewRide = preview, listPreviewRoute = if (preserveSelection) state.listPreviewRoute else null,
+            route = if (preserveSelection) state.route else null,
+            routeRideId = if (preserveSelection) state.routeRideId else null,
+            musicHistory = if (preserveSelection) state.musicHistory else null,
+            musicHistoryState = if (preserveSelection) state.musicHistoryState else null,
+            musicError = if (preserveSelection) state.musicError else null)
         notifyChanged()
         val currentFilter = filter()
         runtime.withDatabase({ db ->
@@ -69,7 +84,7 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
             rides.addAll(page.rides)
             while (page.nextCursor != null && (
                 rides.size < retainedCount ||
-                    (selected != null && rides.none { it.id.bytes.contentEquals(selected.id.bytes) } &&
+                    (retainedRide != null && rides.none { it.id.bytes.contentEquals(retainedRide.id.bytes) } &&
                         rides.size < retainedCount + pageLimit.toInt())
             )) {
                 cursor = page.nextCursor
@@ -84,9 +99,15 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
                 onSuccess = { (rides, nextCursor, vehicles) ->
                     state = state.copy(rides = rides, nextCursor = nextCursor, vehicles = vehicles,
                         loading = false, error = null)
-                    val retained = restoreRideSelection(selected?.id?.bytes, rides) { it.id.bytes }
-                    if (retained != null) select(retained)
-                    else if (selected != null) state = state.copy(selected = null)
+                    val retained = restoreRideSelection(retainedRide?.id?.bytes, rides) { it.id.bytes }
+                    when {
+                        selected != null && retained != null -> select(retained)
+                        selected != null -> state = state.copy(selected = null)
+                        preview != null -> state = state.copy(
+                            listPreviewRide = retained,
+                            listPreviewRoute = state.listPreviewRoute.takeIf { retained != null },
+                        )
+                    }
                 },
                 onFailure = { error -> state = state.copy(loading = false, error = error.message ?: "") },
             )
@@ -120,7 +141,11 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
 
     fun select(ride: MobileRideRecordDto) {
         val generation = ++detailGeneration
-        state = state.copy(selected = ride, route = null, error = null, loading = true)
+        val retainMatchingRoute = historyRouteMatchesRide(state.routeRideId?.bytes, ride.id.bytes)
+        state = state.copy(selected = ride, listPreviewRide = null, listPreviewRoute = null,
+            route = state.route.takeIf { retainMatchingRoute },
+            routeRideId = state.routeRideId.takeIf { retainMatchingRoute },
+            error = null, loading = true)
         notifyChanged()
         runtime.withDatabase({ db ->
             val budget = mobileRideMapLimits().historyPreviewPointLimit
@@ -134,7 +159,7 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
             if (generation != detailGeneration) return@withDatabase
             result.fold(
                 onSuccess = { (route, music, musicState) ->
-                    state = state.copy(route = route, loading = false,
+                    state = state.copy(route = route, routeRideId = ride.id, loading = false,
                         musicHistory = music.getOrNull(),
                         musicHistoryState = musicState.getOrNull(),
                         musicError = music.exceptionOrNull()?.message ?: musicState.exceptionOrNull()?.message)
@@ -171,7 +196,10 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
 
     fun closeDetail() {
         detailGeneration++
-        state = state.copy(selected = null, route = null, loading = false, error = null)
+        state = state.copy(selected = null, listPreviewRide = state.selected,
+            listPreviewRoute = state.route.takeIf {
+                state.selected?.let { historyRouteMatchesRide(state.routeRideId?.bytes, it.id.bytes) } == true
+            }, route = null, routeRideId = null, loading = false, error = null)
         notifyChanged()
     }
 
@@ -204,6 +232,15 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
     fun setLast30Days(value: Boolean) {
         if (last30Days == value) return
         last30Days = value
+        refresh()
+    }
+
+    fun clearFilters() {
+        if (!hasActiveFilters) return
+        searchText = ""
+        vehicleIdentity = null
+        includeShortRides = false
+        last30Days = true
         refresh()
     }
 

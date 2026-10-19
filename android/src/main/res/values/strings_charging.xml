@@ -45,6 +45,8 @@
     <string name="charging_done">Done</string>
     <string name="charging_voltage_v">Voltage (V)</string>
     <string name="charging_outlet_count">Outlet count (optional)</string>
+    <string name="charging_outlet_one">1 outlet</string>
+    <string name="charging_outlet_many">%1$d outlets</string>
     <string name="charging_save">Save</string>
     <string name="charging_cancel">Cancel</string>
     <string name="charging_validation">Review the charging details and correct the highlighted fields.</string>

@@ -6,13 +6,13 @@ import android.icu.util.Measure
 import android.icu.util.MeasureUnit
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.text.Editable
 import android.text.TextWatcher
@@ -31,6 +31,7 @@ import uniffi.cutout_mobile_ffi.MobileMusicHistoryStateDto
 import uniffi.cutout_mobile_ffi.MobileMusicRideEventKindDto
 import uniffi.cutout_mobile_ffi.MobileMusicProviderDto
 import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
+import uniffi.cutout_mobile_ffi.spotifyContentUrl
 
 /** Rust-backed ride history list and selected ride detail. */
 class RideHistoryPanel(
@@ -44,6 +45,14 @@ class RideHistoryPanel(
     private val filters = ui.row()
     private val dateFilter = ui.action(context.getString(R.string.ride_map_last_30_days)) { showDateMenu() }
     private val vehicleFilter = ui.action(context.getString(R.string.ride_map_all_vehicles)) { showVehicleMenu() }
+    private val clearFilters = ui.action("×", false) {
+        search.setText("")
+        controller.clearFilters()
+    }.apply {
+        tag = "ride_map_clear_filters"
+        textSize = 22f
+        contentDescription = context.getString(R.string.ride_map_clear_filters)
+    }
     private val search = EditText(context).apply {
         tag = "ride_map_search"
         hint = context.getString(R.string.ride_map_search)
@@ -55,14 +64,6 @@ class RideHistoryPanel(
         setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
         minimumHeight = ui.dp(48)
         contentDescription = context.getString(R.string.ride_map_search)
-    }
-    private val includeShort = Switch(context).apply {
-        text = context.getString(R.string.ride_map_short_rides)
-        textSize = 14f
-        setTextColor(ui.foreground)
-        minimumHeight = ui.dp(48)
-        isChecked = controller.includeShortRides
-        setOnCheckedChangeListener { _, checked -> controller.setIncludeShortRides(checked) }
     }
     private val rows = ui.column()
     private val message = ui.text("", 14f, false, ui.muted)
@@ -76,10 +77,14 @@ class RideHistoryPanel(
         content.setPadding(0, 0, 0, ui.dp(12))
         addView(content, LayoutParams(-1, -2))
         content.addView(search, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
-        filters.addView(dateFilter, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-        filters.addView(vehicleFilter, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
+        filters.setPadding(ui.dp(4), 0, ui.dp(4), 0)
+        filters.background = ui.rounded(14, ui.card, false).also { it.setStroke(ui.dp(1), ui.stroke) }
+        filters.addView(dateFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+        filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
+        filters.addView(vehicleFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+        filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
+        filters.addView(clearFilters, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
         content.addView(filters, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-        content.addView(includeShort, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(2) })
         content.addView(message, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         content.addView(rows, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         search.addTextChangedListener(object : TextWatcher {
@@ -101,9 +106,8 @@ class RideHistoryPanel(
             controller.state.vehicles.firstOrNull { it.platformIdentifier == identity }?.displayName?.takeIf(String::isNotBlank)
                 ?: context.getString(R.string.ride_map_gps_only)
         } ?: context.getString(R.string.ride_map_all_vehicles)
-        includeShort.setOnCheckedChangeListener(null)
-        includeShort.isChecked = controller.includeShortRides
-        includeShort.setOnCheckedChangeListener { _, checked -> controller.setIncludeShortRides(checked) }
+        clearFilters.isEnabled = controller.hasActiveFilters
+        clearFilters.alpha = if (controller.hasActiveFilters) 1f else .48f
 
         val state = controller.state
         val selected = state.selected
@@ -124,7 +128,7 @@ class RideHistoryPanel(
     }
 
     private fun renderList(state: RideHistoryState) {
-        mapView.clearRoute()
+        state.listPreviewRoute?.let(mapView::show) ?: mapView.clearRoute()
         rows.removeAllViews()
         if (state.loading) {
             message.text = context.getString(R.string.ride_map_loading_history)
@@ -204,6 +208,8 @@ class RideHistoryPanel(
 
     private fun renderDetail(ride: MobileRideRecordDto, state: RideHistoryState) {
         rows.removeAllViews()
+        val routeMatchesRide = historyRouteMatchesRide(state.routeRideId?.bytes, ride.id.bytes)
+        val route = state.route.takeIf { routeMatchesRide }
         val back = ui.action(context.getString(R.string.ride_map_back_to_history)) { controller.closeDetail() }
         rows.addView(back, LinearLayout.LayoutParams(-1, ui.dp(48)))
         rows.addView(ui.text(context.getString(R.string.ride_map_detail), 22f, true),
@@ -217,7 +223,7 @@ class RideHistoryPanel(
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         rows.addView(ui.text("${context.getString(R.string.ride_map_average_speed)} · ${averageSpeed(ride)}", 14f, false, ui.muted),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
-        state.route?.let { route ->
+        route?.let { route ->
             val routeText = when (route.routePresence) {
                 MobileRideMapRoutePresenceDto.VISIBLE -> context.getString(R.string.ride_map_recorded_points_detail,
                     ride.summary.pointCount.toInt())
@@ -250,10 +256,10 @@ class RideHistoryPanel(
             mapView.show(route)
         } ?: mapView.clearRoute()
         renderMusic(ride, state)
-        state.error?.let {
-            rows.addView(ui.text(it, 14f, false, ui.red),
+        state.error?.let { error ->
+            rows.addView(ui.text(error, 14f, false, ui.red),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
-            if (state.route == null && !state.loading) {
+            if (!state.loading) {
                 rows.addView(ui.action(context.getString(R.string.ride_map_retry_detail)) {
                     controller.select(ride)
                 }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
@@ -302,8 +308,21 @@ class RideHistoryPanel(
                 val provider = context.getString(musicProviderString(event.provider))
                 val kind = context.getString(musicKindString(event.kind))
                 val time = DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()).format(Date(event.wallClockAtMs.toLong()))
-                rows.addView(ui.text(context.getString(R.string.ride_map_music_event,
-                    time, provider, listOfNotNull(item, artist, kind).joinToString(" · ")), 14f, false), spaced())
+                val label = ui.text(context.getString(R.string.ride_map_music_event,
+                    time, provider, listOfNotNull(item, artist, kind).joinToString(" · ")), 14f, false)
+                val contentLink = if (event.provider == MobileMusicProviderDto.SPOTIFY)
+                    event.itemIdentifier?.let(::spotifyContentUrl) else null
+                if (contentLink == null) {
+                    rows.addView(label, spaced())
+                } else {
+                    val eventRow = ui.row()
+                    eventRow.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+                    eventRow.addView(ui.action(context.getString(R.string.ride_map_open_spotify), false) {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(contentLink)))
+                    }.apply { textSize = 13f; setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8)); minimumHeight = ui.dp(44) },
+                        LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginStart = ui.dp(8) })
+                    rows.addView(eventRow, spaced())
+                }
             }
         }
         musicForgetError?.let { rows.addView(ui.text(context.getString(R.string.ride_map_music_forget_failed), 14f, false, ui.red), spaced()) }
@@ -384,6 +403,14 @@ class RideHistoryPanel(
             }
             menu.add(context.getString(R.string.ride_map_all_time)).setOnMenuItemClickListener {
                 controller.setLast30Days(false); true
+            }
+            menu.add(context.getString(R.string.ride_map_short_rides)).apply {
+                isCheckable = true
+                isChecked = controller.includeShortRides
+                setOnMenuItemClickListener {
+                    controller.setIncludeShortRides(!controller.includeShortRides)
+                    true
+                }
             }
             show()
         }

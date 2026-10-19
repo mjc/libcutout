@@ -6,6 +6,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import lol.cutout.RideHistoryController
 import lol.cutout.restoreRideSelection
+import lol.cutout.historyRouteMatchesRide
+import lol.cutout.routeSegmentsForStyle
+import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
 import lol.cutout.RideMapRuntime
 import org.junit.Test
 
@@ -23,6 +26,35 @@ open class RideHistoryControllerTest {
         check(restoreRideSelection(original.identity, listOf(other)) { it.identity } == null) {
             "A ride removed by the active query must no longer remain selected"
         }
+    }
+
+    @Test
+    fun retainedRouteAndRetryAreFencedToTheSelectedRideIdentity() {
+        val firstRide = byteArrayOf(1, 4, 7)
+        val secondRide = byteArrayOf(2, 5, 8)
+        check(historyRouteMatchesRide(firstRide.copyOf(), firstRide)) {
+            "A retry for the same ride should retain its last valid route projection"
+        }
+        check(!historyRouteMatchesRide(firstRide.copyOf(), secondRide)) {
+            "A route projection from another ride must not appear in the newly selected detail"
+        }
+        check(!historyRouteMatchesRide(null, secondRide)) {
+            "A failed initial route projection should remain retryable"
+        }
+    }
+
+    @Test
+    fun mapKeepsRustBackgroundGapSegmentsSeparatelyStyled() {
+        data class Point(val segmentId: ULong, val sequence: Int)
+        val points = listOf(Point(1UL, 1), Point(1UL, 2), Point(2UL, 3), Point(2UL, 4))
+        val reasons = mapOf(
+            1UL to MobileRideSegmentStartReasonDto.INITIAL,
+            2UL to MobileRideSegmentStartReasonDto.BACKGROUND_GAP,
+        )
+        val continuous = routeSegmentsForStyle(points, Point::segmentId, reasons, backgroundGap = false)
+        val gaps = routeSegmentsForStyle(points, Point::segmentId, reasons, backgroundGap = true)
+        check(continuous == listOf(points.take(2))) { "The Rust initial segment should use the normal route layer" }
+        check(gaps == listOf(points.drop(2))) { "The Rust background-gap segment should use the dashed gap layer" }
     }
 
     @Test

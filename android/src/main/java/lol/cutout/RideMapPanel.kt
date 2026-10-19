@@ -33,6 +33,26 @@ import uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionDto
 import uniffi.cutout_mobile_ffi.mobileRideMapLimits
 import kotlin.math.roundToInt
 
+internal fun isBackgroundGap(reason: MobileRideSegmentStartReasonDto?): Boolean =
+    reason == MobileRideSegmentStartReasonDto.BACKGROUND_GAP
+
+internal fun <T> routeSegmentsForStyle(
+    points: List<T>,
+    segmentId: (T) -> ULong,
+    reasons: Map<ULong, MobileRideSegmentStartReasonDto>,
+    backgroundGap: Boolean,
+): List<List<T>> = points.groupBy(segmentId).values.filter { segment ->
+    isBackgroundGap(reasons[segmentId(segment.first())]) == backgroundGap
+}
+
+private fun segmentReasonString(reason: MobileRideSegmentStartReasonDto): Int = when (reason) {
+    MobileRideSegmentStartReasonDto.INITIAL -> R.string.ride_map_segment_reason_initial
+    MobileRideSegmentStartReasonDto.RESUME -> R.string.ride_map_segment_reason_resume
+    MobileRideSegmentStartReasonDto.BACKGROUND_GAP -> R.string.ride_map_segment_reason_gap
+    MobileRideSegmentStartReasonDto.IMPORT_BOUNDARY -> R.string.ride_map_segment_reason_import
+    MobileRideSegmentStartReasonDto.STATIONARY -> R.string.ride_map_segment_reason_stationary
+}
+
 /** Small renderer contract so layout and mode behavior can be tested without MapLibre JNI. */
 interface RideMapSurface {
     val view: View
@@ -50,6 +70,8 @@ interface RideMapSurface {
     fun currentCameraPosition(): CameraPosition?
     fun restoreCameraPosition(position: CameraPosition?)
     fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String? = null)
+    /** Places a compact, interactive selection card over the map while charging mode is active. */
+    fun showChargingPopup(view: View?) = Unit
     fun recenter()
     fun setActive(value: Boolean)
     fun onHostStart()
@@ -62,9 +84,17 @@ interface RideMapSurface {
 
 object RideMapViewportSizing {
     fun mapHeightPx(availableHeightPx: Int, density: Float): Int {
+        return scaledMapHeightPx(availableHeightPx, density, .46f, 160f, 360f)
+    }
+
+    fun historyDetailHeightPx(availableHeightPx: Int, density: Float): Int {
+        return scaledMapHeightPx(availableHeightPx, density, .58f, 240f, 520f)
+    }
+
+    private fun scaledMapHeightPx(availableHeightPx: Int, density: Float, fraction: Float, minDp: Float, maxDp: Float): Int {
         if (availableHeightPx <= 0 || !density.isFinite() || density <= 0f) return 0
         val availableDp = availableHeightPx / density
-        val heightDp = minOf(availableDp, minOf(maxOf(availableDp * 0.46f, 160f), 360f))
+        val heightDp = minOf(availableDp, minOf(maxOf(availableDp * fraction, minDp), maxDp))
         return (heightDp * density).roundToInt()
     }
 }
@@ -88,6 +118,7 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
     override var onChargingSpotSelected: ((String) -> Unit)? = null
     private var chargingSpots: List<MobileChargingSpotDto> = emptyList()
     private var selectedChargingSpotId: String? = null
+    private var chargingPopup: View? = null
     private var pendingCameraPosition: CameraPosition? = null
     override var onCameraGesture: (() -> Unit)? = null
     private var pendingFollow = false
@@ -163,25 +194,21 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         pendingFit = fitCamera
         val activeMap = map ?: return
         if (!styleLoaded) return
-        val json = routeFeatureCollection(projection.points)
+        val normalJson = routeFeatureCollection(projection, backgroundGap = false)
+        val gapJson = routeFeatureCollection(projection, backgroundGap = true)
         val style = activeMap.style ?: return
-        val source = style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)
-        if (source == null) {
-            style.addSource(GeoJsonSource(ROUTE_SOURCE, json))
-            style.addLayer(LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
-                PropertyFactory.lineColor(ui.brand),
-                PropertyFactory.lineWidth(4f),
-                PropertyFactory.lineOpacity(0.92f),
-            ))
-            style.addSource(GeoJsonSource(ENDPOINT_SOURCE, endpointFeatureCollection(projection.points)))
-            style.addLayer(CircleLayer(ENDPOINT_LAYER, ENDPOINT_SOURCE).withProperties(
-                PropertyFactory.circleRadius(5f),
-                PropertyFactory.circleColor(ui.yellow),
-                PropertyFactory.circleStrokeColor(ui.background),
-                PropertyFactory.circleStrokeWidth(2f),
-            ))
-        } else source.setGeoJson(json)
+        installRouteLayer()
+        style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(normalJson)
+        style.getSourceAs<GeoJsonSource>(GAP_ROUTE_SOURCE)?.setGeoJson(gapJson)
         style.getSourceAs<GeoJsonSource>(ENDPOINT_SOURCE)?.setGeoJson(endpointFeatureCollection(projection.points))
+        style.getSourceAs<GeoJsonSource>(SINGLETON_SOURCE)?.setGeoJson(singletonFeatureCollection(projection, gap = false))
+        style.getSourceAs<GeoJsonSource>(GAP_SINGLETON_SOURCE)?.setGeoJson(singletonFeatureCollection(projection, gap = true))
+        val singletonLabels = projection.segments.filter { it.visiblePointCount == 1uL }.map {
+            context.getString(R.string.ride_map_singleton_marker_accessibility,
+                context.getString(segmentReasonString(it.startReason)))
+        }
+        mapView.contentDescription = listOf(context.getString(R.string.ride_map_title), *singletonLabels.toTypedArray())
+            .joinToString(". ")
         if (fitCamera) fit(projection.cameraRegion)
     }
 
@@ -197,7 +224,11 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         latestProjection = null
         val style = map?.style ?: return
         style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(EMPTY_ROUTES)
+        style.getSourceAs<GeoJsonSource>(GAP_ROUTE_SOURCE)?.setGeoJson(EMPTY_ROUTES)
         style.getSourceAs<GeoJsonSource>(ENDPOINT_SOURCE)?.setGeoJson(EMPTY_ROUTES)
+        style.getSourceAs<GeoJsonSource>(SINGLETON_SOURCE)?.setGeoJson(EMPTY_ROUTES)
+        style.getSourceAs<GeoJsonSource>(GAP_SINGLETON_SOURCE)?.setGeoJson(EMPTY_ROUTES)
+        mapView.contentDescription = context.getString(R.string.ride_map_title)
         focusActualLocationIfAvailable()
     }
 
@@ -218,6 +249,19 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         val style = map?.style ?: return
         val source = style.getSourceAs<GeoJsonSource>(CHARGING_SOURCE) ?: return
         source.setGeoJson(chargingFeatureCollection(spots, selectedId))
+    }
+
+    override fun showChargingPopup(view: View?) {
+        chargingPopup?.let(::removeView)
+        chargingPopup = view
+        view?.let {
+            addView(it, LayoutParams(-1, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                leftMargin = ui.dp(16)
+                rightMargin = ui.dp(16)
+                bottomMargin = ui.dp(16)
+            })
+            it.bringToFront()
+        }
     }
 
     override fun recenter() {
@@ -243,6 +287,7 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
     override fun onHostStop() { hostStarted = false; hostResumed = false; updateLifecycle() }
     override fun onHostDestroy() {
         onHostStop()
+        showChargingPopup(null)
         if (!destroyed) { mapView.onDestroy(); destroyed = true }
     }
 
@@ -262,10 +307,27 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         if (style.getSource(ROUTE_SOURCE) == null) style.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_ROUTES))
         if (style.getLayer(ROUTE_LAYER) == null) style.addLayer(LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
             PropertyFactory.lineColor(ui.brand), PropertyFactory.lineWidth(4f), PropertyFactory.lineOpacity(0.92f),
+            PropertyFactory.lineCap("round"), PropertyFactory.lineJoin("round"),
+        ))
+        if (style.getSource(GAP_ROUTE_SOURCE) == null) style.addSource(GeoJsonSource(GAP_ROUTE_SOURCE, EMPTY_ROUTES))
+        if (style.getLayer(GAP_ROUTE_LAYER) == null) style.addLayer(LineLayer(GAP_ROUTE_LAYER, GAP_ROUTE_SOURCE).withProperties(
+            PropertyFactory.lineColor(ui.brand), PropertyFactory.lineWidth(4f), PropertyFactory.lineOpacity(0.92f),
+            PropertyFactory.lineCap("round"), PropertyFactory.lineJoin("round"),
+            PropertyFactory.lineDasharray(arrayOf(2f, 1.5f)),
         ))
         if (style.getSource(ENDPOINT_SOURCE) == null) style.addSource(GeoJsonSource(ENDPOINT_SOURCE, EMPTY_ROUTES))
         if (style.getLayer(ENDPOINT_LAYER) == null) style.addLayer(CircleLayer(ENDPOINT_LAYER, ENDPOINT_SOURCE).withProperties(
             PropertyFactory.circleRadius(5f), PropertyFactory.circleColor(ui.yellow),
+            PropertyFactory.circleStrokeColor(ui.background), PropertyFactory.circleStrokeWidth(2f),
+        ))
+        if (style.getSource(SINGLETON_SOURCE) == null) style.addSource(GeoJsonSource(SINGLETON_SOURCE, EMPTY_ROUTES))
+        if (style.getLayer(SINGLETON_LAYER) == null) style.addLayer(CircleLayer(SINGLETON_LAYER, SINGLETON_SOURCE).withProperties(
+            PropertyFactory.circleRadius(7f), PropertyFactory.circleColor(ui.cyan),
+            PropertyFactory.circleStrokeColor(ui.background), PropertyFactory.circleStrokeWidth(2f),
+        ))
+        if (style.getSource(GAP_SINGLETON_SOURCE) == null) style.addSource(GeoJsonSource(GAP_SINGLETON_SOURCE, EMPTY_ROUTES))
+        if (style.getLayer(GAP_SINGLETON_LAYER) == null) style.addLayer(CircleLayer(GAP_SINGLETON_LAYER, GAP_SINGLETON_SOURCE).withProperties(
+            PropertyFactory.circleRadius(7f), PropertyFactory.circleColor(ui.orange),
             PropertyFactory.circleStrokeColor(ui.background), PropertyFactory.circleStrokeWidth(2f),
         ))
         if (style.getSource(CHARGING_SOURCE) == null) style.addSource(GeoJsonSource(CHARGING_SOURCE, EMPTY_ROUTES))
@@ -326,10 +388,10 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         }
     }
 
-    private fun routeFeatureCollection(points: List<MobileRideMapRouteDisplayPointDto>): String {
-        val bySegment = points.groupBy { it.segmentId }
+    private fun routeFeatureCollection(projection: MobileRideMapRouteProjectionDto, backgroundGap: Boolean): String {
+        val reasons = projection.segments.associate { it.segmentId to it.startReason }
         val features = JSONArray()
-        bySegment.values.forEach { segment ->
+        routeSegmentsForStyle(projection.points, { it.segmentId }, reasons, backgroundGap).forEach { segment ->
             if (segment.size < 2) return@forEach
             val coordinates = JSONArray()
             segment.forEach { coordinates.put(JSONArray().put(it.longitudeDegrees).put(it.latitudeDegrees)) }
@@ -340,10 +402,26 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
         return JSONObject().put("type", "FeatureCollection").put("features", features).toString()
     }
 
+    private fun singletonFeatureCollection(projection: MobileRideMapRouteProjectionDto, gap: Boolean): String {
+        val reasons = projection.segments.associate { it.segmentId to it.startReason }
+        val features = JSONArray()
+        val groups = projection.points.groupBy { it.segmentId }.values
+        groups.forEach { segment ->
+            if (segment.size != 1 || isBackgroundGap(reasons[segment.first().segmentId]) != gap) return@forEach
+            val point = segment.single()
+            val geometry = JSONObject().put("type", "Point")
+                .put("coordinates", JSONArray().put(point.longitudeDegrees).put(point.latitudeDegrees))
+            val properties = JSONObject().put("segmentId", point.segmentId.toString())
+                .put("startReason", reasons[point.segmentId]?.name ?: "UNKNOWN")
+            features.put(JSONObject().put("type", "Feature").put("properties", properties).put("geometry", geometry))
+        }
+        return JSONObject().put("type", "FeatureCollection").put("features", features).toString()
+    }
+
     private fun endpointFeatureCollection(points: List<MobileRideMapRouteDisplayPointDto>): String {
         val features = JSONArray()
         points.groupBy { it.segmentId }.values.forEach { segment ->
-            if (segment.isEmpty()) return@forEach
+            if (segment.size < 2) return@forEach
             listOf(segment.first(), segment.last()).distinctBy { it.latitudeDegrees to it.longitudeDegrees }
                 .forEach { point ->
                     val geometry = JSONObject().put("type", "Point")
@@ -378,8 +456,14 @@ class RideRouteMapView(context: Context) : FrameLayout(context), RideMapSurface 
     companion object {
         private const val ROUTE_SOURCE = "cutout-ride-route"
         private const val ROUTE_LAYER = "cutout-ride-route-line"
+        private const val GAP_ROUTE_SOURCE = "cutout-ride-route-gaps"
+        private const val GAP_ROUTE_LAYER = "cutout-ride-route-gap-line"
         private const val ENDPOINT_SOURCE = "cutout-ride-endpoints"
         private const val ENDPOINT_LAYER = "cutout-ride-endpoint-circles"
+        private const val SINGLETON_SOURCE = "cutout-ride-route-singletons"
+        private const val SINGLETON_LAYER = "cutout-ride-route-singleton-marker"
+        private const val GAP_SINGLETON_SOURCE = "cutout-ride-route-gap-singletons"
+        private const val GAP_SINGLETON_LAYER = "cutout-ride-route-gap-singleton-marker"
         private const val CHARGING_SOURCE = "cutout-charging-spots"
         private const val CHARGING_LAYER = "cutout-charging-spots-circles"
         private const val USER_LOCATION_SOURCE = "cutout-user-location"
@@ -461,12 +545,14 @@ class RideMapPanel(
         isSaveEnabled = true
         content.setPadding(ui.dp(18), ui.dp(8), ui.dp(18), 0)
         addView(content, LayoutParams(-1, -1))
-        modes.addView(modeButton(context.getString(R.string.ride_map_live)) { setMode(Mode.LIVE) }.apply { tag = "ride_map_mode_live" },
-            LayoutParams(0, ui.dp(48), 1f))
-        modes.addView(modeButton(context.getString(R.string.ride_map_history)) { setMode(Mode.HISTORY) }.apply { tag = "ride_map_mode_history" },
-            LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(6) })
-        modes.addView(modeButton(context.getString(R.string.charging_mode)) { setMode(Mode.CHARGING) }.apply { tag = "ride_map_mode_charging" },
-            LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(6) })
+        modes.tag = "ride_map_mode_picker"
+        modes.background = ui.rounded(11, ui.card, false).also { it.setStroke(ui.dp(1), ui.stroke) }
+        modes.setPadding(ui.dp(3), 0, ui.dp(3), 0)
+        modes.addView(modeButton(R.string.ride_map_live, Mode.LIVE), LayoutParams(0, ui.dp(44), 1f))
+        modes.addView(modeButton(R.string.ride_map_history, Mode.HISTORY),
+            LayoutParams(0, ui.dp(44), 1f).apply { leftMargin = ui.dp(2) })
+        modes.addView(modeButton(R.string.charging_mode, Mode.CHARGING),
+            LayoutParams(0, ui.dp(44), 1f).apply { leftMargin = ui.dp(2) })
         content.addView(ui.title(context.getString(R.string.ride_map_title)))
         content.addView(modes, LayoutParams(-1, -2).apply { topMargin = ui.dp(12) })
         mapSlot = FrameLayout(context).apply { tag = "ride_map_surface_slot" }
@@ -507,7 +593,7 @@ class RideMapPanel(
         historyPage.visibility = View.GONE
         chargingPage.visibility = View.GONE
         chargingPage.onLayoutModeChanged = ::updatePresentationOrder
-        history.onChanged = { historyPage.render(); updateMapVisibility() }
+        history.onChanged = { historyPage.render(); updateMapVisibility(); updateMapHeight(height) }
         updatePresentationOrder()
         refreshModeButtons()
         closeObserver = runtime.observe(::render)
@@ -578,7 +664,7 @@ class RideMapPanel(
             // and remeasure once so the first rendered frame uses the Swift viewport formula.
             val viewportHeightPx = getMeasuredHeight()
             val params = mapSlot.layoutParams as? LayoutParams
-            val desired = if (mapSlot.visibility == View.GONE) 0 else RideMapViewportSizing.mapHeightPx(viewportHeightPx, resources.displayMetrics.density)
+            val desired = if (mapSlot.visibility == View.GONE) 0 else currentMapHeight(viewportHeightPx)
             if (params != null && (params.height != desired || params.weight != 0f)) {
                 params.height = desired
                 params.weight = 0f
@@ -590,7 +676,7 @@ class RideMapPanel(
 
     private fun updateMapHeight(availableHeightPx: Int) {
         val params = mapSlot.layoutParams as? LayoutParams ?: return
-        val desired = if (mapSlot.visibility == View.GONE) 0 else RideMapViewportSizing.mapHeightPx(availableHeightPx, resources.displayMetrics.density)
+        val desired = if (mapSlot.visibility == View.GONE) 0 else currentMapHeight(availableHeightPx)
         if (params.height == desired && params.weight == 0f) return
         params.height = desired
         params.weight = 0f
@@ -604,7 +690,7 @@ class RideMapPanel(
         val mapIsVisible = shouldShowMap()
         val mapLayout = when (mode) {
             Mode.CHARGING -> if (mapIsVisible) LayoutParams(-1, 0, 1f) else LayoutParams(-1, 0)
-            else -> LayoutParams(-1, RideMapViewportSizing.mapHeightPx(height, resources.displayMetrics.density))
+            else -> LayoutParams(-1, currentMapHeight(height))
         }.apply { topMargin = pageSpacing }
         mapSlot.layoutParams = mapLayout
         mapSlot.visibility = if (mapIsVisible) View.VISIBLE else View.GONE
@@ -655,7 +741,28 @@ class RideMapPanel(
         }
     }
 
-    private fun modeButton(label: String, click: () -> Unit) = ui.action(label, false, click)
+    private fun currentMapHeight(availableHeightPx: Int): Int =
+        if (mode == Mode.HISTORY && history.state.selected != null)
+            RideMapViewportSizing.historyDetailHeightPx(availableHeightPx, resources.displayMetrics.density)
+        else RideMapViewportSizing.mapHeightPx(availableHeightPx, resources.displayMetrics.density)
+
+    private fun modeButton(label: Int, target: Mode) = ui.action(context.getString(label), false) { setMode(target) }.apply {
+        tag = when (target) {
+            Mode.LIVE -> "ride_map_mode_live"
+            Mode.HISTORY -> "ride_map_mode_history"
+            Mode.CHARGING -> "ride_map_mode_charging"
+        }
+        textSize = 14f
+        setPadding(0, 0, 0, 0)
+        background = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x22FFFFFF else 0x22000000),
+            android.graphics.drawable.InsetDrawable(ui.rounded(9, ui.card, false), 0, ui.dp(6), 0, ui.dp(6)),
+            null,
+        )
+        setTextColor(ui.foreground)
+        minimumHeight = ui.dp(44)
+        minHeight = ui.dp(44)
+    }
 
     private fun refreshModeButtons() {
         val live = modes.getChildAt(0) as android.widget.Button
@@ -667,9 +774,18 @@ class RideMapPanel(
     }
 
     private fun styleMode(button: android.widget.Button, selected: Boolean) {
-        button.background = ui.rounded(14, if (selected) ui.yellow else ui.card, !selected)
-        button.setTextColor(if (selected) Color.BLACK else ui.foreground)
+        val content = if (button.tag == "ride_map_mode_live") R.string.ride_map_live
+            else if (button.tag == "ride_map_mode_history") R.string.ride_map_history else R.string.charging_mode
+        val ripple = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x22FFFFFF else 0x22000000),
+            android.graphics.drawable.InsetDrawable(ui.rounded(9, if (selected) ui.background else ui.card, false), 0, ui.dp(6), 0, ui.dp(6)),
+            null,
+        )
+        button.background = ripple
+        button.setTextColor(if (selected) ui.foreground else ui.muted)
         button.isSelected = selected
+        button.contentDescription = context.getString(content)
+        button.setTypeface(null, if (selected) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
     }
 
     private fun render(value: RideMapPresentation) {

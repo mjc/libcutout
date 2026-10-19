@@ -35,12 +35,29 @@ open class RideMapPanelLayoutTest {
     }
 
     @org.junit.Test
+    fun historyDetailUsesItsLargerSwiftViewportClamp() {
+        check(RideMapViewportSizing.historyDetailHeightPx(500, 1f) == 290) {
+            "A 500dp history detail viewport should use 58% (290dp)"
+        }
+        check(RideMapViewportSizing.historyDetailHeightPx(300, 1f) == 240) {
+            "History detail should clamp up to 240dp when space permits"
+        }
+        check(RideMapViewportSizing.historyDetailHeightPx(200, 1f) == 200) {
+            "History detail must never exceed the available viewport"
+        }
+        check(RideMapViewportSizing.historyDetailHeightPx(1_000, 1f) == 520) {
+            "History detail should clamp at 520dp"
+        }
+    }
+
+    @org.junit.Test
     fun chargingControlsPrecedeMapAndListModeHidesSharedMap() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val runtime = RideMapRuntime(context)
         val charging = AndroidChargingClient(context, runtime)
         var panel: RideMapPanel? = null
+        var surface: TestRideMapSurface? = null
         try {
             instrumentation.runOnMainSync {
                 panel = RideMapPanel(
@@ -49,7 +66,7 @@ open class RideMapPanelLayoutTest {
                     chargingClient = charging,
                     onRequestLocation = {},
                     onExport = {},
-                    mapSurfaceFactory = { TestRideMapSurface(it) },
+                    mapSurfaceFactory = { TestRideMapSurface(it).also { created -> surface = created } },
                 )
                 val root = checkNotNull(panel)
                 val width = (393 * context.resources.displayMetrics.density).toInt()
@@ -62,8 +79,8 @@ open class RideMapPanelLayoutTest {
                     root.layout(0, 0, width, height)
                 }
                 layout()
-                val surface = checkNotNull(root.findViewWithTag<View>("ride_map_surface_slot"))
-                check(surface.visibility == View.GONE) {
+                val idleSlot = checkNotNull(root.findViewWithTag<View>("ride_map_surface_slot"))
+                check(idleSlot.visibility == View.GONE) {
                     "Idle Live must not reserve an empty map above the recording controls"
                 }
                 root.findViewWithTag<Button>("ride_map_mode_charging").performClick()
@@ -83,6 +100,10 @@ open class RideMapPanelLayoutTest {
                 chargingPage.findViewWithTag<Button>("charging_view_map").performClick()
                 layout()
                 check(slot.visibility == View.VISIBLE) { "Returning to charging map mode must restore the map" }
+                surface?.showChargingPopup(View(context))
+                chargingPage.deactivate()
+                check(surface?.chargingPopup == null) { "Leaving charging mode must remove its selected-spot popup" }
+                check(surface?.chargingSpots.isNullOrEmpty()) { "Leaving charging mode must clear charging pins" }
             }
         } finally {
             instrumentation.runOnMainSync { panel?.onHostDestroy() }
@@ -92,6 +113,8 @@ open class RideMapPanelLayoutTest {
     }
 
     private class TestRideMapSurface(context: Context) : FrameLayout(context), RideMapSurface {
+        var chargingPopup: View? = null
+        var chargingSpots: List<MobileChargingSpotDto> = emptyList()
         override val view: View get() = this
         override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
         override var onChargingSpotSelected: ((String) -> Unit)? = null
@@ -101,7 +124,8 @@ open class RideMapPanelLayoutTest {
         override fun currentMapCenter(): LatLng? = null
         override fun currentCameraPosition(): CameraPosition? = null
         override fun restoreCameraPosition(position: CameraPosition?) = Unit
-        override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) = Unit
+        override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) { chargingSpots = spots }
+        override fun showChargingPopup(view: View?) { chargingPopup = view }
         override fun recenter() = Unit
         override fun setActive(value: Boolean) = Unit
         override fun onHostStart() = Unit

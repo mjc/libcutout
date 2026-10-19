@@ -18,6 +18,8 @@
     <string name="ride_map_live_title">Live ride</string>
     <string name="ride_map_idle">Ready to record a ride.</string>
     <string name="ride_map_search">Search rides</string>
+    <string name="ride_map_clear_filters">Clear filters</string>
+    <string name="ride_map_open_spotify">Open in Spotify</string>
     <string name="ride_map_last_30_days">Last 30 days</string>
     <string name="ride_map_all_time">All time</string>
     <string name="ride_map_all_vehicles">All vehicles</string>
@@ -52,6 +54,7 @@
     <string name="ride_map_segment_reason_gap">Location gap</string>
     <string name="ride_map_segment_reason_import">Imported route boundary</string>
     <string name="ride_map_segment_reason_stationary">Movement resumed</string>
+    <string name="ride_map_singleton_marker_accessibility">Single recorded route point: %1$s</string>
     <string name="ride_map_segment_points">Segment %1$d · %2$d points</string>
     <string name="ride_map_background_gaps">Background gaps: %1$d</string>
     <string name="ride_map_route_preview">Show route preview</string>

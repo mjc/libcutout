@@ -320,40 +320,19 @@ class ChargingSpotEditorPanel(
         private fun setConnectorLabel() {
             connectorButton.text = selectedConnectors.takeIf { it.isNotEmpty() }?.joinToString(", ", transform = ::connectorText)
                 ?: root.context.getString(R.string.charging_choose_connector)
+            val connector = selectedConnectors.firstOrNull { it != MobileChargingConnectorDto.Unknown }
+            val icon = connector?.let { item ->
+                root.context.getDrawable(ChargingConnectorArtwork.drawable(item))?.mutate()?.apply {
+                    setTint(ui.brand)
+                    setBounds(0, 0, ui.dp(28), ui.dp(28))
+                }
+            }
+            connectorButton.setCompoundDrawables(icon, null, null, null)
+            connectorButton.compoundDrawablePadding = if (icon == null) 0 else ui.dp(10)
         }
     }
 
-    private fun connectorText(value: MobileChargingConnectorDto): String = when (value) {
-        MobileChargingConnectorDto.TypeA -> "Type A"
-        MobileChargingConnectorDto.TypeC -> "Type C"
-        MobileChargingConnectorDto.TypeD -> "Type D"
-        MobileChargingConnectorDto.TypeE -> "Type E"
-        MobileChargingConnectorDto.TypeF -> "Type F"
-        MobileChargingConnectorDto.TypeG -> "Type G"
-        MobileChargingConnectorDto.TypeH -> "Type H"
-        MobileChargingConnectorDto.TypeI -> "Type I"
-        MobileChargingConnectorDto.TypeJ -> "Type J"
-        MobileChargingConnectorDto.TypeK -> "Type K"
-        MobileChargingConnectorDto.TypeL -> "Type L"
-        MobileChargingConnectorDto.TypeM -> "Type M"
-        MobileChargingConnectorDto.TypeN -> "Type N"
-        MobileChargingConnectorDto.TypeO -> "Type O"
-        MobileChargingConnectorDto.Nema515 -> "NEMA 5-15"
-        MobileChargingConnectorDto.Nema520 -> "NEMA 5-20"
-        MobileChargingConnectorDto.Nema1450 -> "NEMA 14-50"
-        MobileChargingConnectorDto.Nema1430 -> "NEMA 14-30"
-        MobileChargingConnectorDto.Nema1030 -> "NEMA 10-30"
-        MobileChargingConnectorDto.Nema650 -> "NEMA 6-50"
-        MobileChargingConnectorDto.Nema1050 -> "NEMA 10-50"
-        MobileChargingConnectorDto.J1772 -> "J1772"
-        MobileChargingConnectorDto.Type2 -> "Type 2"
-        MobileChargingConnectorDto.Ccs1 -> "CCS 1"
-        MobileChargingConnectorDto.Ccs2 -> "CCS 2"
-        MobileChargingConnectorDto.Chademo -> "CHAdeMO"
-        MobileChargingConnectorDto.Nacs -> "NACS"
-        MobileChargingConnectorDto.Unknown -> "Unknown"
-        is MobileChargingConnectorDto.Other -> value.label
-    }
+    private fun connectorText(value: MobileChargingConnectorDto): String = ChargingConnectorArtwork.label(ui, value)
 
     private val connectors = listOf(
         MobileChargingConnectorDto.TypeA, MobileChargingConnectorDto.TypeC, MobileChargingConnectorDto.TypeD,
