@@ -103,6 +103,39 @@ open class PackPanelTest {
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 
+    @Test
+    fun overviewChartUsesOneDistinctBarForEachObservedRustGroup() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            instrumentation.runOnMainSync {
+                val panel = PackPanel(activity)
+                activity.setContentView(panel)
+                panel.render(productionReplayPresentation().copy(bms = snapshot()))
+                val chart = panel.findViewWithTag<View>("pack.voltage-chart") as? lol.cutout.PackVoltageBarChart
+                    ?: error("The overview did not render its Rust-group bar chart")
+                val bars = chart.barGeometry(393, 110)
+                check(bars.size == snapshot().groups.size) {
+                    "Expected one overview bar per observed cell group, got ${bars.size}"
+                }
+                check(bars.zipWithNext().all { (left, right) -> left.centerX() < right.centerX() }) {
+                    "Overview bars must preserve the ascending order of their Rust group indices"
+                }
+                check(bars.all { it.width() > 0f && it.height() > 0f }) {
+                    "Every observed group needs a visible bar above the chart baseline"
+                }
+
+                chart.updateValues(listOf(1 to 3.680, 3 to 3.690))
+                val sparse = chart.barGeometry(lol.cutout.CutoutUi(activity).dp(393), lol.cutout.CutoutUi(activity).dp(110))
+                val slotWidth = (lol.cutout.CutoutUi(activity).dp(393) - lol.cutout.CutoutUi(activity).dp(56)) / 3f
+                check(sparse.size == 2 && kotlin.math.abs((sparse[1].centerX() - sparse[0].centerX()) - 2f * slotWidth) < 1f) {
+                    "Sparse group indices must retain their physical x positions instead of being compacted: $sparse"
+                }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
     private fun snapshot(): MobileBmsSnapshotDto {
         fun reading(mv: Int) = VoltageReading(Voltage(mv), MobileValueSourceDto.REPORTED,
             MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED)

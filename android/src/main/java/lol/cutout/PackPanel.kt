@@ -3,6 +3,7 @@ package lol.cutout
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -154,11 +155,14 @@ class PackPanel(context: Context) : ScrollView(context) {
             val delta = ui.text("", 29f, true)
             bind { delta.text = bms?.cellDelta?.value?.value?.let { "$it mV" } ?: "—" }
             card.addView(delta)
-            val chart = GroupVoltageChart(context, emptyList()).apply {
+            val chart = PackVoltageBarChart(context, emptyList()).apply {
+                tag = "pack.voltage-chart"
                 contentDescription = context.getString(R.string.pack_chart)
                 layoutParams = LinearLayout.LayoutParams(-1, ui.dp(110))
             }
-            bind { chart.updateValues(bms?.groups.orEmpty().mapNotNull { g -> g.voltage?.value?.value?.let { it.toDouble() / 1000.0 } }) }
+            bind { chart.updateValues(bms?.groups.orEmpty().mapNotNull { g ->
+                g.voltage?.value?.value?.let { g.index.toInt() to (it.toDouble() / 1000.0) }
+            }) }
             card.addView(chart)
             card.addView(ui.row().apply {
                 addView(groupExtreme(context.getString(R.string.pack_lowest), lowest.index), LinearLayout.LayoutParams(0, -2, 1f))
@@ -345,9 +349,88 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun currentText(value: BatteryCurrent): String = TelemetryValueFormatting.current(context, value)
 }
 
-/** Lightweight chart view; values remain the exact bounded observations supplied by Rust. */
+/** Swift-equivalent cell overview bars with labeled voltage ticks and group indices. */
+internal class PackVoltageBarChart(context: Context, private var groups: List<Pair<Int, Double>>) : View(context) {
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = CutoutUi(context).muted; strokeWidth = resources.displayMetrics.density; style = Paint.Style.STROKE
+    }
+    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(10, 132, 255); style = Paint.Style.FILL
+    }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = CutoutUi(context).muted; textSize = 10f * resources.displayMetrics.scaledDensity
+    }
+    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = CutoutUi(context).muted; textSize = 11f * resources.displayMetrics.scaledDensity; textAlign = Paint.Align.RIGHT
+    }
+
+    fun updateValues(next: List<Pair<Int, Double>>) { groups = next; invalidate() }
+
+    /** Geometry is calculated from only the Rust-projected group observations. */
+    internal fun barGeometry(width: Int, height: Int): List<RectF> {
+        if (groups.isEmpty()) return emptyList()
+        val density = resources.displayMetrics.density
+        val left = 48f * density
+        val right = width - 8f * density
+        val top = 8f * density
+        val bottom = height - 25f * density
+        if (right <= left || bottom <= top) return emptyList()
+        val low = (groups.minOf { it.second } - 0.005).coerceAtLeast(0.0)
+        val high = groups.maxOf { it.second } + 0.005
+        val span = (high - low).coerceAtLeast(0.001)
+        val firstIndex = groups.minOf { it.first }
+        val slotCount = groups.maxOf { it.first } - firstIndex + 1
+        val slot = (right - left) / slotCount
+        val barWidth = (slot * 0.58f).coerceAtMost(22f * density)
+        val baseline = bottom
+        return groups.map { group ->
+            val center = left + slot * (group.first - firstIndex + 0.5f)
+            val valueY = bottom - ((group.second - low) / span * (bottom - top)).toFloat()
+            RectF(center - barWidth / 2f, valueY, center + barWidth / 2f, baseline)
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if (groups.isEmpty()) return
+        val density = resources.displayMetrics.density
+        val left = 48f * density
+        val right = width - 8f * density
+        val top = 8f * density
+        val bottom = height - 25f * density
+        if (right <= left || bottom <= top) return
+        val low = (groups.minOf { it.second } - 0.005).coerceAtLeast(0.0)
+        val high = groups.maxOf { it.second } + 0.005
+        val span = (high - low).coerceAtLeast(0.001)
+        val firstIndex = groups.minOf { it.first }
+        val slotCount = groups.maxOf { it.first } - firstIndex + 1
+        val slot = (right - left) / slotCount
+        for (tick in 0..2) {
+            val value = low + span * tick / 2.0
+            val y = bottom - ((value - low) / span * (bottom - top)).toFloat()
+            canvas.drawLine(left, y, right, y, gridPaint)
+            canvas.drawText(String.format(Locale.getDefault(), "%.3f", value), left - 5f * density, y + 4f * density, axisPaint)
+        }
+        canvas.drawLine(left, top, left, bottom, gridPaint)
+        canvas.drawLine(left, bottom, right, bottom, gridPaint)
+        barGeometry(width, height).forEach { canvas.drawRoundRect(it, 2f * density, 2f * density, barPaint) }
+        val labelIndexes = groups.indices.filter { index ->
+            groups.size <= 4 || index == 0 || index == groups.lastIndex ||
+                (groups[index].first - firstIndex) % ((slotCount + 2) / 3).coerceAtLeast(1) == 0
+        }.distinct()
+        labelIndexes.forEach { index ->
+            val label = groups[index].first.toString()
+            val center = left + slot * (groups[index].first - firstIndex + 0.5f)
+            canvas.drawText(label, center - labelPaint.measureText(label) / 2f, height - 4f * density, labelPaint)
+        }
+    }
+}
+
+/** Detail history remains a line chart, matching Swift's per-reading trend. */
 private class GroupVoltageChart(context: Context, private var values: List<Double>) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(10, 132, 255); strokeWidth = resources.displayMetrics.density * 2f; style = Paint.Style.STROKE }
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(10, 132, 255); strokeWidth = resources.displayMetrics.density * 2f; style = Paint.Style.STROKE
+    }
     fun updateValues(next: List<Double>) { values = next; invalidate() }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
