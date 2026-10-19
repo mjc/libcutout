@@ -41,7 +41,7 @@ final class SpotifyPlaybackAPITests: XCTestCase {
         let body = Data(
             #"{"device":{"id":"phone"},"is_playing":false,"progress_ms":null,"item":{"type":"episode","uri":"spotify:episode:abc","name":"Episode","show":{"name":"Podcast"},"duration_ms":7200000}}"#
                 .utf8)
-        let playback = try JSONDecoder().decode(SpotifyPlayback.self, from: body)
+        let playback = try SpotifyPlayback(MobileSpotifyPlayback.parse(body: body))
         let snapshot = playback.snapshot(state: .paused, observedAtMs: 10)
         XCTAssertEqual(snapshot.item?.artist, "Podcast")
         XCTAssertEqual(snapshot.durationMilliseconds, 7_200_000)
@@ -58,11 +58,25 @@ final class SpotifyPlaybackAPITests: XCTestCase {
         XCTAssertNil(playback)
     }
 
+    func testInvalidPlaybackPayloadMapsToTheExistingUnavailableFailure() async throws {
+        for body in [Data(), Data("not-json".utf8)] {
+            let api = SpotifyPlaybackAPI { request in
+                (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+            do {
+                _ = try await api.playback(accessToken: "test-token")
+                XCTFail("Malformed metadata must not be presented as playback")
+            } catch let failure as SpotifyPlaybackAPI.Failure {
+                XCTAssertEqual(failure, .unavailable)
+            }
+        }
+    }
+
     func testRestrictedDeviceAndUnknownContentHaveNoInventedMetadata() throws {
         let body = Data(
             #"{"device":{"id":"phone","is_restricted":true},"is_playing":true,"item":{"type":"ad","uri":"spotify:ad:abc","name":"Ad"}}"#
                 .utf8)
-        let snapshot = try JSONDecoder().decode(SpotifyPlayback.self, from: body).snapshot(
+        let snapshot = try SpotifyPlayback(MobileSpotifyPlayback.parse(body: body)).snapshot(
             state: .playing, observedAtMs: 1)
         XCTAssertNil(snapshot.item)
         XCTAssertFalse(snapshot.capabilities.next)
@@ -70,7 +84,7 @@ final class SpotifyPlaybackAPITests: XCTestCase {
     }
 
     func testNoActivePlayerKeepsLastTrackWithoutExposingPlaybackControls() async throws {
-        let previous = try JSONDecoder().decode(SpotifyPlayback.self, from: Self.track)
+        let previous = try SpotifyPlayback(MobileSpotifyPlayback.parse(body: Self.track))
         let api = SpotifyPlaybackAPI { request in
             XCTAssertEqual(request.httpMethod, "GET")
             return (Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
@@ -166,18 +180,51 @@ final class SpotifyPlaybackAPITests: XCTestCase {
     }
 
     func testRateLimitAlsoBlocksCommandsWithoutRetryingThem() async throws {
+        let clock = TestMonotonicClock(value: 1_000)
         let transport = RateLimitedTransport()
-        let api = SpotifyPlaybackAPI(send: transport.send)
-        _ = try? await api.playback(accessToken: "test-token")
+        let api = SpotifyPlaybackAPI(
+            send: transport.send,
+            monotonicNowMilliseconds: { clock.now() })
+        do {
+            _ = try await api.playback(accessToken: "test-token")
+            XCTFail("The transport's first response should establish a retry deadline")
+        } catch let SpotifyPlaybackAPI.Failure.rateLimited(seconds) {
+            XCTAssertEqual(seconds, 45)
+        }
+
+        clock.advance(milliseconds: 44_999)
         do {
             try await api.perform(.next, accessToken: "test-token", deviceID: "phone")
             XCTFail("A rate-limited command must not be sent or queued")
         } catch let SpotifyPlaybackAPI.Failure.rateLimited(seconds) {
-            XCTAssertGreaterThan(seconds, 0)
-            XCTAssertLessThanOrEqual(seconds, 45)
+            XCTAssertEqual(seconds, 0.001)
         }
         let requests = await transport.count
         XCTAssertEqual(requests, 1)
+
+        clock.advance(milliseconds: 1)
+        try await api.perform(.next, accessToken: "test-token", deviceID: "phone")
+        let requestsAtDeadline = await transport.count
+        XCTAssertEqual(requestsAtDeadline, 2)
+    }
+}
+
+private final class TestMonotonicClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64
+
+    init(value: UInt64) { self.value = value }
+
+    func now() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func advance(milliseconds: UInt64) {
+        lock.lock()
+        value &+= milliseconds
+        lock.unlock()
     }
 }
 
@@ -185,6 +232,12 @@ private actor RateLimitedTransport {
     var count = 0
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         count += 1
+        if count > 1 {
+            return (
+                Data(),
+                HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!
+            )
+        }
         return (
             Data(),
             HTTPURLResponse(
