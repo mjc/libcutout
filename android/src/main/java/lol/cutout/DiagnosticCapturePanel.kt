@@ -77,10 +77,11 @@ class DiagnosticCapturePanel(
     private val captureObserver = bluetooth.diagnostics.observe { next ->
         renderCapture(next)
     }
-    private val bleObserver = bluetooth.addObserver { next ->
+    internal fun renderDiscovery(next: BlePresentation) {
         val relevantChange = next.phase != bleState.phase || next.devices.map { it.id to (it.advertisedName ?: it.name) } !=
             bleState.devices.map { it.id to (it.advertisedName ?: it.name) }
-        if (!disposed) { bleState = next; if (relevantChange) scheduleRender() }
+        val captureChange = next.captureCandidates != bleState.captureCandidates
+        if (!disposed) { bleState = next; if (relevantChange || captureChange) scheduleRender() }
     }
 
     init {
@@ -106,7 +107,6 @@ class DiagnosticCapturePanel(
         renderHandler.removeCallbacks(queuedRender)
         elapsedHandler.removeCallbacks(elapsedTick)
         captureObserver.close()
-        bleObserver.close()
         researchDialog?.dismiss()
         researchDialog = null
         detail?.dispose()
@@ -172,9 +172,10 @@ class DiagnosticCapturePanel(
                     settingsSummary.refresh()
                     render()
                 }.apply { tag = "captures.active.open" })
-                captureState.deviceName?.takeIf(String::isNotBlank)?.let {
-                    addView(ui.text(it, 14f, color = ui.muted))
-                }
+                val source = captureState.deviceKind?.takeIf(String::isNotBlank)
+                    ?: captureState.deviceName?.takeIf(String::isNotBlank)
+                    ?: ui.label("captures.automatic")
+                addView(ui.text(source, 14f, color = ui.muted).apply { tag = "captures.active.source" })
             }
             content.addView(ui.space(18))
         }
@@ -506,7 +507,7 @@ class DiagnosticCapturePanel(
     }
 
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
-        val candidates = bleState.devices.filter { !it.id.isBlank() }
+        val candidates = bleState.captureCandidates
         if (candidates.isEmpty()) {
             researchDialog?.dismiss()
             researchDialog = AlertDialog.Builder(context).setMessage(R.string.capture_no_devices)
@@ -514,21 +515,61 @@ class DiagnosticCapturePanel(
                 .setNegativeButton(android.R.string.cancel, null).show()
             return
         }
-        val labels = candidates.map { item ->
-            val name = item.advertisedName?.takeIf(String::isNotBlank) ?: item.name
-            "$name  ·  ${item.id.takeLast(8)}"
-        }.toTypedArray()
         researchDialog?.dismiss()
+        val selector = ScrollView(context).apply { isFillViewport = false; tag = "captures.selection" }
+        val groups = ui.column().apply { setPadding(ui.dp(20), ui.dp(8), ui.dp(20), ui.dp(8)) }
+        selector.addView(groups)
+        val sections = listOf(
+            DiscoveryCandidateSection.SUPPORTED to ui.label("picker.section.detected_devices"),
+            DiscoveryCandidateSection.PROBE_FIRST to ui.label("picker.section.probe_first"),
+            DiscoveryCandidateSection.RECORD_ONLY to ui.label("picker.section.record_only"),
+        )
+        sections.forEach { (section, heading) ->
+            val rows = candidates.filter { it.section == section }
+            if (rows.isNotEmpty()) {
+                val header = ui.text(heading, 14f, true, ui.muted).apply { isAccessibilityHeading = true }
+                groups.addView(header, LinearLayout.LayoutParams(-1, -2).apply {
+                    topMargin = if (groups.childCount == 0) ui.dp(8) else ui.dp(18)
+                    bottomMargin = ui.dp(6)
+                })
+                rows.forEach { candidate ->
+                    val button = ui.column().apply {
+                        tag = "captures.select.${candidate.platformIdentifier}"
+                        isClickable = true
+                        isFocusable = true
+                        setPadding(ui.dp(16), ui.dp(13), ui.dp(16), ui.dp(13))
+                        background = ui.rounded(18)
+                        contentDescription = listOf(
+                            candidate.displayName, candidate.productCategory, candidate.evidence,
+                            candidate.detail, candidate.platformIdentifier.takeLast(8).uppercase(),
+                        ).filter(String::isNotBlank).joinToString(", ")
+                        setOnClickListener { researchDialog?.dismiss(); descriptionDialog(candidate, lifecycle) }
+                    }
+                    button.addView(ui.text(candidate.displayName, 18f, true))
+                    button.addView(ui.text(
+                        "${candidate.productCategory} · ${candidate.platformIdentifier.takeLast(8).uppercase()}",
+                        14f, false, ui.muted,
+                    ), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+                    button.addView(ui.text(candidate.evidence, 14f, false, ui.muted),
+                        LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
+                    button.addView(ui.text(candidate.detail, 14f, false, ui.muted),
+                        LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(3) })
+                    groups.addView(button, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(7) })
+                }
+            }
+        }
+        groups.addView(ui.text(ui.label("captures.read_only"), 14f, false, ui.muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(18); bottomMargin = ui.dp(8) })
         researchDialog = AlertDialog.Builder(context)
-            .setTitle(R.string.capture_choose_device)
-            .setItems(labels) { _, which -> descriptionDialog(candidates[which], lifecycle) }
+            .setTitle(ui.label("captures.choose_device"))
+            .setView(selector)
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun descriptionDialog(device: NearbyPev, lifecycle: MobileCaptureLifecycleSnapshotDto) {
+    private fun descriptionDialog(candidate: DiscoveryCandidate, lifecycle: MobileCaptureLifecycleSnapshotDto) {
         val input = EditText(context).apply {
-            hint = context.getString(R.string.capture_description)
+            hint = ui.label("captures.description")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 2
             maxLines = 4
@@ -536,18 +577,24 @@ class DiagnosticCapturePanel(
         val wrapper = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0)
+            addView(ui.text(candidate.evidence, 14f, false, ui.muted))
+            addView(ui.text(candidate.detail, 14f, false, ui.muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
             addView(input, LinearLayout.LayoutParams(-1, -2))
+            addView(ui.text(ui.label("captures.description_hint"), 14f, false, ui.muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
+            addView(ui.text(ui.label("captures.read_only"), 14f, false, ui.muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         }
-        val name = device.advertisedName?.takeIf(String::isNotBlank) ?: device.name
+        val name = candidate.displayName
         researchDialog?.dismiss()
         researchDialog = AlertDialog.Builder(context).setTitle(name).setView(wrapper)
-            .setPositiveButton(R.string.capture_start, null)
+            .setPositiveButton(ui.label("captures.start"), null)
             .setNegativeButton(android.R.string.cancel, null)
             .create().also { dialog ->
                 dialog.setOnShowListener {
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                         if (disposed || !lifecycle.canStart || bleState.phase != NativePhase.IDLE) return@setOnClickListener
-                        bluetooth.startManualCapture(device.id, null, input.text.toString()) { started ->
+                        bluetooth.startManualCapture(candidate.platformIdentifier, null, input.text.toString()) { started ->
                             if (!disposed) {
                                 if (!started) Toast.makeText(context, R.string.capture_start_failed, Toast.LENGTH_LONG).show()
                                 else {

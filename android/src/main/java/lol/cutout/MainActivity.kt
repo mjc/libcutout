@@ -330,6 +330,7 @@ class MainActivity : Activity() {
         navigation[R.string.configuration]?.visibility = if (connected) View.VISIBLE else View.GONE
         ride.render(value, value.chargeEstimate)
         picker.render(value, client.hasPermissions(), client.isEnabled(), scanned)
+        captures?.renderDiscovery(value)
         settings.render(value.settings)
         pack?.render(value)
         debug?.render(value, latestCapture)
@@ -368,6 +369,7 @@ class MainActivity : Activity() {
                 val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission) { title ->
                     if (page == R.string.captures) nestedTitle.text = title
                 }
+                panel.renderDiscovery(latest)
                 captures = panel; addPanel(id, panel)
             }
             R.string.phone_alarm_title -> {

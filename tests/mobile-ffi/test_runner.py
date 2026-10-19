@@ -26,6 +26,12 @@ def status(name, code=0, failure=""):
 
 
 class DeviceSelectionTests(unittest.TestCase):
+    def test_capture_picker_sections_are_exported_for_android(self):
+        labels = runner.collect_shared_labels()["en"]
+        self.assertEqual(labels["picker.section.detected_devices"], "Detected devices")
+        self.assertEqual(labels["picker.section.probe_first"], "Probe first")
+        self.assertEqual(labels["picker.section.record_only"], "Record only")
+
     def test_requires_supported_physical_arm64_android(self):
         valid = {"serial": "PHONE", "abi": "arm64-v8a", "api": "35", "emulator": ""}
         for override in ({"abi": "x86_64"}, {"api": "32"}, {"emulator": "1"}, {"serial": ""}):

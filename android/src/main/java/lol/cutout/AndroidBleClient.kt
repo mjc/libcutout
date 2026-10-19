@@ -23,6 +23,8 @@ enum class NativePhase { IDLE, CONNECTING, DISCOVERING, IDENTIFYING }
 data class BlePresentation(
     val scanning: Boolean = false,
     val devices: List<NearbyPev> = emptyList(),
+    /** Rust-projected inventory for the explicit diagnostic capture chooser only. */
+    val captureCandidates: List<DiscoveryCandidate> = emptyList(),
     val phase: NativePhase = NativePhase.IDLE,
     val session: MobileDeviceSessionSnapshotDto? = null,
     val telemetry: MobileTelemetrySnapshotDto? = null,
@@ -37,6 +39,18 @@ data class BlePresentation(
     /** Rust-derived admission route for the active attempt, independent of scan rows. */
     val connectionCandidate: DiscoveryCandidate? = null,
 )
+
+/** Keep ordinary connection candidates and the advanced capture inventory as separate projections. */
+internal object AndroidCaptureCandidateProjection {
+    fun project(candidates: List<DiscoveryCandidate>): List<DiscoveryCandidate> =
+        candidates.distinctBy(DiscoveryCandidate::platformIdentifier)
+            .filter { it.platformIdentifier.isNotBlank() }
+            .filter { it.section in setOf(
+                DiscoveryCandidateSection.SUPPORTED,
+                DiscoveryCandidateSection.PROBE_FIRST,
+                DiscoveryCandidateSection.RECORD_ONLY,
+            ) }
+}
 
 /** Android effect boundary for the shared Rust-owned ride lifecycle. */
 internal object AndroidRideSessionEffects {
@@ -357,12 +371,18 @@ class AndroidBleClient(
                     scanForwardedCount += forwardedNow
                     // Rust owns candidate admission and ordering; signal changes do not
                     // independently reorder the native rows or promote Bluetooth noise.
-                    val candidates = state.discoverySnapshot().pickerCandidates.mapNotNull { candidate ->
+                    val discovery = state.discoverySnapshot()
+                    val candidates = discovery.pickerCandidates.mapNotNull { candidate ->
                         found[candidate.platformIdentifier]?.second?.copy(name = candidate.displayName,
                             suggested = candidate.isPickerCandidate, candidate = candidate)
                     }
+                    // The Rust picker projection is retained unchanged for normal connection
+                    // admission. Diagnostic capture has a distinct Rust projection that also
+                    // includes unknown advertisements; it never promotes them to ride controls.
+                    val captureDtos = discovery.pickerCandidates + state.advancedCaptureCandidates()
+                    val captureCandidates = AndroidCaptureCandidateProjection.project(captureDtos)
                     scanCandidateCount = candidates.size
-                    view = view.copy(devices = candidates)
+                    view = view.copy(devices = candidates, captureCandidates = captureCandidates)
                     publish()
                 }
             }
@@ -379,7 +399,7 @@ class AndroidBleClient(
             scanCallback = callback
             scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setReportDelay(500).build(), callback)
-            view = view.copy(scanning = true, devices = emptyList(), problem = false)
+            view = view.copy(scanning = true, devices = emptyList(), captureCandidates = emptyList(), problem = false)
             Log.i("CutoutBle", "scan started")
             stopScanTimer = timers.after(20_000) { stopScanOnOwner(outcome = "timed out"); publish() }
         } catch (error: Exception) {

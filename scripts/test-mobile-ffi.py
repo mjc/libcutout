@@ -32,7 +32,7 @@ RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
 ANDROID_TARGETS = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}
 EMULATOR_TESTS = "lol.cutout.ffitest.MobileFfiTest,lol.cutout.ffitest.ProductionAppTest"
 GRADLE_CACHE = TARGET / "android-tests/gradle-cache"
-SHARED_LABEL_PREFIXES = ("settings.", "actions.", "controls.", "euc.", "vesc.",
+SHARED_LABEL_PREFIXES = ("settings.", "actions.", "controls.", "picker.", "euc.", "vesc.",
                          "ride.", "status.", "footpad.", "music.", "bms.", "lighting.",
                          "charging.", "setup.", "navigation.", "ride_map.", "camera.", "captures.", "capture.")
 
@@ -124,7 +124,7 @@ def prepare_replay() -> None:
         REPLAY_SOURCE.write_text(source)
 
 
-def prepare_shared_labels() -> None:
+def collect_shared_labels() -> dict[str, dict[str, str]]:
     labels = {}
     for source in (ROOT / "swift/CutoutMobile/Sources/CutoutMobile/Localizable.xcstrings",
                    ROOT / "swift/CutoutMobile/Apps/CutoutApp/Localizable.xcstrings"):
@@ -134,6 +134,11 @@ def prepare_shared_labels() -> None:
                     text = value.get("stringUnit", {}).get("value")
                     if text is not None:
                         labels.setdefault(language, {})[key] = text
+    return labels
+
+
+def prepare_shared_labels() -> None:
+    labels = collect_shared_labels()
     resource = TARGET / "android-tests/resources/raw/shared_labels.json"
     resource.parent.mkdir(parents=True, exist_ok=True)
     contents = json.dumps(labels, sort_keys=True, ensure_ascii=False)

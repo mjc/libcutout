@@ -6,12 +6,14 @@ import android.os.Looper
 import android.view.View
 import android.widget.Button
 import android.widget.ScrollView
+import android.app.AlertDialog
 import lol.cutout.CaptureLabelControls
 import lol.cutout.DiagnosticCapturePresentation
 import uniffi.cutout_mobile_ffi.*
 import lol.cutout.CutoutApplication
 import lol.cutout.DiagnosticCapturePanel
 import lol.cutout.DiagnosticCaptureArtifact
+import lol.cutout.AndroidCaptureCandidateProjection
 import lol.cutout.R
 import org.junit.Assert.*
 import org.junit.Test
@@ -29,6 +31,127 @@ import java.io.File
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-night-xhdpi", application = LocalTestApplication::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalDiagnosticCapturePanelTest {
+    @Test
+    fun captureCandidateProjectionAddsRustUnknownsWithoutPromotingThemToRidePicker() {
+        CutoutSessionStateHandle().use { state ->
+            state.observeDiscovery(DiscoveryObservation(
+                platformIdentifier = "native-opaque-id",
+                advertisedName = "Falcon test".encodeToByteArray(),
+                advertisedServiceUuids = emptyList(),
+                manufacturerData = emptyList(),
+                rssiDbm = (-51).toShort(),
+            ))
+            val discovery = state.discoverySnapshot()
+            val advanced = state.advancedCaptureCandidates()
+            assertTrue("unknown ads stay out of the ordinary picker projection", discovery.pickerCandidates.isEmpty())
+            assertEquals(1, advanced.size)
+            assertEquals(DiscoveryCandidateSupport.UNKNOWN_RECORDABLE, advanced.single().support)
+            assertEquals(DiscoveryCandidateSection.RECORD_ONLY, advanced.single().section)
+
+            val captureCandidates = AndroidCaptureCandidateProjection.project(
+                discovery.pickerCandidates + advanced,
+            )
+            assertEquals(listOf("native-opaque-id"), captureCandidates.map { it.platformIdentifier })
+            val presentation = lol.cutout.BlePresentation(captureCandidates = captureCandidates)
+            assertTrue("capture inventory must not add ride rows", presentation.devices.isEmpty())
+
+            val placeholder = mobileManualDiscoveryCandidate()
+            assertFalse(placeholder in AndroidCaptureCandidateProjection.project(captureCandidates + placeholder))
+        }
+    }
+
+    @Test
+    fun captureChooserShowsRustRecordOnlyCandidateAndItsEvidence() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val panel = DiagnosticCapturePanel(activity, (activity.application as CutoutApplication).bluetooth, {})
+        activity.setContentView(panel)
+        CutoutSessionStateHandle().use { state ->
+            state.observeDiscovery(DiscoveryObservation(
+                "opaque-record-only", "Unknown rideable".encodeToByteArray(), emptyList(), emptyList(), (-44).toShort(),
+            ))
+            val candidate = state.advancedCaptureCandidates().single()
+            val lifecycle = MobileCaptureLifecycleSnapshotDto(
+                MobileCaptureAttemptDto(MobileCaptureGenerationDto(700UL), MobileCaptureOriginDto.MANUAL,
+                    MobileCaptureStageDto.RECORDING), false, true,
+            )
+            panel.renderCapture(DiagnosticCapturePresentation(ready = true, lifecycle = lifecycle))
+            panel.renderDiscovery(BlePresentation(captureCandidates = listOf(candidate)))
+            try {
+                val choose = DiagnosticCapturePanel::class.java.getDeclaredMethod(
+                    "chooseDevice", MobileCaptureLifecycleSnapshotDto::class.java,
+                ).apply { isAccessible = true }
+                choose.invoke(panel, lifecycle)
+                fun currentDialog() = DiagnosticCapturePanel::class.java.getDeclaredField("researchDialog")
+                    .apply { isAccessible = true }.get(panel) as? AlertDialog
+                val chooser = checkNotNull(currentDialog())
+                val row = checkNotNull(chooser.window?.decorView?.findViewWithTag<View>("captures.select.opaque-record-only"))
+                assertTrue(row.contentDescription.toString().contains(candidate.displayName))
+                row.performClick()
+                val details = checkNotNull(currentDialog())
+                assertTrue(details.isShowing)
+                val dialogText = (details.window?.decorView as? ViewGroup)?.let { root ->
+                    collectText(root).joinToString(" ")
+                }.orEmpty()
+                assertTrue(dialogText.contains(candidate.evidence))
+                assertTrue(dialogText.contains(candidate.detail))
+            } finally {
+                currentDialog()?.dismiss()
+                panel.dispose()
+                host.pause().stop().destroy()
+            }
+        }
+    }
+
+    private fun collectText(view: View): List<String> = buildList {
+        if (view is android.widget.TextView) add(view.text.toString())
+        if (view is ViewGroup) for (index in 0 until view.childCount) addAll(collectText(view.getChildAt(index)))
+    }
+
+    @Test
+    fun activeLibraryRowAlwaysIdentifiesManualOrAutomaticCapture() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val bluetooth = (activity.application as CutoutApplication).bluetooth
+        val panel = DiagnosticCapturePanel(activity, bluetooth, {})
+        activity.setContentView(panel)
+        val loaded = CountDownLatch(1)
+        val observer = bluetooth.diagnostics.observe { if (it.ready && !it.loading) loaded.countDown() }
+        try {
+            assertTrue(awaitWithMainLooper(loaded, 15, TimeUnit.SECONDS))
+            panel.renderCapture(DiagnosticCapturePresentation(
+                ready = true,
+                lifecycle = MobileCaptureLifecycleSnapshotDto(
+                    MobileCaptureAttemptDto(MobileCaptureGenerationDto(601UL), MobileCaptureOriginDto.MANUAL,
+                        MobileCaptureStageDto.RECORDING), false, true,
+                ),
+                deviceKind = "Bench capture",
+            ))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
+            assertEquals("Bench capture", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.source")).text.toString())
+
+            assertTrue(panel.handleBack())
+            panel.renderCapture(DiagnosticCapturePresentation(
+                ready = true,
+                lifecycle = MobileCaptureLifecycleSnapshotDto(
+                    MobileCaptureAttemptDto(MobileCaptureGenerationDto(602UL), MobileCaptureOriginDto.AUTOMATIC,
+                        MobileCaptureStageDto.RECORDING), false, true,
+                ),
+            ))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
+            assertEquals(
+                lol.cutout.CutoutUi(activity).label("captures.automatic"),
+                checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.source")).text.toString(),
+            )
+        } finally {
+            observer.close()
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
     @Test
     fun labelControlsWaitForRustAdmissionAndKeepPriorStateOnFailure() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
