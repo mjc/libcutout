@@ -89,6 +89,16 @@ class RideDashboardView(
             value.phase == NativePhase.IDENTIFYING -> context.getString(R.string.identifying)
             else -> context.getString(R.string.disconnected)
         }
+        val projection = snapshot?.let(::mobileRiderDashboardProjection)
+        // Only current verified EUC sessions may surface the Rust-selected guidance.
+        val reduceAccelerationWarning = displayKind == DisplayKind.EUC &&
+            readiness == MobileConnectionReadinessDto.VERIFIED &&
+            snapshot != null &&
+            projection?.accelerationGuidance == MobileRiderAccelerationGuidanceDto.REDUCE_ACCELERATION
+        if (reduceAccelerationWarning) {
+            statusText = ui.label("euc.warning.reduce_acceleration")
+            warningStatus = true
+        }
         if (snapshot?.operatingState == RideOperatingState.CHARGING) {
             when (chargeEstimate?.kind) {
                 MobileChargeEstimateStateKindDto.FULL -> statusText = ui.label("charge.estimate.value.full")
@@ -96,7 +106,6 @@ class RideDashboardView(
                 else -> Unit
             }
         }
-        val projection = snapshot?.let(::mobileRiderDashboardProjection)
         val metrics = projection?.dashboardMetrics.orEmpty()
         val battery = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.BatteryLevel>()
             .firstOrNull()?.reading
@@ -452,7 +461,9 @@ class RideDashboardView(
         withGps: Boolean = false,
     ): LinearLayout = ui.row().apply {
         gravity = Gravity.CENTER
-        val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = !withGps }
+        // Swift's hero HStack aligns the speed and unit on their first text baseline;
+        // the GPS readback sits below the unit without changing that alignment.
+        val readout = ui.row().apply { gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP; isBaselineAligned = true }
         val speed = ui.text(context.getString(R.string.unavailable), maxPointSizeSp.toFloat(), true).apply {
             setSingleLine(true); maxLines = 1; maxWidth = maxTextWidthPx.coerceAtLeast(ui.dp(1))
             setHorizontallyScrolling(false)
@@ -464,7 +475,11 @@ class RideDashboardView(
         val unit = ui.text(" ${context.getString(R.string.speed_unit)}", 18f, true, ui.muted)
         speedUnitView = unit
         if (withGps) {
-            val unitAndGps = ui.column().apply { gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false }
+            val unitAndGps = ui.column().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                isBaselineAligned = true
+                baselineAlignedChildIndex = 0
+            }
             unitAndGps.addView(unit)
             gpsSpeedView = ui.text("GPS --", 12f, true, ui.muted).apply {
                 maxLines = 1
@@ -591,13 +606,16 @@ class RideDashboardView(
         headingView?.text = identityTitle
         headingView?.contentDescription = identityTitle
         statusView?.text = statusText
+        statusView?.setTextColor(if (warningStatus) ui.orange else ui.muted)
         emptyStatusView?.text = statusText
         closeView?.contentDescription = context.getString(if (active) R.string.disconnect else R.string.choose_device)
         statusDot?.background = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             setColor(if (warningStatus || !active) ui.orange else ui.muted)
         }
-        statusView?.contentDescription = statusText
+        statusView?.contentDescription = if (warningStatus) {
+            "$statusText, ${ui.label("status.accessibility.warning")}"
+        } else statusText
         speedView?.text = speed
         val percent = (headroom as? MobileRiderHeadroomValueDto.Available)?.permille?.toInt()
         gaugeView?.update(headroom, percent, headroomText)

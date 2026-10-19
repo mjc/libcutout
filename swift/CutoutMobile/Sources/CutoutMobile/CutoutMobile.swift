@@ -3913,8 +3913,6 @@ extension BmsSnapshot {
 }
 
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
-    private static let reduceAccelerationPwmHeadroomThreshold = 250
-
     public let phase: SessionConnectionPhase
     public let displayState: RideDisplayState
 
@@ -4210,11 +4208,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 
     private var shouldReduceAcceleration: Bool {
-        guard operatingState == .riding || operatingState == .standing, let pwmHeadroomPermille else {
-            return false
-        }
-
-        return pwmHeadroomPermille <= Self.reduceAccelerationPwmHeadroomThreshold
+        telemetry?.riderDashboardProjection.accelerationGuidance == .reduceAcceleration
     }
 
     private var pwmHeadroomCoverage: EucRideVisibleFieldSource {

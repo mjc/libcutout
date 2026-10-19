@@ -26,6 +26,8 @@ import uniffi.cutout_mobile_ffi.MobileVescRideStopReasonDto
 import uniffi.cutout_mobile_ffi.MobileVescRideWarningDto
 import uniffi.cutout_mobile_ffi.MobilePhoneLocationSampleDto
 import uniffi.cutout_mobile_ffi.MobilePhoneLocationState
+import uniffi.cutout_mobile_ffi.DutyCycle
+import uniffi.cutout_mobile_ffi.MobileRiderAccelerationGuidanceDto
 import uniffi.cutout_mobile_ffi.RideOperatingState
 
 /** Presentation-only state copies over the existing Rust replay; no wire claim is made. */
@@ -77,6 +79,91 @@ open class RideDashboardProjectionTest {
         check(originalSpeed == expectedSpeed) { "Ride speed did not use Swift's millimeters-per-second to mph conversion" }
         check(children(ride).filterIsInstance<TextView>().any { it.text.toString().trim() == speedUnit }) {
             "The Ride hero did not render its localized speed unit"
+        }
+        val speedView = tagged<TextView>(ride, "ride.hero.speed")
+        val unitView = children(ride).filterIsInstance<TextView>().first { it.text.toString().trim() == speedUnit }
+        fun absoluteBaseline(view: View): Int {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            return location[1] + view.baseline
+        }
+        check(kotlin.math.abs(absoluteBaseline(speedView) - absoluteBaseline(unitView)) <= 2) {
+            "Speed unit should share Swift's first-text-baseline alignment"
+        }
+    }
+
+    @Test
+    fun eucAccelerationGuidanceUsesRustProjectionOnlyForVerifiedRideTelemetry() = withActivity { activity ->
+        val replay = productionReplayPresentation()
+        val ui = CutoutUi(activity)
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+
+        val lowHeadroom = replay.withPwm(900)
+        check(mobileRiderDashboardProjection(checkNotNull(lowHeadroom.telemetry)).accelerationGuidance ==
+            MobileRiderAccelerationGuidanceDto.REDUCE_ACCELERATION) {
+            "The fixture should exercise Rust-selected low-headroom guidance"
+        }
+        ride.render(lowHeadroom)
+        val speed = tagged<TextView>(ride, "ride.hero.speed")
+        check(hasLocalizedText(ride, ui, activity, "euc.warning.reduce_acceleration")) {
+            "Verified EUC telemetry should show Rust's reduction guidance"
+        }
+
+        val aboveThreshold = replay.withPwm(700)
+        check(mobileRiderDashboardProjection(checkNotNull(aboveThreshold.telemetry)).accelerationGuidance ==
+            MobileRiderAccelerationGuidanceDto.NO_WARNING) {
+            "The safe comparison fixture should remain Rust-selected as no warning"
+        }
+        ride.render(aboveThreshold)
+        check(!hasText(ride, ui.label("euc.warning.reduce_acceleration"))) {
+            "Ride presentation must not retain guidance after Rust clears it"
+        }
+        check(hasLocalizedText(ride, ui, activity, "euc.status.riding")) {
+            "No-warning guidance should preserve the ordinary Rust operating status"
+        }
+        check(tagged<TextView>(ride, "ride.hero.speed") === speed) {
+            "Guidance-only changes should retain the live speed view"
+        }
+
+        val noVisibleTelemetry = lowHeadroom.copy(
+            telemetry = checkNotNull(lowHeadroom.telemetry).copy(
+                speed = null,
+                voltage = null,
+                batteryCurrent = null,
+                motorCurrent = null,
+                power = null,
+                controllerTemperature = null,
+                motorTemperature = null,
+                batteryTemperature = null,
+                pwm = null,
+                footpad = null,
+                pitch = null,
+                roll = null,
+                batteryLevelReported = null,
+                batteryLevelEstimated = null,
+            ),
+        )
+        check(mobileRiderDashboardProjection(checkNotNull(noVisibleTelemetry.telemetry)).accelerationGuidance ==
+            MobileRiderAccelerationGuidanceDto.NO_WARNING)
+        ride.render(noVisibleTelemetry)
+        check(!hasText(ride, ui.label("euc.warning.reduce_acceleration"))) {
+            "With no PWM input, Rust's no-warning result must not show reduction guidance"
+        }
+
+        val pending = lowHeadroom.copy(
+            session = checkNotNull(lowHeadroom.session).copy(
+                connection = checkNotNull(lowHeadroom.session).connection.copy(
+                    readiness = MobileConnectionReadinessDto.PENDING,
+                ),
+            ),
+        )
+        ride.render(pending)
+        check(!hasText(ride, ui.label("euc.warning.reduce_acceleration"))) {
+            "Unverified telemetry must not surface a safety status"
+        }
+        check(hasText(ride, activity.getString(lol.cutout.R.string.identifying))) {
+            "Connection progress keeps priority over telemetry guidance"
         }
     }
 
@@ -301,6 +388,10 @@ open class RideDashboardProjectionTest {
 
     private fun BlePresentation.withTelemetry(operatingState: RideOperatingState): BlePresentation = copy(
         telemetry = checkNotNull(telemetry).copy(operatingState = operatingState),
+    )
+
+    private fun BlePresentation.withPwm(permille: Int): BlePresentation = copy(
+        telemetry = checkNotNull(telemetry).copy(pwm = DutyCycle(permille.toShort())),
     )
 
     private fun BlePresentation.withVesc(

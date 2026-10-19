@@ -4708,6 +4708,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(lowHeadroom.warningState.title, "Reduce acceleration")
         XCTAssertEqual(healthyHeadroom.warningState.severity, .normal)
         XCTAssertEqual(parked.warningState.severity, .normal)
+
+        let standingAtBoundary = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .standing, pwm: dutyCycle(750))
+            )
+        )
+        let standingAboveBoundary = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .standing, pwm: dutyCycle(749))
+            )
+        )
+        XCTAssertEqual(standingAtBoundary.pwmHeadroomPermille, 250)
+        XCTAssertEqual(standingAtBoundary.warningState.severity, .reduceAcceleration)
+        XCTAssertEqual(standingAboveBoundary.pwmHeadroomPermille, 251)
+        XCTAssertEqual(standingAboveBoundary.warningState.severity, .normal)
     }
 
     func testRideStateTreatsMissingLiveSnapshotAsTelemetryUnavailable() {

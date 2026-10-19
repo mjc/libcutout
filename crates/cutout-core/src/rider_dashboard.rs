@@ -6,6 +6,16 @@ use crate::{
 };
 
 const PWM_IDLE_DEADBAND_PERMILLE: u16 = 20;
+const REDUCE_ACCELERATION_HEADROOM_THRESHOLD_PERMILLE: u16 = 250;
+
+/// Rust-selected guidance about remaining PWM headroom.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiderAccelerationGuidance {
+    /// Available PWM headroom is above the low-headroom boundary or unavailable.
+    NoWarning,
+    /// Riding or standing with available PWM headroom at or below the boundary.
+    ReduceAcceleration,
+}
 
 /// Availability of one projected rider metric.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +130,8 @@ pub struct RiderDashboardProjection {
     pub dashboard_metrics: Vec<RiderDashboardMetricDescriptor>,
     /// Safety metrics in display order.
     pub safety_metrics: Vec<RiderSafetyMetricDescriptor>,
+    /// Rust-owned guidance derived from operating state and PWM headroom.
+    pub acceleration_guidance: RiderAccelerationGuidance,
 }
 
 impl RiderDashboardProjection {
@@ -163,7 +175,31 @@ impl RiderDashboardProjection {
             safety_metrics: vec![RiderSafetyMetricDescriptor::PwmHeadroom {
                 value: pwm_headroom(input.pwm),
             }],
+            acceleration_guidance: acceleration_guidance(input.operating_state, input.pwm),
         }
+    }
+}
+
+fn acceleration_guidance(
+    operating_state: RideOperatingState,
+    pwm: Option<Measured<DutyCycle>>,
+) -> RiderAccelerationGuidance {
+    match operating_state {
+        RideOperatingState::Riding | RideOperatingState::Standing => {}
+        RideOperatingState::Unknown | RideOperatingState::Parked | RideOperatingState::Charging => {
+            return RiderAccelerationGuidance::NoWarning;
+        }
+    }
+
+    match pwm_headroom(pwm) {
+        RiderMetricValue::Available(headroom)
+            if headroom <= REDUCE_ACCELERATION_HEADROOM_THRESHOLD_PERMILLE =>
+        {
+            RiderAccelerationGuidance::ReduceAcceleration
+        }
+        RiderMetricValue::Available(_)
+        | RiderMetricValue::NotApplicable
+        | RiderMetricValue::Unavailable => RiderAccelerationGuidance::NoWarning,
     }
 }
 
@@ -433,6 +469,63 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn acceleration_guidance_uses_the_existing_headroom_threshold_for_riding_and_standing() {
+        for operating_state in [RideOperatingState::Riding, RideOperatingState::Standing] {
+            for (pwm_permille, expected) in [
+                (750, RiderAccelerationGuidance::ReduceAcceleration),
+                (751, RiderAccelerationGuidance::ReduceAcceleration),
+                (749, RiderAccelerationGuidance::NoWarning),
+                (-750, RiderAccelerationGuidance::ReduceAcceleration),
+                (-749, RiderAccelerationGuidance::NoWarning),
+            ] {
+                let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                    operating_state,
+                    pwm: Some(Measured::reported(DutyCycle::from_permille(pwm_permille))),
+                    ..empty_input()
+                });
+
+                assert_eq!(
+                    projection.acceleration_guidance, expected,
+                    "{operating_state:?}, PWM {pwm_permille}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn acceleration_guidance_is_absent_when_pwm_is_unavailable_or_state_is_not_riding() {
+        for operating_state in [
+            RideOperatingState::Unknown,
+            RideOperatingState::Parked,
+            RideOperatingState::Charging,
+        ] {
+            let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                operating_state,
+                pwm: Some(Measured::reported(DutyCycle::from_permille(1_000))),
+                ..empty_input()
+            });
+            assert_eq!(
+                projection.acceleration_guidance,
+                RiderAccelerationGuidance::NoWarning,
+                "{operating_state:?}"
+            );
+        }
+
+        for operating_state in [RideOperatingState::Riding, RideOperatingState::Standing] {
+            let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                operating_state,
+                ..empty_input()
+            });
+            assert_eq!(
+                projection.acceleration_guidance,
+                RiderAccelerationGuidance::NoWarning,
+                "{operating_state:?}"
+            );
+        }
+    }
+
     #[test]
     fn unknown_current_does_not_manufacture_signed_power() {
         let input = RiderDashboardInput {

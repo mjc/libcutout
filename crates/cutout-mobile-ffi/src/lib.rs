@@ -5778,6 +5778,15 @@ pub enum MobileRiderHeadroomValueDto {
     Unavailable,
 }
 
+/// Rust-selected rider guidance based on operating state and PWM headroom.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRiderAccelerationGuidanceDto {
+    /// Headroom is sufficient or the required measurement is unavailable.
+    NoWarning,
+    /// The rider is moving or standing with low PWM headroom.
+    ReduceAcceleration,
+}
+
 /// One Rust-selected metric in the live rider safety section.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRiderSafetyMetricDescriptorDto {
@@ -5792,6 +5801,8 @@ pub struct MobileRiderDashboardProjectionDto {
     pub dashboard_metrics: Vec<MobileRiderDashboardMetricDescriptorDto>,
     /// Safety metrics in display order.
     pub safety_metrics: Vec<MobileRiderSafetyMetricDescriptorDto>,
+    /// Rust-selected low-headroom guidance.
+    pub acceleration_guidance: MobileRiderAccelerationGuidanceDto,
 }
 
 /// Compact values used by Swift fixtures to exercise the Rust-owned projection.
@@ -18868,6 +18879,16 @@ impl From<cutout_core::RiderDashboardProjection> for MobileRiderDashboardProject
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            acceleration_guidance: projection.acceleration_guidance.into(),
+        }
+    }
+}
+
+impl From<cutout_core::RiderAccelerationGuidance> for MobileRiderAccelerationGuidanceDto {
+    fn from(guidance: cutout_core::RiderAccelerationGuidance) -> Self {
+        match guidance {
+            cutout_core::RiderAccelerationGuidance::NoWarning => Self::NoWarning,
+            cutout_core::RiderAccelerationGuidance::ReduceAcceleration => Self::ReduceAcceleration,
         }
     }
 }
@@ -21209,6 +21230,10 @@ mod tests {
             vec![MobileRiderSafetyMetricDescriptorDto::PwmHeadroom {
                 value: MobileRiderHeadroomValueDto::Available { permille: 0 },
             }]
+        );
+        assert_eq!(
+            projection.acceleration_guidance,
+            MobileRiderAccelerationGuidanceDto::ReduceAcceleration
         );
     }
 
