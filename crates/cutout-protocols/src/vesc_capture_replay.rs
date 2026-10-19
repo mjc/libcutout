@@ -198,8 +198,16 @@ impl VescCaptureReplaySession {
 
     fn prepare_record(record: &PevcapRecord, host: &mut HostSession<Self>) {
         match record.direction {
-            PevcapDirection::LinkUp | PevcapDirection::LinkDown => {
+            PevcapDirection::LinkUp => {
                 *host = HostSession::new(Self::new(host.protocol_session().policy));
+                return;
+            }
+            PevcapDirection::LinkDown => {
+                // The shared driver delivers LinkDown next, disconnecting and resetting
+                // the decoder once. Retain the historical projection and its evidence.
+                let session = host.protocol_session_mut();
+                session.scope = None;
+                session.last_receipt = None;
                 return;
             }
             PevcapDirection::Outbound => return,
@@ -735,6 +743,147 @@ mod tests {
                     );
                     assert_eq!(capture.encode(encoding).unwrap(), bytes);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn capture_ending_link_down_retains_last_observation_without_new_sample() {
+        use cutout_core::{PevcapEncoding, PevcapReader, PevcapReplayMode};
+        let mut capture = reconnect_capture();
+        let original = record(90_000, 283, 1, 1, 100);
+        capture.records = vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(0), None),
+            original.clone(),
+            PevcapRecord::link_down(MonotonicTimestamp::new(110)),
+        ];
+        let mut expected_host = host(VescReplayGeometryPolicy::Captured);
+        let expected = ingest(&mut expected_host, &original);
+        assert!(expected.telemetry.speed.is_some());
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).unwrap();
+            for mode in [PevcapReplayMode::Whole, PevcapReplayMode::OneByte] {
+                let mut host = HostSession::new(VescCaptureReplaySession::new(
+                    VescReplayGeometryPolicy::Captured,
+                ));
+                let mut outputs = Vec::new();
+                PevcapReader::new(std::io::Cursor::new(&bytes), encoding)
+                    .unwrap()
+                    .replay_into_host_with_record_context(
+                        mode,
+                        &mut host,
+                        &mut outputs,
+                        true,
+                        VescCaptureReplaySession::observe_record,
+                    )
+                    .unwrap();
+                assert_eq!(VescCaptureReplaySession::observation(&host), expected);
+                assert!(!host.protocol_session().inner.replay_is_connected());
+                assert!(host.protocol_session().scope.is_none());
+                assert_eq!(host.protocol_session().last_receipt, None);
+                assert_eq!(
+                    outputs
+                        .iter()
+                        .filter(|output| matches!(
+                            output,
+                            SessionOutput::Event(cutout_core::DeviceEvent::LinkDown)
+                        ))
+                        .count(),
+                    1
+                );
+                assert!(
+                    !outputs
+                        .iter()
+                        .any(|output| matches!(output, SessionOutput::Transport(_)))
+                );
+                assert_eq!(capture.encode(encoding).unwrap(), bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn disconnected_capture_rejects_late_bytes_and_link_up_starts_new_scope() {
+        use cutout_core::{PevcapEncoding, PevcapReader, PevcapReplayMode};
+        let mut capture = reconnect_capture();
+        let original = record(90_000, 283, 2, 1, 100);
+        let late = record(100_000, 314, 3, 1, 120);
+        let mut unknown = record(90_000, 283, 1, 1, 210);
+        unknown.semantic_telemetry = None;
+        let fresh = record(100_000, 314, 1, 1, 220);
+        capture.records = vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(0), None),
+            original,
+            PevcapRecord::link_down(MonotonicTimestamp::new(110)),
+            late.clone(),
+            PevcapRecord::link_up(MonotonicTimestamp::new(200), None),
+            unknown,
+            fresh.clone(),
+        ];
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).unwrap();
+            for mode in [PevcapReplayMode::Whole, PevcapReplayMode::OneByte] {
+                let mut host = HostSession::new(VescCaptureReplaySession::new(
+                    VescReplayGeometryPolicy::Captured,
+                ));
+                let mut outputs = Vec::new();
+                let mut observations = Vec::new();
+                PevcapReader::new(std::io::Cursor::new(&bytes), encoding)
+                    .unwrap()
+                    .replay_into_host_with_record_context(
+                        mode,
+                        &mut host,
+                        &mut outputs,
+                        true,
+                        |boundary, host| {
+                            VescCaptureReplaySession::observe_record(boundary, host);
+                            if let PevcapReplayRecord::After(_) = boundary {
+                                observations.push((
+                                    VescCaptureReplaySession::observation(host),
+                                    host.protocol_session().inner.replay_is_connected(),
+                                ));
+                            }
+                        },
+                    )
+                    .unwrap();
+                let before_disconnect = &observations[1].0;
+                assert!(before_disconnect.telemetry.speed.is_some());
+                assert_eq!(&observations[2].0, before_disconnect);
+                assert!(!observations[2].1);
+                let rejected = &observations[3].0;
+                assert_eq!(rejected.telemetry, before_disconnect.telemetry);
+                assert_eq!(rejected.geometry, before_disconnect.geometry);
+                assert_eq!(rejected.original, late.semantic_telemetry);
+                assert_eq!(
+                    rejected.disposition,
+                    VescReplayRecordDisposition::Ignored(VescReplayRejection::Disconnected)
+                );
+                assert!(!observations[3].1);
+                let reconnected = &observations[4].0;
+                assert!(observations[4].1);
+                assert_eq!(reconnected.telemetry, TelemetrySnapshot::default());
+                assert_eq!(reconnected.geometry, VescReplayGeometryBasis::Unknown);
+                assert_eq!(reconnected.original, None);
+                assert_eq!(observations[5].0.telemetry.speed, None);
+                let final_observation = &observations[6].0;
+                assert_eq!(
+                    final_observation.disposition,
+                    VescReplayRecordDisposition::Accepted
+                );
+                assert_eq!(
+                    final_observation
+                        .telemetry
+                        .speed
+                        .unwrap()
+                        .value
+                        .as_millimetres_per_second(),
+                    1794
+                );
+                assert_eq!(
+                    final_observation.telemetry.speed_observed_at_ms,
+                    Some(MonotonicTimestamp::new(220))
+                );
+                assert_eq!(final_observation.original, fresh.semantic_telemetry);
+                assert_eq!(capture.encode(encoding).unwrap(), bytes);
             }
         }
     }
