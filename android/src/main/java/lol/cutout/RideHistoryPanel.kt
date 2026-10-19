@@ -6,10 +6,16 @@ import android.icu.util.Measure
 import android.icu.util.MeasureUnit
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.view.Gravity
 import android.view.View
+import android.graphics.drawable.RippleDrawable
 import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ScrollView
@@ -45,17 +51,25 @@ class RideHistoryPanel(
     private val filterTopRow = ui.row()
     private val dateFilter = ui.action(context.getString(R.string.ride_map_last_30_days)) { showDateMenu() }.apply {
         tag = "ride_map_date_filter"
+        styleFilterAction(this)
     }
     private val vehicleFilter = ui.action(context.getString(R.string.ride_map_all_vehicles)) { showVehicleMenu() }.apply {
         tag = "ride_map_vehicle_filter"
+        styleFilterAction(this)
     }
-    private val clearFilters = ui.action("×", false) {
-        search.setText("")
-        controller.clearFilters()
-    }.apply {
+    private val clearFilters = ImageButton(context).apply {
         tag = "ride_map_clear_filters"
-        textSize = 22f
         contentDescription = context.getString(R.string.ride_map_clear_filters)
+        setImageDrawable(CutoutIcon(CutoutSymbol.CLOSE, ui.muted))
+        setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+        minimumWidth = ui.dp(44)
+        minimumHeight = ui.dp(44)
+        scaleType = ImageView.ScaleType.CENTER
+        background = filterActionRipple()
+        setOnClickListener {
+            search.setText("")
+            controller.clearFilters()
+        }
     }
     private val search = EditText(context).apply {
         tag = "ride_map_search"
@@ -76,6 +90,28 @@ class RideHistoryPanel(
     private var musicForgetError: String? = null
     private var fittedRouteRideIdentity: ByteArray? = null
     private var explicitRouteFitRequested = false
+
+    private fun styleFilterAction(button: android.widget.Button) {
+        button.background = filterActionRipple()
+        button.textSize = 15f
+        button.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        button.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+        button.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+        button.setCompoundDrawablesRelative(null, null, CutoutIcon(CutoutSymbol.CHEVRON, ui.muted).apply {
+            setBounds(0, 0, ui.dp(12), ui.dp(12))
+        }, null)
+        button.compoundDrawablePadding = ui.dp(6)
+        button.maxLines = 1
+        button.ellipsize = android.text.TextUtils.TruncateAt.END
+        button.elevation = 0f
+        button.stateListAnimator = null
+    }
+
+    private fun filterActionRipple() = RippleDrawable(
+        ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
+        null,
+        ui.rounded(10, Color.WHITE, outlined = false),
+    )
 
     init {
         isFillViewport = true
@@ -135,7 +171,10 @@ class RideHistoryPanel(
             unavailableLabel,
         )
         clearFilters.isEnabled = controller.hasActiveFilters
-        clearFilters.alpha = if (controller.hasActiveFilters) 1f else .48f
+        clearFilters.setImageDrawable(CutoutIcon(
+            CutoutSymbol.CLOSE,
+            if (controller.hasActiveFilters) ui.brand else ui.muted,
+        ))
 
         val state = controller.state
         val selected = state.selected
