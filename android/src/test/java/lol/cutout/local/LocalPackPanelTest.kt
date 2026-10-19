@@ -137,7 +137,7 @@ class LocalPackPanelTest : PackPanelTest() {
     }
 
     @Test
-    fun groupTilesExposeRustPackIdentityAlertsAndReturnToTheOriginatingMode() {
+    fun groupTilesExposeRustPackIdentityAlertsAndReturnToTheCellMap() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
         val panel = PackPanel(activity)
@@ -173,13 +173,13 @@ class LocalPackPanelTest : PackPanelTest() {
             assertTrue("Critical alert should change the rendered tile outline", warningStroke != renderedTopBorderPixel(tile, activity))
 
             tile.performClick()
-            buttons(panel).single { it.text == activity.getString(R.string.back) }.performClick()
-            assertTrue(checkNotNull(panel.findViewWithTag<View>("pack.mode.overview")).isSelected)
-            assertFalse(checkNotNull(panel.findViewWithTag<View>("pack.mode.cell-map")).isSelected)
+            buttons(panel).single { it.text == CutoutUi(activity).label("bms.pack.back") }.performClick()
+            assertFalse(checkNotNull(panel.findViewWithTag<View>("pack.mode.overview")).isSelected)
+            assertTrue(checkNotNull(panel.findViewWithTag<View>("pack.mode.cell-map")).isSelected)
 
             buttons(panel).single { it.text == activity.getString(R.string.pack_cell_map) }.performClick()
             checkNotNull(panel.findViewWithTag<View>("pack.group.1")).performClick()
-            buttons(panel).single { it.text == activity.getString(R.string.back) }.performClick()
+            buttons(panel).single { it.text == CutoutUi(activity).label("bms.pack.back") }.performClick()
             assertFalse(checkNotNull(panel.findViewWithTag<View>("pack.mode.overview")).isSelected)
             assertTrue(checkNotNull(panel.findViewWithTag<View>("pack.mode.cell-map")).isSelected)
         } finally {

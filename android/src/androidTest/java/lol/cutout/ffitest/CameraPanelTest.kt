@@ -150,7 +150,7 @@ open class CameraPanelTest {
                     wifiReady = true, connection = CameraConnectionState.CONNECTED,
                     evidence = evidence.copy(configuration = emptyList()),
                 ))
-                check(panel.findViewWithTag<Button>("camera.still.request") == null)
+                check(panel.findViewWithTag<Button>("camera.still.request")?.visibility == View.GONE)
                 check(descendants(panel).filterIsInstance<TextView>().any {
                     it.text == lol.cutout.CutoutUi(activity).label("camera.still.unavailable") && it.visibility == View.VISIBLE
                 }) { "Unsupported still capture must be shown as unavailable, as in Swift" }
