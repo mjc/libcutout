@@ -1,6 +1,7 @@
 package lol.cutout.local
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +29,30 @@ import java.io.File
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-night-xhdpi", application = LocalTestApplication::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalArtifactCaptureDetailPanelTest {
+    @Test
+    fun longArtifactIdentityWrapsAndOpensAtHeaderWithAccessibilityText() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val base = host.get()
+        val context = base.createConfigurationContext(Configuration(base.resources.configuration).apply { fontScale = 1.5f })
+        val missing = File(base.cacheDir, "capture-accessibility-absent.jsonl")
+        val deviceName = "Custom wheel with a long owner-saved name and firmware description"
+        val panel = ArtifactCaptureDetailPanel(context, artifact(missing).copy(deviceName = deviceName),
+            onExport = { _, _ -> error("Unavailable artifacts must not export") },
+            onShare = { error("No share was requested") },
+            submissionController = FakeSubmissionController(), onSettings = {})
+        base.setContentView(panel)
+        try {
+            NativeSurfaceCapture.save(panel, "capture-file-artifact-detail-large-text")
+            val identity = checkNotNull(panel.findViewWithTag<TextView>("captures.artifact.device"))
+            assertEquals(deviceName, identity.text.toString())
+            assertTrue(identity.lineCount > 1)
+            assertEquals(0, panel.scrollY)
+        } finally {
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
     @Test
     fun showsArtifactMetadataTechnicalDetailsAndExplicitShareAfterRetry() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()

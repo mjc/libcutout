@@ -1,6 +1,7 @@
 package lol.cutout.local
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
@@ -26,6 +27,24 @@ import uniffi.cutout_mobile_ffi.*
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalPackPanelTest : PackPanelTest() {
+    @Test
+    fun controllerOnlyEstimateStacksAtAccessibilityTextSize() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val base = host.get()
+        val context = base.createConfigurationContext(Configuration(base.resources.configuration).apply { fontScale = 1.5f })
+        val panel = PackPanel(context)
+        base.setContentView(panel)
+        try {
+            panel.render(productionReplayPresentation().copy(bms = null))
+            NativeSurfaceCapture.save(panel, "pack-controller-only-large-text")
+            val estimateCard = checkNotNull(panel.findViewWithTag<ViewGroup>("bms.no-data.estimate"))
+            val hero = estimateCard.getChildAt(0) as android.widget.LinearLayout
+            assertEquals(android.widget.LinearLayout.VERTICAL, hero.orientation)
+            assertTrue(hero.getChildAt(1).top >= hero.getChildAt(0).bottom)
+            assertEquals(0, panel.scrollY)
+        } finally { host.pause().stop().destroy() }
+    }
+
     @Test
     fun noBmsRendersSharedEvidenceAndDoesNotPromoteRetainedReadingsToLiveConfidence() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()

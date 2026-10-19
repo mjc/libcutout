@@ -12,6 +12,7 @@ import lol.cutout.NearbyPev
 import lol.cutout.RideDashboardView
 import lol.cutout.SettingsPanel
 import lol.cutout.CutoutApplication
+import lol.cutout.CutoutUi
 import lol.cutout.MainActivity
 import lol.cutout.R
 import lol.cutout.ffitest.productionReplayPresentation
@@ -108,7 +109,7 @@ class NativeProductionSurfaceScreenshotTest {
             check(open(R.string.more))
             NativeSurfaceCapture.save(activity.window.decorView, "app-more-dark")
             check(open(R.string.pack))
-            val tag = "pack.metric.${activity.getString(R.string.voltage)}"
+            val tag = "pack.metric.${CutoutUi(activity).label("bms.no_data.pack_voltage")}"
             val voltage = checkNotNull(activity.window.decorView.findViewWithTag<android.widget.TextView>(tag))
             val text = voltage.text.toString()
             check(text != "—")
