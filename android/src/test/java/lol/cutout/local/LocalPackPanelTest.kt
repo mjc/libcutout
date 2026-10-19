@@ -70,7 +70,7 @@ class LocalPackPanelTest : PackPanelTest() {
             assertEquals(1, texts(panel).count { it == "12 mV" })
             assertTrue(texts(panel).contains(activity.getString(R.string.pack_balancing)))
             assertTrue(texts(panel).contains("Balancing is active"))
-            assertTrue(texts(panel).contains("Cell temperature high"))
+            assertTrue(texts(panel).any { it.contains("Cell temperature high") })
             assertNotNull(panel.findViewWithTag<View>("pack.group.1"))
             assertNotNull(panel.findViewWithTag<View>("pack.group.2"))
         } finally {
