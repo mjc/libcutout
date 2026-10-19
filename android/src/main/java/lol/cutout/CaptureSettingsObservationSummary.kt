@@ -85,6 +85,16 @@ internal class CaptureSettingsObservationSummary(
         updateViews()
     }
 
+    /** A new route or capture must not consume the previous route's asynchronous read. */
+    fun reset(values: List<MobileCaptureSettingsObservationDto> = emptyList()) {
+        if (disposed) return
+        request++
+        loading = false
+        failed = false
+        observations = values.toList()
+        updateViews()
+    }
+
     fun dispose() {
         if (disposed) return
         disposed = true
