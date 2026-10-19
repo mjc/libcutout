@@ -4,6 +4,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.EditText
+import android.widget.SeekBar
+import android.view.MotionEvent
 import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
@@ -199,6 +202,135 @@ open class LightingPanelTest {
                     check(effects.isSelected && effects.hasFocus()) {
                         "Rerendering a snapshot should preserve the selected page and focused tab"
                     }
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun telemetrySnapshotsDoNotReplaceAnActiveBrightnessGesture() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val panel = LightingPanel(activity, client) {}
+                val requested = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(
+                        MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true,
+                    ),
+                    emptyList(), "synthetic-light", null, null, false, requested, null, emptyList(),
+                    permissionMissing = false,
+                )
+                panel.render(snapshot)
+                activity.setContentView(panel)
+                val width = (393 * activity.resources.displayMetrics.density).toInt()
+                val heightLimit = (2200 * activity.resources.displayMetrics.density).toInt()
+                panel.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(heightLimit, View.MeasureSpec.AT_MOST),
+                )
+                panel.layout(0, 0, width, panel.measuredHeight)
+                panel.viewTreeObserver.dispatchOnPreDraw()
+
+                val slider = checkNotNull(panel.findViewWithTag<SeekBar>("lighting.brightness"))
+                check(slider.isEnabled && slider.width > 0 && slider.height > 0)
+                val now = android.os.SystemClock.uptimeMillis()
+                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, slider.width * .7f, slider.height / 2f, 0)
+                slider.dispatchTouchEvent(down)
+                down.recycle()
+                check(slider.isPressed) { "Brightness slider did not enter its native tracking state" }
+                val duringDrag = snapshot.copy(requested = requested.copy(brightness = 63u))
+                panel.render(duringDrag)
+                check(panel.findViewWithTag<SeekBar>("lighting.brightness") === slider && slider.isPressed) {
+                    "A telemetry snapshot replaced the brightness control during a drag"
+                }
+                val cancelTime = now + 20
+                val cancel = MotionEvent.obtain(now, cancelTime, MotionEvent.ACTION_CANCEL, slider.width * .7f, slider.height / 2f, 0)
+                slider.dispatchTouchEvent(cancel)
+                cancel.recycle()
+                check(!slider.isPressed) { "The synthetic slider gesture must finish before the next interaction test" }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun telemetrySnapshotsPreserveFocusedPresetDraftAndCaret() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val panel = LightingPanel(activity, client) {}
+                val requested = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(
+                        MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true,
+                    ),
+                    emptyList(), "synthetic-light", null, null, false, requested, null, emptyList(),
+                    permissionMissing = false,
+                )
+                panel.render(snapshot)
+                activity.setContentView(panel)
+                val width = (393 * activity.resources.displayMetrics.density).toInt()
+                panel.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec((2200 * activity.resources.displayMetrics.density).toInt(), View.MeasureSpec.AT_MOST),
+                )
+                panel.layout(0, 0, width, panel.measuredHeight)
+                panel.viewTreeObserver.dispatchOnPreDraw()
+
+                val name = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                name.isFocusableInTouchMode = true
+                check(name.requestFocus())
+                name.setText("Weekend ride")
+                name.setSelection(7)
+                panel.render(snapshot.copy(requested = requested.copy(brightness = 78u)))
+                val retained = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                check(retained === name && retained.text.toString() == "Weekend ride" && retained.selectionStart == 7) {
+                    "A telemetry snapshot replaced the focused preset editor or changed its draft/caret"
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun focusOnAnOrdinaryButtonDoesNotFreezeNewConfirmedState() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val panel = LightingPanel(activity, client) {}
+                val confirmed = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(
+                        MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true,
+                    ),
+                    emptyList(), "synthetic-light", null, null, false, null, confirmed, emptyList(),
+                    permissionMissing = false,
+                )
+                panel.render(snapshot)
+                activity.setContentView(panel)
+                val width = (393 * activity.resources.displayMetrics.density).toInt()
+                panel.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec((2200 * activity.resources.displayMetrics.density).toInt(), View.MeasureSpec.AT_MOST),
+                )
+                panel.layout(0, 0, width, panel.measuredHeight)
+                panel.viewTreeObserver.dispatchOnPreDraw()
+
+                val white = checkNotNull(panel.findViewWithTag<View>("lighting.set-white"))
+                white.isFocusableInTouchMode = true
+                check(white.requestFocus())
+                panel.render(snapshot.copy(confirmed = confirmed.copy(brightness = 78u)))
+                check(panel.findViewWithTag<View>("lighting.set-white") !== white)
+                check(panel.findViewWithTag<SeekBar>("lighting.brightness")?.progress == 78) {
+                    "Keyboard focus on a command button must not prevent a newer Rust-confirmed value from rendering"
                 }
             }
         } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
