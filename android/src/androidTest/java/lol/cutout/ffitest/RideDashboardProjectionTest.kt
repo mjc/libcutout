@@ -29,6 +29,7 @@ import uniffi.cutout_mobile_ffi.MobilePhoneLocationState
 import uniffi.cutout_mobile_ffi.DutyCycle
 import uniffi.cutout_mobile_ffi.MobileRiderAccelerationGuidanceDto
 import uniffi.cutout_mobile_ffi.RideOperatingState
+import uniffi.cutout_mobile_ffi.mobileRiderDashboardProjection
 
 /** Presentation-only state copies over the existing Rust replay; no wire claim is made. */
 open class RideDashboardProjectionTest {
@@ -80,21 +81,28 @@ open class RideDashboardProjectionTest {
         check(children(ride).filterIsInstance<TextView>().any { it.text.toString().trim() == speedUnit }) {
             "The Ride hero did not render its localized speed unit"
         }
-        val speedView = tagged<TextView>(ride, "ride.hero.speed")
+        val density = activity.resources.displayMetrics.density
+        layout(ride, (393 * density).toInt(), (852 * density).toInt())
+        val alignedSpeedView = tagged<TextView>(ride, "ride.hero.speed")
         val unitView = children(ride).filterIsInstance<TextView>().first { it.text.toString().trim() == speedUnit }
+        check(alignedSpeedView.isLaidOut && unitView.isLaidOut &&
+            alignedSpeedView.width > 0 && unitView.width > 0 &&
+            alignedSpeedView.baseline >= 0 && unitView.baseline >= 0) {
+            "Ride speed and unit need measured views with valid baselines before alignment is checked"
+        }
         fun absoluteBaseline(view: View): Int {
             val location = IntArray(2)
             view.getLocationOnScreen(location)
             return location[1] + view.baseline
         }
-        check(kotlin.math.abs(absoluteBaseline(speedView) - absoluteBaseline(unitView)) <= 2) {
+        check(kotlin.math.abs(absoluteBaseline(alignedSpeedView) - absoluteBaseline(unitView)) <= 2) {
             "Speed unit should share Swift's first-text-baseline alignment"
         }
     }
 
     @Test
     fun eucAccelerationGuidanceUsesRustProjectionOnlyForVerifiedRideTelemetry() = withActivity { activity ->
-        val replay = productionReplayPresentation()
+        val replay = productionReplayPresentation().withTelemetry(RideOperatingState.RIDING)
         val ui = CutoutUi(activity)
         val ride = RideDashboardView(activity, {}, {})
         activity.setContentView(ride)

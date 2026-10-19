@@ -478,9 +478,11 @@ class RideDashboardView(
             val unitAndGps = ui.column().apply {
                 gravity = Gravity.CENTER_VERTICAL
                 isBaselineAligned = true
-                baselineAlignedChildIndex = 0
             }
             unitAndGps.addView(unit)
+            // LinearLayout validates this index against its children at assignment time.
+            // Keep the speed-unit TextView as the column's baseline source.
+            unitAndGps.baselineAlignedChildIndex = 0
             gpsSpeedView = ui.text("GPS --", 12f, true, ui.muted).apply {
                 maxLines = 1
                 setSingleLine(true)
