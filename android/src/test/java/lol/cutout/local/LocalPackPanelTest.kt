@@ -1,12 +1,113 @@
 package lol.cutout.local
 
+import android.app.Activity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import lol.cutout.PackPanel
+import lol.cutout.R
 import lol.cutout.ffitest.PackPanelTest
+import lol.cutout.ffitest.productionReplayPresentation
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.robolectric.Robolectric
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import uniffi.cutout_mobile_ffi.*
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-class LocalPackPanelTest : PackPanelTest()
+class LocalPackPanelTest : PackPanelTest() {
+    @Test
+    fun balancingCardAppearsForNonblankSummaryAndUpdatesInPlace() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val panel = PackPanel(activity)
+        activity.setContentView(panel)
+        try {
+            val replay = productionReplayPresentation()
+            panel.render(replay.copy(bms = partialSnapshot().copy(balancingSummary = "")))
+            assertNull(panel.findViewWithTag<TextView>("pack.balancing.detail"))
+
+            panel.render(replay.copy(bms = partialSnapshot().copy(balancingSummary = "Balancing active")))
+            val detail = panel.findViewWithTag<TextView>("pack.balancing.detail")
+            assertNotNull(detail)
+            assertEquals("Balancing active", detail.text.toString())
+
+            panel.render(replay.copy(bms = partialSnapshot().copy(balancingSummary = "Balancing stopped")))
+            assertSame(detail, panel.findViewWithTag<TextView>("pack.balancing.detail"))
+            assertEquals("Balancing stopped", detail.text.toString())
+        } finally {
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun partialSnapshotShowsOnlyPresentPackMetricsAndKeepsDistinctBmsSections() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val panel = PackPanel(activity)
+        activity.setContentView(panel)
+        try {
+            val snapshot = partialSnapshot()
+            panel.render(productionReplayPresentation().copy(bms = snapshot))
+
+            assertNotNull(panel.findViewWithTag<TextView>("pack.metric.${activity.getString(R.string.voltage)}"))
+            assertNull(panel.findViewWithTag<TextView>("pack.metric.${activity.getString(R.string.battery)}"))
+            assertFalse(texts(panel).contains(activity.getString(R.string.pack_current_1)))
+            assertFalse(texts(panel).contains(activity.getString(R.string.pack_current_2)))
+            assertFalse(texts(panel).contains("Fault summary must not be repeated"))
+
+            assertTrue(texts(panel).contains(activity.getString(R.string.pack_difference)))
+            assertEquals(1, texts(panel).count { it == "12 mV" })
+            assertTrue(texts(panel).contains(activity.getString(R.string.pack_balancing)))
+            assertTrue(texts(panel).contains("Balancing is active"))
+            assertTrue(texts(panel).contains("Cell temperature high"))
+            assertNotNull(panel.findViewWithTag<View>("pack.group.1"))
+            assertNotNull(panel.findViewWithTag<View>("pack.group.2"))
+        } finally {
+            host.pause().stop().destroy()
+        }
+    }
+
+    private fun partialSnapshot(): MobileBmsSnapshotDto {
+        fun reading(millivolts: Int) = VoltageReading(
+            Voltage(millivolts), MobileValueSourceDto.REPORTED,
+            MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED,
+        )
+        fun group(index: Int, millivolts: Int) = MobileBmsGroupSnapshotDto(
+            index.toUShort(), 1u, index.toUShort(), null, reading(millivolts), Voltage(millivolts),
+            emptyList(), emptyList(), null, null, false, MobileBmsAlertLevelDto.NOMINAL, null,
+        )
+        return MobileBmsSnapshotDto(
+            2u, 2u, MobileReadbackAvailabilityDto.AVAILABLE,
+            MobileBmsTopologyDto("2S verified pack", 2u, 1u, 1u, 1u, MobileBmsTopologyConfidenceDto.VERIFIED),
+            null, null, null, null, null, reading(48_000), null, null, null,
+            VoltageDeltaReading(
+                VoltageDelta(12), MobileValueSourceDto.CALCULATED,
+                MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED,
+            ),
+            1u, null, emptyList(), null, "Balancing is active", null,
+            "Fault summary must not be repeated", null,
+            listOf(group(1, 48_000), group(2, 48_012)), emptyList(),
+            listOf(MobileBmsFaultDto("temperature", "Cell temperature high", MobileBmsAlertLevelDto.WARNING)),
+            null, null,
+        )
+    }
+
+    private fun texts(root: View): List<String> = descendants(root)
+        .filterIsInstance<TextView>().map { it.text.toString() }.toList()
+
+    private fun descendants(root: View): Sequence<View> = sequence {
+        yield(root)
+        if (root is ViewGroup) for (index in 0 until root.childCount) yieldAll(descendants(root.getChildAt(index)))
+    }
+}
