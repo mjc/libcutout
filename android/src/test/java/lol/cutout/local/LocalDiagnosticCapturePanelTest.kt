@@ -89,6 +89,8 @@ class LocalDiagnosticCapturePanelTest {
                 activeLabels = listOf(MobileCaptureLabelDto.POWERED_ON_STATIONARY))
             panel.renderCapture(snapshot)
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            assertNull(panel.findViewWithTag<Button>("capture.label.powered_on_stationary.action"))
+            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
             val button = checkNotNull(panel.findViewWithTag<Button>("capture.label.powered_on_stationary.action"))
             button.isFocusableInTouchMode = true
             assertTrue(button.requestFocus())
@@ -99,6 +101,53 @@ class LocalDiagnosticCapturePanelTest {
             assertTrue(button.hasFocus())
             assertTrue(button.isSelected)
             NativeSurfaceCapture.save(panel, "capture-active-labels-dark")
+            assertTrue(panel.handleBack())
+            assertNotNull(panel.findViewWithTag<View>("captures.active.open"))
+            assertNull(panel.findViewWithTag<View>("captures.active.stop"))
+            assertFalse(panel.handleBack())
+            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
+            assertTrue(checkNotNull(panel.findViewWithTag<Button>("capture.label.powered_on_stationary.action")).isSelected)
+            panel.renderCapture(snapshot.copy(lifecycle = MobileCaptureLifecycleSnapshotDto(null, true, true)))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            assertNull(panel.findViewWithTag<View>("captures.active.stop"))
+            assertNotNull(panel.findViewWithTag<View>("captures.manual.start"))
+            assertFalse(panel.handleBack())
+        } finally {
+            observer.close()
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun savedRowOpensDetailAndBackPreservesTheLibrary() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val bluetooth = (activity.application as CutoutApplication).bluetooth
+        val titles = mutableListOf<String>()
+        val panel = DiagnosticCapturePanel(activity, bluetooth, {}, onTitleChanged = { titles += it })
+        activity.setContentView(panel)
+        val loaded = CountDownLatch(1)
+        val observer = bluetooth.diagnostics.observe { if (it.ready && !it.loading) loaded.countDown() }
+        try {
+            assertTrue(awaitWithMainLooper(loaded, 15, TimeUnit.SECONDS))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            val entry = MobileLiveCaptureHistoryEntryDto("fixture-row", false,
+                MobileCaptureIntegrityDto.Complete, null, "Falcon", 1792357200000UL, 1792357260000UL, 240UL, 8192UL)
+            panel.renderCapture(DiagnosticCapturePresentation(ready = true, captures = listOf(entry)))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            val row = checkNotNull(panel.findViewWithTag<View>("captures.database.fixture-row"))
+            assertTrue(row.performClick())
+            assertNull(panel.findViewWithTag<View>("captures.manual.start"))
+            assertNotNull(panel.findViewWithTag<View>("capture.submission.panel"))
+            assertEquals("Recording", titles.last())
+            assertTrue(panel.handleBack())
+            assertSame(row, panel.findViewWithTag("captures.database.fixture-row"))
+            assertEquals("Bluetooth Captures", titles.last())
+            assertFalse(panel.handleBack())
+            panel.renderCapture(DiagnosticCapturePresentation(ready = true, historyError = "Unavailable"))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            assertNotNull(panel.findViewWithTag<View>("captures.history.retry"))
         } finally {
             observer.close()
             panel.dispose()
