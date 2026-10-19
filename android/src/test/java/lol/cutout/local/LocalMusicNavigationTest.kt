@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import lol.cutout.CutoutApplication
 import lol.cutout.MainActivity
 import lol.cutout.R
+import lol.cutout.ffitest.productionReplayPresentation
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -86,6 +87,10 @@ class LocalMusicNavigationTest {
         try {
             val activity = host.get()
             val decor = activity.window.decorView
+            activity.render(productionReplayPresentation())
+            descendants(decor).single {
+                it.isShown && it.isClickable && it.contentDescription?.toString() == activity.getString(R.string.configuration)
+            }.performClick()
             val open = checkNotNull(decor.findViewWithTag<View>("settings.open-alarms"))
             assertTrue(open.isShown)
             open.performClick()
@@ -100,7 +105,7 @@ class LocalMusicNavigationTest {
     }
 
     @Test
-    fun musicHistoryOptionsRemainReachableBelowTheInitialSettingsViewport() {
+    fun musicHistoryPickerRemainsReachableInAShortSettingsViewport() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<CutoutApplication>()
         context.music.selectProvider(MobileMusicProviderDto.APPLE_MUSIC)
         val host = Robolectric.buildActivity(MainActivity::class.java,
@@ -109,7 +114,7 @@ class LocalMusicNavigationTest {
             val decor = host.get().window.decorView
             val density = decor.resources.displayMetrics.density
             val width = (353 * density).toInt()
-            val height = (640 * density).toInt()
+            val height = (360 * density).toInt()
             repeat(2) {
                 decor.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
@@ -117,12 +122,13 @@ class LocalMusicNavigationTest {
                 decor.viewTreeObserver.dispatchOnPreDraw()
             }
             val panel = checkNotNull(decor.findViewWithTag<android.widget.ScrollView>("music.settings.screen"))
-            val lastPolicy = checkNotNull(panel.findViewWithTag<View>("music.history.policy.human_readable"))
+            val picker = checkNotNull(panel.findViewWithTag<android.widget.Spinner>("music.history-picker"))
+            assertEquals(3, picker.count)
             assertTrue("A short viewport must scroll to the final music policy", panel.canScrollVertically(1))
             panel.isSmoothScrollingEnabled = false
             panel.fullScroll(View.FOCUS_DOWN)
             val visible = android.graphics.Rect()
-            assertTrue(lastPolicy.getGlobalVisibleRect(visible))
+            assertTrue(picker.getGlobalVisibleRect(visible))
             assertTrue(visible.height() > 0)
             assertTrue(panel.scrollY > 0)
         } finally { host.pause().stop().destroy() }
