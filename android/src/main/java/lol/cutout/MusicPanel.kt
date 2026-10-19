@@ -116,22 +116,8 @@ class MusicPanel(
         background = ui.rounded(22)
     }
 
-    private fun formAction(label: String, symbol: CutoutSymbol, action: () -> Unit) = ui.action(label, onClick = action).apply {
-        gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        typeface = android.graphics.Typeface.DEFAULT
-        minHeight = ui.dp(44)
-        minimumHeight = ui.dp(44)
-        setTextColor(ui.brand)
-        setPadding(0, ui.dp(10), 0, ui.dp(10))
-        background = android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000), null,
-            ui.rounded(10, android.graphics.Color.WHITE, outlined = false),
-        )
-        setCompoundDrawablesRelative(CutoutIcon(symbol, ui.brand).apply {
-            setBounds(0, 0, ui.dp(20), ui.dp(20))
-        }, null, null, null)
-        compoundDrawablePadding = ui.dp(12)
-    }
+    private fun formAction(label: String, symbol: CutoutSymbol, action: () -> Unit) =
+        musicFormAction(context, ui, label, plainRow = false, symbol = symbol, action = action)
 
     fun render(value: AndroidMusicPresentation) {
         val snapshot = value.snapshot
@@ -244,6 +230,49 @@ class MusicPanel(
     }
 }
 
+/** Plain, leading-aligned action row used by the SwiftUI Form settings surface. */
+private fun musicFormAction(
+    context: Context,
+    ui: CutoutUi,
+    label: String,
+    plainRow: Boolean = true,
+    symbol: CutoutSymbol? = null,
+    tag: String? = null,
+    destructive: Boolean = false,
+    action: () -> Unit,
+) = android.widget.Button(context).apply {
+    text = label
+    if (tag != null) this.tag = tag
+    textSize = 17f
+    isAllCaps = false
+    includeFontPadding = false
+    typeface = android.graphics.Typeface.DEFAULT
+    gravity = Gravity.START or Gravity.CENTER_VERTICAL
+    minHeight = ui.dp(44)
+    minimumHeight = ui.dp(44)
+    minWidth = 0
+    minimumWidth = 0
+    setPadding(0, ui.dp(if (plainRow) 8 else 10), 0, ui.dp(if (plainRow) 8 else 10))
+    setTextColor(if (destructive) ui.red else ui.brand)
+    background = if (plainRow) {
+        android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x22FFFFFF else 0x11000000), null, null,
+        )
+    } else {
+        android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000), null,
+            ui.rounded(10, android.graphics.Color.WHITE, outlined = false),
+        )
+    }
+    if (symbol != null) {
+        setCompoundDrawablesRelative(CutoutIcon(symbol, if (destructive) ui.red else ui.brand).apply {
+            setBounds(0, 0, ui.dp(20), ui.dp(20))
+        }, null, null, null)
+        compoundDrawablePadding = ui.dp(12)
+    }
+    setOnClickListener { action() }
+}
+
 /** Provider selection and the OS permission handoff live in Setup, as in MusicSettingsView. */
 class MusicSettingsPanel(
     context: Context,
@@ -253,28 +282,28 @@ class MusicSettingsPanel(
     private val onChooseSoundCloud: () -> Unit = {},
 ) : ScrollView(context) {
     private val page = ui.column()
-    private val status = ui.text("", 14f, color = ui.muted)
+    private val status = ui.text("", 14f, color = ui.muted).apply { tag = "music.connection-status" }
     private val accessExplanation = ui.text(context.getString(R.string.music_access_explanation), 13f, color = ui.muted)
-    private val accessAction = ui.action(context.getString(R.string.music_enable_media_access), primary = true) {
+    private val accessAction = musicFormAction(context, ui, context.getString(R.string.music_enable_media_access), tag = "music.enable-access") {
         onRequestListenerAccess()
     }
-    private val connectAction = ui.action(context.getString(R.string.music_connect_provider), primary = true) {
+    private val connectAction = musicFormAction(context, ui, ui.label("music.connect_provider"), tag = "music.connect-provider") {
         client.connectOrRetrySelectedProvider()
-    }.apply { tag = "music.connect-provider" }
-    private val openProviderAction = ui.action(context.getString(R.string.music_open_provider)) {
+    }
+    private val openProviderAction = musicFormAction(context, ui, "", tag = "music.open-provider") {
         client.openProviderFromSettings()
-    }.apply { tag = "music.open-provider" }
-    private val spotifyDisconnect = ui.action(context.getString(R.string.music_spotify_disconnect)) {
+    }
+    private val spotifyDisconnect = musicFormAction(context, ui, context.getString(R.string.music_spotify_disconnect), tag = "music.disconnect-spotify", destructive = true) {
         android.app.AlertDialog.Builder(context)
             .setMessage(R.string.music_spotify_disconnect_confirm)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.music_spotify_disconnect) { _, _ -> client.disconnectSpotify() }
             .show()
-    }.apply { tag = "music.disconnect-spotify" }
-    private val soundCloudChoose = ui.action(context.getString(R.string.music_soundcloud_choose_music), primary = true) {
+    }
+    private val soundCloudChoose = musicFormAction(context, ui, context.getString(R.string.music_soundcloud_choose_music), tag = "music.soundcloud.choose-music") {
         onChooseSoundCloud()
-    }.apply { tag = "music.soundcloud.choose-music" }
-    private val providerError = ui.text("", 13f, color = ui.red)
+    }
+    private val providerError = ui.text("", 13f, color = ui.red).apply { tag = "music.provider-error" }
     private val providers = MusicSettingsChoice(context, ui, context.getString(R.string.music_provider_title), listOf(
         MobileMusicProviderDto.APPLE_MUSIC to context.getString(R.string.music_apple_music),
         MobileMusicProviderDto.SPOTIFY to context.getString(R.string.music_spotify),
@@ -285,7 +314,7 @@ class MusicSettingsPanel(
         MobileMusicHistoryPolicyDto.OPAQUE_ITEM to context.getString(R.string.music_history_opaque),
         MobileMusicHistoryPolicyDto.HUMAN_READABLE to context.getString(R.string.music_history_human_readable),
     ), { policy, completed -> client.setHistoryPolicy(policy) { completed() } }).apply { tag = "music.history-picker" }
-    private val historyStatus = ui.text("", 13f, color = ui.muted)
+    private val historyStatus = ui.text("", 13f, color = ui.muted).apply { tag = "music.history-status" }
     private val historyExplanation = ui.text("", 13f, color = ui.muted)
     private var observation: AutoCloseable? = client.observe(::render)
 
@@ -321,9 +350,17 @@ class MusicSettingsPanel(
         status.text = when {
             value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD -> context.getString(R.string.music_soundcloud_ready)
             !value.listenerAccessGranted -> context.getString(R.string.music_access_required)
-            value.error != null -> value.error
+            value.snapshot?.state in setOf(MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED) ->
+                value.snapshot?.item?.title?.takeIf(String::isNotBlank)
+                    ?: context.getString(value.snapshot?.state?.settingsStateLabel() ?: R.string.music_state_not_connected)
+            value.snapshot?.state == MobileMusicPlaybackStateDto.BUFFERING -> context.getString(R.string.music_state_buffering)
+            value.snapshot?.state == MobileMusicPlaybackStateDto.INTERRUPTED -> context.getString(R.string.music_state_interrupted)
+            value.snapshot?.state == MobileMusicPlaybackStateDto.STOPPED &&
+                value.selectedProvider == MobileMusicProviderDto.SPOTIFY && !value.snapshot?.item?.title.isNullOrBlank() ->
+                ui.label("music.open_to_resume").replace("%@", value.selectedProvider.providerTitle(context))
             else -> context.getString(value.snapshot?.state?.settingsStateLabel() ?: R.string.music_state_not_connected)
         }
+        status.contentDescription = status.text
         accessAction.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
         accessExplanation.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
         // Android session control is unavailable until the user grants notification access.
@@ -331,7 +368,11 @@ class MusicSettingsPanel(
         val profile = musicProviderProfile(value.selectedProvider)
         val handoffOnly = profile.`interface` == MobileMusicProviderInterface.APP_HANDOFF_ONLY
         connectAction.visibility = if (handoffOnly || !value.listenerAccessGranted || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
-        openProviderAction.text = context.getString(R.string.music_open_named_provider, value.selectedProvider.providerTitle(context))
+        val providerTitle = value.selectedProvider.providerTitle(context)
+        val reconnect = value.snapshot?.state in setOf(MobileMusicPlaybackStateDto.STALE, MobileMusicPlaybackStateDto.DISCONNECTED)
+        connectAction.text = ui.label(if (reconnect) "music.reconnect_provider" else "music.connect_provider")
+            .replace("%@", providerTitle)
+        openProviderAction.text = ui.label("music.open_named_provider").replace("%@", providerTitle)
         spotifyDisconnect.visibility = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) View.VISIBLE else View.GONE
         spotifyDisconnect.isEnabled = !value.spotifyDisconnectPending
         spotifyDisconnect.text = context.getString(if (value.spotifyDisconnectError != null) R.string.music_spotify_disconnect_retry else R.string.music_spotify_disconnect)
@@ -356,6 +397,7 @@ class MusicSettingsPanel(
             MobileMusicHistoryStatusDto.DISABLED -> context.getString(R.string.music_history_disabled)
             MobileMusicHistoryStatusDto.MISSING, null -> ""
         }
+        historyStatus.setTextColor(if (value.historyError != null) ui.red else ui.muted)
         if (!providerSupportsHistory) {
             historyStatus.text = context.getString(R.string.music_history_provider_unavailable)
         }

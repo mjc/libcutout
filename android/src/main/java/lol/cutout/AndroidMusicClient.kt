@@ -147,16 +147,28 @@ class AndroidMusicClient(
         if (provider == MobileMusicProviderDto.SOUND_CLOUD || hasNotificationListenerAccess()) refreshSessions()
     }
 
-    /** Re-enables Android media-session observation for the chosen provider. This does not
-     * authorize a provider account; Android exposes its own authenticated MediaSession. */
+    /** Explicit recovery action: reconnect an existing MediaSession or open the selected
+     * provider when no session exists. Android provider authentication stays in that app. */
     fun connectOrRetrySelectedProvider() {
         main.post {
+            if (closed) return@post
+            if (!hasNotificationListenerAccess()) {
+                // Media access is an OS permission. A recovery tap must never
+                // launch a provider or try to grant it on the rider's behalf.
+                refreshSessions()
+                refreshHistory()
+                return@post
+            }
             if (selectedProvider == MobileMusicProviderDto.SPOTIFY) {
                 preferences.edit().putBoolean(SPOTIFY_MONITORING_OPT_OUT_KEY, false).apply()
                 resumeObservations()
             }
             publish(latestPresentation.copy(error = null, spotifyDisconnectError = null))
+            // Refresh first so a stale controller is detached on this same
+            // explicit retry. If no session remains, use the same Rust-authorized
+            // launch effect as Open app; no provider account is authorized here.
             refreshSessions()
+            if (currentController == null) openSelectedProvider()
             refreshHistory()
         }
     }
