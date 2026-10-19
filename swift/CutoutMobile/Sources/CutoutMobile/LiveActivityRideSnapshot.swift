@@ -340,6 +340,12 @@ public struct LiveActivityRideGridMetric: Equatable, Sendable {
     public let value: LiveActivityRideValue
 }
 
+private enum LiveActivityBalanceInstrumentKind: String, Codable, Sendable {
+    case electricUnicycle
+    case refloat
+    case unavailable
+}
+
 public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let identity: LiveActivityRideIdentity
     public let glyph: LiveActivityRideGlyph
@@ -352,15 +358,43 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let mode: LiveActivityRideValue
     public let duration: LiveActivityRideValue
     public let distance: LiveActivityRideValue
-    public let headroom: LiveActivityRideValue
-    public let headroomSeverity: LiveActivityRideHeadroomSeverity?
+    private let storedHeadroom: LiveActivityRideValue
+    private let storedHeadroomSeverity: LiveActivityRideHeadroomSeverity?
     public let beeps: LiveActivityRideValue
     public let temperature: LiveActivityRideValue
     public let chargeEstimate: LiveActivityRideValue
+    // Persist only the rendering choice derived from Rust identity. Older device
+    // snapshots lack this evidence, so every presentation route fails closed.
+    private var balanceInstrumentKind: LiveActivityBalanceInstrumentKind?
+
+    private enum CodingKeys: String, CodingKey {
+        case identity, glyph, connectionState, sessionStatus, speed, battery, packVoltage, pwm
+        case mode, duration, distance, beeps, temperature, chargeEstimate, balanceInstrumentKind
+        case storedHeadroom = "headroom"
+        case storedHeadroomSeverity = "headroomSeverity"
+    }
+
+    private var usesBalanceInstruments: Bool {
+        switch balanceInstrumentKind {
+        case .electricUnicycle?, .refloat?: true
+        case .unavailable?: false
+        case nil: identity.source == .productionModel
+        }
+    }
+
+    public var headroom: LiveActivityRideValue {
+        usesBalanceInstruments
+            ? storedHeadroom : .notApplicable(label: localizedLiveActivityText("live_activity.label.headroom"))
+    }
+
+    public var headroomSeverity: LiveActivityRideHeadroomSeverity? {
+        usesBalanceInstruments ? storedHeadroomSeverity : .notApplicable
+    }
 
     public init(
         identity: LiveActivityRideIdentity,
         glyph: LiveActivityRideGlyph = .electricUnicycle,
+        deviceIdentity: MobileDeviceIdentityDto? = nil,
         rideState: EucRideScreenState,
         now: MonotonicMilliseconds? = nil,
         staleAfter staleThreshold: MonotonicMilliseconds = RideTelemetryFreshnessPolicy.staleAfter,
@@ -384,8 +418,27 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.mode = .deferred(label: localizedLiveActivityText("live_activity.label.mode"))
         self.duration = Self.durationValue(rideDuration)
         self.distance = Self.distanceValue(rideDistance: rideDistance, speedUnit: rideState.speedUnit)
-        self.headroom = Self.headroomValue(rideState: rideState, connectionState: connectionState)
-        self.headroomSeverity = Self.headroomSeverity(rideState: rideState, connectionState: connectionState)
+        let instrumentKind: LiveActivityBalanceInstrumentKind
+        if let deviceIdentity {
+            switch deviceIdentity.protocol {
+            case .vesc:
+                instrumentKind = deviceIdentity.vescApplication == .refloat ? .refloat : .unavailable
+            case .veteranLeaperkimNosfet, .begodeGotway:
+                instrumentKind = .electricUnicycle
+            }
+        } else {
+            // A typed EUC model remains valid evidence before the session identity arrives.
+            // An arbitrary device label or physical glyph establishes no balance application.
+            instrumentKind = identity.source == .productionModel ? .electricUnicycle : .unavailable
+        }
+        self.balanceInstrumentKind = instrumentKind
+        self.storedHeadroom =
+            instrumentKind == .unavailable
+            ? .notApplicable(label: localizedLiveActivityText("live_activity.label.headroom"))
+            : Self.headroomValue(rideState: rideState, connectionState: connectionState)
+        self.storedHeadroomSeverity =
+            instrumentKind == .unavailable
+            ? .notApplicable : Self.headroomSeverity(rideState: rideState, connectionState: connectionState)
         self.beeps = .deferred(label: localizedLiveActivityText("live_activity.label.beeps"))
         self.temperature = Self.temperatureValue(telemetry: rideState.telemetry, connectionState: connectionState)
         self.chargeEstimate = Self.chargeEstimateValue(rideState: rideState, connectionState: connectionState)
@@ -420,8 +473,9 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.mode = mode
         self.duration = duration
         self.distance = distance
-        self.headroom = headroom
-        self.headroomSeverity = headroomSeverity
+        self.storedHeadroom = headroom
+        self.storedHeadroomSeverity = headroomSeverity
+        self.balanceInstrumentKind = nil
         self.beeps = beeps
         self.temperature = temperature
         self.chargeEstimate =
@@ -479,7 +533,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     }
 
     public var showsCompactPwmBar: Bool {
-        (glyph == .floatwheelAtom || glyph == .onewheel) && pwm.progressValue != nil
+        balanceInstrumentKind == .refloat && pwm.progressValue != nil
     }
 
     public static var activityAccessibilityLabel: String {
@@ -510,7 +564,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public func presented(isStale: Bool) -> Self {
         guard isStale, connectionState == .connected else { return self }
 
-        return Self(
+        var stale = Self(
             identity: identity,
             glyph: glyph,
             connectionState: .stale,
@@ -528,6 +582,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
             chargeEstimate: chargeEstimate.stalePresentation,
             headroomSeverity: headroomSeverity
         )
+        stale.balanceInstrumentKind = balanceInstrumentKind
+        return stale
     }
 }
 

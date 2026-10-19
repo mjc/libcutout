@@ -1626,6 +1626,7 @@ final class CutoutAppModel {
                     ? LiveActivityRideGlyph(
                         vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
                     : liveActivityGlyph,
+                deviceIdentity: device.deviceSessionSnapshot?.identity,
                 rideState: EucRideScreenState(phase: phase, displayState: displayed),
                 now: core.now(),
                 rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
