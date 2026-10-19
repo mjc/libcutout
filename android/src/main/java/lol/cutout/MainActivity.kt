@@ -333,7 +333,8 @@ class MainActivity : Activity() {
                     onMusic = { musicReturnPage = R.string.setup; showPage(R.string.music_settings) },
                     onCaptures = { showPage(R.string.captures) },
                     onLocation = ::requestLocation, onNotifications = ::requestNotifications,
-                    onOpenUrl = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) })
+                    onOpenUrl = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) },
+                    onAccountDeleted = { map?.communityAccountDeletionCompleted() })
                 setup = panel; addPanel(id, panel)
             }
             R.string.music -> addPanel(id, MusicPanel(this, app.music,

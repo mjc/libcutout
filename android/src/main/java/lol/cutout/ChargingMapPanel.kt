@@ -100,7 +100,9 @@ class ChargingMapPanel(
     private var modalCostBadge: android.widget.TextView? = null
     private var editorStatus: String? = null
     private var syncRequestedOnActivation = false
+    private var communitySyncGeneration = 0L
     private var syncMessage: String? = null
+    private var panelDisposed = false
     private val status = ui.text("", 14f, false, ui.muted)
     private val communityActions = ui.row().apply { visibility = View.GONE }
     private val emptyAction = ui.action(context.getString(R.string.charging_empty)) { addSpot() }.apply {
@@ -143,6 +145,8 @@ class ChargingMapPanel(
     }
 
     fun dispose() {
+        panelDisposed = true
+        communitySyncGeneration++
         editorCallbackFence.dispose()
         modalDialog?.dismiss()
         modalDialog = null
@@ -220,6 +224,16 @@ class ChargingMapPanel(
         syncRequestedOnActivation = false
         mapView.showChargingPopup(null)
         mapView.showChargingSpots(emptyList(), null)
+    }
+
+    /** Refresh local community projections after Rust confirms contributor deletion. */
+    fun communityAccountDeletionCompleted() {
+        if (panelDisposed) return
+        communitySyncGeneration++
+        syncMessage = null
+        controller.refreshCurrentViewport()
+        controller.loadBlockedOperations()
+        render()
     }
 
     fun refreshLocation() { if (active) locationClient.refresh() }
@@ -1002,20 +1016,24 @@ class ChargingMapPanel(
         render()
     }
 
-    private fun synchronize(explicitRetry: Boolean) = client.synchronize(explicitRetry) { result ->
-        result.fold(
-            onSuccess = { value ->
-                syncMessage = value.message ?: when {
-                    value.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED -> context.getString(R.string.charging_sync_uncertain)
-                    value.result == MobileChargingSyncResult.SYNCED -> context.getString(R.string.charging_sync_complete)
-                    else -> context.getString(R.string.charging_sync_pending, value.pendingCount.toInt())
-                }
-                if (active) controller.refreshCurrentViewport()
-            },
-            onFailure = { syncMessage = it.message },
-        )
-        controller.loadBlockedOperations()
-        render()
+    private fun synchronize(explicitRetry: Boolean) {
+        val generation = communitySyncGeneration
+        client.synchronize(explicitRetry) completion@{ result ->
+            if (panelDisposed || communitySyncGeneration != generation) return@completion
+            result.fold(
+                onSuccess = { value ->
+                    syncMessage = value.message ?: when {
+                        value.credentialState == MobileChargingSyncCredentialState.REGISTRATION_STARTED -> context.getString(R.string.charging_sync_uncertain)
+                        value.result == MobileChargingSyncResult.SYNCED -> context.getString(R.string.charging_sync_complete)
+                        else -> context.getString(R.string.charging_sync_pending, value.pendingCount.toInt())
+                    }
+                    if (active) controller.refreshCurrentViewport()
+                },
+                onFailure = { syncMessage = it.message },
+            )
+            controller.loadBlockedOperations()
+            render()
+        }
     }
 
     private fun showFilters() {

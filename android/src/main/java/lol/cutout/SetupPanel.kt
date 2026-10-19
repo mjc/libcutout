@@ -16,6 +16,7 @@ class SetupPanel(
     private val onLocation: () -> Unit,
     private val onNotifications: () -> Unit,
     private val onOpenUrl: (String) -> Unit,
+    private val onAccountDeleted: () -> Unit = {},
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
     private val page = ui.column()
@@ -75,8 +76,10 @@ class SetupPanel(
             finishSettingChange(result)
         }
     }
-    private val accountStatus = ui.text(context.getString(R.string.setup_account_loading), 14f, color = ui.muted)
-    private val accountError = ui.text("", 13f, color = ui.red)
+    private val accountStatus = ui.text(context.getString(R.string.setup_account_loading), 14f, color = ui.muted).apply {
+        tag = "setup.account.status"
+    }
+    private val accountError = ui.text("", 13f, color = ui.red).apply { tag = "setup.account.error" }
     private val accountReload = ui.action(context.getString(R.string.setup_account_reload)) { refreshAccount() }.apply { visibility = View.GONE }
     private val accountDelete = ui.action(context.getString(R.string.setup_account_delete), primary = true) {
         android.app.AlertDialog.Builder(context)
@@ -245,25 +248,32 @@ class SetupPanel(
         accountBusy = true
         accountStatus.text = context.getString(R.string.setup_account_deleting)
         accountDelete.isEnabled = false
-        app.charging.deleteAccount { result ->
-            if (disposed) return@deleteAccount
-            accountBusy = false
-            result.onSuccess { receipt ->
-                accountState = app.charging.status.credentialState
-                accountStatus.text = context.getString(R.string.setup_account_deleted)
-                accountError.visibility = View.GONE
-            }.onFailure {
-                accountState = app.charging.status.credentialState
-                accountStatus.text = context.getString(R.string.setup_account_retry_description)
-                accountError.text = context.getString(R.string.setup_account_delete_failed)
-                accountError.visibility = View.VISIBLE
-            }
-            accountReload.isEnabled = true
-            accountDelete.visibility = if (accountState == MobileChargingSyncCredentialState.DELETION_PENDING || accountState == MobileChargingSyncCredentialState.READY) View.VISIBLE else View.GONE
-            accountDelete.text = context.getString(if (accountState == MobileChargingSyncCredentialState.DELETION_PENDING) R.string.setup_account_retry_delete else R.string.setup_account_delete)
-            accountDelete.isEnabled = !accountBusy
-            accountReload.visibility = View.VISIBLE
+        app.charging.deleteAccount(::accountDeletionCompleted)
+    }
+
+    internal fun accountDeletionCompleted(result: Result<uniffi.cutout_mobile_ffi.MobileCommunityAccountDeletionReceiptDto>) {
+        accountBusy = false
+        result.onSuccess {
+            // The app-level effect is receipt-gated and must survive leaving Setup
+            // while the Rust-owned deletion is still in flight.
+            onAccountDeleted()
+            if (disposed) return
+            accountState = app.charging.status.credentialState
+            accountStatus.text = context.getString(R.string.setup_account_deleted)
+            accountError.visibility = View.GONE
+        }.onFailure {
+            if (disposed) return
+            accountState = app.charging.status.credentialState
+            accountStatus.text = context.getString(R.string.setup_account_retry_description)
+            accountError.text = context.getString(R.string.setup_account_delete_failed)
+            accountError.visibility = View.VISIBLE
         }
+        if (disposed) return
+        accountReload.isEnabled = true
+        accountDelete.visibility = if (accountState == MobileChargingSyncCredentialState.DELETION_PENDING || accountState == MobileChargingSyncCredentialState.READY) View.VISIBLE else View.GONE
+        accountDelete.text = context.getString(if (accountState == MobileChargingSyncCredentialState.DELETION_PENDING) R.string.setup_account_retry_delete else R.string.setup_account_delete)
+        accountDelete.isEnabled = !accountBusy
+        accountReload.visibility = View.VISIBLE
     }
 
     private fun section(title: Int, content: LinearLayout.() -> Unit): LinearLayout = ui.column().apply {
