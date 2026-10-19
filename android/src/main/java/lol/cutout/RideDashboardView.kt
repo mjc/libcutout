@@ -105,6 +105,7 @@ class RideDashboardView(
         val thermal = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.Thermal>().firstOrNull()?.readback
         val headroom = projection?.safetyMetrics.orEmpty()
             .filterIsInstance<MobileRiderSafetyMetricDescriptorDto.PwmHeadroom>().firstOrNull()?.value
+            .takeUnless { displayKind == DisplayKind.EUC && value.rideSession?.phase == MobileRideSessionPhaseDto.Stale }
         val speed = snapshot?.speed?.let { format(it.value.value.toDouble() * 0.0022369362920544, 1) }
             ?: context.getString(R.string.unavailable)
         val batteryText = battery?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + it.value.value }

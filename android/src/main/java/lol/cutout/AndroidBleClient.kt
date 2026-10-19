@@ -32,7 +32,20 @@ data class BlePresentation(
     val selectedVehicleIdentifier: String? = null,
     val notificationCount: ULong = 0UL,
     val chargeEstimate: MobileChargeEstimateStateDto? = null,
+    /** Rust-owned logical ride freshness state used to fence safety readings. */
+    val rideSession: MobileRideSessionSnapshotDto? = null,
+    /** Rust-derived admission route for the active attempt, independent of scan rows. */
+    val connectionCandidate: DiscoveryCandidate? = null,
 )
+
+/** Android effect boundary for the shared Rust-owned ride lifecycle. */
+internal object AndroidRideSessionEffects {
+    fun freshnessChecked(state: CutoutSessionStateHandle, nowMs: ULong): MobileRideSessionSnapshotDto =
+        state.reduceRideSession(MobileRideSessionInputDto.FreshnessChecked(nowMs)).snapshot
+
+    fun reconnectExhausted(state: CutoutSessionStateHandle): MobileRideSessionSnapshotDto =
+        state.reduceRideSession(MobileRideSessionInputDto.ReconnectExhausted).snapshot
+}
 
 /** Application-owned Android effects. Every Rust call and GATT operation uses one owner. */
 class AndroidBleClient(
@@ -79,6 +92,10 @@ class AndroidBleClient(
     private var scanForwardedCount = 0
     private var scanCandidateCount = 0
     private var publishTimer: (() -> Unit)? = null
+    private var rideFreshnessTimer: (() -> Unit)? = null
+    private var rideFreshnessScheduledAt: ULong? = null
+    private var rideReconnectPlatformIdentifier: String? = null
+    private var rideStartedConnectionToken: MobileConnectionAttemptTokenDto? = null
     private var view = BlePresentation()
     @Volatile private var listener: ((BlePresentation) -> Unit)? = null
     private val additionalObservers = java.util.concurrent.CopyOnWriteArrayList<(BlePresentation) -> Unit>()
@@ -98,7 +115,7 @@ class AndroidBleClient(
             val active = connection
             if (active != null) active.finishTransport(failed = true)
             else view = view.copy(scanning = false, phase = NativePhase.IDLE, session = null,
-                telemetry = null, settings = null, bms = null, problem = true)
+                telemetry = null, settings = null, bms = null, problem = true, connectionCandidate = null)
             stopScanOnOwner()
             publish()
         }
@@ -212,7 +229,7 @@ class AndroidBleClient(
                         selectionLoaded = true
                         restoreAttemptedId = null
                         view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                            telemetry = null, settings = null, bms = null)
+                            telemetry = null, settings = null, bms = null, connectionCandidate = null)
                     }.onFailure { error ->
                         Log.w("CutoutBle", "Saved Bluetooth selection could not be cleared", error)
                         view = view.copy(problem = true)
@@ -375,7 +392,8 @@ class AndroidBleClient(
 
     private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto, recordOnly: Boolean = false) {
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
-            session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL)
+            session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL,
+            connectionCandidate = null)
         if (!recordOnly) {
             val advertisement = found[device.address]?.second
             diagnostics.start(
@@ -399,12 +417,15 @@ class AndroidBleClient(
         pendingConnectId = null
         restoreSuppressed = true
         cancelPendingRetryOnOwner()
+        rideReconnectPlatformIdentifier = null
+        rideStartedConnectionToken = null
+        state.reduceRideSession(MobileRideSessionInputDto.UserDisconnected)
         val existing = connection
         if (existing != null) existing.finishTransport(failed = false)
         else {
             state.disconnectConnectionAttempt()
             view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                telemetry = null, settings = null, bms = null)
+                telemetry = null, settings = null, bms = null, connectionCandidate = null)
             publish()
         }
     }
@@ -463,6 +484,7 @@ class AndroidBleClient(
             pendingConnectId = null
             cancelPendingRetryOnOwner()
             stopScanOnOwner()
+            rideFreshnessTimer?.invoke(); rideFreshnessTimer = null; rideFreshnessScheduledAt = null
             val active = connection
             if (active == null) {
                 publishTimer?.invoke(); publishTimer = null
@@ -542,13 +564,17 @@ class AndroidBleClient(
                 pendingRetry = null
                 pendingRetryDevice = null
                 cancelRetryTimer?.invoke(); cancelRetryTimer = null
-                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true)
+                rideReconnectPlatformIdentifier = null
+                view = view.copy(rideSession = AndroidRideSessionEffects.reconnectExhausted(state))
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true,
+                    connectionCandidate = null)
             }
             MobileConnectionRetryDecisionDto.Rejected -> {
                 pendingRetry = null
                 pendingRetryDevice = null
                 cancelRetryTimer?.invoke(); cancelRetryTimer = null
-                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true)
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(), problem = true,
+                    connectionCandidate = null)
             }
         }
     }
@@ -623,10 +649,12 @@ class AndroidBleClient(
         if (publishTimer != null) return
         publishTimer = timers.after(100) {
             publishTimer = null
+            val rideSession = updateRideSessionOnOwner()
             val owned = view.copy(
                 selectedVehicleIdentifier = if (stateOwner.isInitialized())
                     state.discoverySnapshot().selectedPlatformIdentifier else null,
                 chargeEstimate = chargeEstimates.observe(view.session, view.settings, view.telemetry),
+                rideSession = rideSession,
             )
             latestPresentation = owned
             if (stateOwner.isInitialized()) onSessionObservation(owned, state)
@@ -634,6 +662,85 @@ class AndroidBleClient(
                 listener?.invoke(owned)
                 additionalObservers.forEach { it(owned) }
             }
+        }
+    }
+
+    /** Feed only timestamped, verified transport observations into Rust's ride lifecycle. */
+    private fun updateRideSessionOnOwner(): MobileRideSessionSnapshotDto {
+        val snapshot = state.rideSessionSnapshot()
+        val connection = view.session?.connection
+        val token = connection?.token
+        if (token != null && connection.readiness == MobileConnectionReadinessDto.VERIFIED) {
+            if (snapshot.identity?.platformIdentifier != token.platformIdentifier) {
+                state.reduceRideSession(MobileRideSessionInputDto.UserDisconnected)
+                startRideSessionOnOwner(token.platformIdentifier)
+                rideStartedConnectionToken = token
+                rideReconnectPlatformIdentifier = null
+            } else when (snapshot.phase) {
+                MobileRideSessionPhaseDto.Idle -> {
+                    if (rideStartedConnectionToken != token) startRideSessionOnOwner(token.platformIdentifier)
+                    rideStartedConnectionToken = token
+                }
+                is MobileRideSessionPhaseDto.Ended -> {
+                    // A new connection attempt may start a fresh logical ride after the
+                    // prior one ended. Repeated publications from this same attempt must
+                    // not silently reopen a rider-stopped session.
+                    if (rideStartedConnectionToken != token) {
+                        startRideSessionOnOwner(token.platformIdentifier)
+                        rideStartedConnectionToken = token
+                    }
+                }
+                is MobileRideSessionPhaseDto.Ending -> Unit
+                else -> rideStartedConnectionToken = token
+            }
+            var current = state.rideSessionSnapshot()
+            if (rideReconnectPlatformIdentifier == token.platformIdentifier &&
+                current.phase == MobileRideSessionPhaseDto.Reconnecting
+            ) {
+                state.reduceRideSession(MobileRideSessionInputDto.BluetoothConnected)
+                rideReconnectPlatformIdentifier = null
+                current = state.rideSessionSnapshot()
+            }
+            val observedAt = view.telemetry?.atMs?.value
+            if (observedAt != null && current.lastTelemetryAtMs != observedAt) {
+                state.reduceRideSession(MobileRideSessionInputDto.TelemetryObserved(observedAt))
+            }
+        }
+        return state.rideSessionSnapshot().also(::scheduleRideFreshnessCheck)
+    }
+
+    private fun startRideSessionOnOwner(platformIdentifier: String) {
+        val decision = state.reduceRideSession(MobileRideSessionInputDto.Start(platformIdentifier))
+        val startEffect = decision.effect as? MobileRideSessionEffectDto.StartActivity ?: return
+        // Android has no ActivityKit surface; retire that platform effect while retaining
+        // the shared Rust lifecycle phase and monotonic freshness contract.
+        state.reduceRideSession(MobileRideSessionInputDto.ActivityUnavailable(startEffect.identity))
+    }
+
+    /** One cancellable check at the deadline returned by Rust; Rust decides whether it is stale. */
+    private fun scheduleRideFreshnessCheck(snapshot: MobileRideSessionSnapshotDto) {
+        val lastTelemetryAt = snapshot.lastTelemetryAtMs
+        if (lastTelemetryAt == null || snapshot.phase == MobileRideSessionPhaseDto.Stale ||
+            snapshot.phase is MobileRideSessionPhaseDto.Ended
+        ) {
+            rideFreshnessTimer?.invoke()
+            rideFreshnessTimer = null
+            rideFreshnessScheduledAt = null
+            return
+        }
+        if (rideFreshnessScheduledAt == lastTelemetryAt && rideFreshnessTimer != null) return
+        rideFreshnessTimer?.invoke()
+        val nowMs = now()
+        val deadline = if (ULong.MAX_VALUE - lastTelemetryAt < snapshot.staleAfterMs) ULong.MAX_VALUE
+            else lastTelemetryAt + snapshot.staleAfterMs
+        val delay = (if (deadline <= nowMs) 1UL else deadline - nowMs)
+            .coerceAtMost(Long.MAX_VALUE.toULong()).toLong()
+        rideFreshnessScheduledAt = lastTelemetryAt
+        rideFreshnessTimer = timers.after(delay) {
+            rideFreshnessTimer = null
+            rideFreshnessScheduledAt = null
+            view = view.copy(rideSession = AndroidRideSessionEffects.freshnessChecked(state, now()))
+            publish()
         }
     }
 
@@ -669,7 +776,13 @@ class AndroidBleClient(
                 if (snapshot.connection.deadlineMs == null) {
                     cancelDeadline?.invoke(); cancelDeadline = null
                 }
-                view = view.copy(session = snapshot, telemetry = telemetry, settings = settings)
+                val connectionCandidate = if (snapshot.connection.readiness == MobileConnectionReadinessDto.VERIFIED) {
+                    val displayName = view.devices.firstOrNull { it.id == token.platformIdentifier }
+                        ?.candidate?.displayName ?: snapshot.identity?.model ?: "Connected device"
+                    state.connectionAdmissionCandidate(token.platformIdentifier, displayName, false)
+                } else null
+                view = view.copy(session = snapshot, telemetry = telemetry, settings = settings,
+                    connectionCandidate = connectionCandidate)
                 publish()
             }
         }
@@ -961,11 +1074,13 @@ class AndroidBleClient(
             draining = false
             val wasVerified = state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED
             if (failed && wasVerified && !restoreSuppressed) {
+                state.reduceRideSession(MobileRideSessionInputDto.BluetoothDisconnected(now()))
+                rideReconnectPlatformIdentifier = token.platformIdentifier
                 state.connectionLinkDown(token)
                 retire(invalidate = false)
                 connection = null
                 view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                    telemetry = null, settings = null, bms = null, problem = true)
+                    telemetry = null, settings = null, bms = null, problem = true, connectionCandidate = null)
                 scheduleRustRetry(device, token)
             } else {
                 if (failed) restoreAttemptedId = device.address
@@ -973,7 +1088,7 @@ class AndroidBleClient(
                 retire(invalidate = false)
                 connection = null
                 view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                    telemetry = null, settings = null, bms = null, problem = failed)
+                    telemetry = null, settings = null, bms = null, problem = failed, connectionCandidate = null)
             }
             publish()
             connectPendingOnOwner()
