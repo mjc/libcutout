@@ -172,6 +172,12 @@ class AndroidBleClient(
             main.post { completed(Result.failure(IllegalStateException("Forget is already in progress"))) }
             return@postOnOwner
         }
+        var completedOnce = false
+        fun complete(result: Result<Unit>) {
+            if (completedOnce) return
+            completedOnce = true
+            main.post { completed(result) }
+        }
         val revision = ++selectionRevision
         forgettingSavedDevice = true
         restoreSuppressed = true
@@ -181,7 +187,7 @@ class AndroidBleClient(
 
         fun clearSelectionAfterTeardown(disconnectAttempt: Boolean) {
             if (revision != selectionRevision) {
-                main.post { completed(Result.failure(IllegalStateException("Saved device changed during forget"))) }
+                complete(Result.failure(IllegalStateException("Saved device changed during forget")))
                 return
             }
             val result = if (disconnectAttempt) runCatching { state.disconnectConnectionAttempt() }
@@ -189,7 +195,7 @@ class AndroidBleClient(
             result.onFailure { error ->
                 forgettingSavedDevice = false
                 selectionRevision++
-                main.post { completed(Result.failure(error)) }
+                complete(Result.failure(error))
                 return
             }
             (context.applicationContext as CutoutApplication).rides.withDatabase(
@@ -197,7 +203,7 @@ class AndroidBleClient(
             ) { cleared ->
                 owner.post {
                     if (revision != selectionRevision) {
-                        main.post { completed(Result.failure(IllegalStateException("Saved device changed during forget"))) }
+                        complete(Result.failure(IllegalStateException("Saved device changed during forget")))
                         return@post
                     }
                     forgettingSavedDevice = false
@@ -212,7 +218,7 @@ class AndroidBleClient(
                         view = view.copy(problem = true)
                     }
                     publish()
-                    main.post { completed(cleared.map { Unit }) }
+                    complete(cleared.map { Unit })
                 }
             }
         }
@@ -232,7 +238,7 @@ class AndroidBleClient(
                         selectionRevision++ // Retire this completion so a later teardown cannot clear implicitly.
                         view = view.copy(problem = true)
                         publish()
-                        main.post { completed(Result.failure(error)) }
+                        complete(Result.failure(error))
                     }
                 },
             )
@@ -411,7 +417,7 @@ class AndroidBleClient(
         completed: (Boolean) -> Unit,
     ) = postOnOwner {
         val selected = found[platformId]
-        if (selected == null || connection != null || !state.captureLifecycleSnapshot().canStart) {
+        if (forgettingSavedDevice || selected == null || connection != null || !state.captureLifecycleSnapshot().canStart) {
             main.post { completed(false) }
             return@postOnOwner
         }
