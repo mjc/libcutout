@@ -62,7 +62,7 @@ class PackPanel(context: Context) : ScrollView(context) {
     }
 
     fun handleBack(): Boolean {
-        if (selectedGroup != null) { selectedGroup = null; rebuild(); return true }
+        if (selectedGroup != null) { selectedGroup = null; showCells = true; rebuild(); return true }
         if (showCells) { showCells = false; rebuild(); return true }
         return false
     }
@@ -453,9 +453,9 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun renderDetail(snapshot: MobileBmsSnapshotDto, selected: MobileBmsGroupSnapshotDto) {
         val selectedIndex = selected.index
         fun current() = group(selectedIndex)
-        // Swift's detail Back action returns to the originating BMS root screen. Keep
-        // the current overview/cell-map choice rather than forcing a different mode.
-        page.addView(ui.action(context.getString(R.string.back)) { selectedGroup = null; rebuild() })
+        // Swift's detail Back action explicitly returns to the cell map, even when
+        // the detail was opened from an overview warning/extreme-value control.
+        page.addView(ui.action(ui.label("bms.pack.back")) { selectedGroup = null; showCells = true; rebuild() })
         page.addView(ui.space(12))
         val card = card()
         val groupLabel = ui.text("", 18f, true, ui.muted)

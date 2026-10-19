@@ -77,6 +77,27 @@ open class PackPanelTest {
     }
 
     @Test
+    fun detailBackReturnsToCellMapEvenWhenOpenedFromOverview() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            instrumentation.runOnMainSync {
+                val panel = PackPanel(activity)
+                activity.setContentView(panel)
+                panel.render(productionReplayPresentation().copy(bms = snapshot()))
+                checkNotNull(panel.findViewWithTag<View>("pack.group.1")).performClick()
+                check(panel.findViewWithTag<View>("pack.detail.voltage") != null)
+                buttons(panel).single { it.text == CutoutUi(activity).label("bms.pack.back") }.performClick()
+                check(buttons(panel).single { it.text == activity.getString(R.string.pack_cell_map) }.isSelected) {
+                    "The Swift detail Back action returns to the cell map even when detail began in overview"
+                }
+                check(panel.findViewWithTag<View>("pack.group.1") != null)
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
     fun cellMapKeepsObservedGroupsWhoseCurrentVoltageIsUnavailable() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
