@@ -155,8 +155,10 @@ open class RideHistoryControllerTest {
                         "A history filter control extended beyond its container at font scale $fontScale"
                     }
                     if (fontScale >= 1.3f) {
-                        check(vehicleBounds.top >= dateBounds.bottom && clearBounds.top == dateBounds.top) {
-                            "Accessibility filters should stack vehicle below date and keep clear beside date"
+                        check(vehicleBounds.top >= maxOf(dateBounds.bottom, clearBounds.bottom) &&
+                            kotlin.math.abs(clearBounds.exactCenterY() - dateBounds.exactCenterY()) <= 1f &&
+                            dateBounds.right <= clearBounds.left) {
+                            "Accessibility filters should stack vehicle below date and vertically center clear beside date"
                         }
                     } else {
                         check(dateBounds.top == vehicleBounds.top && dateBounds.right <= vehicleBounds.left &&
