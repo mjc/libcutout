@@ -1,0 +1,4 @@
+<resources>
+    <string name="vesc_debug">VESC diagnostics</string>
+    <string name="captures">Bluetooth captures</string>
+</resources>
