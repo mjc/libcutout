@@ -27,8 +27,12 @@ class DiagnosticCapturePanel(
     private var captureState = bluetooth.diagnostics.current()
     private var bleState = bluetooth.latestPresentation
     private var disposed = false
+    private var progressText: TextView? = null
+    private var packetText: TextView? = null
+    private var labels: CaptureLabelControls? = null
+    private var labelGeneration: MobileCaptureGenerationDto? = null
     private val captureObserver = bluetooth.diagnostics.observe { next ->
-        if (!disposed) { captureState = next; scheduleRender() }
+        renderCapture(next)
     }
     private val bleObserver = bluetooth.addObserver { next ->
         val relevantChange = next.phase != bleState.phase || next.devices.map { it.id to (it.advertisedName ?: it.name) } !=
@@ -57,6 +61,30 @@ class DiagnosticCapturePanel(
         bleObserver.close()
     }
 
+    /** Progress and admitted label updates retain controls and their accessibility focus. */
+    internal fun renderCapture(next: DiagnosticCapturePresentation) {
+        if (disposed) return
+        fun structure(value: DiagnosticCapturePresentation) = value.copy(
+            writerStatus = null, notificationCount = 0UL, activeLabels = emptyList(),
+        )
+        val rebuild = structure(next) != structure(captureState) ||
+            (next.writerStatus == null) != (captureState.writerStatus == null) ||
+            next.writerStatus?.lastError != captureState.writerStatus?.lastError
+        captureState = next
+        if (rebuild) scheduleRender() else updateProgress()
+        labels?.render(next)
+    }
+
+    private fun updateProgress() {
+        captureState.writerStatus?.let { status ->
+            progressText?.text = context.getString(
+                R.string.capture_writer_status, status.queuedMessages.toString(),
+                android.text.format.Formatter.formatShortFileSize(context, status.bytesWritten.toLong()),
+            )
+            packetText?.text = context.getString(R.string.capture_notification_count, captureState.notificationCount.toString())
+        }
+    }
+
     private fun scheduleRender() {
         renderHandler.removeCallbacks(queuedRender)
         renderHandler.postDelayed(queuedRender, 150L)
@@ -65,6 +93,8 @@ class DiagnosticCapturePanel(
     private fun render() {
         if (disposed) return
         content.removeAllViews()
+        progressText = null
+        packetText = null
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(28))
         content.addView(ui.title(context.getString(R.string.capture_title)))
         content.addView(ui.space(18))
@@ -81,12 +111,30 @@ class DiagnosticCapturePanel(
                 captureState.fileName?.let { addView(ui.text(it, 13f, color = ui.muted)) }
                 captureState.note?.takeIf(String::isNotBlank)?.let { addView(ui.text(it, 14f, color = ui.muted)) }
                 captureState.writerStatus?.let { status ->
-                    addView(ui.text(context.getString(
-                        R.string.capture_writer_status, status.queuedMessages.toString(),
-                        android.text.format.Formatter.formatShortFileSize(context, status.bytesWritten.toLong()),
-                    ), 14f, color = ui.muted))
-                    addView(ui.text(context.getString(R.string.capture_notification_count, captureState.notificationCount.toString()), 14f, color = ui.muted))
+                    progressText = ui.text("", 14f, color = ui.muted).also { addView(it) }
+                    packetText = ui.text("", 14f, color = ui.muted).also { addView(it) }
+                    updateProgress()
                     status.lastError?.let { addView(ui.text(it, 14f, color = ui.red)) }
+                }
+                addView(ui.space(16))
+                if (labelGeneration != attempt.generation) {
+                    labelGeneration = attempt.generation.copy()
+                    labels = CaptureLabelControls(context, attempt.generation.copy(), bluetooth.diagnostics::changeLabel) { error ->
+                        if (!disposed && captureState.lifecycle.attempt?.generation == attempt.generation) {
+                            val key = when (error) {
+                                is MobileCaptureAnnotationException.CapacityReached -> "captures.labels_full"
+                                is MobileCaptureAnnotationException.NotRecording -> "captures.labels_not_recording"
+                                else -> "captures.labels_failed"
+                            }
+                            AlertDialog.Builder(context).setTitle(ui.label("captures.label_not_recorded"))
+                                .setMessage(ui.label(key)).setPositiveButton(android.R.string.ok, null).show()
+                        }
+                    }
+                }
+                checkNotNull(labels).let { controls ->
+                    (controls.parent as? ViewGroup)?.removeView(controls)
+                    controls.render(captureState)
+                    addView(controls, LinearLayout.LayoutParams(-1, -2))
                 }
                 if (attempt.origin == MobileCaptureOriginDto.MANUAL &&
                     attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)) {
