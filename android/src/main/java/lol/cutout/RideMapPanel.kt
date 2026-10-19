@@ -563,6 +563,11 @@ class RideMapPanel(
             setMargins(0, ui.dp(10), ui.dp(10), 0)
         })
         mapView.onCameraGesture = { followsLatestPoint = false; updateCameraControl() }
+        val chargingViewportCallback = mapView.onViewportChanged
+        mapView.onViewportChanged = { bounds ->
+            chargingViewportCallback?.invoke(bounds)
+            if (mode == Mode.HISTORY) history.projectSelectedViewport(bounds)
+        }
         // Swift's live/history route map occupies 46% of the measured presentation viewport,
         // clamped to 160–360dp. Charging mode places its controls before the map instead.
         content.addView(mapSlot, LayoutParams(-1, 0).apply { topMargin = ui.dp(10) })
@@ -619,15 +624,54 @@ class RideMapPanel(
     fun showCurrentLocation(latitude: Double, longitude: Double) = mapView.showCurrentLocation(latitude, longitude)
     fun updatePhoneLocation(sample: uniffi.cutout_mobile_ffi.MobilePhoneLocationSampleDto?) = chargingPage.updateLocation(sample)
     internal fun saveUiState(): android.os.Bundle = android.os.Bundle().apply {
+        mapView.currentCameraPosition()?.let { cameraPositions[mode] = it }
         putString("mode", mode.name)
+        Mode.values().forEach { cameraMode ->
+            cameraPositions[cameraMode]?.let { position -> putCamera(cameraMode.name, position) }
+        }
+        val historyState = android.os.Bundle().also(historyPage::saveUiState)
+        if (cameraPositions[Mode.HISTORY] == null) historyState.remove("fitted-ride")
+        putBundle("history-ui", historyState)
+        putBundle("charging-ui", android.os.Bundle().also(chargingPage::savePresentationState))
     }
 
-    /** Restores only the selected Map tab; ride, location, and charging state remain Rust-owned. */
+    /** Restores Map presentation state; ride and location state remain Rust-owned. */
     internal fun restoreUiState(saved: android.os.Bundle?) {
-        val restored = saved?.getString("mode")?.let { name ->
+        if (saved == null) return
+        Mode.values().forEach { cameraMode ->
+            readCamera(cameraMode.name, saved)?.let { cameraPositions[cameraMode] = it }
+        }
+        historyPage.restoreUiState(saved.getBundle("history-ui"))
+        chargingPage.restorePresentationState(saved.getBundle("charging-ui"))
+        val restored = saved.getString("mode")?.let { name ->
             Mode.values().firstOrNull { it.name == name }
         } ?: return
         setMode(restored)
+        mapView.restoreCameraPosition(cameraPositions[restored])
+    }
+
+    private fun android.os.Bundle.putCamera(key: String, position: CameraPosition) {
+        val target = position.target ?: return
+        putDouble("$key-lat", target.latitude)
+        putDouble("$key-lon", target.longitude)
+        putDouble("$key-zoom", position.zoom)
+        putDouble("$key-tilt", position.tilt)
+        putDouble("$key-bearing", position.bearing)
+    }
+
+    private fun readCamera(key: String, saved: android.os.Bundle): CameraPosition? {
+        val latitude = saved.getDouble("$key-lat", Double.NaN)
+        val longitude = saved.getDouble("$key-lon", Double.NaN)
+        val zoom = saved.getDouble("$key-zoom", Double.NaN)
+        if (!latitude.isFinite() || latitude !in -90.0..90.0 ||
+            !longitude.isFinite() || longitude !in -180.0..180.0 || !zoom.isFinite()
+        ) return null
+        return CameraPosition.Builder()
+            .target(LatLng(latitude, longitude))
+            .zoom(zoom)
+            .tilt(saved.getDouble("$key-tilt", 0.0))
+            .bearing(saved.getDouble("$key-bearing", 0.0))
+            .build()
     }
     fun setActive(value: Boolean) {
         activePage = value

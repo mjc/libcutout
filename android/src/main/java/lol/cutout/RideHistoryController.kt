@@ -1,6 +1,7 @@
 package lol.cutout
 
 import uniffi.cutout_mobile_ffi.MobileRideCursorDto
+import uniffi.cutout_mobile_ffi.MobileGeoBoundsDto
 import uniffi.cutout_mobile_ffi.MobileRideHistoryFilterDto
 import uniffi.cutout_mobile_ffi.MobileRideHistoryVehicleOptionDto
 import uniffi.cutout_mobile_ffi.MobileRideIdDto
@@ -90,15 +91,21 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         get() = searchText.isNotBlank() || !last30Days || vehicleIdentity != null || includeShortRides
     private var queryGeneration = 0L
     private var detailGeneration = 0L
+    private var viewportGeneration = 0L
+    private var lastDetailViewport: MobileGeoBoundsDto? = null
+    private var pendingRestoredSelection: ByteArray? = null
 
     var onChanged: (() -> Unit)? = null
 
     fun refresh(preserveSelection: Boolean = false) {
         val generation = ++queryGeneration
         detailGeneration++
+        viewportGeneration++
+        lastDetailViewport = null
         val selected = state.selected.takeIf { preserveSelection }
         val preview = state.listPreviewRide.takeIf { preserveSelection }
         val retainedRide = selected ?: preview
+        val restoredSelection = pendingRestoredSelection?.copyOf()
         val retainedCount = if (preserveSelection) state.rides.size else 0
         state = state.copy(loading = true, loadingMore = false, error = null, selected = selected,
             listPreviewRide = preview, listPreviewRoute = if (preserveSelection) state.listPreviewRoute else null,
@@ -125,15 +132,23 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
                 rides.addAll(page.rides)
             }
             val vehicles = db.listRideHistoryVehicleOptions()
-            Triple(rides, page.nextCursor, vehicles)
+            val restoredRide = restoredSelection?.let { bytes ->
+                db.findRide(MobileRideIdDto(bytes))
+            }
+            Triple(rides, page.nextCursor, vehicles) to restoredRide
         }) { result ->
             if (generation != queryGeneration) return@withDatabase
             result.fold(
-                onSuccess = { (rides, nextCursor, vehicles) ->
+                onSuccess = { (page, restoredRide) ->
+                    val (rides, nextCursor, vehicles) = page
                     state = state.copy(rides = rides, nextCursor = nextCursor, vehicles = vehicles,
                         loading = false, error = null)
                     val retained = restoreRideSelection(retainedRide?.id?.bytes, rides) { it.id.bytes }
                     when {
+                        restoredSelection != null -> {
+                            pendingRestoredSelection = null
+                            restoredRide?.let(::select)
+                        }
                         selected != null && retained != null -> select(retained)
                         selected != null -> state = state.copy(selected = null)
                         preview != null -> state = state.copy(
@@ -174,6 +189,8 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
 
     fun select(ride: MobileRideRecordDto) {
         val generation = ++detailGeneration
+        viewportGeneration++
+        lastDetailViewport = null
         val retainMatchingRoute = historyRouteMatchesRide(state.routeRideId?.bytes, ride.id.bytes)
         state = state.copy(selected = ride, listPreviewRide = null, listPreviewRoute = null,
             route = state.route.takeIf { retainMatchingRoute },
@@ -203,6 +220,52 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         }
     }
 
+    /** Reprojects only the selected ride's bounded route for the visible viewport. */
+    fun projectSelectedViewport(viewport: MobileGeoBoundsDto) {
+        val ride = state.selected ?: return
+        if (!historyRouteMatchesRide(state.routeRideId?.bytes, ride.id.bytes)) return
+        if (lastDetailViewport?.sameBounds(viewport) == true) return
+
+        lastDetailViewport = viewport
+        val detail = detailGeneration
+        val projection = ++viewportGeneration
+        runtime.withDatabase({ db ->
+            db.projectRoutePoints(ride.id, MobileRideMapRouteProjectionOptionsDto(
+                viewport, mobileRideMapLimits().historyPreviewPointLimit,
+                MobileRideMapRoutePrivacyPolicyDto.Precise,
+            ))
+        }) { result ->
+            if (detail != detailGeneration || projection != viewportGeneration ||
+                state.selected?.id?.bytes?.contentEquals(ride.id.bytes) != true
+            ) return@withDatabase
+            result.fold(
+                onSuccess = { route -> state = state.copy(route = route, routeRideId = ride.id, error = null) },
+                onFailure = { error -> state = state.copy(error = error.message ?: "") },
+            )
+            notifyChanged()
+        }
+    }
+
+    fun saveUiState(out: android.os.Bundle, currentSearch: String = searchText) {
+        out.putString("search", currentSearch)
+        out.putString("vehicle", vehicleIdentity)
+        out.putBoolean("include-short", includeShortRides)
+        out.putBoolean("last-30-days", last30Days)
+        (state.selected?.id?.bytes ?: pendingRestoredSelection)?.let { out.putByteArray("selected-ride", it.copyOf()) }
+        state.routeRideId?.bytes?.let { out.putByteArray("fitted-ride", it.copyOf()) }
+    }
+
+    /** Applies presentation-only state before the owning Map mode performs its normal refresh. */
+    fun restoreUiState(saved: android.os.Bundle?) {
+        if (saved == null) return
+        searchText = saved.getString("search").orEmpty()
+        vehicleIdentity = saved.getString("vehicle")
+        includeShortRides = saved.getBoolean("include-short", false)
+        last30Days = saved.getBoolean("last-30-days", true)
+        pendingRestoredSelection = saved.getByteArray("selected-ride")?.copyOf()
+        state = state.copy(selected = null, listPreviewRide = null, route = null, routeRideId = null)
+    }
+
     fun forgetMusicHistory(ride: MobileRideRecordDto, completed: (Result<Unit>) -> Unit) {
         val generation = detailGeneration
         runtime.withDatabase({ db ->
@@ -229,6 +292,8 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
 
     fun closeDetail() {
         detailGeneration++
+        viewportGeneration++
+        lastDetailViewport = null
         state = state.copy(selected = null, listPreviewRide = state.selected,
             listPreviewRoute = state.route.takeIf {
                 state.selected?.let { historyRouteMatchesRide(state.routeRideId?.bytes, it.id.bytes) } == true
@@ -283,6 +348,12 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
         searchText.trim().takeIf(String::isNotEmpty),
         includeShortRides,
     )
+
+    private fun MobileGeoBoundsDto.sameBounds(other: MobileGeoBoundsDto): Boolean =
+        minimumLatitudeDegrees == other.minimumLatitudeDegrees &&
+            maximumLatitudeDegrees == other.maximumLatitudeDegrees &&
+            minimumLongitudeDegrees == other.minimumLongitudeDegrees &&
+            maximumLongitudeDegrees == other.maximumLongitudeDegrees
 
     private fun notifyChanged() { onChanged?.invoke() }
 }

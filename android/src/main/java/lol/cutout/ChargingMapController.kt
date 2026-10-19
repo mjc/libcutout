@@ -111,6 +111,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         bounds?.let { load(it) }
     }
 
+    fun restoreFilter(value: MobileChargingFilterDto) {
+        filter = value
+    }
+
     fun select(id: String?) {
         val generation = ++selectionGeneration
         if (id == null) {
