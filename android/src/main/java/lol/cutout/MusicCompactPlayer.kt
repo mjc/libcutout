@@ -58,6 +58,19 @@ internal fun AndroidMusicPresentation.availableCommands(
     return commands
 }
 
+/** Insert newly available controls without moving existing accessibility targets. */
+internal fun musicCommandInsertionIndex(
+    parent: LinearLayout,
+    existing: Map<MobileMusicCommandDto, View>,
+    command: MobileMusicCommandDto,
+): Int {
+    val order = listOf(MobileMusicCommandDto.PREVIOUS, MobileMusicCommandDto.PLAY,
+        MobileMusicCommandDto.PAUSE, MobileMusicCommandDto.NEXT, MobileMusicCommandDto.OPEN_PROVIDER)
+    val next = order.dropWhile { it != command }.drop(1)
+        .firstNotNullOfOrNull { existing[it]?.takeIf { view -> view.parent === parent } }
+    return next?.let(parent::indexOfChild) ?: parent.childCount
+}
+
 /** Compact live player; only commands advertised by the current Rust-projected snapshot render. */
 class MusicCompactPlayer(
     context: Context,
@@ -172,7 +185,7 @@ class MusicCompactPlayer(
             isFocusable = true
             contentDescription = label
         }
-        controls.addView(button, LayoutParams(-2, -1))
+        controls.addView(button, musicCommandInsertionIndex(controls, commandButtons, command), LayoutParams(-2, -1))
         commandButtons[command] = button
         return button
     }

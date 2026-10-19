@@ -180,7 +180,7 @@ class MusicPanel(
         val view = ui.action(glyph, primary = command == MobileMusicCommandDto.PLAY || command == MobileMusicCommandDto.PAUSE) {
             client.command(command)
         }.apply { contentDescription = label; tag = "music.command.${command.name.lowercase()}" }
-        controls.addView(view, LayoutParams(0, -2, 1f))
+        controls.addView(view, musicCommandInsertionIndex(controls, controlViews, command), LayoutParams(0, -2, 1f))
         controlViews[command] = view
         return view
     }

@@ -12,6 +12,7 @@ import lol.cutout.CutoutApplication
 import lol.cutout.CutoutUi
 import lol.cutout.availableCommands
 import lol.cutout.showsCompactPlayer
+import lol.cutout.MusicPanel
 import lol.cutout.MusicCompactPlayer
 import uniffi.cutout_mobile_ffi.*
 
@@ -137,6 +138,30 @@ open class MusicCompactPlayerTest {
         ))
         check(commands(MobileMusicPlaybackStateDto.UNAUTHORIZED, all).isEmpty())
         check(commands(MobileMusicPlaybackStateDto.INTERRUPTED, all).isEmpty())
+    }
+
+    @org.junit.Test
+    fun playPauseTransitionsKeepTransportOrderAndExistingSkipTargets() = withPlayer { context, _, client, compact ->
+        val expanded = MusicPanel(context, client, onOpenSettings = {}, onHidePlayer = {}, onDone = {})
+        try {
+            val caps = MobileMusicCapabilitiesDto(previous = true, play = true, pause = true, next = true, openProvider = true)
+            fun visibleCommands(view: View) = descendants(view).filter {
+                it.visibility == View.VISIBLE && it.tag?.toString()?.startsWith("music.command.") == true
+            }.map { it.tag.toString().removePrefix("music.command.") }.toList()
+            val playing = presentation(state = MobileMusicPlaybackStateDto.PLAYING, capabilities = caps)
+            compact.render(playing); expanded.render(playing)
+            val compactNext = compact.findViewWithTag<View>("music.command.next")
+            val expandedNext = expanded.findViewWithTag<View>("music.command.next")
+            listOf(MobileMusicPlaybackStateDto.PAUSED, MobileMusicPlaybackStateDto.PLAYING).forEach { state ->
+                val value = playing.copy(snapshot = playing.snapshot?.copy(state = state))
+                compact.render(value); expanded.render(value)
+                val middle = if (state == MobileMusicPlaybackStateDto.PAUSED) "play" else "pause"
+                check(visibleCommands(compact) == listOf(middle, "next"))
+                check(visibleCommands(expanded) == listOf("previous", middle, "next"))
+                check(compact.findViewWithTag<View>("music.command.next") === compactNext)
+                check(expanded.findViewWithTag<View>("music.command.next") === expandedNext)
+            }
+        } finally { expanded.dispose() }
     }
 
     @org.junit.Test
