@@ -107,6 +107,7 @@ class LocalMusicNavigationTest {
             Intent(context, MainActivity::class.java).putExtra("page", R.string.music_settings)).setup().visible()
         try {
             val decor = host.get().window.decorView
+            NativeSurfaceCapture.save(decor, "music-settings-dark")
             val panel = checkNotNull(decor.findViewWithTag<android.widget.ScrollView>("music.settings.screen"))
             val lastPolicy = checkNotNull(panel.findViewWithTag<View>("music.history.policy.human_readable"))
             assertTrue(panel.canScrollVertically(1))
