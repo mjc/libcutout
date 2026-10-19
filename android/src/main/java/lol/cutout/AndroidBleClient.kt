@@ -70,6 +70,7 @@ class AndroidBleClient(
     private var selectionLoaded = false
     private var selectionLoadInFlight = false
     private var selectionRevision = 0L
+    private var forgettingSavedDevice = false
     private var scanCallback: ScanCallback? = null
     private var stopScanTimer: (() -> Unit)? = null
     // Callback counters are per-scan and atomic; forwarding/candidate counts belong to the owner.
@@ -129,6 +130,113 @@ class AndroidBleClient(
         additionalObservers += callback
         main.post { if (callback in additionalObservers) callback(latestPresentation) }
         return AutoCloseable { additionalObservers -= callback }
+    }
+
+    /** Reads the exact user-selected platform identifier from this BLE owner's Rust database. */
+    fun savedDevice(completed: (Result<String?>) -> Unit) = postOnOwner {
+        if (selectionLoaded) {
+            val saved = selectedDeviceId
+            main.post { completed(Result.success(saved)) }
+            return@postOnOwner
+        }
+        val revision = selectionRevision
+        (context.applicationContext as CutoutApplication).rides.withDatabase(
+            work = { database -> database.selectedDevice() },
+        ) { result ->
+            owner.post {
+                if (revision == selectionRevision) {
+                    result.onSuccess {
+                        selectedDeviceId = it
+                        selectionLoaded = true
+                    }.onFailure { error ->
+                        Log.w("CutoutBle", "Saved Bluetooth selection could not be loaded", error)
+                    }
+                }
+                if (revision == selectionRevision) {
+                    main.post { completed(result) }
+                } else {
+                    // A selection mutation won the race; read back that newer authoritative state.
+                    savedDevice(completed)
+                }
+            }
+        }
+    }
+
+    /**
+     * Forgets the saved device only after the existing transport owner has drained admitted
+     * telemetry and finalized any diagnostic capture. On failure the saved ID remains available
+     * for an explicit retry, while automatic restore and retry stay suppressed.
+     */
+    fun forgetSavedDevice(completed: (Result<Unit>) -> Unit) = postOnOwner {
+        if (forgettingSavedDevice) {
+            main.post { completed(Result.failure(IllegalStateException("Forget is already in progress"))) }
+            return@postOnOwner
+        }
+        val revision = ++selectionRevision
+        forgettingSavedDevice = true
+        restoreSuppressed = true
+        pendingConnectId = null
+        cancelPendingRetryOnOwner()
+        stopScanOnOwner()
+
+        fun clearSelectionAfterTeardown(disconnectAttempt: Boolean) {
+            if (revision != selectionRevision) {
+                main.post { completed(Result.failure(IllegalStateException("Saved device changed during forget"))) }
+                return
+            }
+            val result = if (disconnectAttempt) runCatching { state.disconnectConnectionAttempt() }
+                else Result.success(Unit)
+            result.onFailure { error ->
+                forgettingSavedDevice = false
+                selectionRevision++
+                main.post { completed(Result.failure(error)) }
+                return
+            }
+            (context.applicationContext as CutoutApplication).rides.withDatabase(
+                work = { database -> database.clearSelectedDevice() },
+            ) { cleared ->
+                owner.post {
+                    if (revision != selectionRevision) {
+                        main.post { completed(Result.failure(IllegalStateException("Saved device changed during forget"))) }
+                        return@post
+                    }
+                    forgettingSavedDevice = false
+                    cleared.onSuccess {
+                        selectedDeviceId = null
+                        selectionLoaded = true
+                        restoreAttemptedId = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null)
+                    }.onFailure { error ->
+                        Log.w("CutoutBle", "Saved Bluetooth selection could not be cleared", error)
+                        view = view.copy(problem = true)
+                    }
+                    publish()
+                    main.post { completed(cleared.map { Unit }) }
+                }
+            }
+        }
+
+        val active = connection
+        if (active == null) {
+            clearSelectionAfterTeardown(disconnectAttempt = true)
+        } else {
+            val drained = { clearSelectionAfterTeardown(disconnectAttempt = false) }
+            active.finishTransport(
+                failed = false,
+                afterDrain = drained,
+                afterDrainFailure = { error ->
+                    if (revision == selectionRevision) {
+                        active.removeAfterDrainCallback(drained)
+                        forgettingSavedDevice = false
+                        selectionRevision++ // Retire this completion so a later teardown cannot clear implicitly.
+                        view = view.copy(problem = true)
+                        publish()
+                        main.post { completed(Result.failure(error)) }
+                    }
+                },
+            )
+        }
     }
 
     fun diagnosticRecordingEnabled(completed: (Result<Boolean>) -> Unit) = postOnOwner {
@@ -225,6 +333,7 @@ class AndroidBleClient(
 
     fun connect(id: String) = postOnOwner {
         if (found[id] == null) return@postOnOwner
+        forgettingSavedDevice = false
         cancelPendingRetryOnOwner()
         restoreSuppressed = false
         selectedDeviceId = id
@@ -531,6 +640,11 @@ class AndroidBleClient(
         private var ending = false
         private var draining = false
         private val afterDrainCallbacks = mutableListOf<() -> Unit>()
+        private val afterDrainFailureCallbacks = mutableListOf<(Throwable) -> Unit>()
+
+        fun removeAfterDrainCallback(callback: () -> Unit) {
+            afterDrainCallbacks.remove(callback)
+        }
         private val callbackOverflow = AtomicBoolean()
         private var cancelWakeup: (() -> Unit)? = null
         private var cancelDeadline: (() -> Unit)? = null
@@ -794,8 +908,13 @@ class AndroidBleClient(
         }
 
         /** Preserve admitted callback order until Rust has settled the recording prefix. */
-    fun finishTransport(failed: Boolean, afterDrain: (() -> Unit)? = null) {
+    fun finishTransport(
+        failed: Boolean,
+        afterDrainFailure: ((Throwable) -> Unit)? = null,
+        afterDrain: (() -> Unit)? = null,
+    ) {
             if (afterDrain != null) afterDrainCallbacks += afterDrain
+            if (afterDrainFailure != null) afterDrainFailureCallbacks += afterDrainFailure
             if (retired || draining) return
             ending = true
             draining = true
@@ -809,6 +928,13 @@ class AndroidBleClient(
                         draining = false
                         view = view.copy(problem = true)
                         publish()
+                        val error = result.exceptionOrNull() ?: IllegalStateException("Bluetooth teardown failed")
+                        afterDrainFailureCallbacks.toList().forEach { callback ->
+                            try { callback(error) } catch (callbackError: Exception) {
+                                Log.w("CutoutBle", "Bluetooth teardown failure callback failed", callbackError)
+                            }
+                        }
+                        afterDrainFailureCallbacks.clear()
                         return@postOnOwner
                     }
                     if (diagnostics.hasWriter(token)) {
@@ -851,6 +977,7 @@ class AndroidBleClient(
                 }
             }
             afterDrainCallbacks.clear()
+            afterDrainFailureCallbacks.clear()
         }
 
         fun retire(invalidate: Boolean = true) {

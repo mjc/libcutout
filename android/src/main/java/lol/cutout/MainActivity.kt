@@ -170,6 +170,7 @@ class MainActivity : Activity() {
         panels.values.filterIsInstance<MusicSettingsPanel>().forEach { it.dispose() }
         phoneAlarms?.dispose()
         captures?.dispose()
+        setup?.dispose()
         soundCloud?.dispose()
         onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
         super.onDestroy()
