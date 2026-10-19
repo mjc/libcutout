@@ -133,7 +133,7 @@ class AndroidBleClient(
     }
 
     /** Reads the exact user-selected platform identifier from this BLE owner's Rust database. */
-    fun savedDevice(completed: (Result<String?>) -> Unit) = postOnOwner {
+    fun savedDevice(completed: (Result<String?>) -> Unit): Boolean = postOnOwner {
         if (selectionLoaded) {
             val saved = selectedDeviceId
             main.post { completed(Result.success(saved)) }
@@ -908,11 +908,11 @@ class AndroidBleClient(
         }
 
         /** Preserve admitted callback order until Rust has settled the recording prefix. */
-    fun finishTransport(
-        failed: Boolean,
-        afterDrainFailure: ((Throwable) -> Unit)? = null,
-        afterDrain: (() -> Unit)? = null,
-    ) {
+        fun finishTransport(
+            failed: Boolean,
+            afterDrainFailure: ((Throwable) -> Unit)? = null,
+            afterDrain: (() -> Unit)? = null,
+        ) {
             if (afterDrain != null) afterDrainCallbacks += afterDrain
             if (afterDrainFailure != null) afterDrainFailureCallbacks += afterDrainFailure
             if (retired || draining) return
