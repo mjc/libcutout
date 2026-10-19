@@ -357,6 +357,7 @@ class SettingsPanel(
         private var pendingLocalSubmission = false
         private var priorRequestId: ULong? = null
         private var failure: String? = null
+        private var failedValue: MobileSettingValueDto? = null
         private var numericEdit: EditText? = null
         private var numericSlider: SeekBar? = null
         private var choiceButton: TextView? = null
@@ -404,6 +405,10 @@ class SettingsPanel(
         fun render(next: MobileSettingSnapshotDto?, attempt: MobileConnectionAttemptTokenDto?, enabled: Boolean) {
             if (next?.current != null && draft == next.current) {
                 draft = null; submitted = null
+            }
+            if (next?.current != null && failedValue == next.current) {
+                failure = null
+                failedValue = null
             }
             state = next
             if (pendingLocalSubmission && next?.requestId != null && next.requestId != priorRequestId) {
@@ -691,7 +696,8 @@ class SettingsPanel(
         }
 
         private fun edit(value: MobileSettingValueDto) {
-            draft = value; submitted = null; pendingLocalSubmission = false; failure = null; invalidNumericInput = false
+            draft = value; submitted = null; pendingLocalSubmission = false; failure = null; failedValue = null
+            invalidNumericInput = false
             when (value) {
                 is MobileSettingValueDto.Number -> (control as? MobileSettingControlDto.Number)?.let {
                     setNumericText(formatFixed(value.value, it.precision.toInt()), force = true)
@@ -720,6 +726,7 @@ class SettingsPanel(
                     submitted = null
                     pendingLocalSubmission = false
                     failure = context.getString(R.string.setting_refused)
+                    failedValue = value
                     updateSummary(); updateFeedback()
                 }
                 if (!refused) {
@@ -727,11 +734,13 @@ class SettingsPanel(
                     pendingLocalSubmission = true
                     priorRequestId = requestIdBeforeSubmit
                     failure = null
+                    failedValue = null
                 }
             } catch (_: Exception) {
                 submitted = null
                 pendingLocalSubmission = false
                 failure = context.getString(R.string.setting_refused)
+                failedValue = value
             }
             updateSummary()
             updateFeedback()
@@ -937,6 +946,7 @@ class SettingsPanel(
                 invalidNumericInput -> context.getString(R.string.invalid_number)
                 draft != null && draft != state?.requested -> null
                 status == MobileSettingStatusDto.CONFIRMED -> null
+                state?.refusal != null -> actionRefusal(state!!.refusal!!)
                 status == MobileSettingStatusDto.REFUSED -> ui.label("settings.state.refused")
                 transport == MobileSettingTransportStatusDto.REJECTED -> ui.label("settings.transport.rejected")
                 transport == MobileSettingTransportStatusDto.CANCELLED -> ui.label("settings.transport.cancelled")

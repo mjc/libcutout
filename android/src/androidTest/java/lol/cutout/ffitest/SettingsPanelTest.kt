@@ -433,6 +433,85 @@ open class SettingsPanelTest {
     }
 
     @Test
+    fun settingRefusalUsesRustReasonAndMatchingReadbackClearsLocalFailure() {
+        val initial = checkNotNull(productionReplayPresentation().settings)
+        val descriptor = initial.settingDescriptors.firstOrNull {
+            it.access == MobileSettingAccessDto.WRITABLE &&
+                it.control is MobileSettingControlDto.Number &&
+                it.group != MobileSettingGroupDto.DIAGNOSTICS
+        } ?: error("Production replay has no writable numeric setting")
+        val number = descriptor.control as MobileSettingControlDto.Number
+        val base = initial.settings.firstOrNull { it.id == descriptor.id }
+        val current = (base?.current as? MobileSettingValueDto.Number)?.value
+        val target = when {
+            current != number.minimum -> number.minimum
+            number.minimum.toLong() + number.editorStep.toLong() <= number.maximum.toLong() ->
+                number.minimum + number.editorStep
+            else -> number.maximum
+        }
+        check(current != target) { "Fixture has no distinct writable numeric value" }
+        val requested = MobileSettingValueDto.Number(target)
+        val refusalSnapshot = initial.copy(settings = initial.settings.map {
+            if (it.id == descriptor.id) it.copy(
+                requested = requested,
+                status = MobileSettingStatusDto.REFUSED,
+                refusal = MobileControlRefusalReasonDto.MISSING_ARM,
+            ) else it
+        })
+
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        try {
+            instrumentation.runOnMainSync {
+                val panel = SettingsPanel(activity, ownerLifetimeId) { _, _, _, refuse -> refuse() }
+                activity.setContentView(panel)
+                panel.render(refusalSnapshot)
+                val labels = CutoutUi(activity)
+                val specificRefusal = labels.label("controls.refusal.stationary")
+                check(visibleText(panel, specificRefusal)) {
+                    "Setting refusal discarded Rust's missing-arm explanation"
+                }
+                check(!visibleText(panel, labels.label("settings.state.refused"))) {
+                    "Specific setting refusal was replaced by a generic refusal"
+                }
+
+                val alternate = listOf(number.minimum, number.maximum).firstOrNull { it != target }
+                    ?: error("Fixture has no alternate numeric value")
+                tagged<EditText>(panel, "settings.editor.${descriptor.id}").setText(
+                    BigDecimal.valueOf(alternate.toLong(), number.precision.toInt()).toPlainString(),
+                )
+                check(!visibleText(panel, specificRefusal)) {
+                    "An older refusal remained attached to a different draft"
+                }
+
+                val editor = tagged<EditText>(panel, "settings.editor.${descriptor.id}")
+                editor.setText(BigDecimal.valueOf(target.toLong(), number.precision.toInt()).toPlainString())
+                check(tagged<Button>(panel, "settings.apply.${descriptor.id}").performClick())
+                check(visibleText(panel, activity.getString(R.string.setting_refused))) {
+                    "A local failed submission did not remain visible until matching readback"
+                }
+
+                panel.render(refusalSnapshot.copy(settings = refusalSnapshot.settings.map {
+                    if (it.id == descriptor.id) it.copy(
+                        current = requested,
+                        requested = requested,
+                        currentSource = MobileSettingValueSourceDto.LIVE_READBACK,
+                        status = MobileSettingStatusDto.CONFIRMED,
+                        refusal = null,
+                    ) else it
+                }))
+                check(!visibleText(panel, activity.getString(R.string.setting_refused))) {
+                    "Matching live readback did not settle the local submission error"
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test
     fun numericDraftRefusalRefreshAndReplacementStayAttemptScoped() {
         val presentation = productionReplayPresentation()
         val initial = checkNotNull(presentation.settings) { "Production replay did not publish settings" }
