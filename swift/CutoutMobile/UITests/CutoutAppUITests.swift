@@ -3012,7 +3012,6 @@ final class CutoutAppUITests: XCTestCase {
         start.tap()
         let recording = app.descendants(matching: .any)["capture.screen"]
         XCTAssertTrue(recording.waitForExistence(timeout: 10), app.debugDescription)
-        app.buttons["captures.labels"].tap()
         let annotation = reachableCaptureAnnotation("ride", in: recording)
         waitForReady(annotation)
         annotation.tap()
