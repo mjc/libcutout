@@ -18,6 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowPopupMenu
 import uniffi.cutout_mobile_ffi.*
 
 @RunWith(RobolectricTestRunner::class)
@@ -56,6 +57,57 @@ class LocalMusicPresentationParityTest {
     }
 
     @Test
+    fun realProviderPickerLeavesSoundCloudAndRetainsTheSelectionWhenReopened() {
+        val previousSpinnerMode = System.getProperty("robolectric.useRealSpinnerSelection")
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val client = (activity.application as CutoutApplication).music
+        val previousProvider = client.latestPresentation.selectedProvider
+        var panel: MusicSettingsPanel? = null
+        try {
+            System.setProperty("robolectric.useRealSpinnerSelection", "true")
+            client.selectProvider(MobileMusicProviderDto.SOUND_CLOUD)
+            panel = MusicSettingsPanel(activity, client, onRequestListenerAccess = {})
+            activity.setContentView(panel)
+            val picker = checkNotNull(panel.findViewWithTag<Spinner>("music.provider-picker"))
+            settle(picker)
+            assertEquals(2, picker.selectedItemPosition)
+            for ((provider, position) in listOf(
+                MobileMusicProviderDto.SPOTIFY to 1,
+                MobileMusicProviderDto.SOUND_CLOUD to 2,
+                MobileMusicProviderDto.APPLE_MUSIC to 0,
+            )) {
+                val stalePresentation = client.latestPresentation
+                assertTrue("Provider choices must open", picker.performClick())
+                val popup = checkNotNull(ShadowPopupMenu.getLatestPopupMenu())
+                assertTrue("The provider option must accept a tap", popup.menu.performIdentifierAction(position, 0))
+                // A queued presentation may still contain SoundCloud when its render follows the tap.
+                panel.render(stalePresentation)
+                repeat(3) { settle(picker) }
+                assertEquals("The real picker must publish the explicit provider", provider, client.latestPresentation.selectedProvider)
+                assertEquals(musicProviderProfile(provider).storageKey,
+                    activity.getSharedPreferences("music_provider_preferences", android.content.Context.MODE_PRIVATE)
+                        .getString("selected_provider", null))
+                assertEquals(position, picker.selectedItemPosition)
+                assertTrue("Provider selection must not leave the picker disabled", picker.isEnabled)
+            }
+            panel.dispose()
+            panel = MusicSettingsPanel(activity, client, onRequestListenerAccess = {})
+            activity.setContentView(panel)
+            val reopened = checkNotNull(panel.findViewWithTag<Spinner>("music.provider-picker"))
+            settle(reopened)
+            assertEquals(0, reopened.selectedItemPosition)
+            assertNull("Choosing a provider must not launch authorization or an app", shadowOf(activity).nextStartedActivity)
+        } finally {
+            if (previousSpinnerMode == null) System.clearProperty("robolectric.useRealSpinnerSelection")
+            else System.setProperty("robolectric.useRealSpinnerSelection", previousSpinnerMode)
+            panel?.dispose()
+            client.selectProvider(previousProvider)
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun musicChoiceWaitsForPublishedSelectionAndCoalescesPendingWrites() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val requests = mutableListOf<Int>()
@@ -71,6 +123,10 @@ class LocalMusicPresentationParityTest {
             assertTrue(requests.isEmpty())
             choice.setSelection(1)
             settle(choice)
+            assertTrue("Programmatic selection is display-only", requests.isEmpty())
+            choice.render(0)
+            settle(choice)
+            assertTrue(tapChoice(choice, 1))
             assertEquals(listOf(1), requests)
             assertFalse(choice.isEnabled)
             assertEquals("Selection must retain the last owner receipt", 0, choice.selectedItemPosition)
@@ -81,8 +137,7 @@ class LocalMusicPresentationParityTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(choice.isEnabled)
             assertEquals(1, choice.selectedItemPosition)
-            choice.setSelection(2)
-            settle(choice)
+            assertTrue(tapChoice(choice, 2))
             assertEquals(listOf(1, 2), requests)
             receipts[0]()
             shadowOf(Looper.getMainLooper()).idle()
@@ -228,6 +283,12 @@ class LocalMusicPresentationParityTest {
             View.MeasureSpec.makeMeasureSpec(ui.dp(100), View.MeasureSpec.AT_MOST))
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun tapChoice(choice: MusicSettingsChoice<Int>, index: Int): Boolean {
+        assertTrue(choice.performClick())
+        return checkNotNull(ShadowPopupMenu.getLatestPopupMenu())
+            .menu.performIdentifierAction(index, 0)
     }
 
     private fun presentation(): AndroidMusicPresentation {

@@ -5,12 +5,12 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.PopupMenu
 import android.widget.Spinner
 import android.widget.TextView
 
-/** Keeps a native selection on the last published value until its owner accepts a change. */
+/** A native choice control whose displayed value follows its owner's published state. */
 internal class MusicSettingsChoice<T>(
     context: Context,
     private val ui: CutoutUi,
@@ -36,29 +36,51 @@ internal class MusicSettingsChoice<T>(
                     setPadding(ui.dp(8), ui.dp(12), ui.dp(8), ui.dp(12))
                 }
         }
-        onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val selected = choices.getOrNull(position)?.first ?: return
-                if (!isEnabled || pending || observed == null || selected == observed || position != selectedItemPosition) return
-                pending = true
-                val token = ++operation
-                isEnabled = false
-                val completed = {
-                    main.post {
-                        if (token != operation) return@post
-                        operation++
-                        pending = false
-                        isEnabled = allowed
-                    }
-                    Unit
-                }
-                try { changed(selected, completed) } catch (_: Exception) { completed() }
-                observed?.let { published -> setSelection(choices.indexOfFirst { it.first == published }) }
+    }
+
+    /** Shows a native popup and dispatches the explicit tap synchronously, before a later render. */
+    override fun performClick(): Boolean {
+        if (!isEnabled || choices.isEmpty()) return false
+        val selected = observed
+        val selectedIndex = choices.indexOfFirst { it.first == selected }
+        PopupMenu(context, this).apply {
+            choices.forEachIndexed { index, (_, title) ->
+                menu.add(0, index, index, title).isCheckable = true
             }
+            menu.setGroupCheckable(0, true, true)
+            if (selectedIndex >= 0) menu.findItem(selectedIndex)?.isChecked = true
+            setOnMenuItemClickListener { item ->
+                choose(item.itemId)
+                true
+            }
+            show()
+        }
+        return true
+    }
+
+    private fun choose(index: Int) {
+        val choice = choices.getOrNull(index)?.first ?: return
+        if (!isEnabled || pending || observed == null || choice == observed) return
+        pending = true
+        val token = ++operation
+        isEnabled = false
+        val completed = {
+            main.post {
+                if (token != operation) return@post
+                operation++
+                pending = false
+                isEnabled = allowed
+            }
+            Unit
+        }
+        try {
+            changed(choice, completed)
+        } catch (_: Exception) {
+            completed()
         }
     }
 
+    /** Updates only the displayed selection; it never treats rendering as a user action. */
     fun render(value: T, enabled: Boolean = true) {
         observed = value
         allowed = enabled
