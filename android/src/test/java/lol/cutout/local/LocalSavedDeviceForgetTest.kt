@@ -6,6 +6,10 @@ import android.bluetooth.le.ScanResult
 import androidx.test.core.app.ApplicationProvider
 import lol.cutout.AndroidBleClient
 import lol.cutout.CutoutApplication
+import lol.cutout.AndroidRideSessionEffects
+import uniffi.cutout_mobile_ffi.MobileRideSessionInputDto
+import uniffi.cutout_mobile_ffi.MobileRideSessionPhaseDto
+import uniffi.cutout_mobile_ffi.MobileRideSessionEndReasonDto
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -35,7 +39,18 @@ class LocalSavedDeviceForgetTest {
             check(await { done -> client.savedDevice(done) } == id) {
                 "BLE owner did not read the exact Rust-persisted selection"
             }
+            await { done -> app.rides.withDatabase({
+                AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                    app.sessionStateForNativeOwner(), MobileRideSessionInputDto.Start(id),
+                )
+            }, done) }
             await { done -> client.forgetSavedDevice(done) }
+            val ended = await { done -> app.rides.withDatabase({
+                app.sessionStateForNativeOwner().rideSessionSnapshot()
+            }, done) }
+            check(ended.phase == MobileRideSessionPhaseDto.Ended(MobileRideSessionEndReasonDto.USER_DISCONNECT)) {
+                "Forget left the logical ride live: ${ended.phase}"
+            }
             check(await { done -> app.rides.withDatabase({ it.selectedDevice() }, done) } == null) {
                 "Forget completed without clearing the shared Rust selection"
             }

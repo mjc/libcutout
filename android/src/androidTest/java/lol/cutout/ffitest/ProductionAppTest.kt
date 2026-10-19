@@ -223,7 +223,7 @@ open class ProductionAppTest {
             }
             val ended = AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
                 state,
-                MobileRideSessionInputDto.UserDisconnected,
+                MobileRideSessionInputDto.ActivityEnded(checkNotNull(ending.identity)),
             )
             check(ended.phase is MobileRideSessionPhaseDto.Ended) {
                 "Android did not acknowledge the pending terminal effect: ${ended.phase}"
