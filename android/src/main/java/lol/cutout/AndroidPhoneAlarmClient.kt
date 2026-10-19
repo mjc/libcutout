@@ -63,6 +63,7 @@ class AndroidPhoneAlarmClient(private val context: Context) {
     private var activeIdentity: String? = null
     private var activeState: CutoutSessionStateHandle? = null
     private var activatedThisAttempt = false
+    private var pendingEnableIdentity: String? = null
 
     init {
         ensureChannels()
@@ -88,6 +89,11 @@ class AndroidPhoneAlarmClient(private val context: Context) {
         safely("Could not refresh phone alarm authorization") {
             activeState = state
             updateCapability(state)
+            val requestedIdentity = pendingEnableIdentity
+            pendingEnableIdentity = null
+            if (requestedIdentity != null && requestedIdentity == activeIdentity && capability().canSchedule) {
+                execute(state.setPhoneAlarmEnabled(requestedIdentity, true), state)
+            }
             drain(state)
             refreshPresentation(state)
         }
@@ -96,6 +102,9 @@ class AndroidPhoneAlarmClient(private val context: Context) {
     fun notePermissionRequestStarted() {
         permissions.edit().putBoolean(KEY_PERMISSION_REQUESTED, true).apply()
     }
+
+    /** Retain the explicit toggle intent only for the native permission round trip. */
+    fun enableAfterAuthorization() = owner.post { pendingEnableIdentity = activeIdentity }
 
     fun close() {
         thread.quitSafely()
@@ -163,6 +172,7 @@ class AndroidPhoneAlarmClient(private val context: Context) {
         }?.connection?.token?.platformIdentifier
 
         if (identity == null) {
+            pendingEnableIdentity = null
             if (activeIdentity != null) {
                 try { execute(state.deactivatePhoneAlarmDevice(), state) }
                 catch (error: Exception) { Log.w(TAG, "Could not deactivate phone alarms", error) }
@@ -176,6 +186,7 @@ class AndroidPhoneAlarmClient(private val context: Context) {
         }
 
         if (activeIdentity != identity) {
+            pendingEnableIdentity = null
             if (activeIdentity != null) {
                 try { execute(state.deactivatePhoneAlarmDevice(), state) }
                 catch (error: Exception) { Log.w(TAG, "Could not retire previous phone alarms", error) }

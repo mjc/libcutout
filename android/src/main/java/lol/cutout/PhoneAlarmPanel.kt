@@ -97,6 +97,7 @@ class PhoneAlarmPanel(
             if (checked && !latest.canSchedule) {
                 render(latest)
                 if (latest.permissionRequestAvailable) {
+                    client.enableAfterAuthorization()
                     client.notePermissionRequestStarted()
                     onRequestNotificationPermission()
                 } else openNotificationSettings()
