@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import android.os.Looper
 import android.widget.*
 import uniffi.cutout_mobile_ffi.*
@@ -23,6 +24,15 @@ class LightingPanel(
     private val connectionCard = ui.column().apply { setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14)); background = ui.rounded(20) }
     private val connectionName = ui.text("", 18f, true)
     private val connectionStatus = ui.text("", 14f, color = ui.muted)
+    private val accessoryDetails = ImageButton(context).apply {
+        tag = "lighting.accessory.details"
+        contentDescription = ui.label("lighting.accessory.details")
+        setImageDrawable(CutoutIcon(CutoutSymbol.INFO, ui.muted))
+        setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+        background = null
+        isFocusable = true
+        setOnClickListener { showDetails() }
+    }
     private val connectionActions = ui.row()
     private val selector = ui.row()
     private val controls = ui.column()
@@ -41,8 +51,11 @@ class LightingPanel(
         connectionCard.addView(ui.row().apply {
             addView(TextView(context).apply { text = "●"; textSize = 22f; setTextColor(ui.cyan); gravity = Gravity.CENTER; contentDescription = null }, LinearLayout.LayoutParams(ui.dp(38), ui.dp(38)))
             addView(ui.space(4))
-            addView(ui.column().apply { addView(connectionName); addView(connectionStatus) }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(ui.action(ui.label("lighting.accessory.details")) { showDetails() })
+            addView(ui.column().apply {
+                addView(connectionName)
+                addView(connectionStatus)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(accessoryDetails, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
         })
         connectionCard.addView(connectionActions)
         root.addView(connectionCard)
@@ -67,6 +80,7 @@ class LightingPanel(
         if (Looper.myLooper() != Looper.getMainLooper()) { post { render(value) }; return }
             val snapshot = value.snapshot
             connectionName.text = value.alias?.takeIf(String::isNotBlank) ?: snapshot.name ?: ui.label("lighting.default_name")
+            connectionName.tag = "lighting.accessory.name"
             connectionStatus.text = when {
                 value.permissionMissing -> context.getString(R.string.lighting_bluetooth_permission)
                 snapshot.state is MobileMelkLightingSessionStateDto.Retrying -> (snapshot.state as MobileMelkLightingSessionStateDto.Retrying).let { context.getString(R.string.lighting_retrying, it.attempt.toInt(), maxOf(1, ((it.delayMilliseconds.toLong() + 999) / 1000).toInt())) }
@@ -82,6 +96,7 @@ class LightingPanel(
                     is MobileMelkLightingSessionStateDto.Failed -> "failed"
                 })
             }
+            connectionStatus.tag = "lighting.accessory.status"
             connectionStatus.setTextColor(if (snapshot.state == MobileMelkLightingSessionStateDto.Ready) ui.green else if (snapshot.state is MobileMelkLightingSessionStateDto.Failed || value.error != null) ui.red else ui.muted)
             connectionActions.removeAllViews()
             if (value.permissionMissing) connectionActions.addView(ui.action(context.getString(R.string.lighting_enable_bluetooth), primary = true, onClick = onRequestBluetooth))

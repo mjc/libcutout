@@ -7,6 +7,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.app.Activity
 import android.content.Intent
+import android.content.res.Configuration
 import lol.cutout.MainActivity
 import lol.cutout.R
 import androidx.test.platform.app.InstrumentationRegistry
@@ -84,6 +85,55 @@ open class LightingPanelTest {
                 }
             }
         } finally { client.stop() }
+    }
+
+    @Test
+    fun accessoryDetailsStaysACompactButtonAndPreservesNameWidthAtLargeFontScale() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val base = activity.resources.configuration
+                listOf(1f, 2f).forEach { fontScale ->
+                    val configuration = Configuration(base).apply { this.fontScale = fontScale }
+                    val context = activity.createConfigurationContext(configuration)
+                    val panel = LightingPanel(context, client) {}
+                    panel.render(LightingPresentation(
+                        MobileMelkLightingSessionSnapshotDto(
+                            MobileMelkLightingSessionStateDto.Idle, null, null, 0u, false,
+                        ),
+                        emptyList(), null, null, null, false, null, null, emptyList(),
+                        permissionMissing = false,
+                    ))
+                    activity.setContentView(panel)
+                    val width = (393 * context.resources.displayMetrics.density).toInt()
+                    val heightLimit = (1600 * context.resources.displayMetrics.density).toInt()
+                    panel.measure(
+                        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(heightLimit, View.MeasureSpec.AT_MOST),
+                    )
+                    panel.layout(0, 0, width, panel.measuredHeight)
+
+                    val details = checkNotNull(panel.findViewWithTag<View>("lighting.accessory.details"))
+                    val name = checkNotNull(panel.findViewWithTag<TextView>("lighting.accessory.name"))
+                    val status = checkNotNull(panel.findViewWithTag<TextView>("lighting.accessory.status"))
+                    val minNameWidth = (100 * context.resources.displayMetrics.density).toInt()
+                    check(details.measuredWidth == (44 * context.resources.displayMetrics.density).toInt()) {
+                        "Details action should stay a 44dp icon target at font scale $fontScale, got ${details.measuredWidth}px"
+                    }
+                    check(name.measuredWidth >= minNameWidth && status.measuredWidth >= minNameWidth) {
+                        "Accessory name/status were squeezed by the details action at font scale $fontScale: ${name.measuredWidth}/${status.measuredWidth}px"
+                    }
+                    val node = details.createAccessibilityNodeInfo()
+                    check(node.className == android.widget.ImageButton::class.java.name &&
+                        node.contentDescription == CutoutUi(context).label("lighting.accessory.details")) {
+                        "The compact details icon must remain a named button for accessibility: ${node.className}/${node.contentDescription}"
+                    }
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
     }
 
     private fun children(view: View): Sequence<View> = sequence {
