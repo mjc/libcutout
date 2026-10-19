@@ -16,6 +16,8 @@ internal class CaptureLabelControls(
 ) : LinearLayout(context) {
     private val ui = CutoutUi(context)
     private val buttons = linkedMapOf<MobileCaptureLabelDto, Button>()
+    /** Kept separate so the action-marker disclosure can live with Settings & actions. */
+    val actionMarkersSection = ui.column().apply { tag = "captures.action-markers.section" }
     private val compactLabels = mutableSetOf<MobileCaptureLabelDto>()
     private val titles = mutableMapOf<MobileCaptureLabelDto, String>()
     private val startTitle = ui.label("capture.label.start")
@@ -51,7 +53,7 @@ internal class CaptureLabelControls(
             expanded = !expanded
             actions.visibility = if (expanded) View.VISIBLE else View.GONE
         }.apply { tag = "captures.labels.more" }
-        addView(disclosure, LayoutParams(-1, -2))
+        actionMarkersSection.addView(disclosure, LayoutParams(-1, -2))
         listOf(
             MobileCaptureLabelDto.DISCONNECT_RECONNECT, MobileCaptureLabelDto.POWER_CYCLE,
             MobileCaptureLabelDto.LOW_BEAM_ON, MobileCaptureLabelDto.LOW_BEAM_OFF,
@@ -69,7 +71,7 @@ internal class CaptureLabelControls(
             MobileCaptureLabelDto.BRAKE_OVERPRESSURE_ALARM, MobileCaptureLabelDto.BEEPER_VOLUME,
             MobileCaptureLabelDto.ROLL_ANGLE_MODE, MobileCaptureLabelDto.LED_PATTERN,
         ).forEach { actions.addView(control(it, compact = false), LayoutParams(-1, -2)) }
-        addView(actions, LayoutParams(-1, -2))
+        actionMarkersSection.addView(actions, LayoutParams(-1, -2))
         updateButtons()
     }
 
