@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import uniffi.cutout_mobile_ffi.*
 import java.io.Closeable
 import java.util.concurrent.ArrayBlockingQueue
@@ -225,6 +227,18 @@ class AndroidChargingClient(
 
     fun pendingReportMessage(spotId: String): String? = reportOperations.get(spotId)?.message
 
+    /** Capture Send may register only after confirmation, without synchronizing queued map edits. */
+    fun credentialForCaptureSubmission(completed: (Result<MobileChargingIdentityDto>) -> Unit) =
+        withDatabase({ credentialForExplicitAction(explicitRetry = true) }, completed)
+
+    /** Local key-store I/O must not wait behind registration or charging HTTP work when cancelling. */
+    internal suspend fun existingCredentialForCaptureSubmission(): MobileChargingIdentityDto? = withContext(Dispatchers.IO) {
+        check(!closed) { "Charging client is closed" }
+        val stored = credentials.load()
+        check(!closed) { "Charging client is closed" }
+        (stored as? ChargingCredentialRecord.Ready)?.let { MobileChargingIdentityDto(it.identityId, it.token) }
+    }
+
     fun deleteAccount(completed: (Result<MobileCommunityAccountDeletionReceiptDto>) -> Unit) {
         withDatabase({ database ->
             when (val record = credentials.load()) {
@@ -253,9 +267,9 @@ class AndroidChargingClient(
         }, completed)
     }
 
-    private suspend fun credentialForExplicitAction(): MobileChargingIdentityDto {
+    private suspend fun credentialForExplicitAction(explicitRetry: Boolean = false): MobileChargingIdentityDto {
         val stored = credentials.load()
-        return when (mobileChargingRegistrationAdmission(credentialState(stored), false)) {
+        return when (mobileChargingRegistrationAdmission(credentialState(stored), explicitRetry)) {
             MobileChargingRegistrationAdmission.SYNCHRONIZE -> {
                 val ready = stored as? ChargingCredentialRecord.Ready ?: error("Credential unavailable")
                 MobileChargingIdentityDto(ready.identityId, ready.token)
