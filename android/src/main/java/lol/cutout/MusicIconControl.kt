@@ -3,6 +3,12 @@ package lol.cutout
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
 import android.view.View
@@ -47,17 +53,41 @@ internal fun musicIconControl(
             if (command == MobileMusicCommandDto.OPEN_PROVIDER) {
                 setImageDrawable(CutoutIcon(CutoutSymbol.OPEN_EXTERNAL, ui.foreground))
             } else {
-                setImageResource(when (command) {
-                    MobileMusicCommandDto.PREVIOUS -> android.R.drawable.ic_media_previous
-                    MobileMusicCommandDto.PLAY -> android.R.drawable.ic_media_play
-                    MobileMusicCommandDto.PAUSE -> android.R.drawable.ic_media_pause
-                    MobileMusicCommandDto.NEXT -> android.R.drawable.ic_media_next
-                    MobileMusicCommandDto.OPEN_PROVIDER -> error("handled above")
-                })
-                imageTintList = ColorStateList.valueOf(if (prominent) ui.brand else ui.foreground)
+                setImageDrawable(MusicTransportIcon(command, if (prominent) ui.brand else ui.foreground))
             }
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, FrameLayout.LayoutParams(ui.dp(20), ui.dp(20), Gravity.CENTER))
         setOnClickListener { onClick() }
     }
+}
+
+/** Flat filled transport symbols matching the native Swift player, without legacy Android assets. */
+private class MusicTransportIcon(private val command: MobileMusicCommandDto, color: Int) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+
+    override fun draw(canvas: Canvas) {
+        val saved = canvas.save()
+        canvas.translate(bounds.left.toFloat(), bounds.top.toFloat())
+        canvas.scale(bounds.width() / 24f, bounds.height() / 24f)
+        fun triangle(a: Float, b: Float, c: Float) {
+            canvas.drawPath(Path().apply {
+                moveTo(a, 4f); lineTo(b, 12f); lineTo(c, 20f); close()
+            }, paint)
+        }
+        when (command) {
+            MobileMusicCommandDto.PREVIOUS -> { triangle(12f, 1f, 12f); triangle(23f, 12f, 23f) }
+            MobileMusicCommandDto.NEXT -> { triangle(1f, 12f, 1f); triangle(12f, 23f, 12f) }
+            MobileMusicCommandDto.PLAY -> triangle(6f, 21f, 6f)
+            MobileMusicCommandDto.PAUSE -> {
+                canvas.drawRoundRect(5f, 3f, 10f, 21f, 1f, 1f, paint)
+                canvas.drawRoundRect(14f, 3f, 19f, 21f, 1f, 1f, paint)
+            }
+            MobileMusicCommandDto.OPEN_PROVIDER -> Unit
+        }
+        canvas.restoreToCount(saved)
+    }
+
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(filter: ColorFilter?) { paint.colorFilter = filter }
+    @Suppress("DEPRECATION") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }

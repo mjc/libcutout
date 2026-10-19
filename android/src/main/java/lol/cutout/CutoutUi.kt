@@ -84,7 +84,7 @@ class CutoutUi(val context: Context) {
     }
 }
 
-enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL, MAP, MORE, CAMERA, LIGHTING, PACK, MUSIC, POSITION, FIT_ROUTE, BELL, OPEN_EXTERNAL }
+enum class CutoutSymbol { DEVICES, RIDE, SETTINGS, BLUETOOTH, CHEVRON, CLOSE, INFO, GEAR, SIGNAL, MAP, MORE, CAMERA, LIGHTING, PACK, MUSIC, POSITION, FIT_ROUTE, BELL, OPEN_EXTERNAL, HIDE }
 
 /** Small native stroke icons keep navigation independent of a platform emoji/font. */
 class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Drawable() {
@@ -95,6 +95,12 @@ class CutoutIcon(private val symbol: CutoutSymbol, private val tint: Int) : Draw
         canvas.scale(bounds.width() / 24f, bounds.height() / 24f)
         fun path(vararg points: Float) { val path = Path(); path.moveTo(points[0], points[1]); for (i in 2 until points.size step 2) path.lineTo(points[i], points[i + 1]); canvas.drawPath(path, paint) }
         when (symbol) {
+            CutoutSymbol.HIDE -> {
+                val eye = Path().apply { moveTo(2f, 12f); quadTo(12f, -1f, 22f, 12f); quadTo(12f, 25f, 2f, 12f) }
+                canvas.drawPath(eye, paint)
+                canvas.drawCircle(12f, 12f, 3f, paint)
+                path(3f, 3f, 21f, 21f)
+            }
             CutoutSymbol.OPEN_EXTERNAL -> { path(10f, 4f, 4f, 4f, 4f, 20f, 20f, 20f, 20f, 14f); path(13f, 3f, 21f, 3f, 21f, 11f); path(10f, 14f, 21f, 3f) }
             CutoutSymbol.BELL -> {
                 canvas.drawArc(6f, 3f, 18f, 15f, 180f, 180f, false, paint)

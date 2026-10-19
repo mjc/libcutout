@@ -35,11 +35,11 @@ class MusicPanel(
     private val timelineSection = ui.column().apply { tag = "music.timeline.section" }
     private val providerName = ui.text("", 14f, color = ui.muted)
     private var renderedTimelineKey: List<String>? = null
-    private val spotifyLink = ui.action(context.getString(R.string.music_spotify_content_link)) {
+    private val spotifyLink = formAction(context.getString(R.string.music_spotify_content_link), CutoutSymbol.OPEN_EXTERNAL) {
         spotifyLinkUrl?.let(::openValidatedLink)
     }.apply { tag = "music.spotify-content-link"; visibility = View.GONE }
     private var spotifyLinkUrl: String? = null
-    private val providerAction = ui.action(context.getString(R.string.music_open_provider)) {
+    private val providerAction = formAction(context.getString(R.string.music_open_provider), CutoutSymbol.OPEN_EXTERNAL) {
         client.openSelectedProvider()
     }.apply { tag = "music.open-provider" }
     private var observation: AutoCloseable? = client.observe(::render)
@@ -52,6 +52,7 @@ class MusicPanel(
         toolbar.addView(ui.text(context.getString(R.string.music_title), 20f, true), LinearLayout.LayoutParams(0, ui.dp(48), 1f))
         toolbar.addView(ui.action(context.getString(R.string.music_done)) { onDone() }.apply {
             tag = "music.done"
+            background = null
         }, LinearLayout.LayoutParams(-2, -2))
         addView(toolbar, LayoutParams(-1, -2))
 
@@ -60,6 +61,10 @@ class MusicPanel(
         artist.gravity = Gravity.START
         status.gravity = Gravity.START
         val largeText = resources.configuration.fontScale >= 1.5f
+        title.maxLines = if (largeText) Int.MAX_VALUE else 2
+        artist.maxLines = if (largeText) Int.MAX_VALUE else 2
+        title.ellipsize = android.text.TextUtils.TruncateAt.END
+        artist.ellipsize = android.text.TextUtils.TruncateAt.END
         val hero = ui.row().apply {
             orientation = if (largeText) VERTICAL else HORIZONTAL
             gravity = if (largeText) Gravity.START else Gravity.CENTER_VERTICAL
@@ -86,10 +91,11 @@ class MusicPanel(
         }, LayoutParams(-1, -2))
         form.addView(ui.space(18))
         form.addView(group("music.actions.section").apply {
-            addView(ui.action(context.getString(R.string.music_settings)) { onOpenSettings() }.apply {
+            addView(formAction(context.getString(R.string.music_settings), CutoutSymbol.GEAR) { onOpenSettings() }.apply {
                 tag = "music.open-settings"
             }, LayoutParams(-1, -2))
-            addView(ui.action(context.getString(R.string.music_hide)) { onHidePlayer() }.apply {
+            addView(ui.divider())
+            addView(formAction(context.getString(R.string.music_hide), CutoutSymbol.HIDE) { onHidePlayer() }.apply {
                 tag = "music.hide"
             }, LayoutParams(-1, -2))
         }, LayoutParams(-1, -2))
@@ -110,6 +116,23 @@ class MusicPanel(
         background = ui.rounded(22)
     }
 
+    private fun formAction(label: String, symbol: CutoutSymbol, action: () -> Unit) = ui.action(label, onClick = action).apply {
+        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        typeface = android.graphics.Typeface.DEFAULT
+        minHeight = ui.dp(44)
+        minimumHeight = ui.dp(44)
+        setTextColor(ui.brand)
+        setPadding(0, ui.dp(10), 0, ui.dp(10))
+        background = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000), null,
+            ui.rounded(10, android.graphics.Color.WHITE, outlined = false),
+        )
+        setCompoundDrawablesRelative(CutoutIcon(symbol, ui.brand).apply {
+            setBounds(0, 0, ui.dp(20), ui.dp(20))
+        }, null, null, null)
+        compoundDrawablePadding = ui.dp(12)
+    }
+
     fun render(value: AndroidMusicPresentation) {
         val snapshot = value.snapshot
         title.text = snapshot?.item?.title ?: ui.label(
@@ -120,6 +143,9 @@ class MusicPanel(
         status.text = value.error ?: value.snapshot?.state?.let { context.getString(it.settingsStateLabel()) }
             ?: context.getString(R.string.music_state_not_connected)
         status.contentDescription = status.text
+        status.visibility = if (value.error == null && snapshot?.state in setOf(
+            MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED,
+        )) View.GONE else View.VISIBLE
         if (value.artwork == null) artwork.setImageDrawable(CutoutIcon(CutoutSymbol.MUSIC, ui.muted))
         else artwork.setImageBitmap(value.artwork)
         val visibleCommands = value.availableCommands(includePrevious = true, includeOpenProvider = false).toSet()
@@ -169,7 +195,7 @@ class MusicPanel(
                     timeline.addView(eventRow, LayoutParams(-1, -2))
                     if (event.provider == MobileMusicProviderDto.SPOTIFY && !event.itemIdentifier.isNullOrBlank()) {
                         spotifyContentLink(event.itemIdentifier!!)?.let { url ->
-                            timeline.addView(ui.action(context.getString(R.string.music_spotify_content_link)) {
+                            timeline.addView(formAction(context.getString(R.string.music_spotify_content_link), CutoutSymbol.OPEN_EXTERNAL) {
                                 openValidatedLink(url)
                             }.apply { tag = "music.timeline.spotify-link" }, LayoutParams(-1, -2))
                         }
