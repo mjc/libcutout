@@ -40,6 +40,19 @@ data class BlePresentation(
 
 /** Android effect boundary for the shared Rust-owned ride lifecycle. */
 internal object AndroidRideSessionEffects {
+    fun verifiedTokenForCurrentConnection(
+        session: MobileDeviceSessionSnapshotDto?,
+        activeConnectionToken: MobileConnectionAttemptTokenDto?,
+        activeConnectionIsCurrent: Boolean,
+    ): MobileConnectionAttemptTokenDto? {
+        val connection = session?.connection ?: return null
+        val token = connection.token ?: return null
+        if (connection.readiness != MobileConnectionReadinessDto.VERIFIED ||
+            !activeConnectionIsCurrent || activeConnectionToken != token
+        ) return null
+        return token
+    }
+
     fun reduceAndSettlePlatformEffects(
         state: CutoutSessionStateHandle,
         input: MobileRideSessionInputDto,
@@ -697,9 +710,14 @@ class AndroidBleClient(
     /** Feed only timestamped, verified transport observations into Rust's ride lifecycle. */
     private fun updateRideSessionOnOwner(): MobileRideSessionSnapshotDto {
         val snapshot = state.rideSessionSnapshot()
-        val connection = view.session?.connection
-        val token = connection?.token
-        if (token != null && connection.readiness == MobileConnectionReadinessDto.VERIFIED) {
+        val activeConnection = connection
+        val connectionSnapshot = view.session?.connection
+        val token = AndroidRideSessionEffects.verifiedTokenForCurrentConnection(
+            view.session,
+            activeConnection?.token,
+            activeConnection?.isCurrentForRide() == true,
+        )
+        if (token != null && connectionSnapshot != null) {
             if (snapshot.identity?.platformIdentifier != token.platformIdentifier) {
                 startRideSessionOnOwner(token.platformIdentifier)
                 rideStartedConnectionToken = token
@@ -813,6 +831,7 @@ class AndroidBleClient(
         }
         private val queue = GattOperationQueue(::current, timers, { fail(it) }, capacity = 128)
         private fun current(): Boolean = !retired && !ending && connection === this && session.isCurrent
+        fun isCurrentForRide(): Boolean = current()
 
         private fun callback(gatt: BluetoothGatt, action: () -> Unit) {
             if (callbackOverflow.get()) return

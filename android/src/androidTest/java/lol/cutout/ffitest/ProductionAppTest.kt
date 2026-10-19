@@ -233,6 +233,37 @@ open class ProductionAppTest {
         }
     }
 
+    @Test
+    fun staleVerifiedPresentationCannotRestartRideAfterTransportRetires() {
+        val replay = productionReplayPresentation()
+        val session = checkNotNull(replay.session)
+        val token = checkNotNull(session.connection.token)
+        check(AndroidRideSessionEffects.verifiedTokenForCurrentConnection(session, token, true) == token)
+        check(AndroidRideSessionEffects.verifiedTokenForCurrentConnection(session, token, false) == null) {
+            "A verified snapshot from a draining/retired transport was treated as current"
+        }
+        check(AndroidRideSessionEffects.verifiedTokenForCurrentConnection(session, null, false) == null) {
+            "A restored verified snapshot without a current BLE owner reopened the logical ride"
+        }
+
+        val state = CutoutSessionStateHandle()
+        try {
+            AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                state, MobileRideSessionInputDto.Start(token.platformIdentifier),
+            )
+            val ended = AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                state, MobileRideSessionInputDto.UserDisconnected,
+            )
+            check(ended.phase is MobileRideSessionPhaseDto.Ended)
+            check(AndroidRideSessionEffects.verifiedTokenForCurrentConnection(session, token, false) == null)
+            check(state.rideSessionSnapshot().phase == ended.phase) {
+                "The stale verified presentation restarted an ended logical ride"
+            }
+        } finally {
+            state.close()
+        }
+    }
+
     private fun withActivity(block: (MainActivity) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
