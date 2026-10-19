@@ -107,10 +107,19 @@ class LocalMusicNavigationTest {
             Intent(context, MainActivity::class.java).putExtra("page", R.string.music_settings)).setup().visible()
         try {
             val decor = host.get().window.decorView
-            NativeSurfaceCapture.save(decor, "music-settings-dark")
+            val density = decor.resources.displayMetrics.density
+            val width = (353 * density).toInt()
+            val height = (640 * density).toInt()
+            repeat(2) {
+                decor.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+                decor.layout(0, 0, width, height)
+                decor.viewTreeObserver.dispatchOnPreDraw()
+            }
             val panel = checkNotNull(decor.findViewWithTag<android.widget.ScrollView>("music.settings.screen"))
             val lastPolicy = checkNotNull(panel.findViewWithTag<View>("music.history.policy.human_readable"))
-            assertTrue(panel.canScrollVertically(1))
+            assertTrue("A short viewport must scroll to the final music policy", panel.canScrollVertically(1))
+            panel.isSmoothScrollingEnabled = false
             panel.fullScroll(View.FOCUS_DOWN)
             val visible = android.graphics.Rect()
             assertTrue(lastPolicy.getGlobalVisibleRect(visible))
