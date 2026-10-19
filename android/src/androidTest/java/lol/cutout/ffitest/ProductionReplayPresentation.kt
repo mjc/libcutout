@@ -24,5 +24,8 @@ internal fun productionReplayPresentation(): BlePresentation = CutoutSessionStat
         session.notification(input.channel, input.bytes)
     }
     check(latest.telemetry?.voltage != null)
-    latest
+    val identity = checkNotNull(latest.session?.identity)
+    val candidate = state.connectionAdmissionCandidate(token.platformIdentifier, identity.model ?: "Replay device", false)
+    check(candidate.connectionRoute == uniffi.cutout_mobile_ffi.DiscoveryConnectionRoute.ELECTRIC_UNICYCLE)
+    latest.copy(connectionCandidate = candidate)
 }

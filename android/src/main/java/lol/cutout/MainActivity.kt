@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private var musicReturnPage = R.string.more
     private var soundCloudReturnPage = R.string.music_settings
     private var latest = BlePresentation()
+    private var latestCapture = DiagnosticCapturePresentation()
     private var scanned = false
     private var resumed = false
     private var hostStarted = false
@@ -97,7 +98,7 @@ class MainActivity : Activity() {
         picker = DevicePickerPanel(this, onScan = ::scanOrRequestPermission,
             onOpenSettings = ::openAppSettings,
             onOpenConfiguration = { setupReturnPage = page; showPage(R.string.setup) },
-            onConnect = { client.connect(it); showPage(R.string.ride) })
+            onConnect = client::connect)
         settings = SettingsPanel(this, client.settingsDraftOwnerId,
             onOpenPhoneAlarms = { showPage(R.string.phone_alarm_title) },
             submit = { token, id, value, refused -> client.submit(token, id, value, refused) },
@@ -135,6 +136,11 @@ class MainActivity : Activity() {
             if (resumed) maintainForegroundWork()
         }
         observations += app.soundCloudMusic.observe { if (resumed) maintainForegroundWork() }
+        latestCapture = client.diagnostics.current()
+        observations += client.diagnostics.observe { capture ->
+            latestCapture = capture
+            debug?.render(latest, capture)
+        }
         render(client.latestPresentation)
         showPage(page)
     }
@@ -227,14 +233,36 @@ class MainActivity : Activity() {
         if (!app.rideServiceActive) RideForegroundService.startForCurrentWork(this)
     }
 
+    private fun verifiedRidePage(value: BlePresentation): Int? {
+        val session = value.session ?: return null
+        if (session.connection.readiness != MobileConnectionReadinessDto.VERIFIED) return null
+        if (session.identity == null) return null
+        val platformIdentifier = session.connection.token.platformIdentifier
+        val rustCandidate = value.connectionCandidate
+            ?.takeIf { it.platformIdentifier == platformIdentifier }
+            ?: value.devices.firstOrNull { it.id == platformIdentifier }?.candidate
+        val rustRoute = rustCandidate
+            ?.takeIf { it.support == DiscoveryCandidateSupport.SUPPORTED }
+            ?.connectionRoute
+        return when {
+            rustRoute == DiscoveryConnectionRoute.ELECTRIC_UNICYCLE ||
+                rustRoute == DiscoveryConnectionRoute.VESC_ONEWHEEL -> R.string.ride
+            else -> null
+        }
+    }
+
     /** Also consumed by deterministic instrumentation using the real Rust capture replay. */
     internal fun render(value: BlePresentation) {
-        val hadConnection = latest.session?.connection?.token != null
+        val priorRoute = verifiedRidePage(latest)
         latest = value
         app.existingLighting?.selectVehicle(value.selectedVehicleIdentifier ?: value.session?.connection?.token?.platformIdentifier)
-        val connected = value.session?.connection?.token != null
-        if (hadConnection && !connected && (page == R.string.ride || page == R.string.configuration || page == R.string.pack)) showPage(R.string.devices)
-        if (!connected && page == R.string.ride && value.phase == NativePhase.IDLE) showPage(R.string.devices)
+        val routePage = verifiedRidePage(value)
+        val connected = routePage != null
+        if (!connected && page in setOf(R.string.ride, R.string.configuration, R.string.pack, R.string.vesc_debug)) {
+            showPage(R.string.devices)
+        } else if (connected && page == R.string.devices && priorRoute == null) {
+            showPage(checkNotNull(routePage))
+        }
         navigation[R.string.devices]?.visibility = if (connected) View.GONE else View.VISIBLE
         navigation[R.string.ride]?.visibility = if (connected) View.VISIBLE else View.GONE
         navigation[R.string.configuration]?.visibility = if (connected) View.VISIBLE else View.GONE
@@ -242,8 +270,9 @@ class MainActivity : Activity() {
         picker.render(value, client.hasPermissions(), client.isEnabled(), scanned)
         settings.render(value.settings)
         pack?.render(value)
-        debug?.render(value)
-        if (page == R.string.more && moreIdentity != latest.session?.identity?.toString()) renderMore()
+        debug?.render(value, latestCapture)
+        val currentMoreIdentity = "${latest.session?.identity}:${latest.connectionCandidate?.connectionRoute}"
+        if (page == R.string.more && moreIdentity != currentMoreIdentity) renderMore()
         updateNavigation()
         if (resumed) maintainForegroundWork()
     }
@@ -284,7 +313,7 @@ class MainActivity : Activity() {
                 observations += app.lighting.addObserver { if (resumed) maintainForegroundWork() }
             }
             R.string.pack -> { val panel = PackPanel(this); pack = panel; panel.render(latest); addPanel(id, panel) }
-            R.string.vesc_debug -> { val panel = VescDebugPanel(this); debug = panel; panel.render(latest); addPanel(id, panel) }
+            R.string.vesc_debug -> { val panel = VescDebugPanel(this); debug = panel; panel.render(latest, latestCapture); addPanel(id, panel) }
             R.string.captures -> {
                 val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission) { title ->
                     if (page == R.string.captures) nestedTitle.text = title
@@ -340,7 +369,7 @@ class MainActivity : Activity() {
 
     private fun renderMore() {
         val container = (panels[R.string.more] as? ScrollView)?.getChildAt(0) as? LinearLayout ?: return
-        moreIdentity = latest.session?.identity?.toString()
+        moreIdentity = "${latest.session?.identity}:${latest.connectionCandidate?.connectionRoute}"
         container.removeAllViews(); container.setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(24))
         container.addView(ui.title(getString(R.string.more))); container.addView(ui.space(20))
         val accessories = ui.column().apply { background = ui.rounded(18, outlined = false) }
@@ -351,8 +380,13 @@ class MainActivity : Activity() {
         }
         row(R.string.camera, CutoutSymbol.CAMERA)
         row(R.string.lighting, CutoutSymbol.LIGHTING)
-        if (latest.session?.identity?.vehicleKind == MobileVehicleKindDto.ELECTRIC_UNICYCLE) row(R.string.pack, CutoutSymbol.PACK)
-        if (latest.session?.identity?.protocol == MobileProtocolFamilyDto.VESC) row(R.string.vesc_debug, CutoutSymbol.SETTINGS)
+        when (latest.connectionCandidate
+            ?.takeIf { it.support == DiscoveryCandidateSupport.SUPPORTED }
+            ?.connectionRoute) {
+            DiscoveryConnectionRoute.ELECTRIC_UNICYCLE -> row(R.string.pack, CutoutSymbol.PACK)
+            DiscoveryConnectionRoute.VESC_ONEWHEEL -> row(R.string.vesc_debug, CutoutSymbol.SETTINGS)
+            null -> Unit
+        }
         container.addView(ui.space(24))
         val general = ui.column().apply { background = ui.rounded(18, outlined = false) }
         container.addView(general, LinearLayout.LayoutParams(-1, -2))
