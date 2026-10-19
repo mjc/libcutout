@@ -38,6 +38,10 @@ class ChargingConnectorArtworkTest {
         )
         val resources = connectors.map(ChargingConnectorArtwork::drawable)
         assertEquals(28, resources.distinct().size)
+        assertEquals(28, ChargingConnectorArtwork.catalog.size)
+        assertTrue(ChargingConnectorArtwork.catalog.none { it is MobileChargingConnectorDto.Other })
+        assertTrue(ChargingConnectorArtwork.catalog.contains(MobileChargingConnectorDto.Nema515))
+        assertTrue(ChargingConnectorArtwork.catalog.contains(MobileChargingConnectorDto.Unknown))
         assertEquals(R.drawable.charging_connector_unknown,
             ChargingConnectorArtwork.drawable(MobileChargingConnectorDto.Other("custom label")))
         val ui = CutoutUi(context)

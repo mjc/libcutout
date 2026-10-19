@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.RippleDrawable
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -28,21 +27,41 @@ class ChargingMapPanel(
 ) : ScrollView(context) {
     private enum class Mode { MAP, LIST, DETAILS, EDITOR, REVIEW }
     private val ui = CutoutUi(context)
+    private var centerWhenFixArrives = false
     private val locationClient = AndroidMapLocationClient(context, onFix = { fix ->
-        if (active) mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
+        if (active) {
+            mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
+            if (centerWhenFixArrives) {
+                centerWhenFixArrives = false
+                mapView.recenter()
+            }
+            updateAddButtonEnabled()
+        }
     }, onUnavailable = {
+        centerWhenFixArrives = false
         syncMessage = context.getString(R.string.charging_location_unavailable)
         render()
     })
     private val content = ui.column()
-    private val controls = ui.row()
     private val controller = ChargingMapController(client)
-    private val mapModeButton = ui.action(context.getString(R.string.charging_view_map)) { setMode(Mode.MAP) }.apply { tag = "charging_view_map" }
-    private val listModeButton = ui.action(context.getString(R.string.charging_view_list)) { setMode(Mode.LIST) }.apply { tag = "charging_view_list" }
-    private val moreButton = ui.action("···") { showActionsMenu() }.apply {
-        contentDescription = context.getString(R.string.charging_more_actions)
-        tag = "charging_more_actions"
-    }
+    private val modeSelector = ChargingDisplayModeSelector(
+        context,
+        context.getString(R.string.charging_view_map),
+        context.getString(R.string.charging_view_list),
+    ) { mapSelected -> setMode(if (mapSelected) Mode.MAP else Mode.LIST) }
+    private val filterButton = chargingToolbarIconButton(
+        context, ui, ChargingToolbarGlyph.FILTER,
+        context.getString(R.string.charging_filter), "charging_filter", ::showFilters,
+    )
+    private val addButton = chargingToolbarIconButton(
+        context, ui, ChargingToolbarGlyph.PLUS,
+        context.getString(R.string.charging_add), "charging_add", ::addSpot,
+    )
+    private val moreButton = chargingToolbarIconButton(
+        context, ui, ChargingToolbarGlyph.MORE,
+        context.getString(R.string.charging_more_actions), "charging_more_actions", ::showActionsMenu,
+    )
+    private val controls = ChargingToolbar(context, modeSelector, filterButton, addButton, moreButton)
     private var mode = Mode.MAP
     private var directoryMode = Mode.MAP
     private var active = false
@@ -76,17 +95,6 @@ class ChargingMapPanel(
         clipToPadding = false
         content.setPadding(ui.dp(18), ui.dp(8), ui.dp(18), ui.dp(16))
         addView(content, LayoutParams(-1, -2))
-        controls.addView(mapModeButton,
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-        controls.addView(listModeButton,
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        controls.addView(ui.action(context.getString(R.string.charging_filter)) { showFilters() },
-            LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
-        controls.addView(ui.action("+", true) { addSpot() }.apply {
-            contentDescription = context.getString(R.string.charging_add)
-            tag = "charging_add"
-        }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { leftMargin = ui.dp(8) })
-        controls.addView(moreButton, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)).apply { leftMargin = ui.dp(4) })
         content.addView(controls)
         content.addView(page, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         content.addView(emptyAction, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
@@ -95,6 +103,7 @@ class ChargingMapPanel(
         controller.onChanged = ::render
         mapView.onViewportChanged = { bounds ->
             lastViewport = bounds
+            updateAddButtonEnabled()
             if (active && directoryMode == Mode.MAP) controller.load(bounds)
         }
         mapView.onChargingSpotSelected = { id ->
@@ -136,6 +145,7 @@ class ChargingMapPanel(
 
     fun deactivate() {
         active = false
+        centerWhenFixArrives = false
         locationClient.cancel()
         syncRequestedOnActivation = false
         mapView.showChargingPopup(null)
@@ -143,6 +153,18 @@ class ChargingMapPanel(
     }
 
     fun refreshLocation() { if (active) locationClient.refresh() }
+
+    /** Centers on a fresh native fix, requesting the Activity's location permission when needed. */
+    fun centerOnUserLocation() {
+        val fix = locationClient.freshFix()
+        if (fix != null) {
+            mapView.showCurrentLocation(fix.latitudeDegrees, fix.longitudeDegrees)
+            mapView.recenter()
+        } else {
+            centerWhenFixArrives = true
+            onRequestLocation()
+        }
+    }
 
     fun handleBack(): Boolean = when (mode) {
         Mode.DETAILS -> { closeSheet(Mode.DETAILS); true }
@@ -169,8 +191,8 @@ class ChargingMapPanel(
 
     private fun render() {
         if ((mode == Mode.MAP || mode == Mode.LIST) && modalDialog != null) clearSheet()
-        styleModeButton(mapModeButton, directoryMode == Mode.MAP)
-        styleModeButton(listModeButton, directoryMode == Mode.LIST)
+        updateAddButtonEnabled()
+        modeSelector.selectMap(directoryMode == Mode.MAP)
         page.removeAllViews()
         val showMapContent = active && directoryMode == Mode.MAP
         mapView.showChargingSpots(
@@ -249,14 +271,6 @@ class ChargingMapPanel(
         }
     }
 
-    private fun styleModeButton(button: android.widget.Button, selected: Boolean) {
-        button.isSelected = selected
-        button.setTextColor(if (selected) Color.BLACK else ui.foreground)
-        button.background = RippleDrawable(ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
-            ui.rounded(22, if (selected) ui.yellow else ui.card, outlined = !selected), null)
-        button.contentDescription = button.text.toString() + if (selected) ", " + context.getString(R.string.charging_selected) else ""
-    }
-
     private fun reviewContent(): ScrollView {
         val scroll = ScrollView(context)
         val body = ui.column()
@@ -282,12 +296,6 @@ class ChargingMapPanel(
                 controller.loadBlockedOperations()
                 render()
                 true
-            }
-            if (client.status.credentialState in setOf(
-                    MobileChargingSyncCredentialState.READY,
-                    MobileChargingSyncCredentialState.DELETION_PENDING,
-                )) menu.add(context.getString(R.string.charging_account_delete)).setOnMenuItemClickListener {
-                confirmDeleteAccount(); true
             }
             show()
         }
@@ -709,6 +717,7 @@ class ChargingMapPanel(
         supply.connectors.firstOrNull { it != MobileChargingConnectorDto.Unknown }
 
     private fun addSpot() {
+        if (!addButton.isEnabled) return
         val fix = locationClient.freshFix()
         val center = fix?.let { LatLng(it.latitudeDegrees, it.longitudeDegrees) } ?: mapView.currentMapCenter()
         if (center == null) {
@@ -922,11 +931,14 @@ class ChargingMapPanel(
     )[index])) }
 
     private fun selectConnectorFilter() {
-        val choices = controller.state.spots.flatMap { it.input?.supplies.orEmpty() }.flatMap { it.connectors }.distinct()
+        val choices = ChargingConnectorArtwork.catalog
         val labels = listOf(context.getString(R.string.charging_all)) + choices.map(::connectorText)
-        AlertDialog.Builder(context).setItems(labels.toTypedArray()) { _, index ->
-            controller.setFilter(controller.filter.copy(connector = choices.getOrNull(index - 1)))
-        }.show()
+        val selectedIndex = controller.filter.connector?.let { selected -> choices.indexOf(selected) + 1 } ?: 0
+        AlertDialog.Builder(context).setTitle(R.string.charging_connector)
+            .setSingleChoiceItems(labels.toTypedArray(), selectedIndex) { dialog, index ->
+                controller.setFilter(controller.filter.copy(connector = choices.getOrNull(index - 1)))
+                dialog.dismiss()
+            }.setNegativeButton(R.string.charging_cancel, null).show()
     }
 
     private fun selectVoltageFilter() {
@@ -943,18 +955,11 @@ class ChargingMapPanel(
 
     private fun currentBounds(): MobileGeoBoundsDto? = controller.currentBounds() ?: lastViewport
 
-    private fun confirmDeleteAccount() {
-        AlertDialog.Builder(context).setMessage(R.string.charging_account_delete_confirm)
-            .setNegativeButton(R.string.charging_cancel, null)
-            .setPositiveButton(R.string.charging_account_delete) { _, _ ->
-                client.deleteAccount { result ->
-                    syncMessage = result.fold(
-                        onSuccess = { context.getString(R.string.charging_account_deleted) },
-                        onFailure = { it.message ?: context.getString(R.string.charging_sync_uncertain) },
-                    )
-                    render()
-                }
-            }.show()
+    private fun updateAddButtonEnabled() {
+        val center = mapView.currentMapCenter()
+        val hasUsableCenter = center != null && center.latitude.isFinite() && center.longitude.isFinite() &&
+            center.latitude in -90.0..90.0 && center.longitude in -180.0..180.0
+        addButton.isEnabled = editor == null && (hasUsableCenter || locationClient.freshFix() != null)
     }
 
     private fun supplySummary(input: MobileChargingInputDto?): String {

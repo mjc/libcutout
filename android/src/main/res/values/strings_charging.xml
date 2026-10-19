@@ -10,6 +10,7 @@
     <string name="charging_voltage">Voltage</string>
     <string name="charging_venue">Venue</string>
     <string name="charging_add">Add spot</string>
+    <string name="charging_location_center">Center on my location</string>
     <string name="charging_refresh">Refresh directory</string>
     <string name="charging_retry_sync">Retry sync</string>
     <string name="charging_sync">Sync community</string>

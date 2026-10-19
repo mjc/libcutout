@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.FrameLayout
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.AndroidChargingClient
@@ -58,13 +59,14 @@ open class RideMapPanelLayoutTest {
         val charging = AndroidChargingClient(context, runtime)
         var panel: RideMapPanel? = null
         var surface: TestRideMapSurface? = null
+        var locationRequests = 0
         try {
             instrumentation.runOnMainSync {
                 panel = RideMapPanel(
                     context = context,
                     runtime = runtime,
                     chargingClient = charging,
-                    onRequestLocation = {},
+                    onRequestLocation = { locationRequests++ },
                     onExport = {},
                     mapSurfaceFactory = { TestRideMapSurface(it).also { created -> surface = created } },
                 )
@@ -93,6 +95,12 @@ open class RideMapPanelLayoutTest {
                 }
                 check(slot.visibility == View.VISIBLE)
                 check(slot.height > 0 && chargingPage.height > 0)
+                val requestsBeforeRecenter = locationRequests
+                val recentersBefore = surface?.recenterCount ?: 0
+                root.findViewWithTag<ImageButton>("ride_map_recenter").performClick()
+                check(locationRequests > requestsBeforeRecenter || (surface?.recenterCount ?: 0) > recentersBefore) {
+                    "Charging recenter must request an actual location fix or center on the fresh fix"
+                }
                 chargingPage.findViewWithTag<Button>("charging_view_list").performClick()
                 layout()
                 check(slot.visibility == View.GONE) { "Charging list mode must remove the shared map from layout" }
@@ -115,6 +123,7 @@ open class RideMapPanelLayoutTest {
     private class TestRideMapSurface(context: Context) : FrameLayout(context), RideMapSurface {
         var chargingPopup: View? = null
         var chargingSpots: List<MobileChargingSpotDto> = emptyList()
+        var recenterCount = 0
         override val view: View get() = this
         override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
         override var onChargingSpotSelected: ((String) -> Unit)? = null
@@ -126,7 +135,7 @@ open class RideMapPanelLayoutTest {
         override fun restoreCameraPosition(position: CameraPosition?) = Unit
         override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) { chargingSpots = spots }
         override fun showChargingPopup(view: View?) { chargingPopup = view }
-        override fun recenter() = Unit
+        override fun recenter() { recenterCount++ }
         override fun setActive(value: Boolean) = Unit
         override fun onHostStart() = Unit
         override fun onHostResume() = Unit

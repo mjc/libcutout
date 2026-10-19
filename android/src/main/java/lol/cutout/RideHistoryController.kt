@@ -41,6 +41,9 @@ internal fun <T> restoreRideSelection(
 internal fun historyRouteMatchesRide(projectedIdentity: ByteArray?, selectedIdentity: ByteArray): Boolean =
     projectedIdentity?.contentEquals(selectedIdentity) == true
 
+internal fun shouldFitHistoryRoute(previousIdentity: ByteArray?, currentIdentity: ByteArray, explicitFit: Boolean): Boolean =
+    explicitFit || previousIdentity?.contentEquals(currentIdentity) != true
+
 /** Rust-backed bounded ride-history queries. Stale asynchronous page and detail results are ignored. */
 class RideHistoryController(private val runtime: RideMapRuntime, private val now: () -> Long = System::currentTimeMillis) {
     var state = RideHistoryState()

@@ -4,6 +4,25 @@ import uniffi.cutout_mobile_ffi.MobileChargingConnectorDto
 
 /** Resource mapping follows ChargingSpotPresentation.connectorAssetIdentifier in Swift. */
 internal object ChargingConnectorArtwork {
+    /** Full typed connector catalog shared by editor and directory filters. */
+    val catalog: List<MobileChargingConnectorDto> = listOf(
+        MobileChargingConnectorDto.Nema515,
+        MobileChargingConnectorDto.TypeA, MobileChargingConnectorDto.TypeC,
+        MobileChargingConnectorDto.TypeD, MobileChargingConnectorDto.TypeE,
+        MobileChargingConnectorDto.TypeF, MobileChargingConnectorDto.TypeG,
+        MobileChargingConnectorDto.TypeH, MobileChargingConnectorDto.TypeI,
+        MobileChargingConnectorDto.TypeJ, MobileChargingConnectorDto.TypeK,
+        MobileChargingConnectorDto.TypeL, MobileChargingConnectorDto.TypeM,
+        MobileChargingConnectorDto.TypeN, MobileChargingConnectorDto.TypeO,
+        MobileChargingConnectorDto.Nema520, MobileChargingConnectorDto.Nema1450,
+        MobileChargingConnectorDto.J1772, MobileChargingConnectorDto.Type2,
+        MobileChargingConnectorDto.Ccs1, MobileChargingConnectorDto.Ccs2,
+        MobileChargingConnectorDto.Chademo, MobileChargingConnectorDto.Nacs,
+        MobileChargingConnectorDto.Nema1430, MobileChargingConnectorDto.Nema1030,
+        MobileChargingConnectorDto.Nema650, MobileChargingConnectorDto.Nema1050,
+        MobileChargingConnectorDto.Unknown,
+    )
+
     fun drawable(connector: MobileChargingConnectorDto): Int = when (connector) {
         MobileChargingConnectorDto.TypeA -> R.drawable.charging_connector_type_a
         MobileChargingConnectorDto.TypeC -> R.drawable.charging_connector_type_c

@@ -288,7 +288,7 @@ class ChargingSpotEditorPanel(
             return MobileChargingSupplyDto(volts, selectedConnectors.toList(), outlets)
         }
         private fun chooseConnector() {
-            val options = connectors + selectedConnectors.filterIsInstance<MobileChargingConnectorDto.Other>()
+            val options = ChargingConnectorArtwork.catalog + selectedConnectors.filterIsInstance<MobileChargingConnectorDto.Other>()
             val labels = options.map(::connectorText) + root.context.getString(R.string.charging_other_connector)
             val checked = BooleanArray(labels.size) { index -> options.getOrNull(index)?.let(selectedConnectors::contains) ?: false }
             AlertDialog.Builder(root.context)
@@ -334,16 +334,4 @@ class ChargingSpotEditorPanel(
 
     private fun connectorText(value: MobileChargingConnectorDto): String = ChargingConnectorArtwork.label(ui, value)
 
-    private val connectors = listOf(
-        MobileChargingConnectorDto.TypeA, MobileChargingConnectorDto.TypeC, MobileChargingConnectorDto.TypeD,
-        MobileChargingConnectorDto.TypeE, MobileChargingConnectorDto.TypeF, MobileChargingConnectorDto.TypeG,
-        MobileChargingConnectorDto.TypeH, MobileChargingConnectorDto.TypeI, MobileChargingConnectorDto.TypeJ,
-        MobileChargingConnectorDto.TypeK, MobileChargingConnectorDto.TypeL, MobileChargingConnectorDto.TypeM,
-        MobileChargingConnectorDto.TypeN, MobileChargingConnectorDto.TypeO, MobileChargingConnectorDto.Nema515,
-        MobileChargingConnectorDto.Nema520, MobileChargingConnectorDto.Nema1450, MobileChargingConnectorDto.Nema1430,
-        MobileChargingConnectorDto.Nema1030, MobileChargingConnectorDto.Nema650, MobileChargingConnectorDto.Nema1050,
-        MobileChargingConnectorDto.J1772, MobileChargingConnectorDto.Type2, MobileChargingConnectorDto.Ccs1,
-        MobileChargingConnectorDto.Ccs2, MobileChargingConnectorDto.Chademo, MobileChargingConnectorDto.Nacs,
-        MobileChargingConnectorDto.Unknown,
-    )
 }

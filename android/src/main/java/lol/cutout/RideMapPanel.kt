@@ -519,7 +519,9 @@ class RideMapPanel(
         setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
         background = ui.rounded(14)
         setOnClickListener {
-            if (mode == Mode.LIVE && supportsFollow()) {
+            if (mode == Mode.CHARGING) {
+                chargingPage.centerOnUserLocation()
+            } else if (mode == Mode.LIVE && supportsFollow()) {
                 followsLatestPoint = true
                 mapView.followLatestPoint()
             } else mapView.recenter()
@@ -908,7 +910,11 @@ class RideMapPanel(
     private fun supportsFollow(): Boolean = lastPresentation.snapshot?.state in listOf(MobileRideLifecycleStateDto.ACTIVE, MobileRideLifecycleStateDto.PAUSED)
 
     private fun updateCameraControl() {
-        val title = if (mode == Mode.LIVE && !supportsFollow()) R.string.live_map_show_full_ride else R.string.ride_map_recenter
+        val title = when {
+            mode == Mode.CHARGING -> R.string.charging_location_center
+            mode == Mode.LIVE && !supportsFollow() -> R.string.live_map_show_full_ride
+            else -> R.string.ride_map_recenter
+        }
         recenter.contentDescription = context.getString(title)
         recenter.isSelected = mode == Mode.LIVE && supportsFollow() && followsLatestPoint
         recenter.setImageDrawable(CutoutIcon(if (mode == Mode.LIVE && !supportsFollow()) CutoutSymbol.FIT_ROUTE else CutoutSymbol.POSITION, ui.brand))

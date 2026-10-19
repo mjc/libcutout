@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import lol.cutout.RideHistoryController
 import lol.cutout.restoreRideSelection
 import lol.cutout.historyRouteMatchesRide
+import lol.cutout.shouldFitHistoryRoute
 import lol.cutout.routeSegmentsForStyle
 import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
 import lol.cutout.RideMapRuntime
@@ -40,6 +41,24 @@ open class RideHistoryControllerTest {
         }
         check(!historyRouteMatchesRide(null, secondRide)) {
             "A failed initial route projection should remain retryable"
+        }
+    }
+
+    @Test
+    fun historyCameraFitsOnlyForNewRideOrExplicitRoutePreview() {
+        val ride = byteArrayOf(3, 1, 4)
+        val nextRide = byteArrayOf(9, 2, 6)
+        check(shouldFitHistoryRoute(null, ride, explicitFit = false)) {
+            "The first visible projection should fit its ride"
+        }
+        check(!shouldFitHistoryRoute(ride.copyOf(), ride, explicitFit = false)) {
+            "An unrelated detail refresh must preserve the user's map camera"
+        }
+        check(shouldFitHistoryRoute(ride.copyOf(), ride, explicitFit = true)) {
+            "An explicit route-preview action should fit again"
+        }
+        check(shouldFitHistoryRoute(ride, nextRide, explicitFit = false)) {
+            "Selecting a different ride should fit its route"
         }
     }
 

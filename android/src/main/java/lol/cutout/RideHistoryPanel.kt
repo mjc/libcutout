@@ -70,6 +70,8 @@ class RideHistoryPanel(
     private var searchRunnable: Runnable? = null
     private var exportError: String? = null
     private var musicForgetError: String? = null
+    private var fittedRouteRideIdentity: ByteArray? = null
+    private var explicitRouteFitRequested = false
 
     init {
         isFillViewport = true
@@ -237,6 +239,7 @@ class RideHistoryPanel(
                 if (route.sourcePointCount > route.points.size.toULong()) {
                     rows.addView(ui.text(context.getString(R.string.ride_map_points_truncated), 13f, false, ui.muted), spaced())
                     rows.addView(ui.action(context.getString(R.string.ride_map_route_preview)) {
+                        explicitRouteFitRequested = true
                         controller.select(ride)
                     }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(6) })
                 }
@@ -253,7 +256,10 @@ class RideHistoryPanel(
                     context.getString(R.string.ride_map_background_gaps, route.backgroundGapCount.toInt()),
                     13f, false, ui.muted), spaced())
             }
-            mapView.show(route)
+            val shouldFit = shouldFitHistoryRoute(fittedRouteRideIdentity, ride.id.bytes, explicitRouteFitRequested)
+            mapView.showRoute(route, fitCamera = shouldFit)
+            if (shouldFit) fittedRouteRideIdentity = ride.id.bytes.copyOf()
+            explicitRouteFitRequested = false
         } ?: mapView.clearRoute()
         renderMusic(ride, state)
         state.error?.let { error ->
@@ -261,6 +267,7 @@ class RideHistoryPanel(
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
             if (!state.loading) {
                 rows.addView(ui.action(context.getString(R.string.ride_map_retry_detail)) {
+                    explicitRouteFitRequested = true
                     controller.select(ride)
                 }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
             }
