@@ -13,7 +13,7 @@ pub(crate) const MAX_MUSIC_DISPLAY_TEXT_BYTES: usize = 512;
 pub enum MusicProvider {
     /// Apple Music through the native system-player API.
     AppleMusic,
-    /// Spotify through App Remote.
+    /// Spotify through a native SDK or its account playback API.
     Spotify,
     /// `SoundCloud` app handoff; public iOS APIs expose no local playback state.
     SoundCloud,
@@ -279,6 +279,20 @@ pub struct MusicSnapshot {
 }
 
 impl MusicSnapshot {
+    pub(crate) fn with_playback_observation(
+        &self,
+        state: MusicPlaybackState,
+        observed_at: MonotonicTimestamp,
+        capabilities: MusicCapabilities,
+    ) -> Self {
+        Self {
+            state,
+            observed_at,
+            capabilities,
+            ..self.clone()
+        }
+    }
+
     pub(crate) fn soundcloud_unavailable(observed_at: MonotonicTimestamp) -> Self {
         Self {
             provider: MusicProvider::SoundCloud,

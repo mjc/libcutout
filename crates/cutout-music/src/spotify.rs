@@ -1,5 +1,7 @@
 //! Spotify content links admitted from actual provider item identities.
 
+pub mod playback;
+
 /// Returns a content-specific HTTPS link for a supported Spotify item URI.
 #[must_use]
 pub fn content_url(identifier: &str) -> Option<String> {
