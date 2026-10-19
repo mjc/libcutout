@@ -190,7 +190,8 @@ open class LightingPanelTest {
 
                     val effects = tabs[1]
                     effects.performClick()
-                    effects.requestFocus()
+                    effects.isFocusableInTouchMode = true
+                    check(effects.requestFocus()) { "Tab must receive input focus before testing its retention" }
                     panel.render(snapshot.copy(alias = "Updated accessory"))
                     check(panel.findViewWithTag<View>("lighting.tab.effects") === effects) {
                         "Snapshot updates must keep the existing tab view so accessibility focus survives"
