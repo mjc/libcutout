@@ -4,6 +4,8 @@ import android.app.Activity
 import android.view.View
 import android.widget.TextView
 import lol.cutout.VescDebugPanel
+import lol.cutout.DiagnosticCapturePresentation
+import lol.cutout.CutoutUi
 import lol.cutout.ffitest.productionReplayPresentation
 import org.junit.Assert.*
 import org.junit.Test
@@ -42,6 +44,35 @@ class LocalVescDebugPanelTest {
             NativeSurfaceCapture.save(panel, "vesc-debug-dark")
             panel.render(fixture.copy(session = fixture.session!!.copy(connection = connection.copy(readiness = MobileConnectionReadinessDto.PENDING))))
             assertFalse(voltage.isShown)
+        } finally { host.pause().stop().destroy() }
+    }
+
+    @Test
+    fun captureStatusTakesSubtitlePriorityAndConnectionPhaseRemainsFallback() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        try {
+            val replay = productionReplayPresentation()
+            val connection = checkNotNull(replay.session).connection
+            val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection,
+                MobileDeviceIdentityDto(MobileProtocolFamilyDto.VESC, MobileVehicleKindDto.BOARD, "VESC test fixture")))
+            val panel = VescDebugPanel(activity)
+            activity.setContentView(panel)
+            val labels = CutoutUi(activity)
+            val capture = DiagnosticCapturePresentation(
+                lifecycle = MobileCaptureLifecycleSnapshotDto(
+                    MobileCaptureAttemptDto(MobileCaptureGenerationDto(1uL), MobileCaptureOriginDto.MANUAL,
+                        MobileCaptureStageDto.RECORDING),
+                    canStart = false,
+                    canPair = true,
+                ),
+                notificationCount = 3UL,
+            )
+            panel.render(fixture, capture)
+            val subtitle = checkNotNull(panel.findViewWithTag<TextView>("vesc.debug.subtitle"))
+            assertEquals(labels.label("captures.receiving"), subtitle.text.toString())
+            panel.render(fixture, null)
+            assertEquals(activity.getString(R.string.connected), subtitle.text.toString())
         } finally { host.pause().stop().destroy() }
     }
 }
