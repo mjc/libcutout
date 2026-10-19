@@ -35,9 +35,12 @@ class CameraPanel(
     private val recordingStatus = ui.text("", 13f, color = ui.muted)
     private val stillButton = ui.action(ui.label("camera.still.request")) { client.requestStillCapture() }
     private val stillStatus = ui.text("", 13f, color = ui.muted)
-    private val previewSurface = SurfaceView(context)
+    private val stillUnavailable = ui.text(ui.label("camera.still.unavailable"), 14f, color = ui.muted)
+    private val previewSurface = SurfaceView(context).apply { tag = "camera.preview.surface" }
     private val previewStatus = ui.text("", 13f, color = ui.muted)
-    private val previewControls = ui.row()
+    private val previewSavedDetail = ui.text(ui.label("camera.preview.saved_detail"), 13f, color = ui.muted)
+    private val previewSavedFile = ui.text("", 12f, color = ui.muted)
+    private val previewControls = ui.row().apply { tag = "camera.preview.controls" }
     private val mediaTitle = ui.text(ui.label("camera.evidence.media_title"), 17f, true)
     private val mediaRows = ui.column()
     private val mediaError = ui.text("", 14f, color = ui.red).apply { tag = "camera.files.error" }
@@ -58,7 +61,7 @@ class CameraPanel(
     private var saveRequested = false
     private var previewStartIssued = false
     private var currentState = client.current()
-    private var lastConnected = false
+    private var lastPreviewAvailable = false
     private var mediaPage = 1
     private var lastMediaResult: List<MobileNovatekMediaEntryDto>? = null
     private val holderCallback = object : SurfaceHolder.Callback {
@@ -100,6 +103,7 @@ class CameraPanel(
         captureCard.addView(recordingStatus)
         captureCard.addView(stillButton)
         captureCard.addView(stillStatus)
+        captureCard.addView(stillUnavailable)
         previewSurface.setBackgroundColor(android.graphics.Color.BLACK)
         previewSurface.visibility = View.GONE
         previewSurface.setOnClickListener { /* Keep the preview surface passive, like SwiftUI. */ }
@@ -109,6 +113,8 @@ class CameraPanel(
         })
         captureCard.addView(previewStatus)
         captureCard.addView(previewControls)
+        captureCard.addView(previewSavedDetail)
+        captureCard.addView(previewSavedFile)
         content.addView(captureCard)
         content.addView(ui.space(16))
 
@@ -173,14 +179,16 @@ class CameraPanel(
         error.visibility = if (state.error == null) View.GONE else View.VISIBLE
         val evidence = state.evidence
         val isConnected = state.connection == CameraConnectionState.CONNECTED && evidence != null
+        val hasPreviewSource = evidence?.movieRtspUri?.isNotBlank() == true
         captureCard.visibility = if (isConnected) View.VISIBLE else View.GONE
         filesCard.visibility = if (isConnected) View.VISIBLE else View.GONE
-        if (isConnected && !lastConnected) {
+        val previewAvailable = isConnected && hasPreviewSource
+        if (previewAvailable && !lastPreviewAvailable) {
             previewSurface.visibility = View.VISIBLE
             previewRequested = true
             previewSurface.post(::launchPreviewIfReady)
         }
-        lastConnected = isConnected
+        lastPreviewAvailable = previewAvailable
         if (evidence == null) return
 
         truthRows.removeAllViews()
@@ -212,6 +220,7 @@ class CameraPanel(
         }
         val supportsStill = evidence.configuration.any { it.commandId.toInt() == 1001 && it.status.toInt() == 0 }
         stillButton.visibility = if (supportsStill) View.VISIBLE else View.GONE
+        stillUnavailable.visibility = if (supportsStill) View.GONE else View.VISIBLE
         stillButton.text = ui.label(if (state.stillRequest == CameraRequestState.IN_FLIGHT) "camera.still.requesting" else "camera.still.request")
         stillButton.tag = "camera.still.request"
         stillButton.isEnabled = !commandInFlight
@@ -220,33 +229,48 @@ class CameraPanel(
 
         val preview = state.preview?.preview ?: MobileCameraPreviewStateDto.STOPPED
         previewStatus.text = previewLabel(preview)
-        if (preview !in listOf(MobileCameraPreviewStateDto.STOPPED, MobileCameraPreviewStateDto.UNAVAILABLE)) {
+        if (!hasPreviewSource) {
+            previewSurface.visibility = View.GONE
+        } else if (preview !in listOf(MobileCameraPreviewStateDto.STOPPED, MobileCameraPreviewStateDto.UNAVAILABLE)) {
             previewSurface.visibility = View.VISIBLE
         } else if (!previewRequested) {
             previewSurface.visibility = View.GONE
         }
         previewControls.removeAllViews()
-        val previewStarted = preview !in listOf(MobileCameraPreviewStateDto.STOPPED, MobileCameraPreviewStateDto.INTERRUPTED)
-        if (previewStarted) {
-            previewControls.addView(ui.action(ui.label("camera.preview.stop")) {
-                previewRequested = false; previewStartIssued = false; client.stopPreview()
-            }.apply { tag = "camera.preview.stop" })
-        } else {
-            previewControls.addView(ui.action(ui.label("camera.preview.start")) {
-                previewRequested = true; previewStartIssued = false; saveRequested = false
+        val savedPreview = state.savedPreviewFile
+        previewControls.visibility = if (hasPreviewSource || savedPreview != null) View.VISIBLE else View.GONE
+        if (hasPreviewSource) {
+            val previewStarted = preview !in listOf(MobileCameraPreviewStateDto.STOPPED, MobileCameraPreviewStateDto.INTERRUPTED)
+            if (previewStarted) {
+                previewControls.addView(ui.action(ui.label("camera.preview.stop")) {
+                    previewRequested = false; previewStartIssued = false; client.stopPreview()
+                }.apply { tag = "camera.preview.stop" })
+            } else {
+                previewControls.addView(ui.action(ui.label("camera.preview.start")) {
+                    previewRequested = true; previewStartIssued = false; saveRequested = false
+                    previewSurface.visibility = View.VISIBLE; launchPreviewIfReady()
+                }.apply { tag = "camera.preview.start" })
+            }
+            previewControls.addView(ui.action(ui.label("camera.preview.save"), true) {
+                previewRequested = true; previewStartIssued = false; saveRequested = true
                 previewSurface.visibility = View.VISIBLE; launchPreviewIfReady()
-            }.apply { tag = "camera.preview.start" })
+            }, LinearLayout.LayoutParams(-2, ui.dp(48)).apply { marginStart = ui.dp(8) })
         }
-        previewControls.addView(ui.action(ui.label("camera.preview.save"), true) {
-            previewRequested = true; previewStartIssued = false; saveRequested = true
-            previewSurface.visibility = View.VISIBLE; launchPreviewIfReady()
-        }, LinearLayout.LayoutParams(-2, ui.dp(48)).apply { marginStart = ui.dp(8) })
 
         renderMedia(evidence)
-        state.savedPreviewFile?.let { file ->
-            previewControls.addView(ui.action(ui.label("camera.preview.export")) { share(file) },
+        savedPreview?.let { file ->
+            previewSavedFile.text = file.name
+            previewSavedFile.visibility = View.VISIBLE
+            val export = ui.action(ui.label("camera.preview.export")) { share(file) }.apply {
+                tag = "camera.preview.export"
+            }
+            previewControls.addView(export,
                 LinearLayout.LayoutParams(-2, ui.dp(48)).apply { marginStart = ui.dp(8) })
+        } ?: run {
+            previewSavedFile.text = ""
+            previewSavedFile.visibility = View.GONE
         }
+        previewSavedDetail.visibility = if (hasPreviewSource || savedPreview != null) View.VISIBLE else View.GONE
         state.operationError?.let { error.text = it; error.visibility = View.VISIBLE }
     }
 

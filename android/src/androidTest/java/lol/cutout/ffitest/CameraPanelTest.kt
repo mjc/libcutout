@@ -145,6 +145,71 @@ open class CameraPanelTest {
                 check(panel.findViewWithTag<Button>("camera.recording.request-start")?.isEnabled == true)
                 check(panel.findViewWithTag<Button>("camera.recording.request-stop")?.isEnabled == true)
                 check(panel.findViewWithTag<Button>("camera.still.request")?.isEnabled == true)
+
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = evidence.copy(configuration = emptyList()),
+                ))
+                check(panel.findViewWithTag<Button>("camera.still.request") == null)
+                check(descendants(panel).filterIsInstance<TextView>().any {
+                    it.text == lol.cutout.CutoutUi(activity).label("camera.still.unavailable") && it.visibility == View.VISIBLE
+                }) { "Unsupported still capture must be shown as unavailable, as in Swift" }
+
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = evidence.copy(movieRtspUri = ""),
+                ))
+                check(panel.findViewWithTag<Button>("camera.preview.start") == null)
+                check(panel.findViewWithTag<Button>("camera.preview.save") == null) {
+                    "Preview controls should be absent when Rust evidence provides no preview source"
+                }
+
+                val saved = java.io.File(activity.cacheDir, "camera-preview-test.h264")
+                val noPreviewSource = evidence.copy(movieRtspUri = "")
+                panel.render(panelState(noPreviewSource, null, null).copy(savedPreviewFile = saved))
+                check(descendants(panel).filterIsInstance<TextView>().any { it.text == saved.name }) {
+                    "A saved preview should expose its local filename before the export action"
+                }
+                check(descendants(panel).filterIsInstance<TextView>().any {
+                    it.text == lol.cutout.CutoutUi(activity).label("camera.preview.saved_detail") && it.visibility == View.VISIBLE
+                }) { "The saved preview guidance shown in Swift should remain alongside Android's export action" }
+                val controls = checkNotNull(panel.findViewWithTag<View>("camera.preview.controls"))
+                val export = checkNotNull(panel.findViewWithTag<Button>("camera.preview.export"))
+                check(controls.isShown && export.isShown) {
+                    "A locally saved preview must stay exportable when current evidence has no RTSP source"
+                }
+            }
+        } finally {
+            client.close()
+            state.close()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test
+    fun latePreviewSourceArrivalStartsThePreviewForAnAlreadyConnectedCamera() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Activity
+        val state = CutoutSessionStateHandle()
+        val client = AndroidCameraClient(activity.applicationContext, { state })
+        try {
+            instrumentation.runOnMainSync {
+                val panel = CameraPanel(activity, client)
+                activity.setContentView(panel)
+                val base = MobileNovatekReadOnlySnapshotDto("R3", "", "", emptyList(), true, emptyList())
+                panel.render(CameraPanelState(wifiReady = true, connection = CameraConnectionState.CONNECTED, evidence = base))
+                val surface = checkNotNull(panel.findViewWithTag<View>("camera.preview.surface"))
+                check(surface.visibility == View.GONE) { "A missing RTSP source should not request preview" }
+
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = base.copy(movieRtspUri = "rtsp://192.168.1.254/movie"),
+                ))
+                check(surface.visibility == View.VISIBLE) {
+                    "A newly available Rust-projected RTSP source should start preview without reconnecting the camera"
+                }
             }
         } finally {
             client.close()
