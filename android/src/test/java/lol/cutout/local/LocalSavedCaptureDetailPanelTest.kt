@@ -127,6 +127,7 @@ class LocalSavedCaptureDetailPanelTest {
         base.setContentView(panel)
         try {
             NativeSurfaceCapture.save(panel, "capture-saved-detail-large-text")
+            assertEquals("Opening a recording must start at its identity", 0, panel.scrollY)
             val row = checkNotNull(panel.findViewWithTag<LinearLayout>("captures.detail.model"))
             val label = checkNotNull(panel.findViewWithTag<TextView>("captures.detail.model.label"))
             val value = checkNotNull(panel.findViewWithTag<TextView>("captures.detail.model.value"))

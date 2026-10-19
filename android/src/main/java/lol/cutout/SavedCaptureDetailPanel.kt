@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.format.Formatter
 import android.view.View
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -43,6 +44,10 @@ class SavedCaptureDetailPanel(
         content.setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(24))
         addView(content, LayoutParams(-1, -2))
         render()
+        // Opening a detail starts at its identity, rather than scrolling to the first button.
+        isFocusableInTouchMode = true
+        descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+        requestFocus()
     }
 
     fun dispose() {
