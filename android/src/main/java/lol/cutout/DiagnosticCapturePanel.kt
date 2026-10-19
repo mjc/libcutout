@@ -238,6 +238,7 @@ class DiagnosticCapturePanel(
                         }
                     }.apply { tag = "captures.session.${artifact.id}.share" })
                     addView(settingsReviewAction(MobileCaptureSubmissionSourceDto.RecordedArtifact(artifact.id)))
+                    addView(submissionAction(MobileCaptureSubmissionSourceDto.RecordedArtifact(artifact.id)))
                 }
             }
         }
@@ -287,6 +288,7 @@ class DiagnosticCapturePanel(
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         row.addView(buttons)
         row.addView(settingsReviewAction(MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)))
+        row.addView(submissionAction(MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)))
         return row
     }
 
@@ -298,6 +300,22 @@ class DiagnosticCapturePanel(
                 { requests, done -> bluetooth.diagnostics.savedSettingsReadback(source, requests, done) },
             ).show()
         }.apply { tag = "capture.settings.saved.review" }
+
+    private fun submissionAction(source: MobileCaptureSubmissionSourceDto): View =
+        ui.action(ui.label("capture.submission.review")) {
+            researchDialog?.dismiss()
+            val owner = (context.applicationContext as CutoutApplication).captureSubmissions
+            val panel = CaptureSubmissionPanel(context, owner.controller(source)).apply {
+                setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(20))
+            }
+            val scroll = ScrollView(context).apply { addView(panel) }
+            researchDialog = AlertDialog.Builder(context).setView(scroll)
+                .setPositiveButton(android.R.string.ok, null).create().also { dialog ->
+                    dialog.setOnDismissListener { panel.dispose() }
+                    dialog.show()
+                    dialog.window?.setBackgroundDrawable(ui.rounded(24, ui.background, outlined = false))
+                }
+        }.apply { tag = "capture.submission.open" }
 
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
         val candidates = bleState.devices.filter { !it.id.isBlank() }
