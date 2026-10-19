@@ -18953,6 +18953,8 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .voltage_observed_at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
+            // Bare telemetry has no persisted profile or connection identity. The
+            // connection-aware step/snapshot owners attach their canonical context.
             vesc_drivetrain_context: None,
             operating_state,
             vesc_operating_mode: snapshot.operating_mode.map(Into::into),
@@ -19957,6 +19959,10 @@ pub enum VescBatteryCellModel {
 }
 
 /// Mobile-facing wrapper for a generic VESC read-only session.
+///
+/// An explicit board profile has no persisted revision or connection attempt.
+/// Capture callers needing that attribution use the connection-aware session
+/// step or `CutoutSessionStateHandle::connection_telemetry_snapshot` instead.
 #[derive(Debug, uniffi::Object)]
 pub struct VescReadOnlySession {
     inner: Mutex<CoreVescReadOnlySession>,

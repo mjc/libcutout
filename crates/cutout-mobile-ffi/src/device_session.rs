@@ -473,7 +473,6 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
 #[uniffi::export]
 #[allow(clippy::needless_pass_by_value)]
 impl CutoutSessionStateHandle {
-    /// Observes bytes only for the attempt that owned the native callback.
     /// Revalidates an application-query fragment immediately before native submission.
     pub fn application_query_transport_is_current(
         &self,
@@ -520,6 +519,7 @@ impl CutoutSessionStateHandle {
         )
     }
 
+    /// Observes bytes only for the attempt that owned the native callback.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI exports own byte buffers."
