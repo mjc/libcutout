@@ -476,7 +476,9 @@ class RideDashboardView(
         speedUnitView = unit
         if (withGps) {
             val unitAndGps = ui.column().apply {
-                gravity = Gravity.CENTER_VERTICAL
+                // A top-aligned column reports the same baseline before and after layout.
+                // Center gravity bases it on layout bounds that are not set during measure.
+                gravity = Gravity.TOP
                 isBaselineAligned = true
             }
             unitAndGps.addView(unit)

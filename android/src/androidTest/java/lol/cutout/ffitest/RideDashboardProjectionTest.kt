@@ -96,7 +96,8 @@ open class RideDashboardProjectionTest {
             return location[1] + view.baseline
         }
         check(kotlin.math.abs(absoluteBaseline(alignedSpeedView) - absoluteBaseline(unitView)) <= 2) {
-            "Speed unit should share Swift's first-text-baseline alignment"
+            "Speed unit should share Swift's first-text-baseline alignment: " +
+                "speed=${absoluteBaseline(alignedSpeedView)}, unit=${absoluteBaseline(unitView)}"
         }
     }
 
