@@ -682,6 +682,7 @@ class RideMapPanel(
     fun refreshLocation() {
         if (activePage && mode == Mode.CHARGING) chargingPage.refreshLocation()
     }
+    fun communityAccountDeletionCompleted() = chargingPage.communityAccountDeletionCompleted()
     fun handleBack(): Boolean = when (mode) {
         Mode.HISTORY -> historyPage.handleBack()
         Mode.CHARGING -> chargingPage.handleBack()
