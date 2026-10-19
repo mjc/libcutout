@@ -75,13 +75,17 @@ class LocalChargingEditorContextTest {
         activity.setContentView(panel)
         checkNotNull(panel.findViewWithTag<android.widget.Button>("charging_editor.add_supply")).performClick()
         val voltageDraft = checkNotNull(panel.findViewWithTag<android.widget.EditText>("charging_editor.voltage"))
-        voltageDraft.setText("240")
         try {
             assertTrue("regional context did not resolve", loaded.await(3, TimeUnit.SECONDS))
             shadowOf(activity.mainLooper).idle()
             assertEquals(location.latitudeDegrees to location.longitudeDegrees, geocodedCoordinate)
             assertEquals(location, databaseCoordinate)
             assertEquals("US", databaseCountry)
+            val connectorButton = checkNotNull(panel.findViewWithTag<android.widget.Button>("charging_editor.connector"))
+            val defaultLabel = CutoutUi(activity).let { lol.cutout.ChargingConnectorArtwork.label(it, MobileChargingConnectorDto.Nema515) }
+            assertTrue("Rust's national default remains an unconfirmed suggestion", connectorButton.text.contains(defaultLabel))
+
+            voltageDraft.setText("240")
             assertEquals("240", voltageDraft.text.toString())
 
             checkNotNull(panel.findViewWithTag<View>("charging_editor.suggest_power")).performClick()
@@ -92,14 +96,11 @@ class LocalChargingEditorContextTest {
             assertTrue("country context did not reach the Rust power suggestion", message.contains("120 V"))
             dialog.dismiss()
 
-            val connectorButton = checkNotNull(panel.findViewWithTag<android.widget.Button>("charging_editor.connector"))
-            val typeGLabel = CutoutUi(activity).let { lol.cutout.ChargingConnectorArtwork.label(it, MobileChargingConnectorDto.TypeG) }
-            assertTrue("Rust's first regional connector should be shown as an uncommitted suggestion", connectorButton.text.contains(typeGLabel))
             connectorButton.performClick()
             val connectorDialog = checkNotNull(ShadowAlertDialog.getLatestAlertDialog())
             assertEquals(
                 "nearby Rust order should lead the selectable list",
-                typeGLabel,
+                lol.cutout.ChargingConnectorArtwork.label(CutoutUi(activity), MobileChargingConnectorDto.TypeG),
                 connectorDialog.listView.adapter.getItem(0).toString(),
             )
         } finally {
