@@ -6,6 +6,7 @@ import android.widget.Button
 import android.widget.TextView
 import android.app.Activity
 import android.content.Intent
+import java.util.concurrent.Executor
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.cutout.AndroidCameraClient
 import lol.cutout.CameraPanel
@@ -39,6 +40,22 @@ open class CameraPanelTest {
         gate.reset()
         check(gate.claim(active = true, wifiReady = true, isReading = false, hasEvidence = false, network = firstNetwork)) {
             "Re-entering the active route should permit one fresh read"
+        }
+    }
+
+    @Test
+    fun deactivatingCameraRouteBeforeQueuedReadSuppressesTheNativeEffect() {
+        val fence = lol.cutout.CameraRouteEffectFence()
+        val queued = mutableListOf<Runnable>()
+        val executor = Executor { action -> queued += Runnable { action.run() } }
+        val routeToken = fence.transition(true)
+        var readsStarted = 0
+        fence.submit(executor, routeToken) { readsStarted++ }
+
+        fence.transition(false)
+        queued.single().run()
+        check(readsStarted == 0) {
+            "A read queued while the route was active must not reach native effects after synchronous deactivation"
         }
     }
 
