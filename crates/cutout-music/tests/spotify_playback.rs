@@ -121,6 +121,27 @@ fn request_policy_targets_observed_device_and_never_transfers_playback() {
 }
 
 #[test]
+fn request_query_preserves_spaces_pluses_and_percent_escapes() {
+    let session = SpotifyHttpSession::default();
+    for (device, encoded) in [
+        ("phone&space value", "phone%26space%20value"),
+        ("phone+value", "phone%2Bvalue"),
+        ("phone%2Bvalue", "phone%252Bvalue"),
+        ("phone/?#=+% value", "phone%2F%3F%23%3D%2B%25%20value"),
+    ] {
+        let request = session
+            .command_request(MusicCommand::Play, device, 10)
+            .expect("command");
+        let url = url::Url::parse(&request.url).expect("url");
+        assert_eq!(url.query(), Some(format!("device_id={encoded}").as_str()));
+        assert_eq!(
+            url.query_pairs().collect::<Vec<_>>(),
+            [("device_id".into(), device.into())]
+        );
+    }
+}
+
+#[test]
 fn retry_after_blocks_reads_and_commands_until_monotonic_deadline() {
     let mut session = SpotifyHttpSession::default();
     assert_eq!(
