@@ -137,7 +137,7 @@ internal class CaptureSettingsReview(
         MobileSettingValueDto.Disabled -> ui.label("settings.choice.off")
         is MobileSettingValueDto.Boolean -> ui.label(if (value.value) "controls.on" else "settings.choice.off")
         is MobileSettingValueDto.Choice -> (field?.control as? MobileSettingControlDto.Choices)?.choices
-            ?.firstOrNull { it.id == value.value }?.let { ui.label(it.labelKey) } ?: value.value.toString()
+            ?.firstOrNull { it.id == value.id }?.let { ui.label(it.labelKey) } ?: value.id.toString()
         is MobileSettingValueDto.Number -> {
             val number = field?.control as? MobileSettingControlDto.Number
             if (number == null) value.value.toString() else {

@@ -63,11 +63,10 @@ class CaptureSettingsWorksheet(
             val searchBox = EditText(context).apply {
                 tag = "capture.settings.search"
                 hint = ui.label("capture.settings.search")
-                singleLine = true
+                setSingleLine(true)
                 inputType = InputType.TYPE_CLASS_TEXT
                 setTextColor(ui.foreground)
                 setHintTextColor(ui.muted)
-                setCompoundDrawablesWithIntrinsicBounds(CutoutIcon(CutoutSymbol.INFO, ui.muted), null, null, null)
                 setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8))
                 background = ui.rounded(12)
                 addTextChangedListener(SimpleTextWatcher { search = it; renderFields() })
@@ -187,7 +186,7 @@ class CaptureSettingsWorksheet(
         timeEditor = EditText(context).apply {
             tag = "capture.settings.time"
             hint = ui.label("capture.settings.now")
-            singleLine = true
+            setSingleLine(true)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             setTextColor(ui.foreground); setHintTextColor(ui.muted)
             addTextChangedListener(SimpleTextWatcher { earlierTime = it })
@@ -285,35 +284,38 @@ class CaptureSettingsWorksheet(
         parent.addView(spinner, matchHeight())
     }
 
-    private fun addStateSpinner(parent: LinearLayout, field: MobileCaptureResearchFieldDto, canDisable: Boolean) {
+    private fun addStateSpinner(fieldRow: LinearLayout, field: MobileCaptureResearchFieldDto, canDisable: Boolean) {
         val options = mutableListOf(ControlOption("value", ui.label("capture.settings.value")))
         if (canDisable) options += ControlOption("off", ui.label("capture.settings.off"))
         options += ControlOption("unobserved", ui.label("capture.settings.not_observed"))
         val spinner = spinner(options.map { it.title }, "capture.settings.state.${field.id}")
         spinner.setSelection(options.indexOfFirst { it.value == states[field.id] }.takeIf { it >= 0 } ?: 0, false)
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+            override fun onNothingSelected(adapter: AdapterView<*>?) = Unit
+            override fun onItemSelected(adapter: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 states[field.id] = options[position].value
-            parent.findViewWithTag<View>("capture.settings.value.${field.id}")?.visibility =
-                if (options[position].value == "off" || options[position].value == "unobserved") View.GONE else View.VISIBLE
+                fieldRow.findViewWithTag<View>("capture.settings.editor.${field.id}")?.visibility =
+                    if (options[position].value == "off" || options[position].value == "unobserved") View.GONE else View.VISIBLE
             }
         }
-        parent.addView(spinner, matchHeight())
+        fieldRow.addView(spinner, matchHeight())
     }
 
     private fun addValueEditor(parent: LinearLayout, field: MobileCaptureResearchFieldDto) {
         val editor = EditText(context).apply {
             tag = "capture.settings.value.${field.id}"
             hint = ui.label("capture.settings.unknown")
-            singleLine = true
+            setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT
             setText(values[field.id].orEmpty())
             setTextColor(ui.foreground); setHintTextColor(ui.muted)
-            visibility = if (states[field.id] == "off" || states[field.id] == "unobserved") View.GONE else View.VISIBLE
             addTextChangedListener(SimpleTextWatcher { values[field.id] = it })
         }
         val unit = defaultUnit(field)
+        val editorRow = ui.row().apply {
+            tag = "capture.settings.editor.${field.id}"
+            visibility = if (states[field.id] == "off" || states[field.id] == "unobserved") View.GONE else View.VISIBLE
+        }
         if (unit == "km/h") {
             val unitsList = listOf("km/h", "mph", "")
             val unitPicker = spinner(listOf("km/h", "mph", ui.label("capture.settings.unknown_unit")), "capture.settings.unit.${field.id}")
@@ -324,16 +326,17 @@ class CaptureSettingsWorksheet(
                     units[field.id] = unitsList[position]
                 }
             }
-            parent.addView(ui.row().apply {
+            editorRow.apply {
                 addView(editor, LinearLayout.LayoutParams(0, ui.dp(52), 1f))
                 addView(unitPicker, LinearLayout.LayoutParams(ui.dp(112), ui.dp(52)))
-            }, matchHeight())
+            }
         } else {
-            parent.addView(ui.row().apply {
+            editorRow.apply {
                 addView(editor, LinearLayout.LayoutParams(0, ui.dp(52), 1f))
                 if (unit.isNotEmpty()) addView(ui.text(unit, 15f, color = ui.muted).apply { setPadding(ui.dp(8), 0, ui.dp(8), 0) })
-            }, matchHeight())
+            }
         }
+        parent.addView(editorRow, matchHeight())
     }
 
     private fun submit() {
@@ -377,14 +380,14 @@ class CaptureSettingsWorksheet(
         val reported = catalog.fields.mapNotNull { field ->
             when (states[field.id]) {
                 "unobserved" -> MobileCaptureSettingObservationValueDto(field.id, MobileCaptureObservedValueDto.Unobserved,
-                    units[field.id] ?: defaultUnit(field).takeIf(String::isNotEmpty), null)
+                    (units[field.id] ?: defaultUnit(field)).takeIf(String::isNotEmpty), null)
                 "off" -> MobileCaptureSettingObservationValueDto(field.id, MobileCaptureObservedValueDto.Off,
-                    units[field.id] ?: defaultUnit(field).takeIf(String::isNotEmpty), null)
+                    (units[field.id] ?: defaultUnit(field)).takeIf(String::isNotEmpty), null)
                 "true" -> MobileCaptureSettingObservationValueDto(field.id, MobileCaptureObservedValueDto.Boolean(true), null, null)
                 "false" -> MobileCaptureSettingObservationValueDto(field.id, MobileCaptureObservedValueDto.Boolean(false), null, null)
                 else -> values[field.id]?.takeIf { it.trim().isNotEmpty() }?.let { entered ->
                     MobileCaptureSettingObservationValueDto(field.id, MobileCaptureObservedValueDto.Entered(entered),
-                        units[field.id] ?: defaultUnit(field).takeIf(String::isNotEmpty), null)
+                        (units[field.id] ?: defaultUnit(field)).takeIf(String::isNotEmpty), null)
                 }
             }
         }
