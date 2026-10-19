@@ -2713,8 +2713,9 @@ mod tests {
         let crate::VescReadOnlyReply::MotorConfig(config) = reply else {
             panic!("expected decoded motor configuration reply");
         };
-        assert!(config.speed_geometry.gear_ratio_denominator.as_milli() > 0);
-        assert!(config.speed_geometry.wheel_circumference.as_millimetres() > 0);
+        let geometry = config.speed_geometry.expect("positive setup geometry");
+        assert!(geometry.gear_ratio_denominator.as_milli() > 0);
+        assert!(geometry.wheel_circumference.as_millimetres() > 0);
     }
 
     #[test]

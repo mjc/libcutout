@@ -3192,9 +3192,9 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
         ),
         VescReadOnlyReply::Stats(stats) => info!(?stats, "vesc stats"),
         VescReadOnlyReply::MotorConfig(config) => info!(
-            motor_pole_pairs = config.speed_geometry.motor_pole_pairs.get(),
-            gear_ratio_denominator = config.speed_geometry.gear_ratio_denominator.get(),
-            wheel_circumference_mm = config.speed_geometry.wheel_circumference.as_millimetres(),
+            motor_pole_pairs = %config.speed_geometry.map(|geometry| geometry.motor_pole_pairs.get().to_string()).unwrap_or_else(|| "--".to_owned()),
+            gear_ratio_denominator = %config.speed_geometry.map(|geometry| geometry.gear_ratio_denominator.get().to_string()).unwrap_or_else(|| "--".to_owned()),
+            wheel_circumference_mm = %config.speed_geometry.map(|geometry| geometry.wheel_circumference.as_millimetres().to_string()).unwrap_or_else(|| "--".to_owned()),
             battery_type = ?config.battery_type,
             battery_cells = config.battery_cells.get(),
             "vesc motor config"
@@ -3256,9 +3256,9 @@ fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
         }),
         VescReadOnlyReply::MotorConfig(config) => serde_json::json!({
             "type": "vesc_motor_config",
-            "motor_pole_pairs": config.speed_geometry.motor_pole_pairs.get(),
-            "gear_ratio_denominator": config.speed_geometry.gear_ratio_denominator.get(),
-            "wheel_circumference_mm": config.speed_geometry.wheel_circumference.as_millimetres(),
+            "motor_pole_pairs": config.speed_geometry.map(|geometry| geometry.motor_pole_pairs.get()),
+            "gear_ratio_denominator": config.speed_geometry.map(|geometry| geometry.gear_ratio_denominator.get()),
+            "wheel_circumference_mm": config.speed_geometry.map(|geometry| geometry.wheel_circumference.as_millimetres()),
             "battery_type": format!("{:?}", config.battery_type),
             "battery_cells": config.battery_cells.get(),
         }),
