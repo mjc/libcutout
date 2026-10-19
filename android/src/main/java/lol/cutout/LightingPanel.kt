@@ -277,6 +277,7 @@ class LightingPanel(
             tag = "lighting.effects.power-card"
             addView(powerControl(state))
         })
+        controls.addView(ui.space(16))
         val card = card().apply { tag = "lighting.effects.patterns-card" }
         card.addView(ui.text(ui.label("lighting.patterns"), 18f, true))
         val patterns = mobileMelkLightingPatternCatalog().filter { it.verified }
