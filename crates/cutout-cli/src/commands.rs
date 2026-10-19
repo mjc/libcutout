@@ -3192,9 +3192,9 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
         ),
         VescReadOnlyReply::Stats(stats) => info!(?stats, "vesc stats"),
         VescReadOnlyReply::MotorConfig(config) => info!(
-            motor_pole_pairs = %config.speed_geometry.map(|geometry| geometry.motor_pole_pairs.get().to_string()).unwrap_or_else(|| "--".to_owned()),
-            gear_ratio_denominator = %config.speed_geometry.map(|geometry| geometry.gear_ratio_denominator.get().to_string()).unwrap_or_else(|| "--".to_owned()),
-            wheel_circumference_mm = %config.speed_geometry.map(|geometry| geometry.wheel_circumference.as_millimetres().to_string()).unwrap_or_else(|| "--".to_owned()),
+            motor_pole_pairs = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.motor_pole_pairs.get().to_string()),
+            gear_ratio_denominator = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.gear_ratio_denominator.get().to_string()),
+            wheel_circumference_mm = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.wheel_circumference.as_millimetres().to_string()),
             battery_type = ?config.battery_type,
             battery_cells = config.battery_cells.get(),
             "vesc motor config"
