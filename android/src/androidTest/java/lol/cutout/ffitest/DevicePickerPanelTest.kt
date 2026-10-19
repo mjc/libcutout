@@ -28,7 +28,10 @@ open class DevicePickerPanelTest {
         lateinit var panel: DevicePickerPanel
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             panel = DevicePickerPanel(context, { scans++ }, { settings++ }, { configuration++ }, {})
-            panel.render(BlePresentation(), permitted = false, enabled = false, hasScanned = false)
+            panel.render(BlePresentation(scanning = true), permitted = false, enabled = false, hasScanned = false)
+            check(tagged<ProgressBar>(panel, "picker_spinner").visibility == View.GONE) {
+                "Permission recovery must take priority over a stale scan spinner"
+            }
 
             check(tagged<Button>(panel, "picker_recovery_primary").performClick())
             check(scans == 1 && settings == 0) { "Permission action did not request Nearby access" }
@@ -36,6 +39,11 @@ open class DevicePickerPanelTest {
             check(settings == 1) { "Secondary recovery action did not open app settings" }
             check(tagged<View>(panel, "picker_setup").performClick())
             check(configuration == 1) { "Setup gear did not open configuration" }
+
+            panel.render(BlePresentation(scanning = true), permitted = true, enabled = false, hasScanned = false)
+            check(tagged<ProgressBar>(panel, "picker_spinner").visibility == View.GONE) {
+                "Bluetooth-off recovery must take priority over a stale scan spinner"
+            }
         }
     }
 
@@ -154,9 +162,12 @@ open class DevicePickerPanelTest {
         lateinit var panel: DevicePickerPanel
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             panel = DevicePickerPanel(context, {}, {}, {}, {})
-            panel.render(replay.copy(phase = NativePhase.IDENTIFYING), permitted = true, enabled = true, hasScanned = true)
+            panel.render(replay.copy(scanning = true, phase = NativePhase.IDENTIFYING), permitted = true, enabled = true, hasScanned = true)
             check(tagged<ProgressBar>(panel, "picker_spinner").visibility == View.GONE) {
                 "Verified connection remained in a connecting state after native phase lagged"
+            }
+            check(tagged<TextView>(panel, "picker_status_text").text == context.getString(lol.cutout.R.string.picker_status_live)) {
+                "Verified readiness must remain the visible status when a scan flag lags"
             }
             for (readiness in listOf(
                 MobileConnectionReadinessDto.FAILED,
@@ -164,6 +175,7 @@ open class DevicePickerPanelTest {
                 MobileConnectionReadinessDto.CONFLICTED,
             )) {
                 val terminal = replay.copy(
+                    scanning = true,
                     phase = NativePhase.IDENTIFYING,
                     session = replay.session!!.copy(
                         connection = replay.session!!.connection.copy(readiness = readiness),
@@ -171,7 +183,7 @@ open class DevicePickerPanelTest {
                 )
                 panel.render(terminal, permitted = true, enabled = true, hasScanned = true)
                 check(tagged<ProgressBar>(panel, "picker_spinner").visibility == View.GONE) {
-                    "$readiness readiness remained in a connecting state"
+                    "$readiness readiness remained in a connecting/scanning state"
                 }
             }
         }

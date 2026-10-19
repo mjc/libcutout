@@ -128,7 +128,14 @@ class DevicePickerPanel(
             else -> appContext.getString(R.string.picker_status_starting)
         }
         statusText.text = message
-        val showsActivity = value.scanning || connecting
+        val terminalReadiness = readiness in setOf(
+            MobileConnectionReadinessDto.VERIFIED,
+            MobileConnectionReadinessDto.FAILED,
+            MobileConnectionReadinessDto.RECORD_ONLY,
+            MobileConnectionReadinessDto.CONFLICTED,
+        )
+        val showsActivity = !permissionNeeded && !bluetoothOff && !terminalReadiness &&
+            (connecting || value.scanning)
         spinner.visibility = if (showsActivity) View.VISIBLE else View.GONE
         statusGlyph.visibility = if (showsActivity) View.GONE else View.VISIBLE
 
@@ -270,10 +277,10 @@ class DevicePickerPanel(
         private fun showDetails(device: NearbyPev) {
             val candidate = device.candidate ?: return
             val advertisedName = device.advertisedName?.takeIf { it.isNotBlank() && it != candidate.displayName }
-                ?.let { "\n${appContext.getString(R.string.picker_advertised_name)}: $it" }.orEmpty()
+                ?.let { "${appContext.getString(R.string.picker_advertised_name)}: $it\n" }.orEmpty()
             AlertDialog.Builder(appContext)
                 .setTitle(candidate.displayName)
-                .setMessage("${candidate.productCategory}\n\n${candidate.evidence}\n\n${candidate.detail}\n\n${appContext.getString(R.string.picker_device_identifier)}: ${device.id}$advertisedName\n${appContext.getString(R.string.picker_signal)}: ${device.rssi} dBm")
+                .setMessage("$advertisedName${appContext.getString(R.string.picker_device_identifier)}: ${device.id}\n\n${ui.label("picker.detection_details")}\n${candidate.productCategory} - ${candidate.evidence}\n${candidate.detail}")
                 .setPositiveButton(appContext.getString(R.string.picker_done), null)
                 .show()
         }
