@@ -156,7 +156,7 @@ class LocalMusicPresentationParityTest {
                     panel.findViewWithTag<TextView>("music.provider-error").text.toString())
                 val connect = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.connect-provider"))
                 assertEquals(View.VISIBLE, connect.visibility)
-                assertEquals(base.getString(R.string.spotify_reauthorize), connect.text.toString())
+                assertEquals(CutoutUi(context).label("music.connect_provider").replace("%@", "Spotify"), connect.text.toString())
                 assertEquals(Gravity.START or Gravity.CENTER_VERTICAL, connect.gravity)
                 assertTrue(connect.minimumHeight >= CutoutUi(context).dp(44))
                 val flatBackground = connect.background as android.graphics.drawable.RippleDrawable

@@ -387,8 +387,8 @@ class MusicSettingsPanel(
         connectAction.text = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) {
             when {
                 value.spotifyCredentialRestoreRetryAvailable -> ui.label("music.spotify.retry_saved_authorization")
-                value.spotifyAuthorized || value.spotifyNeedsAuthorization -> context.getString(R.string.spotify_reauthorize)
-                else -> context.getString(R.string.spotify_connect)
+                value.spotifyNeedsAuthorization -> context.getString(R.string.spotify_reauthorize)
+                else -> ui.label(if (reconnect) "music.reconnect_provider" else "music.connect_provider").replace("%@", providerTitle)
             }
         } else ui.label(if (reconnect) "music.reconnect_provider" else "music.connect_provider").replace("%@", providerTitle)
         openProviderAction.text = ui.label("music.open_named_provider").replace("%@", providerTitle)
