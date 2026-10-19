@@ -74,6 +74,50 @@ class LocalCaptureSettingsObservationSummaryTest {
     }
 
     @Test
+    fun emptyRetryClearsFailureAndAnOlderDuplicateCannotChangeIt() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val callbacks = mutableListOf<(Result<List<MobileCaptureSettingsObservationDto>>) -> Unit>()
+        val panel = CaptureSettingsObservationSummary(host.get(), { callbacks.add(it); Unit }, {})
+        host.get().setContentView(panel)
+        try {
+            panel.refresh()
+            callbacks[0](Result.failure(IllegalStateException("Read unavailable")))
+            panel.refresh()
+            callbacks[0](Result.success(listOf(observation())))
+            assertEquals(View.VISIBLE, panel.findViewWithTag<View>("capture.settings.summary.loading").visibility)
+            callbacks[1](Result.success(emptyList()))
+            assertEquals(View.GONE, panel.findViewWithTag<View>("capture.settings.observations").visibility)
+            assertEquals(View.GONE, panel.findViewWithTag<View>("capture.settings.load-error").visibility)
+            callbacks[0](Result.failure(IllegalStateException("Older duplicate failure")))
+            assertEquals(View.GONE, panel.findViewWithTag<View>("capture.settings.load-error").visibility)
+        } finally {
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun newRouteRejectsPreviousReadEvenWhenBothSnapshotsAreEmpty() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val callbacks = mutableListOf<(Result<List<MobileCaptureSettingsObservationDto>>) -> Unit>()
+        val panel = CaptureSettingsObservationSummary(host.get(), { callbacks.add(it); Unit }, {})
+        host.get().setContentView(panel)
+        try {
+            panel.refresh()
+            panel.reset()
+            panel.refresh()
+            assertEquals(2, callbacks.size)
+            callbacks[0](Result.failure(IllegalStateException("Old recording ended")))
+            assertEquals(View.GONE, panel.findViewWithTag<View>("capture.settings.load-error").visibility)
+            callbacks[1](Result.success(listOf(observation())))
+            assertEquals(View.VISIBLE, panel.findViewWithTag<View>("capture.settings.observations").visibility)
+        } finally {
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun disposedSummaryIgnoresBackgroundCompletionAndCannotRetryOrReview() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         var complete: ((Result<List<MobileCaptureSettingsObservationDto>>) -> Unit)? = null
