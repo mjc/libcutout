@@ -197,6 +197,42 @@ open class ProductionAppTest {
         }
     }
 
+    @Test
+    fun androidLifecycleSettlementAcknowledgesTerminalAndPendingReplacementEffects() {
+        val state = CutoutSessionStateHandle()
+        try {
+            val first = AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                state,
+                MobileRideSessionInputDto.Start("first-wheel"),
+            )
+            check(first.phase == MobileRideSessionPhaseDto.Starting)
+
+            val replacement = AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                state,
+                MobileRideSessionInputDto.Start("second-wheel"),
+            )
+            check(replacement.phase == MobileRideSessionPhaseDto.Starting)
+            check(replacement.identity?.platformIdentifier == "second-wheel") {
+                "The EndActivity acknowledgement did not settle the pending replacement ride"
+            }
+
+            val ending = state.reduceRideSession(MobileRideSessionInputDto.UserDisconnected).snapshot
+            check(ending.phase is MobileRideSessionPhaseDto.Ending)
+            check(!AndroidRideSessionEffects.acceptsFreshnessUpdates(ending)) {
+                "A terminal ride phase should cancel, not reschedule, freshness checks"
+            }
+            val ended = AndroidRideSessionEffects.reduceAndSettlePlatformEffects(
+                state,
+                MobileRideSessionInputDto.UserDisconnected,
+            )
+            check(ended.phase is MobileRideSessionPhaseDto.Ended) {
+                "Android did not acknowledge the pending terminal effect: ${ended.phase}"
+            }
+        } finally {
+            state.close()
+        }
+    }
+
     private fun withActivity(block: (MainActivity) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

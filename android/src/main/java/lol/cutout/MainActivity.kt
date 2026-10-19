@@ -237,7 +237,7 @@ class MainActivity : Activity() {
         val session = value.session ?: return null
         if (session.connection.readiness != MobileConnectionReadinessDto.VERIFIED) return null
         if (session.identity == null) return null
-        val platformIdentifier = session.connection.token.platformIdentifier
+        val platformIdentifier = session.connection.token?.platformIdentifier ?: return null
         val rustCandidate = value.connectionCandidate
             ?.takeIf { it.platformIdentifier == platformIdentifier }
             ?: value.devices.firstOrNull { it.id == platformIdentifier }?.candidate
