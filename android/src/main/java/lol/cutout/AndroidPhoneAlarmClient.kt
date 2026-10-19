@@ -49,7 +49,10 @@ data class PhoneAlarmPresentation(
 }
 
 /** Executes only native notification effects requested by the Rust session owner. */
-class AndroidPhoneAlarmClient(private val context: Context) {
+class AndroidPhoneAlarmClient(
+    private val context: Context,
+    private val rides: RideMapRuntime = (context.applicationContext as CutoutApplication).rides,
+) {
     private val appContext = context.applicationContext
     private val thread = HandlerThread("CutoutPhoneAlarms").apply { start() }
     private val owner = Handler(thread.looper)
@@ -62,8 +65,12 @@ class AndroidPhoneAlarmClient(private val context: Context) {
     @Volatile private var presentation = PhoneAlarmPresentation()
     private var activeIdentity: String? = null
     private var activeState: CutoutSessionStateHandle? = null
+    private var latestSession: MobileDeviceSessionSnapshotDto? = null
     private var activatedThisAttempt = false
     private var pendingEnableIdentity: String? = null
+    private var vehicleNameGeneration = 0L
+    private var savedVehicleName: String? = null
+    private var vehicleNameQueriedIdentity: String? = null
 
     init {
         ensureChannels()
@@ -75,6 +82,9 @@ class AndroidPhoneAlarmClient(private val context: Context) {
     fun addObserver(callback: (PhoneAlarmPresentation) -> Unit): AutoCloseable {
         observers += callback
         main.post { if (callback in observers) callback(presentation) }
+        // The alarm settings screen observes on attach; refresh the saved Rust name once
+        // per panel open, without coupling the lookup to the telemetry stream.
+        owner.post { refreshSavedVehicleNameForActiveIdentity() }
         return AutoCloseable { observers.remove(callback) }
     }
 
@@ -173,11 +183,15 @@ class AndroidPhoneAlarmClient(private val context: Context) {
 
         if (identity == null) {
             pendingEnableIdentity = null
+            latestSession = null
             if (activeIdentity != null) {
                 try { execute(state.deactivatePhoneAlarmDevice(), state) }
                 catch (error: Exception) { Log.w(TAG, "Could not deactivate phone alarms", error) }
+                vehicleNameGeneration++
+                savedVehicleName = null
             }
             activeIdentity = null
+            vehicleNameQueriedIdentity = null
             activatedThisAttempt = false
             updateCapability(state)
             refreshPresentation(state)
@@ -193,6 +207,12 @@ class AndroidPhoneAlarmClient(private val context: Context) {
             }
             activeIdentity = identity
             activatedThisAttempt = false
+            savedVehicleName = null
+            vehicleNameQueriedIdentity = null
+        }
+        latestSession = session
+        if (activeIdentity == identity && vehicleNameQueriedIdentity != identity) {
+            refreshSavedVehicleName(identity)
         }
         updateCapability(state)
         if (!activatedThisAttempt) {
@@ -213,6 +233,33 @@ class AndroidPhoneAlarmClient(private val context: Context) {
     private fun updateCapability(state: CutoutSessionStateHandle) {
         try { execute(state.setPhoneAlarmDeliveryCapability(capability()), state) }
         catch (error: Exception) { Log.w(TAG, "Could not update phone alarm delivery capability", error) }
+    }
+
+    private fun refreshSavedVehicleNameForActiveIdentity() {
+        val identity = activeIdentity ?: return
+        refreshSavedVehicleName(identity, force = true)
+    }
+
+    private fun refreshSavedVehicleName(identity: String, force: Boolean = false) {
+        if (activeIdentity != identity) return
+        if (!force && vehicleNameQueriedIdentity == identity) return
+        vehicleNameQueriedIdentity = identity
+        val nameGeneration = ++vehicleNameGeneration
+        rides.withDatabase({ database ->
+            database.deviceName(identity)?.takeIf(String::isNotBlank)
+        }) { result ->
+            // The shared database callback is delivered on Main; return to this owner's
+            // queue and reject a result for any identity that has since been retired.
+            owner.post {
+                if (activeIdentity != identity || vehicleNameGeneration != nameGeneration) return@post
+                result.fold(
+                    onSuccess = { savedVehicleName = it },
+                    onFailure = { Log.w(TAG, "Could not load saved phone-alarm vehicle name", it) },
+                )
+                val label = savedVehicleName ?: latestSession?.let(::deviceLabel)
+                if (label != null) publish(presentation.copy(deviceLabel = label))
+            }
+        }
     }
 
     private fun execute(actions: MobilePhoneAlarmActionsDto, state: CutoutSessionStateHandle) {
@@ -274,7 +321,7 @@ class AndroidPhoneAlarmClient(private val context: Context) {
         catch (failure: Exception) { null }
         publish(presentation.copy(
             preferences = settings,
-            deviceLabel = session?.let(::deviceLabel) ?: presentation.deviceLabel,
+            deviceLabel = session?.let { savedVehicleName ?: deviceLabel(it) } ?: presentation.deviceLabel,
             authorization = authorization(),
             error = error ?: presentation.error,
             permissionRequestAvailable = canRequestRuntimePermission(),
