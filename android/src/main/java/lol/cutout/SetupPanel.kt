@@ -18,13 +18,18 @@ class SetupPanel(
     private val onOpenUrl: (String) -> Unit,
     private val onAccountDeleted: () -> Unit = {},
 ) : ScrollView(context) {
+    private enum class SavedDeviceRetryAction { LOAD, FORGET }
+
     private val ui = CutoutUi(context)
     private val page = ui.column()
-    private val error = ui.text("", 14f, color = ui.orange)
-    private val retrySettings = ui.action(context.getString(R.string.setup_retry)) { reload() }.apply {
-        tag = "setup.retry"
-        visibility = View.GONE
-    }
+    private val autostartError = ui.text("", 14f, color = ui.red).apply { tag = "setup.ride-autostart.error" }
+    private val retryAutostart = ui.action(ui.label("setup.ride_autostart.retry")) {
+        reloadRideAutostart()
+    }.apply { tag = "setup.ride-autostart.retry"; visibility = View.GONE }
+    private val diagnosticsError = ui.text("", 14f, color = ui.red).apply { tag = "setup.diagnostics.error" }
+    private val retryDiagnostics = ui.action(ui.label("setup.diagnostics.retry")) {
+        reloadDiagnostics()
+    }.apply { tag = "setup.diagnostics.retry"; visibility = View.GONE }
     private val savedDeviceSection = ui.column().apply {
         tag = "setup.saved_device.section"
         background = ui.rounded(18)
@@ -56,26 +61,40 @@ class SetupPanel(
         visibility = View.GONE
     }
     private val retryForgetSavedDevice = ui.action(ui.label("setup.saved_device.retry")) {
-        forgetDevice()
+        when (savedDeviceRetryAction) {
+            SavedDeviceRetryAction.LOAD -> refreshSavedDevice()
+            SavedDeviceRetryAction.FORGET -> forgetDevice()
+            null -> Unit
+        }
     }.apply {
         tag = "setup.saved_device.retry"
         visibility = View.GONE
     }
     private var savedDeviceBusy = false
+    private var savedDeviceRetryAction: SavedDeviceRetryAction? = null
     private var savedDeviceReadGeneration = 0L
     private var disposed = false
     private var savedDeviceDialog: android.app.AlertDialog? = null
     private var binding = false
-    private val autostart = toggle(context.getString(R.string.setup_ride_autostart)) { enabled ->
+    private val autostart = toggle(ui.label("setup.ride_autostart")) { enabled ->
         app.rides.withCore({ it.setRideAutostartEnabled(enabled) }) { result ->
-            finishSettingChange(result)
+            finishAutostartChange(result)
+        }
+    }.apply {
+        tag = "setup.ride-autostart"
+        accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.hintText = ui.label("setup.ride_autostart.hint")
+                info.isShowingHintText = true
+            }
         }
     }
-    private val diagnostics = toggle(context.getString(R.string.setup_diagnostics_automatic)) { enabled ->
+    private val diagnostics = toggle(ui.label("setup.diagnostics.automatic")) { enabled ->
         app.bluetooth.setDiagnosticRecordingEnabled(enabled) { result ->
-            finishSettingChange(result)
+            finishDiagnosticsChange(result)
         }
-    }
+    }.apply { tag = "setup.diagnostics.automatic" }
     private val accountStatus = ui.text(context.getString(R.string.setup_account_loading), 14f, color = ui.muted).apply {
         tag = "setup.account.status"
     }
@@ -110,12 +129,20 @@ class SetupPanel(
         page.addView(savedDeviceSection)
         page.addView(ui.space(20))
         page.addView(autostart)
+        page.addView(autostartError)
+        autostartError.visibility = View.GONE
+        page.addView(retryAutostart)
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.music), onClick = onMusic))
         page.addView(ui.space(20))
         page.addView(ui.text(context.getString(R.string.setup_diagnostics), 17f, true))
         page.addView(diagnostics)
-        page.addView(ui.text(context.getString(R.string.setup_diagnostics_detail), 14f, color = ui.muted))
+        page.addView(ui.text(ui.label("setup.diagnostics.explanation"), 14f, color = ui.muted).apply {
+            tag = "setup.diagnostics.explanation"
+        })
+        page.addView(diagnosticsError)
+        diagnosticsError.visibility = View.GONE
+        page.addView(retryDiagnostics)
         page.addView(ui.action(context.getString(R.string.captures), onClick = onCaptures))
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.setup_location), onClick = onLocation))
@@ -130,30 +157,15 @@ class SetupPanel(
             addView(accountReload, LayoutParams(-1, -2))
             addView(accountDelete, LayoutParams(-1, -2))
         })
-        page.addView(error)
-        error.visibility = View.GONE
-        page.addView(retrySettings)
         reload()
     }
 
-    fun reload(clearFailure: Boolean = true) {
+    fun reload() {
         refreshSavedDevice()
-        if (clearFailure) {
-            error.visibility = View.GONE
-            retrySettings.visibility = View.GONE
-            refreshAccount()
-        }
+        refreshAccount()
         autostart.isEnabled = false; diagnostics.isEnabled = false
-        app.rides.withCore({ it.rideAutostartEnabled() }) { result ->
-            if (disposed) return@withCore
-            result.onSuccess { binding = true; autostart.isChecked = it; binding = false; autostart.isEnabled = true }
-                .onFailure { showFailure(R.string.setup_load_failed) }
-        }
-        app.bluetooth.diagnosticRecordingEnabled { result ->
-            if (disposed) return@diagnosticRecordingEnabled
-            result.onSuccess { binding = true; diagnostics.isChecked = it; binding = false; diagnostics.isEnabled = true }
-                .onFailure { showFailure(R.string.setup_load_failed) }
-        }
+        loadRideAutostart()
+        loadDiagnostics()
     }
 
     /** Stop rendering asynchronous results after the owning Activity discards this panel. */
@@ -165,12 +177,15 @@ class SetupPanel(
 
     private fun refreshSavedDevice() {
         if (savedDeviceBusy) return
+        savedDeviceRetryAction = null
+        retryForgetSavedDevice.visibility = View.GONE
         val generation = ++savedDeviceReadGeneration
         savedDeviceStatus.text = ui.label("setup.saved_device.loading")
         app.bluetooth.savedDevice { result ->
             if (disposed || generation != savedDeviceReadGeneration) return@savedDevice
             result.onSuccess { id ->
                 val present = id != null
+                savedDeviceRetryAction = null
                 savedDeviceSection.visibility = if (present || savedDeviceBusy) View.VISIBLE else View.GONE
                 if (present) {
                     savedDeviceStatus.text = ui.label("setup.saved_device.status")
@@ -184,9 +199,9 @@ class SetupPanel(
                 savedDeviceSection.visibility = View.VISIBLE
                 savedDeviceStatus.text = ui.label("setup.saved_device.load_failed")
                 forgetSavedDevice.visibility = View.GONE
-                retryForgetSavedDevice.visibility = View.GONE
-                retrySettings.isEnabled = true
-                retrySettings.visibility = View.VISIBLE
+                savedDeviceRetryAction = SavedDeviceRetryAction.LOAD
+                retryForgetSavedDevice.visibility = View.VISIBLE
+                retryForgetSavedDevice.isEnabled = true
             }
         }
     }
@@ -194,6 +209,8 @@ class SetupPanel(
     private fun forgetDevice() {
         if (savedDeviceBusy || disposed) return
         savedDeviceBusy = true
+        savedDeviceRetryAction = null
+        retryForgetSavedDevice.visibility = View.GONE
         val generation = ++savedDeviceReadGeneration
         savedDeviceSection.visibility = View.VISIBLE
         savedDeviceStatus.text = ui.label("setup.saved_device.forgetting")
@@ -203,10 +220,12 @@ class SetupPanel(
             if (disposed || generation != savedDeviceReadGeneration) return@forgetSavedDevice
             savedDeviceBusy = false
             if (result.isSuccess) {
+                savedDeviceRetryAction = null
                 savedDeviceStatus.text = ui.label("setup.saved_device.success")
                 forgetSavedDevice.visibility = View.GONE
                 retryForgetSavedDevice.visibility = View.GONE
             } else {
+                savedDeviceRetryAction = SavedDeviceRetryAction.FORGET
                 savedDeviceStatus.text = ui.label("setup.saved_device.failure")
                 forgetSavedDevice.visibility = View.GONE
                 retryForgetSavedDevice.visibility = View.VISIBLE
@@ -284,15 +303,92 @@ class SetupPanel(
         content()
     }
 
-    private fun <T> finishSettingChange(result: Result<T>) {
+    private fun finishAutostartChange(result: Result<*>) {
         if (disposed) return
         if (result.isSuccess) {
-            reload()
+            clearAutostartFailure()
+            loadRideAutostart()
         } else {
-            showFailure()
-            // Read back the effective value without clearing the write failure.
-            reload(clearFailure = false)
+            showAutostartFailure(ui.label("setup.ride_autostart.save_failed"), canRetryLoad = false)
+            loadRideAutostart(clearFailureOnSuccess = false)
         }
+    }
+
+    private fun finishDiagnosticsChange(result: Result<*>) {
+        if (disposed) return
+        if (result.isSuccess) {
+            clearDiagnosticsFailure()
+            loadDiagnostics()
+        } else {
+            showDiagnosticsFailure(ui.label("setup.diagnostics.failed"))
+            loadDiagnostics(clearFailureOnSuccess = false)
+        }
+    }
+
+    private fun reloadRideAutostart() {
+        clearAutostartFailure()
+        autostart.isEnabled = false
+        loadRideAutostart()
+    }
+
+    private fun reloadDiagnostics() {
+        clearDiagnosticsFailure()
+        diagnostics.isEnabled = false
+        loadDiagnostics()
+    }
+
+    private fun loadRideAutostart(clearFailureOnSuccess: Boolean = true) {
+        app.rides.withCore({ it.rideAutostartEnabled() }) { result ->
+            if (disposed) return@withCore
+            result.onSuccess {
+                binding = true
+                autostart.isChecked = it
+                binding = false
+                autostart.isEnabled = true
+                if (clearFailureOnSuccess) clearAutostartFailure()
+            }.onFailure {
+                autostart.isEnabled = false
+                showAutostartFailure(ui.label("setup.ride_autostart.load_failed"))
+            }
+        }
+    }
+
+    private fun loadDiagnostics(clearFailureOnSuccess: Boolean = true) {
+        app.bluetooth.diagnosticRecordingEnabled { result ->
+            if (disposed) return@diagnosticRecordingEnabled
+            result.onSuccess {
+                binding = true
+                diagnostics.isChecked = it
+                binding = false
+                diagnostics.isEnabled = true
+                if (clearFailureOnSuccess) clearDiagnosticsFailure()
+            }.onFailure {
+                diagnostics.isEnabled = false
+                showDiagnosticsFailure(ui.label("setup.diagnostics.failed"))
+            }
+        }
+    }
+
+    private fun showAutostartFailure(message: String, canRetryLoad: Boolean = true) {
+        autostartError.text = message
+        autostartError.visibility = View.VISIBLE
+        retryAutostart.visibility = if (canRetryLoad) View.VISIBLE else View.GONE
+    }
+
+    private fun clearAutostartFailure() {
+        autostartError.visibility = View.GONE
+        retryAutostart.visibility = View.GONE
+    }
+
+    private fun showDiagnosticsFailure(message: String) {
+        diagnosticsError.text = message
+        diagnosticsError.visibility = View.VISIBLE
+        retryDiagnostics.visibility = View.VISIBLE
+    }
+
+    private fun clearDiagnosticsFailure() {
+        diagnosticsError.visibility = View.GONE
+        retryDiagnostics.visibility = View.GONE
     }
 
     private fun toggle(title: String, changed: (Boolean) -> Unit) = Switch(context).apply {
@@ -302,11 +398,6 @@ class SetupPanel(
         setOnCheckedChangeListener { _, selected -> if (!binding) { isEnabled = false; changed(selected) } }
     }
 
-    private fun showFailure(message: Int = R.string.setup_save_failed) {
-        error.text = context.getString(message)
-        error.visibility = View.VISIBLE
-        retrySettings.visibility = View.VISIBLE
-    }
 }
 
 private fun MobileChargingSyncCredentialState.accountStatusLabel(): Int = when (this) {

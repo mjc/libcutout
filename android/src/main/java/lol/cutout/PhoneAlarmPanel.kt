@@ -119,6 +119,7 @@ class PhoneAlarmPanel(
             deviceTitle.text = value.deviceLabel.orEmpty()
             settings?.let { renderPreferences(it) }
             authorization.text = context.getString(authorizationString(value.authorization))
+            authorization.contentDescription = "${notificationsTitle.text}: ${authorization.text}"
             requestPermission.visibility = if (value.permissionRequestAvailable) VISIBLE else GONE
             openSettings.visibility = if (value.authorization == AndroidPhoneAlarmAuthorization.DISABLED) VISIBLE else GONE
             error.text = value.error.orEmpty()

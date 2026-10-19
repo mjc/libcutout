@@ -71,6 +71,10 @@ open class PhoneAlarmPanelTest {
                     authorization = AndroidPhoneAlarmAuthorization.NOT_REQUESTED,
                     permissionRequestAvailable = true,
                 ))
+                val notificationStatus = find<TextView>(panel) { it.contentDescription?.startsWith(
+                    activity.getString(R.string.phone_alarm_notifications_section) + ":",
+                ) == true }
+                check(notificationStatus.contentDescription.toString().endsWith(notificationStatus.text.toString()))
                 check(find<Button>(panel, "phone-alarm.permission.request").isShown)
                 check(find<View>(panel, "phone-alarm.configured").isShown)
                 panel.render(PhoneAlarmPresentation(

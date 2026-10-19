@@ -37,7 +37,7 @@ open class ProductionAppTest {
         check(visibleText(activity, context.getString(R.string.picker_title)))
         clickDescription(activity, context.getString(R.string.more))
         clickDescription(activity, context.getString(R.string.setup))
-        check(visibleText(activity, context.getString(R.string.setup_ride_autostart)))
+        check(visibleText(activity, CutoutUi(activity).label("setup.ride_autostart")))
         clickDescription(activity, context.getString(R.string.devices))
         check(visibleText(activity, context.getString(R.string.picker_title)))
     }
