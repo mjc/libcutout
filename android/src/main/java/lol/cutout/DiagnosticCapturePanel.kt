@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
@@ -25,6 +26,9 @@ class DiagnosticCapturePanel(
     private val content = ui.column()
     private val library = ScrollView(context).apply {
         isFillViewport = true
+        clipToPadding = false
+        isFocusableInTouchMode = true
+        descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
         addView(content, LayoutParams(-1, -2))
     }
     private var detail: SavedCaptureDetailPanel? = null
@@ -39,14 +43,37 @@ class DiagnosticCapturePanel(
         }
     private val renderHandler = Handler(Looper.getMainLooper())
     private val queuedRender = Runnable { render() }
+    private val elapsedHandler = Handler(Looper.getMainLooper())
+    private val elapsedTick = object : Runnable {
+        override fun run() {
+            if (disposed || !isAttachedToWindow || windowVisibility != View.VISIBLE || !showsActive || !hasActiveCapture()) return
+            activeCapture.updateElapsed(SystemClock.elapsedRealtime().toULong())
+            elapsedHandler.postDelayed(this, 1_000L)
+        }
+    }
     private var captureState = bluetooth.diagnostics.current()
     private var bleState = bluetooth.latestPresentation
     private var disposed = false
-    private var progressText: TextView? = null
-    private var packetText: TextView? = null
     private var labels: CaptureLabelControls? = null
     private var labelGeneration: MobileCaptureGenerationDto? = null
     private var researchDialog: android.app.Dialog? = null
+    private val activeCapture = ActiveCapturePanel(context, { expected, completed ->
+        val current = captureState.lifecycle.attempt
+        if (!disposed && current?.generation == expected && current.origin == MobileCaptureOriginDto.MANUAL) {
+            bluetooth.finishManualCapture(completed)
+        } else completed(false)
+    }) {
+        if (!disposed) Toast.makeText(context, R.string.capture_save_failed, Toast.LENGTH_LONG).show()
+    }
+    private val settingsSummary = CaptureSettingsObservationSummary(context, { done ->
+        val generation = captureState.lifecycle.attempt?.generation?.copy()
+        if (generation == null) done(Result.failure(IllegalStateException("No active capture")))
+        else bluetooth.diagnostics.activeSettings(generation, done)
+    }, {
+        if (!disposed && showsActive) captureState.lifecycle.attempt?.generation?.copy()?.let(::showActiveSettingsReview)
+    })
+    private var renderedObservations = captureState.settingsObservations.toList()
+    private var captureGeneration = captureState.lifecycle.attempt?.generation?.copy()
     private val captureObserver = bluetooth.diagnostics.observe { next ->
         renderCapture(next)
     }
@@ -59,6 +86,11 @@ class DiagnosticCapturePanel(
     init {
         setBackgroundColor(ui.background)
         addView(library, LayoutParams(-1, -1))
+        addView(activeCapture.footer, LayoutParams(-1, -2, android.view.Gravity.BOTTOM).apply {
+            gravity = android.view.Gravity.BOTTOM
+        })
+        activeCapture.footer.elevation = ui.dp(4).toFloat()
+        activeCapture.footer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateFooterInset() }
         content.tag = "captures.home"
         render()
         refresh()
@@ -72,6 +104,7 @@ class DiagnosticCapturePanel(
     fun dispose() {
         disposed = true
         renderHandler.removeCallbacks(queuedRender)
+        elapsedHandler.removeCallbacks(elapsedTick)
         captureObserver.close()
         bleObserver.close()
         researchDialog?.dismiss()
@@ -80,30 +113,37 @@ class DiagnosticCapturePanel(
         detail = null
         artifactDetail?.dispose()
         artifactDetail = null
+        activeCapture.dispose()
+        settingsSummary.dispose()
     }
 
     /** Progress and admitted label updates retain controls and their accessibility focus. */
     internal fun renderCapture(next: DiagnosticCapturePresentation) {
         if (disposed) return
+        val nextGeneration = next.lifecycle.attempt?.generation?.copy()
+        if (nextGeneration != captureGeneration) {
+            captureGeneration = nextGeneration
+            settingsSummary.reset(next.settingsObservations)
+            renderedObservations = next.settingsObservations.toList()
+        }
         fun structure(value: DiagnosticCapturePresentation) = value.copy(
             writerStatus = null, notificationCount = 0UL, activeLabels = emptyList(),
+            settingsObservations = emptyList(), startedElapsedMillis = null, finishedElapsedMillis = null,
         )
         val rebuild = structure(next) != structure(captureState) ||
             (next.writerStatus == null) != (captureState.writerStatus == null) ||
             next.writerStatus?.lastError != captureState.writerStatus?.lastError
         captureState = next
-        if (rebuild) scheduleRender() else updateProgress()
+        if (rebuild) scheduleRender()
         labels?.render(next)
-    }
-
-    private fun updateProgress() {
-        captureState.writerStatus?.let { status ->
-            progressText?.text = context.getString(
-                R.string.capture_writer_status, status.queuedMessages.toString(),
-                android.text.format.Formatter.formatShortFileSize(context, status.bytesWritten.toLong()),
-            )
-            packetText?.text = context.getString(R.string.capture_notification_count, captureState.notificationCount.toString())
+        if (next.settingsObservations != renderedObservations) {
+            renderedObservations = next.settingsObservations.toList()
+            settingsSummary.render(renderedObservations)
         }
+        if (showsActive && hasActiveCapture()) {
+            activeCapture.render(next, showFooter = true)
+            ensureElapsedTick()
+        } else elapsedHandler.removeCallbacks(elapsedTick)
     }
 
     private fun scheduleRender() {
@@ -114,8 +154,7 @@ class DiagnosticCapturePanel(
     private fun render() {
         if (disposed) return
         content.removeAllViews()
-        progressText = null
-        packetText = null
+        elapsedHandler.removeCallbacks(elapsedTick)
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(28))
         val lifecycle = captureState.lifecycle
         val attempt = lifecycle.attempt
@@ -128,7 +167,9 @@ class DiagnosticCapturePanel(
             section("") {
                 addView(ui.navigationRow(ui.label("captures.active"), CutoutSymbol.SIGNAL) {
                     showsActive = true
+                    library.requestFocus()
                     library.scrollTo(0, 0)
+                    settingsSummary.refresh()
                     render()
                 }.apply { tag = "captures.active.open" })
                 captureState.deviceName?.takeIf(String::isNotBlank)?.let {
@@ -138,84 +179,73 @@ class DiagnosticCapturePanel(
             content.addView(ui.space(18))
         }
         if (showsActive && attempt != null) {
-            section(context.getString(R.string.capture_active)) {
-                val stage = stageLabel(attempt.stage)
-                addView(ui.text(stage, 18f, true))
-                captureState.deviceName?.takeIf(String::isNotBlank)?.let {
-                    addView(ui.text(it, 15f, color = ui.muted))
-                }
+            section("") {
+                (activeCapture.header.parent as? ViewGroup)?.removeView(activeCapture.header)
+                addView(activeCapture.header)
                 captureState.fileName?.let { addView(ui.text(it, 13f, color = ui.muted)) }
-                captureState.note?.takeIf(String::isNotBlank)?.let { addView(ui.text(it, 14f, color = ui.muted)) }
-                captureState.writerStatus?.let { status ->
-                    progressText = ui.text("", 14f, color = ui.muted).also { addView(it) }
-                    packetText = ui.text("", 14f, color = ui.muted).also { addView(it) }
-                    updateProgress()
-                    status.lastError?.let { addView(ui.text(it, 14f, color = ui.red)) }
+                captureState.note?.takeIf { !it.isNullOrBlank() && it != captureState.deviceKind }?.let {
+                    addView(ui.text(it, 14f, color = ui.muted))
                 }
-                addView(ui.space(16))
-                if (labelGeneration != attempt.generation) {
-                    labelGeneration = attempt.generation.copy()
-                    labels = CaptureLabelControls(context, attempt.generation.copy(), bluetooth.diagnostics::changeLabel) { error ->
-                        if (!disposed && captureState.lifecycle.attempt?.generation == attempt.generation) {
-                            val key = when (error) {
-                                is MobileCaptureAnnotationException.CapacityReached -> "captures.labels_full"
-                                is MobileCaptureAnnotationException.NotRecording -> "captures.labels_not_recording"
-                                else -> "captures.labels_failed"
-                            }
-                            AlertDialog.Builder(context).setTitle(ui.label("captures.label_not_recorded"))
-                                .setMessage(ui.label(key)).setPositiveButton(android.R.string.ok, null).show()
+            }
+            content.addView(ui.space(14))
+            if (labelGeneration != attempt.generation) {
+                labelGeneration = attempt.generation.copy()
+                labels = CaptureLabelControls(context, attempt.generation.copy(), bluetooth.diagnostics::changeLabel) { error ->
+                    if (!disposed && captureState.lifecycle.attempt?.generation == attempt.generation) {
+                        val key = when (error) {
+                            is MobileCaptureAnnotationException.CapacityReached -> "captures.labels_full"
+                            is MobileCaptureAnnotationException.NotRecording -> "captures.labels_not_recording"
+                            else -> "captures.labels_failed"
                         }
+                        AlertDialog.Builder(context).setTitle(ui.label("captures.label_not_recorded"))
+                            .setMessage(ui.label(key)).setPositiveButton(android.R.string.ok, null).show()
                     }
                 }
+            }
+            section("") {
                 checkNotNull(labels).let { controls ->
                     (controls.parent as? ViewGroup)?.removeView(controls)
                     controls.render(captureState)
                     addView(controls, LinearLayout.LayoutParams(-1, -2))
                 }
-                addView(ui.space(12))
-                val canAnnotate = attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)
+            }
+            content.addView(ui.space(14))
+            val canAnnotate = attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)
+            section("") {
                 addView(ui.action(ui.label("capture.settings.worksheet.title")) {
                     val expected = attempt.generation.copy()
                     researchDialog?.dismiss()
                     researchDialog = CaptureSettingsWorksheet(context) { draft, done ->
-                        bluetooth.diagnostics.recordSettings(expected, draft, done)
+                        bluetooth.diagnostics.recordSettings(expected, draft) { result ->
+                            done(result)
+                            if (!disposed && result.isSuccess && captureState.lifecycle.attempt?.generation == expected) {
+                                settingsSummary.refresh()
+                            }
+                        }
                     }.show()
                 }.apply {
                     tag = "capture.settings.open"
                     isEnabled = canAnnotate
                     alpha = if (isEnabled) 1f else .45f
                 })
-                addView(ui.action(ui.label("capture.settings.review.title")) {
-                    val expected = attempt.generation.copy()
-                    researchDialog?.dismiss()
-                    researchDialog = CaptureSettingsReview(context,
-                        { done -> bluetooth.diagnostics.activeSettings(expected, done) },
-                        { requests, done -> bluetooth.diagnostics.activeSettingsReadback(expected, requests, done) },
-                    ).show()
-                }.apply { tag = "capture.settings.review.open"; isEnabled = canAnnotate })
-                if (attempt.origin == MobileCaptureOriginDto.MANUAL &&
-                    attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)) {
-                    addView(ui.space(12))
-                    val actionLabel = if (attempt.stage == MobileCaptureStageDto.SAVE_FAILED)
-                        R.string.capture_retry_save else R.string.capture_stop
-                    addView(ui.action(context.getString(actionLabel), primary = true) {
-                        bluetooth.finishManualCapture { admitted ->
-                            if (!disposed) {
-                                if (!admitted) Toast.makeText(context, R.string.capture_save_failed, Toast.LENGTH_LONG).show()
-                                refresh()
-                            }
-                        }
-                    }.apply { tag = "captures.active.stop" })
-                } else if (attempt.origin == MobileCaptureOriginDto.AUTOMATIC) {
-                    addView(ui.space(6))
-                    addView(ui.text(context.getString(R.string.capture_automatic_description), 13f, color = ui.muted))
-                }
+                addView(ui.space(8))
+                (settingsSummary.parent as? ViewGroup)?.removeView(settingsSummary)
+                addView(settingsSummary, LinearLayout.LayoutParams(-1, -2))
+            }
+            content.addView(ui.space(14))
+            section("") {
+                (activeCapture.technical.parent as? ViewGroup)?.removeView(activeCapture.technical)
+                addView(activeCapture.technical)
             }
             captureState.error?.let { content.addView(ui.text(it, 14f, color = ui.red)) }
-            content.addView(ui.text(ui.label("captures.leave_hint"), 13f, color = ui.muted))
+            activeCapture.render(captureState, showFooter = true)
+            updateFooterInset()
+            ensureElapsedTick()
             onTitleChanged(navigationTitle)
             return
         }
+        activeCapture.render(captureState, showFooter = false)
+        updateFooterInset()
 
         section("") {
             addView(ui.action(ui.label("captures.new"), primary = true) {
@@ -283,6 +313,40 @@ class DiagnosticCapturePanel(
         content.addView(block)
     }
 
+    private fun hasActiveCapture(): Boolean {
+        val stage = captureState.lifecycle.attempt?.stage ?: return false
+        return stage !in setOf(MobileCaptureStageDto.SAVED, MobileCaptureStageDto.FAILED)
+    }
+
+    private fun updateFooterInset() {
+        val bottom = if (showsActive && activeCapture.footer.visibility == View.VISIBLE)
+            activeCapture.footer.height + ui.dp(16) else ui.dp(28)
+        if (content.paddingBottom != bottom) {
+            content.setPadding(content.paddingLeft, content.paddingTop, content.paddingRight, bottom)
+        }
+    }
+
+    private fun ensureElapsedTick() {
+        if (disposed || !isAttachedToWindow || windowVisibility != View.VISIBLE || !showsActive || !hasActiveCapture()) return
+        elapsedHandler.removeCallbacks(elapsedTick)
+        elapsedHandler.postDelayed(elapsedTick, 1_000L)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        ensureElapsedTick()
+    }
+
+    override fun onDetachedFromWindow() {
+        elapsedHandler.removeCallbacks(elapsedTick)
+        super.onDetachedFromWindow()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == View.VISIBLE) ensureElapsedTick() else elapsedHandler.removeCallbacks(elapsedTick)
+    }
+
     private fun stageLabel(stage: MobileCaptureStageDto?): String = when (stage) {
         null, MobileCaptureStageDto.STARTING -> context.getString(R.string.capture_starting)
         MobileCaptureStageDto.RECORDING -> context.getString(R.string.capture_recording)
@@ -302,11 +366,16 @@ class DiagnosticCapturePanel(
             artifactDetail = null
             removeAllViews()
             addView(library, LayoutParams(-1, -1))
+            addView(activeCapture.footer, LayoutParams(-1, -2, android.view.Gravity.BOTTOM).apply {
+                gravity = android.view.Gravity.BOTTOM
+            })
             onTitleChanged(navigationTitle)
             return true
         }
         if (showsActive) {
             showsActive = false
+            elapsedHandler.removeCallbacks(elapsedTick)
+            settingsSummary.reset(captureState.settingsObservations)
             render()
             return true
         }
@@ -418,6 +487,15 @@ class DiagnosticCapturePanel(
         ).show()
     }
 
+    private fun showActiveSettingsReview(generation: MobileCaptureGenerationDto) {
+        if (disposed || captureState.lifecycle.attempt?.generation != generation) return
+        researchDialog?.dismiss()
+        researchDialog = CaptureSettingsReview(context,
+            { done -> bluetooth.diagnostics.activeSettings(generation, done) },
+            { requests, done -> bluetooth.diagnostics.activeSettingsReadback(generation, requests, done) },
+        ).show()
+    }
+
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
         val candidates = bleState.devices.filter { !it.id.isBlank() }
         if (candidates.isEmpty()) {
@@ -463,7 +541,10 @@ class DiagnosticCapturePanel(
                         bluetooth.startManualCapture(device.id, null, input.text.toString()) { started ->
                             if (!disposed) {
                                 if (!started) Toast.makeText(context, R.string.capture_start_failed, Toast.LENGTH_LONG).show()
-                                else showsActive = true
+                                else {
+                                    showsActive = true
+                                    settingsSummary.refresh()
+                                }
                                 refresh()
                             }
                         }
