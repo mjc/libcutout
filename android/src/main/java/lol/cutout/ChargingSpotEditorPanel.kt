@@ -143,7 +143,7 @@ class ChargingSpotEditorPanel(
             tag = "charging.editor.scroll"
             isFillViewport = true
             clipToPadding = false
-            addView(body, ScrollView.LayoutParams(-1, -2))
+            addView(body, android.widget.FrameLayout.LayoutParams(-1, -2))
         }, LayoutParams(-1, 0, 1f))
 
         val choices = ui.row().apply { tag = "charging.editor.kind-choices" }
