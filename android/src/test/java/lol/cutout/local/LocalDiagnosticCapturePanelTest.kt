@@ -9,6 +9,7 @@ import lol.cutout.DiagnosticCapturePresentation
 import uniffi.cutout_mobile_ffi.*
 import lol.cutout.CutoutApplication
 import lol.cutout.DiagnosticCapturePanel
+import lol.cutout.DiagnosticCaptureArtifact
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,6 +20,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w393dp-h852dp-night-xhdpi", application = LocalTestApplication::class)
@@ -153,6 +155,56 @@ class LocalDiagnosticCapturePanelTest {
             panel.dispose()
             host.pause().stop().destroy()
         }
+    }
+
+    @Test
+    fun sessionArtifactOpensFileDetailAndBackReturnsToSameLibraryRow() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val bluetooth = (activity.application as CutoutApplication).bluetooth
+        val titles = mutableListOf<String>()
+        val missingFile = File(activity.cacheDir, "missing-session-capture.jsonl")
+        val artifact = DiagnosticCaptureArtifact(
+            id = "artifact-session-1",
+            file = missingFile,
+            origin = MobileCaptureOriginDto.AUTOMATIC,
+            platformIdentifier = "opaque-native-id",
+            deviceName = "Falcon",
+            description = "Connection attempt capture",
+            startedAtUnixMillis = 1_792_357_200_000UL,
+            elapsedMillis = 12_000UL,
+            status = MobileCaptureWriterStatusDto(0UL, 0UL, 0UL, 256UL, 256UL, false, null),
+            notificationCount = 1UL,
+            error = null,
+        )
+        val panel = DiagnosticCapturePanel(activity, bluetooth, {}, onTitleChanged = { titles += it })
+        activity.setContentView(panel)
+        val loaded = CountDownLatch(1)
+        val observer = bluetooth.diagnostics.observe { if (it.ready && !it.loading) loaded.countDown() }
+        try {
+            assertTrue(awaitWithMainLooper(loaded, 15, TimeUnit.SECONDS))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            panel.renderCapture(DiagnosticCapturePresentation(ready = true, sessionArtifacts = listOf(artifact)))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+            val row = checkNotNull(panel.findViewWithTag<View>("captures.session.artifact-session-1"))
+            val initialTitle = titles.last()
+            assertTrue(row.performClick())
+            assertNotNull(panel.findViewWithTag<View>("captures.artifact.detail"))
+            assertTrue(panelText(panel).contains("Capture file is unavailable"))
+            assertTrue(titles.last().isNotBlank())
+            assertTrue(panel.handleBack())
+            assertSame(row, panel.findViewWithTag("captures.session.artifact-session-1"))
+            assertEquals(initialTitle, titles.last())
+        } finally {
+            observer.close()
+            panel.dispose()
+            host.pause().stop().destroy()
+        }
+    }
+
+    private fun panelText(view: View): String = buildString {
+        if (view is android.widget.TextView) append(view.text).append('\n')
+        if (view is android.view.ViewGroup) for (index in 0 until view.childCount) append(panelText(view.getChildAt(index)))
     }
 
     @Test

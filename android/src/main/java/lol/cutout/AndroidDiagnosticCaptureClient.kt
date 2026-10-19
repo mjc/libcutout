@@ -35,8 +35,11 @@ data class DiagnosticCaptureArtifact(
     val id: String,
     val file: File,
     val origin: MobileCaptureOriginDto,
+    val platformIdentifier: String,
     val deviceName: String?,
     val description: String?,
+    val startedAtUnixMillis: ULong,
+    val elapsedMillis: ULong,
     val status: MobileCaptureWriterStatusDto,
     val notificationCount: ULong,
     val error: String?,
@@ -59,6 +62,9 @@ class AndroidDiagnosticCaptureClient internal constructor(
         val origin: MobileCaptureOriginDto,
         val description: String?,
         val connectionToken: MobileConnectionAttemptTokenDto?,
+        val startedAtUnixMillis: ULong,
+        val startedElapsedMillis: ULong,
+        var finishedElapsedMillis: ULong? = null,
         var priorOutcome: MobileCaptureWriteOutcomeDto = MobileCaptureWriteOutcomeDto.Accepted,
         var notificationCount: ULong = 0UL,
         var finalizationStarted: Boolean = false,
@@ -281,9 +287,10 @@ class AndroidDiagnosticCaptureClient internal constructor(
         }
         try {
             val directory = File(context.filesDir, "DiagnosticCaptures").apply { mkdirs() }
+            val startedAtUnixMillis = System.currentTimeMillis().toULong()
             val prepared = prepareCaptureWriter(
                 MobileCaptureStartRequestDto(
-                    wallClockUnixSeconds = System.currentTimeMillis() / 1000.0,
+                    wallClockUnixSeconds = startedAtUnixMillis.toDouble() / 1000.0,
                     platformId = platformId,
                     advertisedServices = advertisedServices,
                     directoryPath = directory.absolutePath,
@@ -300,10 +307,11 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 ),
                 database(),
             )
-            val started = prepared.start(SystemClock.elapsedRealtime().toULong())
+            val startedElapsedMillis = SystemClock.elapsedRealtime().toULong()
+            val started = prepared.start(startedElapsedMillis)
             val writer = Writer(
                 generation, started.builder, started.path, platformId, advertisedName,
-                origin, description, connectionToken,
+                origin, description, connectionToken, startedAtUnixMillis, startedElapsedMillis,
             )
             if (!owner.captureWriterStarted(generation)) {
                 started.builder.finishWriterAndPublishCapture(null)
@@ -461,6 +469,8 @@ class AndroidDiagnosticCaptureClient internal constructor(
         if (writer !== active) { completed?.invoke(); return }
         if (active.finalizationStarted) { completed?.let(active.finishWaiters::add); return }
         active.finalizationStarted = true
+        // Keep duration tied to the admitted end of capture, not async flush/database work.
+        active.finishedElapsedMillis = SystemClock.elapsedRealtime().toULong()
         completed?.let(active.finishWaiters::add)
         state().retireCaptureWriter(active.generation)
         val publication = MobileCaptureHistoryPublicationDto(
@@ -506,7 +516,11 @@ class AndroidDiagnosticCaptureClient internal constructor(
             if (file.parentFile == File(context.filesDir, "DiagnosticCaptures").canonicalFile && file.isFile) {
                 DiagnosticCaptureArtifact(
                     id = artifact.id.toString(), file = file, origin = active.origin,
+                    platformIdentifier = active.platformId,
                     deviceName = active.advertisedName, description = active.description,
+                    startedAtUnixMillis = active.startedAtUnixMillis,
+                    elapsedMillis = ((active.finishedElapsedMillis ?: active.startedElapsedMillis)
+                        .let { if (it >= active.startedElapsedMillis) it - active.startedElapsedMillis else 0UL }),
                     status = artifact.status,
                     notificationCount = active.notificationCount,
                     error = if (decision.databasePublicationFailed) context.getString(R.string.capture_database_publish_failed) else null,
