@@ -61,7 +61,7 @@ open class PackPanelTest {
                 val panel = PackPanel(activity)
                 activity.setContentView(panel)
                 panel.render(descriptor)
-                val first = panel.findViewWithTag<Button>("pack.group.1")
+                val first = panel.findViewWithTag<View>("pack.group.1")
                     ?: error("The BMS map did not render its first observed group")
                 first.performClick()
                 check(texts(panel).contains(activity.getString(R.string.pack_resistance)))
@@ -93,7 +93,7 @@ open class PackPanelTest {
                 panel.render(replay.copy(bms = withoutVoltage))
                 buttons(panel).single { it.text == activity.getString(R.string.pack_cell_map) }.performClick()
 
-                val first = panel.findViewWithTag<Button>("pack.group.1")
+                val first = panel.findViewWithTag<View>("pack.group.1")
                     ?: error("An observed group with unavailable voltage disappeared from the cell map")
                 check(first.contentDescription.toString().contains(activity.getString(R.string.unavailable)))
                 first.performClick()

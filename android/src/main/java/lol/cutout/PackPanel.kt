@@ -1,11 +1,15 @@
 package lol.cutout
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.graphics.drawable.RippleDrawable
 import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.LinearLayout
@@ -91,7 +95,8 @@ class PackPanel(context: Context) : ScrollView(context) {
             snapshot?.balancingSummary?.isNotBlank() == true,
             snapshot?.faultSummary != null,
             groups.map { g -> listOf(
-                g.index, g.packNumber, g.label, g.voltage != null, g.alertLevel,
+                g.index, g.packNumber, g.label, g.voltage != null,
+                g.alertLevel == MobileBmsAlertLevelDto.WARNING || g.alertLevel == MobileBmsAlertLevelDto.CRITICAL,
                 g.temperature != null, g.resistance != null, g.detail != null,
                 g.recentVoltages.size, g.latestVoltage != null, g.isBalancing != null,
             ) },
@@ -196,8 +201,12 @@ class PackPanel(context: Context) : ScrollView(context) {
                 page.addView(counts)
                 page.addView(ui.space(12))
                 page.addView(ui.row().apply {
-                    addView(ui.action(context.getString(R.string.pack_overview), !showCells) { showCells = false; rebuild() }, LinearLayout.LayoutParams(0, -2, 1f))
-                    addView(ui.action(context.getString(R.string.pack_cell_map), showCells) { showCells = true; rebuild() }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(ui.action(context.getString(R.string.pack_overview), !showCells) { showCells = false; rebuild() }.apply {
+                        tag = "pack.mode.overview"; isSelected = !showCells
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(ui.action(context.getString(R.string.pack_cell_map), showCells) { showCells = true; rebuild() }.apply {
+                        tag = "pack.mode.cell-map"; isSelected = showCells
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
                 })
                 page.addView(ui.space(10))
                 if (showCells) renderCellMap(snapshot) else renderOverview(snapshot)
@@ -238,9 +247,15 @@ class PackPanel(context: Context) : ScrollView(context) {
         }
         renderMeasurements(snapshot)
         snapshot.groups.filter { it.alertLevel == MobileBmsAlertLevelDto.WARNING || it.alertLevel == MobileBmsAlertLevelDto.CRITICAL }.forEach { g ->
-            page.addView(ui.action(context.getString(R.string.pack_warning, groupName(g))) {
+            val warning = ui.action(context.getString(R.string.pack_warning, groupName(g))) {
                 selectedGroup = g.index; rebuild()
-            }.apply { setTextColor(if (g.alertLevel == MobileBmsAlertLevelDto.CRITICAL) ui.red else ui.orange) })
+            }
+            bind {
+                val current = group(g.index) ?: g
+                warning.text = context.getString(R.string.pack_warning, groupName(current))
+                warning.setTextColor(if (current.alertLevel == MobileBmsAlertLevelDto.CRITICAL) ui.red else ui.orange)
+            }
+            page.addView(warning)
         }
         if (snapshot.groups.isNotEmpty()) {
             page.addView(ui.space(12)); sectionTitle(context.getString(R.string.pack_cells))
@@ -322,31 +337,125 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun renderGroups(groups: List<MobileBmsGroupSnapshotDto>) = groupGrid(page, groups)
 
     private fun groupGrid(parent: LinearLayout, groups: List<MobileBmsGroupSnapshotDto>) {
-        val grid = GridLayout(context).apply { columnCount = 3 }
+        val grid = GridLayout(context).apply {
+            tag = "pack.group-grid"
+            columnCount = groupColumnCount()
+            addOnLayoutChangeListener { view, left, _, right, _, oldLeft, _, oldRight, _ ->
+                if (right - left != oldRight - oldLeft) {
+                    val next = groupColumnCount(right - left)
+                    if (columnCount != next) columnCount = next
+                }
+            }
+        }
         groups.forEach { g ->
             val index = g.index
-            val button = ui.action("", onClick = { selectedGroup = index; rebuild() }).apply {
-                tag = "pack.group.${g.index}"; textSize = 14f; gravity = Gravity.CENTER; minHeight = ui.dp(64)
+            val cellShape = ui.rounded(8, ui.card, true)
+            val cell = ui.column().apply {
+                tag = "pack.group.${g.index}"
+                minimumHeight = maxOf(ui.dp(60), (60 * resources.displayMetrics.scaledDensity).toInt())
+                setPadding(ui.dp(8), ui.dp(6), ui.dp(8), ui.dp(6))
+                background = RippleDrawable(
+                    ColorStateList.valueOf(if (ui.dark) 0x33FFFFFF else 0x22000000),
+                    cellShape,
+                    ui.rounded(8, Color.WHITE, false),
+                )
+                isClickable = true
+                isFocusable = true
+                descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                setOnClickListener { selectedGroup = index; rebuild() }
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(
+                        host: View,
+                        info: android.view.accessibility.AccessibilityNodeInfo,
+                    ) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = android.widget.Button::class.java.name
+                        info.isClickable = true
+                        info.isFocusable = true
+                        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                    }
+                }
             }
+            val top = ui.row()
+            val title = ui.text("", 11f, color = ui.muted).apply {
+                tag = "pack.group.title.$index"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            val alert = ui.text("", 13f, true).apply {
+                tag = "pack.group.alert.$index"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            top.addView(alert)
+            cell.addView(top, LinearLayout.LayoutParams(-1, -2))
+            cell.addView(ui.space(2))
+            val voltage = ui.text("", 16f).apply {
+                tag = "pack.group.value.$index"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                fontFeatureSettings = "tnum"
+            }
+            cell.addView(voltage, LinearLayout.LayoutParams(-1, -2))
             bind {
                 val current = group(index)
-                button.text = if (current == null) "${groupName(g)}\n—" else "${groupName(current)}\n${groupVoltage(current) ?: "—"}"
-                button.setTextColor(current?.let { alertColor(it.alertLevel) } ?: ui.muted)
-                button.contentDescription = context.getString(R.string.pack_group_accessibility,
-                    current?.let(::groupName) ?: groupName(g), current?.let(::groupVoltage) ?: context.getString(R.string.unavailable))
+                val displayed = current ?: g
+                cellShape.setStroke(ui.dp(1), groupCellStroke(displayed.alertLevel))
+                title.text = groupReadingLabel(displayed)
+                voltage.text = current?.let(::groupVoltage) ?: context.getString(R.string.unavailable)
+                voltage.setTextColor(current?.let { alertColor(it.alertLevel) } ?: ui.muted)
+                alert.text = when (displayed.alertLevel) {
+                    MobileBmsAlertLevelDto.CRITICAL, MobileBmsAlertLevelDto.WARNING -> "!"
+                    MobileBmsAlertLevelDto.UNKNOWN -> "?"
+                    MobileBmsAlertLevelDto.NOMINAL -> ""
+                }
+                alert.setTextColor(alertColor(displayed.alertLevel))
+                val accessibility = mutableListOf(
+                    context.getString(R.string.pack_group_accessibility, groupName(displayed), voltage.text),
+                )
+                if (displayed.alertLevel == MobileBmsAlertLevelDto.WARNING || displayed.alertLevel == MobileBmsAlertLevelDto.CRITICAL) {
+                    accessibility += context.getString(R.string.pack_cell_warning)
+                } else if (displayed.alertLevel == MobileBmsAlertLevelDto.UNKNOWN) {
+                    accessibility += context.getString(R.string.setting_unknown)
+                }
+                if (displayed.isBalancing == true) accessibility += context.getString(R.string.pack_balancing)
+                displayed.detail?.takeIf(String::isNotBlank)?.let(accessibility::add)
+                cell.contentDescription = accessibility.joinToString(", ")
             }
-            grid.addView(button, GridLayout.LayoutParams().apply {
-                width = 0; height = ui.dp(74); columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+            grid.addView(cell, GridLayout.LayoutParams().apply {
+                width = 0; height = -2; columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 setMargins(ui.dp(3), ui.dp(3), ui.dp(3), ui.dp(3))
             })
         }
         parent.addView(grid, LinearLayout.LayoutParams(-1, -2))
     }
 
+    private fun groupColumnCount(width: Int = (resources.displayMetrics.widthPixels - ui.dp(46)).coerceAtLeast(0)): Int {
+        val minWidth = if (resources.configuration.fontScale >= 1.3f) 240 else 80
+        val spacing = ui.dp(8)
+        val available = width.coerceAtLeast(ui.dp(minWidth))
+        return ((available + spacing) / (ui.dp(minWidth) + spacing)).coerceAtLeast(1)
+    }
+
+    private fun groupReadingLabel(group: MobileBmsGroupSnapshotDto): String {
+        val pack = group.packNumber
+        val reading = group.packReadingIndex
+        return if (pack != null && reading != null) {
+            "P${pack.toInt()} · ${reading.toInt().toString().padStart(2, '0')}"
+        } else group.index.toString().padStart(2, '0')
+    }
+
+    private fun groupCellStroke(level: MobileBmsAlertLevelDto): Int = when (level) {
+        MobileBmsAlertLevelDto.CRITICAL -> Color.argb(140, Color.red(ui.orange), Color.green(ui.orange), Color.blue(ui.orange))
+        MobileBmsAlertLevelDto.WARNING -> ui.orange
+        MobileBmsAlertLevelDto.NOMINAL, MobileBmsAlertLevelDto.UNKNOWN -> Color.argb(51, Color.red(ui.muted), Color.green(ui.muted), Color.blue(ui.muted))
+    }
+
     private fun renderDetail(snapshot: MobileBmsSnapshotDto, selected: MobileBmsGroupSnapshotDto) {
         val selectedIndex = selected.index
         fun current() = group(selectedIndex)
-        page.addView(ui.action(context.getString(R.string.back)) { selectedGroup = null; showCells = true; rebuild() })
+        // Swift's detail Back action returns to the originating BMS root screen. Keep
+        // the current overview/cell-map choice rather than forcing a different mode.
+        page.addView(ui.action(context.getString(R.string.back)) { selectedGroup = null; rebuild() })
         page.addView(ui.space(12))
         val card = card()
         val groupLabel = ui.text("", 18f, true, ui.muted)

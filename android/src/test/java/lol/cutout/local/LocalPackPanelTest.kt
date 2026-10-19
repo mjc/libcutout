@@ -2,11 +2,16 @@ package lol.cutout.local
 
 import android.app.Activity
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.GridLayout
 import android.widget.TextView
 import lol.cutout.PackPanel
 import lol.cutout.R
+import lol.cutout.CutoutUi
 import lol.cutout.ffitest.PackPanelTest
 import lol.cutout.ffitest.productionReplayPresentation
 import org.junit.Assert.assertEquals
@@ -131,6 +136,57 @@ class LocalPackPanelTest : PackPanelTest() {
         }
     }
 
+    @Test
+    fun groupTilesExposeRustPackIdentityAlertsAndReturnToTheOriginatingMode() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val panel = PackPanel(activity)
+        activity.setContentView(panel)
+        try {
+            val replay = productionReplayPresentation()
+            val base = partialSnapshot()
+            val firstGroup = base.groups.first().copy(
+                packNumber = 2u,
+                packReadingIndex = 7u,
+                label = "Left pack",
+                alertLevel = MobileBmsAlertLevelDto.WARNING,
+                isBalancing = true,
+                detail = "Voltage trend rising",
+            )
+            val snapshot = base.copy(groups = listOf(firstGroup, base.groups.last()))
+            panel.render(replay.copy(bms = snapshot))
+
+            val tile = checkNotNull(panel.findViewWithTag<ViewGroup>("pack.group.1"))
+            assertEquals("P2 · 07", panel.findViewWithTag<TextView>("pack.group.title.1")?.text?.toString())
+            assertEquals("!", panel.findViewWithTag<TextView>("pack.group.alert.1")?.text?.toString())
+            val warningStroke = renderedTopBorderPixel(tile, activity)
+            assertTrue(tile.contentDescription.contains("Left pack"))
+            assertTrue(tile.contentDescription.contains(activity.getString(R.string.pack_cell_warning)))
+            assertTrue(tile.contentDescription.contains(activity.getString(R.string.pack_balancing)))
+            assertTrue(tile.contentDescription.contains("Voltage trend rising"))
+            assertTrue((panel.findViewWithTag<View>("pack.group-grid") as GridLayout).columnCount >= 3)
+
+            panel.render(replay.copy(bms = snapshot.copy(groups = listOf(
+                firstGroup.copy(alertLevel = MobileBmsAlertLevelDto.CRITICAL), snapshot.groups.last(),
+            ))))
+            assertSame(tile, panel.findViewWithTag<View>("pack.group.1"))
+            assertTrue("Critical alert should change the rendered tile outline", warningStroke != renderedTopBorderPixel(tile, activity))
+
+            tile.performClick()
+            buttons(panel).single { it.text == activity.getString(R.string.back) }.performClick()
+            assertTrue(checkNotNull(panel.findViewWithTag<View>("pack.mode.overview")).isSelected)
+            assertFalse(checkNotNull(panel.findViewWithTag<View>("pack.mode.cell-map")).isSelected)
+
+            buttons(panel).single { it.text == activity.getString(R.string.pack_cell_map) }.performClick()
+            checkNotNull(panel.findViewWithTag<View>("pack.group.1")).performClick()
+            buttons(panel).single { it.text == activity.getString(R.string.back) }.performClick()
+            assertFalse(checkNotNull(panel.findViewWithTag<View>("pack.mode.overview")).isSelected)
+            assertTrue(checkNotNull(panel.findViewWithTag<View>("pack.mode.cell-map")).isSelected)
+        } finally {
+            host.pause().stop().destroy()
+        }
+    }
+
     private fun partialSnapshot(): MobileBmsSnapshotDto {
         fun reading(millivolts: Int) = VoltageReading(
             Voltage(millivolts), MobileValueSourceDto.REPORTED,
@@ -158,6 +214,25 @@ class LocalPackPanelTest : PackPanelTest() {
 
     private fun texts(root: View): List<String> = descendants(root)
         .filterIsInstance<TextView>().map { it.text.toString() }.toList()
+
+    private fun buttons(root: View): List<Button> = descendants(root).filterIsInstance<Button>().toList()
+
+    private fun renderedTopBorderPixel(view: View, activity: Activity): Int {
+        val width = maxOf(view.width, CutoutUi(activity).dp(120))
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val height = view.measuredHeight
+        view.layout(0, 0, width, height)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        return try {
+            view.draw(Canvas(bitmap))
+            bitmap.getPixel(width / 2, 0)
+        } finally {
+            bitmap.recycle()
+        }
+    }
 
     private fun descendants(root: View): Sequence<View> = sequence {
         yield(root)
