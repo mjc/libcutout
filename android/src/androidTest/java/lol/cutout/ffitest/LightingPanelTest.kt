@@ -237,18 +237,29 @@ open class LightingPanelTest {
 
                 val slider = checkNotNull(panel.findViewWithTag<SeekBar>("lighting.brightness"))
                 check(slider.isEnabled && slider.width > 0 && slider.height > 0)
+                // Start on the native thumb for the requested 40% value. A track tap
+                // outside the thumb can seek immediately without entering the drag
+                // lifecycle that protects an in-progress user edit from telemetry.
+                val thumbCenterX = slider.thumb.bounds.centerX().toFloat()
+                val centerY = slider.height / 2f
                 val now = android.os.SystemClock.uptimeMillis()
-                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, slider.width * .7f, slider.height / 2f, 0)
+                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, thumbCenterX, centerY, 0)
                 slider.dispatchTouchEvent(down)
                 down.recycle()
+                val slop = android.view.ViewConfiguration.get(slider.context).scaledTouchSlop
+                val moveTime = now + 16
+                val movedX = (thumbCenterX + slop * 3f).coerceAtMost((slider.width - slider.paddingRight).toFloat())
+                val move = MotionEvent.obtain(now, moveTime, MotionEvent.ACTION_MOVE, movedX, centerY, 0)
+                slider.dispatchTouchEvent(move)
+                move.recycle()
                 check(slider.isPressed) { "Brightness slider did not enter its native tracking state" }
                 val duringDrag = snapshot.copy(requested = requested.copy(brightness = 63u))
                 panel.render(duringDrag)
                 check(panel.findViewWithTag<SeekBar>("lighting.brightness") === slider && slider.isPressed) {
                     "A telemetry snapshot replaced the brightness control during a drag"
                 }
-                val cancelTime = now + 20
-                val cancel = MotionEvent.obtain(now, cancelTime, MotionEvent.ACTION_CANCEL, slider.width * .7f, slider.height / 2f, 0)
+                val cancelTime = moveTime + 16
+                val cancel = MotionEvent.obtain(now, cancelTime, MotionEvent.ACTION_CANCEL, movedX, centerY, 0)
                 slider.dispatchTouchEvent(cancel)
                 cancel.recycle()
                 check(!slider.isPressed) { "The synthetic slider gesture must finish before the next interaction test" }
