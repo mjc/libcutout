@@ -24877,23 +24877,25 @@ mod tests {
 
     #[test]
     fn mobile_phone_speed_readback_preserves_receipt_time_and_rust_freshness() {
-        let state = MobilePhoneLocationState::default();
+        let phone_location = MobilePhoneLocationState::default();
         let sample = capture_phone_location_fixture();
-        state.ingest_at(sample, 1_000);
+        phone_location.ingest_at(sample, 1_000);
 
-        let fresh = state.current_readback_at(1_000 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
+        let fresh =
+            phone_location.current_readback_at(1_000 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
         assert_eq!(fresh.freshness, MobilePhoneLocationFreshnessDto::Fresh);
         assert_eq!(fresh.received_at_monotonic_ms, Some(1_000));
         let speed = fresh.snapshot.gps_speed.expect("fixture reports GPS speed");
         assert_eq!(speed.value.value, 4_470);
         assert_eq!(speed.source, MobileValueSourceDto::Reported);
 
-        let stale = state.current_readback_at(1_001 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
+        let stale =
+            phone_location.current_readback_at(1_001 + ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS);
         assert_eq!(stale.freshness, MobilePhoneLocationFreshnessDto::Stale);
         assert_eq!(stale.snapshot.gps_speed, fresh.snapshot.gps_speed);
 
-        state.clear();
-        let unavailable = state.current_readback_at(10_000);
+        phone_location.clear();
+        let unavailable = phone_location.current_readback_at(10_000);
         assert_eq!(
             unavailable.freshness,
             MobilePhoneLocationFreshnessDto::Unavailable
