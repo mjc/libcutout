@@ -34,7 +34,12 @@ class LightingPanel(
         setOnClickListener { showDetails() }
     }
     private val connectionActions = ui.row()
-    private val selector = ui.row()
+    private val selector = ui.row().apply {
+        tag = "lighting.page-picker"
+        setPadding(ui.dp(3), ui.dp(3), ui.dp(3), ui.dp(3))
+        background = ui.rounded(13, ui.card, outlined = false)
+    }
+    private val pageTabs = linkedMapOf<Page, TextView>()
     private val controls = ui.column()
     private var active = false
     private var page = Page.COLOR
@@ -60,8 +65,35 @@ class LightingPanel(
         connectionCard.addView(connectionActions)
         root.addView(connectionCard)
         root.addView(ui.space(14))
-        root.addView(selector.apply { setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4)); background = ui.rounded(18) })
-        selector.tag = "lighting.page-picker"
+        Page.values().forEach { item ->
+            val tab = TextView(context).apply {
+                tag = "lighting.tab.${item.name.lowercase()}"
+                text = ui.label("lighting.page.${item.name.lowercase()}")
+                textSize = 14f
+                setAutoSizeTextTypeUniformWithConfiguration(12, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+                setTextColor(ui.foreground)
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setSingleLine(true)
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                minHeight = ui.dp(44)
+                setPadding(ui.dp(4), 0, ui.dp(4), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { page = item; updatePagePicker(); renderSelected() }
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = Button::class.java.name
+                        info.isSelected = host.isSelected
+                    }
+                }
+            }
+            pageTabs[item] = tab
+            selector.addView(tab, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+        }
+        updatePagePicker()
+        root.addView(selector)
         root.addView(ui.space(14))
         root.addView(controls)
         render(client.currentPresentation())
@@ -103,12 +135,18 @@ class LightingPanel(
             else if (snapshot.state != MobileMelkLightingSessionStateDto.Ready) connectionActions.addView(ui.action(ui.label("lighting.choose_accessory"), primary = true, onClick = { showPairing() }))
             val error = value.error
             if (error != null) connectionActions.addView(ui.text(error, 13f, color = ui.orange).apply { setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(4)) })
-            selector.removeAllViews()
-            Page.values().forEach { item ->
-                selector.addView(ui.action(ui.label("lighting.page.${item.name.lowercase()}"), primary = page == item) { page = item; renderSelected() }.apply { tag = "lighting.tab.${item.name.lowercase()}" }, LinearLayout.LayoutParams(0, -2, 1f))
-            }
+            updatePagePicker()
             if (value.permissionMissing) { controls.removeAllViews(); return }
             renderSelected()
+    }
+
+    private fun updatePagePicker() {
+        pageTabs.forEach { (item, tab) ->
+            val selected = page == item
+            tab.isSelected = selected
+            tab.typeface = Typeface.create("sans-serif", if (selected) Typeface.BOLD else Typeface.NORMAL)
+            tab.background = if (selected) ui.rounded(10, ui.stroke, outlined = false) else null
+        }
     }
 
     private fun ready() = current?.snapshot?.state == MobileMelkLightingSessionStateDto.Ready && current?.permissionMissing == false

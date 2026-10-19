@@ -2,7 +2,6 @@ package lol.cutout.ffitest
 
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.Switch
 import android.widget.TextView
 import android.app.Activity
@@ -72,7 +71,7 @@ open class LightingPanelTest {
                         permissionMissing = false,
                     ),
                 )
-                val effects = panel.findViewWithTag<Button>("lighting.tab.effects")
+                val effects = panel.findViewWithTag<View>("lighting.tab.effects")
                 check(effects != null) { "Swift-equivalent Effects page tab was not rendered" }
                 effects.performClick()
                 check(children(panel).filterIsInstance<TextView>().any { it.text == lol.cutout.CutoutUi(context).label("lighting.patterns") })
@@ -130,6 +129,74 @@ open class LightingPanelTest {
                     check(node.className == android.widget.ImageButton::class.java.name &&
                         node.contentDescription == CutoutUi(context).label("lighting.accessory.details")) {
                         "The compact details icon must remain a named button for accessibility: ${node.className}/${node.contentDescription}"
+                    }
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun segmentedPagesFitNarrowLargeTextAndRetainTabViewsAcrossSnapshots() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val base = activity.resources.configuration
+                listOf(1f, 1.5f, 2f).forEach { fontScale ->
+                    val configuration = Configuration(base).apply { this.fontScale = fontScale }
+                    val context = activity.createConfigurationContext(configuration)
+                    val panel = LightingPanel(context, client) {}
+                    val snapshot = LightingPresentation(
+                        MobileMelkLightingSessionSnapshotDto(
+                            MobileMelkLightingSessionStateDto.Idle, null, null, 0u, false,
+                        ),
+                        emptyList(), null, null, null, false, null, null, emptyList(),
+                        permissionMissing = false,
+                    )
+                    panel.render(snapshot)
+                    activity.setContentView(panel)
+
+                    val density = context.resources.displayMetrics.density
+                    val width = (353 * density).toInt()
+                    val heightLimit = (1800 * density).toInt()
+                    repeat(4) {
+                        panel.measure(
+                            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(heightLimit, View.MeasureSpec.AT_MOST),
+                        )
+                        panel.layout(0, 0, width, panel.measuredHeight)
+                        panel.viewTreeObserver.dispatchOnPreDraw()
+                    }
+
+                    val tabs = listOf("color", "effects", "music").map { name ->
+                        checkNotNull(panel.findViewWithTag<TextView>("lighting.tab.$name"))
+                    }
+                    val selector = checkNotNull(panel.findViewWithTag<ViewGroup>("lighting.page-picker"))
+                    check(selector.childCount == 3)
+                    tabs.forEach { tab ->
+                        check(tab.measuredHeight == (44 * density).toInt()) {
+                            "Segmented page target must remain 44dp at font scale $fontScale"
+                        }
+                        check(tab.lineCount == 1 && tab.layout?.getEllipsisCount(0) == 0) {
+                            "Segmented page label wrapped or clipped at font scale $fontScale: ${tab.text}"
+                        }
+                        check(tab.createAccessibilityNodeInfo().className == android.widget.Button::class.java.name)
+                    }
+                    check(tabs.sumOf { it.measuredWidth } == selector.measuredWidth - selector.paddingLeft - selector.paddingRight) {
+                        "The three segmented targets must share the available width at font scale $fontScale"
+                    }
+
+                    val effects = tabs[1]
+                    effects.performClick()
+                    effects.requestFocus()
+                    panel.render(snapshot.copy(alias = "Updated accessory"))
+                    check(panel.findViewWithTag<View>("lighting.tab.effects") === effects) {
+                        "Snapshot updates must keep the existing tab view so accessibility focus survives"
+                    }
+                    check(effects.isSelected && effects.hasFocus()) {
+                        "Rerendering a snapshot should preserve the selected page and focused tab"
                     }
                 }
             }
