@@ -23,6 +23,7 @@ class MusicPanel(
     private val artwork = ImageView(context).apply {
         scaleType = ImageView.ScaleType.CENTER_CROP
         background = ui.rounded(12, ui.card, false)
+        clipToOutline = true
         contentDescription = context.getString(R.string.music_artwork)
     }
     private val title = ui.text(context.getString(R.string.music_nothing_playing), 22f, true)
@@ -31,6 +32,8 @@ class MusicPanel(
     private val controls = ui.row().apply { gravity = Gravity.CENTER }
     private val controlViews = linkedMapOf<MobileMusicCommandDto, View>()
     private val timeline = ui.column()
+    private val timelineSection = ui.column().apply { tag = "music.timeline.section" }
+    private val providerName = ui.text("", 14f, color = ui.muted)
     private var renderedTimelineKey: List<String>? = null
     private val spotifyLink = ui.action(context.getString(R.string.music_spotify_content_link)) {
         spotifyLinkUrl?.let(::openValidatedLink)
@@ -53,7 +56,6 @@ class MusicPanel(
         addView(toolbar, LayoutParams(-1, -2))
 
         val form = ui.column()
-        form.gravity = Gravity.CENTER_HORIZONTAL
         title.gravity = Gravity.START
         artist.gravity = Gravity.START
         status.gravity = Gravity.START
@@ -68,28 +70,44 @@ class MusicPanel(
         })
         val metadata = ui.column().apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(16), 0, 0, 0)
+            setPadding(if (largeText) 0 else ui.dp(16), if (largeText) ui.dp(8) else 0, 0, 0)
             addView(title, LayoutParams(-1, -2))
             addView(artist, LayoutParams(-1, -2))
             addView(status, LayoutParams(-1, -2))
         }
         hero.addView(metadata, if (largeText) LayoutParams(-1, -2) else LinearLayout.LayoutParams(0, -2, 1f))
-        form.addView(hero, LayoutParams(-1, -2))
-        form.addView(ui.space(12))
-        form.addView(controls, LayoutParams(-1, ui.dp(52)))
-        form.addView(timeline, LayoutParams(-1, -2))
-        form.addView(providerAction, LayoutParams(-1, -2))
-        form.addView(spotifyLink, LayoutParams(-1, -2))
-        form.addView(ui.action(context.getString(R.string.music_settings)) { onOpenSettings() }.apply {
-            tag = "music.open-settings"
+        form.addView(group("music.playback.section").apply {
+            addView(hero, LayoutParams(-1, -2))
+            addView(ui.space(8))
+            addView(controls, LayoutParams(-1, ui.dp(44)))
+            addView(providerAction, LayoutParams(-1, -2))
+            addView(spotifyLink, LayoutParams(-1, -2))
+            addView(providerName, LayoutParams(-1, -2))
         }, LayoutParams(-1, -2))
-        form.addView(ui.action(context.getString(R.string.music_hide)) { onHidePlayer() }, LayoutParams(-1, -2))
+        form.addView(ui.space(18))
+        form.addView(group("music.actions.section").apply {
+            addView(ui.action(context.getString(R.string.music_settings)) { onOpenSettings() }.apply {
+                tag = "music.open-settings"
+            }, LayoutParams(-1, -2))
+            addView(ui.action(context.getString(R.string.music_hide)) { onHidePlayer() }.apply {
+                tag = "music.hide"
+            }, LayoutParams(-1, -2))
+        }, LayoutParams(-1, -2))
+        timelineSection.addView(ui.space(18))
+        timelineSection.addView(group("music.timeline.content").apply { addView(timeline, LayoutParams(-1, -2)) })
+        form.addView(timelineSection, LayoutParams(-1, -2))
         val scroll = ScrollView(context).apply {
             isFillViewport = true
             addView(form, android.widget.FrameLayout.LayoutParams(-1, -2))
         }
         addView(scroll, LayoutParams(-1, 0, 1f))
         render(client.latestPresentation)
+    }
+
+    private fun group(identifier: String) = ui.column().apply {
+        tag = identifier
+        setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(12))
+        background = ui.rounded(22)
     }
 
     fun render(value: AndroidMusicPresentation) {
@@ -102,63 +120,64 @@ class MusicPanel(
         status.text = value.error ?: value.snapshot?.state?.let { context.getString(it.settingsStateLabel()) }
             ?: context.getString(R.string.music_state_not_connected)
         status.contentDescription = status.text
-        artwork.setImageBitmap(value.artwork)
+        if (value.artwork == null) artwork.setImageDrawable(CutoutIcon(CutoutSymbol.MUSIC, ui.muted))
+        else artwork.setImageBitmap(value.artwork)
         val visibleCommands = value.availableCommands(includePrevious = true, includeOpenProvider = false).toSet()
-        val controlsByCommand = listOf(
-            Triple(MobileMusicCommandDto.PREVIOUS, "‹", R.string.music_previous),
-            Triple(MobileMusicCommandDto.PAUSE, "Ⅱ", R.string.music_pause),
-            Triple(MobileMusicCommandDto.PLAY, "▶", R.string.music_play),
-            Triple(MobileMusicCommandDto.NEXT, "›", R.string.music_next),
-        )
+        val controlsByCommand = listOf(MobileMusicCommandDto.PREVIOUS, MobileMusicCommandDto.PAUSE,
+            MobileMusicCommandDto.PLAY, MobileMusicCommandDto.NEXT)
         controlViews.keys.toList().filterNot(visibleCommands::contains).forEach { controlViews[it]?.visibility = View.GONE }
-        controlsByCommand.filter { it.first in visibleCommands }.forEach { (command, glyph, label) ->
-            addControl(glyph, context.getString(label), command).visibility = View.VISIBLE
+        controlsByCommand.filter { it in visibleCommands }.forEach { command ->
+            addControl(command).visibility = View.VISIBLE
         }
+        controls.visibility = if (visibleCommands.isEmpty()) View.GONE else View.VISIBLE
         val caps = snapshot?.capabilities
+        spotifyLinkUrl = contentLink(snapshot)
+        spotifyLink.visibility = if (spotifyLinkUrl == null) View.GONE else View.VISIBLE
+        providerAction.text = context.getString(R.string.music_open_named_provider, value.selectedProvider.providerTitle(context))
         providerAction.visibility = if (
-            value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD || caps?.openProvider == true ||
-            snapshot == null
+            spotifyLinkUrl == null && (value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD ||
+                caps?.openProvider == true || snapshot == null)
         ) View.VISIBLE else View.GONE
+        providerName.text = value.selectedProvider.providerTitle(context)
+        providerName.visibility = if (spotifyLinkUrl == null && providerAction.visibility == View.GONE) View.VISIBLE else View.GONE
         val events = value.history?.events.orEmpty().filter {
             it.kind != MobileMusicRideEventKindDto.PROVIDER_DISCONNECTED &&
                 !(it.kind == MobileMusicRideEventKindDto.STOPPED && it.itemIdentifier == null && it.title == null)
         }
         val timelineKey = events.map { listOf(it.sequence.toString(), it.kind.name, it.itemIdentifier.orEmpty(), it.title.orEmpty(), it.artist.orEmpty()).joinToString("|") }
+        timelineSection.visibility = if (events.isEmpty()) View.GONE else View.VISIBLE
         if (timelineKey != renderedTimelineKey) {
             timeline.removeAllViews()
             renderedTimelineKey = timelineKey
-        if (events.isNotEmpty()) {
-            timeline.addView(ui.space(12))
-            timeline.addView(ui.text(context.getString(R.string.music_timeline_title), 15f, true), LayoutParams(-1, -2))
-            events.forEach { event ->
-                val titleText = event.title ?: context.getString(R.string.music_history_opaque_item)
-                val providerTitle = event.provider.providerTitle(context)
-                val subtitle = "${event.kind.timelineTitle(context)} · $providerTitle" +
-                    (event.artist?.takeIf(String::isNotBlank)?.let { " · $it" } ?: "")
-                val eventRow = ui.row().apply {
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, ui.dp(7), 0, ui.dp(7))
-                    val eventMetadata = ui.column()
-                    eventMetadata.addView(ui.text(titleText, 15f, true), LinearLayout.LayoutParams(-1, -2))
-                    eventMetadata.addView(ui.text(subtitle, 13f, color = ui.muted), LinearLayout.LayoutParams(-1, -2))
-                    addView(eventMetadata, LinearLayout.LayoutParams(0, -2, 1f))
-                    addView(ui.text(DateFormat.getTimeFormat(context).format(java.util.Date(event.wallClockAtMs.toLong())), 12f, color = ui.muted),
-                        LinearLayout.LayoutParams(-2, -2))
-                }
-                timeline.addView(eventRow, LayoutParams(-1, -2))
-                if (event.provider == MobileMusicProviderDto.SPOTIFY && !event.itemIdentifier.isNullOrBlank()) {
-                    spotifyContentLink(event.itemIdentifier!!)?.let { url ->
-                        timeline.addView(ui.action(context.getString(R.string.music_spotify_content_link)) {
-                            openValidatedLink(url)
-                        }.apply { tag = "music.timeline.spotify-link" }, LayoutParams(-1, -2))
+            if (events.isNotEmpty()) {
+                timeline.addView(ui.text(context.getString(R.string.music_timeline_title), 15f, true), LayoutParams(-1, -2))
+                events.forEach { event ->
+                    val titleText = event.title ?: context.getString(R.string.music_history_opaque_item)
+                    val providerTitle = event.provider.providerTitle(context)
+                    val subtitle = "${event.kind.timelineTitle(context)} · $providerTitle" +
+                        (event.artist?.takeIf(String::isNotBlank)?.let { " · $it" } ?: "")
+                    val eventRow = ui.row().apply {
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, ui.dp(7), 0, ui.dp(7))
+                        val eventMetadata = ui.column()
+                        eventMetadata.addView(ui.text(titleText, 15f, true), LinearLayout.LayoutParams(-1, -2))
+                        eventMetadata.addView(ui.text(subtitle, 13f, color = ui.muted), LinearLayout.LayoutParams(-1, -2))
+                        addView(eventMetadata, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(ui.text(DateFormat.getTimeFormat(context).format(java.util.Date(event.wallClockAtMs.toLong())), 12f, color = ui.muted),
+                            LinearLayout.LayoutParams(-2, -2))
                     }
+                    timeline.addView(eventRow, LayoutParams(-1, -2))
+                    if (event.provider == MobileMusicProviderDto.SPOTIFY && !event.itemIdentifier.isNullOrBlank()) {
+                        spotifyContentLink(event.itemIdentifier!!)?.let { url ->
+                            timeline.addView(ui.action(context.getString(R.string.music_spotify_content_link)) {
+                                openValidatedLink(url)
+                            }.apply { tag = "music.timeline.spotify-link" }, LayoutParams(-1, -2))
+                        }
+                    }
+                    timeline.addView(ui.divider())
                 }
-                timeline.addView(ui.divider())
             }
         }
-        }
-        spotifyLinkUrl = contentLink(snapshot)
-        spotifyLink.visibility = if (spotifyLinkUrl == null) View.GONE else View.VISIBLE
     }
 
     private fun contentLink(snapshot: MobileMusicSnapshotDto?): String? =
@@ -175,12 +194,10 @@ class MusicPanel(
     }
 
 
-    private fun addControl(glyph: String, label: String, command: MobileMusicCommandDto): View {
+    private fun addControl(command: MobileMusicCommandDto): View {
         controlViews[command]?.let { return it }
-        val view = ui.action(glyph, primary = command == MobileMusicCommandDto.PLAY || command == MobileMusicCommandDto.PAUSE) {
-            client.command(command)
-        }.apply { contentDescription = label; tag = "music.command.${command.name.lowercase()}" }
-        controls.addView(view, musicCommandInsertionIndex(controls, controlViews, command), LayoutParams(0, -2, 1f))
+        val view = musicIconControl(context, ui, command) { client.command(command) }
+        controls.addView(view, musicCommandInsertionIndex(controls, controlViews, command), LayoutParams(ui.dp(44), ui.dp(44)))
         controlViews[command] = view
         return view
     }
@@ -232,13 +249,18 @@ class MusicSettingsPanel(
         onChooseSoundCloud()
     }.apply { tag = "music.soundcloud.choose-music" }
     private val providerError = ui.text("", 13f, color = ui.red)
-    private val providers = ui.column()
-    private val historyPolicies = ui.column()
+    private val providers = MusicSettingsChoice(context, ui, context.getString(R.string.music_provider_title), listOf(
+        MobileMusicProviderDto.APPLE_MUSIC to context.getString(R.string.music_apple_music),
+        MobileMusicProviderDto.SPOTIFY to context.getString(R.string.music_spotify),
+        MobileMusicProviderDto.SOUND_CLOUD to context.getString(R.string.music_soundcloud),
+    ), { provider, completed -> client.selectProvider(provider); completed() }).apply { tag = "music.provider-picker" }
+    private val historyPolicies = MusicSettingsChoice(context, ui, context.getString(R.string.music_history_title), listOf(
+        MobileMusicHistoryPolicyDto.DISABLED to context.getString(R.string.music_history_disabled),
+        MobileMusicHistoryPolicyDto.OPAQUE_ITEM to context.getString(R.string.music_history_opaque),
+        MobileMusicHistoryPolicyDto.HUMAN_READABLE to context.getString(R.string.music_history_human_readable),
+    ), { policy, completed -> client.setHistoryPolicy(policy) { completed() } }).apply { tag = "music.history-picker" }
     private val historyStatus = ui.text("", 13f, color = ui.muted)
     private val historyExplanation = ui.text("", 13f, color = ui.muted)
-    private val forgetHistory = ui.action(context.getString(R.string.music_history_forget)) {
-        client.deleteCurrentHistory()
-    }.apply { tag = "music.history.forget" }
     private var observation: AutoCloseable? = client.observe(::render)
 
     init {
@@ -248,6 +270,7 @@ class MusicSettingsPanel(
         page.addView(ui.title(context.getString(R.string.music_settings)), LayoutParams(-1, -2))
         page.addView(ui.space(8))
         page.addView(section(R.string.music_provider_title) {
+            addView(providers, LayoutParams(-1, -2))
             addView(status, LayoutParams(-1, -2))
             addView(accessExplanation, LayoutParams(-1, -2))
             addView(accessAction, LayoutParams(-1, -2))
@@ -256,16 +279,15 @@ class MusicSettingsPanel(
             addView(spotifyDisconnect, LayoutParams(-1, -2))
             addView(soundCloudChoose, LayoutParams(-1, -2))
             addView(providerError, LayoutParams(-1, -2))
-            addView(providers, LayoutParams(-1, -2))
         }, LayoutParams(-1, -2))
         page.addView(ui.space(14))
         page.addView(section(R.string.music_history_title) {
             addView(historyPolicies, LayoutParams(-1, -2))
             addView(historyStatus, LayoutParams(-1, -2))
             addView(historyExplanation, LayoutParams(-1, -2))
-            addView(forgetHistory, LayoutParams(-1, -2))
         }, LayoutParams(-1, -2))
         addView(page, android.widget.FrameLayout.LayoutParams(-1, -2))
+        render(client.latestPresentation)
         client.refreshHistory()
     }
 
@@ -274,13 +296,15 @@ class MusicSettingsPanel(
             value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD -> context.getString(R.string.music_soundcloud_ready)
             !value.listenerAccessGranted -> context.getString(R.string.music_access_required)
             value.error != null -> value.error
-            else -> context.getString(R.string.music_access_enabled)
+            else -> context.getString(value.snapshot?.state?.settingsStateLabel() ?: R.string.music_state_not_connected)
         }
         accessAction.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
         accessExplanation.visibility = if (value.listenerAccessGranted || value.selectedProvider == MobileMusicProviderDto.SOUND_CLOUD) View.GONE else View.VISIBLE
         // Android session control is unavailable until the user grants notification access.
         // Showing Connect here would only retry an action that cannot succeed yet.
-        connectAction.visibility = if (!value.listenerAccessGranted || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
+        val profile = musicProviderProfile(value.selectedProvider)
+        val handoffOnly = profile.`interface` == MobileMusicProviderInterface.APP_HANDOFF_ONLY
+        connectAction.visibility = if (handoffOnly || !value.listenerAccessGranted || value.spotifyDisconnectPending) View.GONE else View.VISIBLE
         openProviderAction.text = context.getString(R.string.music_open_named_provider, value.selectedProvider.providerTitle(context))
         spotifyDisconnect.visibility = if (value.selectedProvider == MobileMusicProviderDto.SPOTIFY) View.VISIBLE else View.GONE
         spotifyDisconnect.isEnabled = !value.spotifyDisconnectPending
@@ -292,35 +316,12 @@ class MusicSettingsPanel(
             else -> value.spotifyDisconnectError ?: value.error.orEmpty()
         }
         providerError.visibility = if (providerError.text.isNullOrBlank()) View.GONE else View.VISIBLE
-        listOf(
-            MobileMusicProviderDto.APPLE_MUSIC to context.getString(R.string.music_apple_music),
-            MobileMusicProviderDto.SPOTIFY to context.getString(R.string.music_spotify),
-            MobileMusicProviderDto.SOUND_CLOUD to context.getString(R.string.music_soundcloud),
-        ).forEachIndexed { index, (provider, label) ->
-            val selected = value.selectedProvider == provider
-            val row = providers.getChildAt(index) as? android.widget.Button ?: ui.action(label) { client.selectProvider(provider) }
-            if (row.parent == null) providers.addView(row, LayoutParams(-1, -2))
-            row.text = if (selected) "✓  $label" else label
-            row.isSelected = selected
+        providers.render(value.selectedProvider, enabled = !value.spotifyDisconnectPending)
+        val providerSupportsHistory = !handoffOnly
+        historyPolicies.render(value.historyPolicy, enabled = providerSupportsHistory && !value.spotifyDisconnectPending)
+        listOf(accessAction, openProviderAction, soundCloudChoose).forEach {
+            it.isEnabled = !value.spotifyDisconnectPending
         }
-        val providerSupportsHistory = value.selectedProvider != MobileMusicProviderDto.SOUND_CLOUD
-        listOf(
-            MobileMusicHistoryPolicyDto.DISABLED to context.getString(R.string.music_history_disabled),
-            MobileMusicHistoryPolicyDto.OPAQUE_ITEM to context.getString(R.string.music_history_opaque),
-            MobileMusicHistoryPolicyDto.HUMAN_READABLE to context.getString(R.string.music_history_human_readable),
-        ).forEachIndexed { index, (policy, label) ->
-            val selected = value.historyPolicy == policy
-            val row = historyPolicies.getChildAt(index) as? android.widget.Button ?: ui.action(label) {
-                client.setHistoryPolicy(policy)
-            }.apply { tag = "music.history.policy.${policy.name.lowercase()}" }
-            if (row.parent == null) historyPolicies.addView(row, LayoutParams(-1, -2))
-            row.text = if (selected) "✓  $label" else label
-            row.isSelected = selected
-            row.isEnabled = providerSupportsHistory
-            row.alpha = if (providerSupportsHistory) 1f else 0.55f
-        }
-        historyPolicies.isEnabled = providerSupportsHistory
-        historyPolicies.alpha = if (providerSupportsHistory) 1f else 0.55f
         historyStatus.text = value.historyError ?: when (value.history?.status) {
             MobileMusicHistoryStatusDto.UNAVAILABLE -> context.getString(R.string.music_history_unavailable)
             MobileMusicHistoryStatusDto.DELETED -> context.getString(R.string.music_history_deleted)
@@ -339,7 +340,6 @@ class MusicSettingsPanel(
             MobileMusicHistoryPolicyDto.HUMAN_READABLE -> R.string.music_history_human_readable_explanation
         }) + " " + context.getString(R.string.music_history_privacy)
         historyExplanation.visibility = if (providerSupportsHistory) View.VISIBLE else View.GONE
-        forgetHistory.visibility = if (value.history?.events?.isNotEmpty() == true) View.VISIBLE else View.GONE
     }
 
     fun dispose() {

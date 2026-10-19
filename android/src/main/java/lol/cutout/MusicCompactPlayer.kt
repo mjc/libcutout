@@ -2,7 +2,6 @@ package lol.cutout
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.net.Uri
@@ -78,27 +77,26 @@ class MusicCompactPlayer(
     private val ui: CutoutUi = CutoutUi(context),
     private val onOpenDetails: () -> Unit = {},
 ) : LinearLayout(context) {
+    private val largeText = context.resources.configuration.fontScale > 1f
     private val artwork = ImageView(context).apply {
         scaleType = ImageView.ScaleType.CENTER_CROP
         background = ui.rounded(6, ui.card, false)
         contentDescription = context.getString(R.string.music_artwork)
+        clipToOutline = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
     private val itemTitle = ui.text(context.getString(R.string.music_nothing_playing), 14f, true).apply {
         tag = "music.now-playing-title"
         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP,
+            14f * context.resources.configuration.fontScale.coerceAtMost(1.35f))
     }
     private val itemArtist = ui.text("", 12f, color = ui.muted).apply {
         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
     }
     private val controls = ui.row()
-    private val commandButtons = linkedMapOf<MobileMusicCommandDto, TextView>()
-    private val contentLink = TextView(context).apply {
-        text = "↗"
-        textSize = 17f
-        setTextColor(ui.brand)
-        gravity = Gravity.CENTER
-        minWidth = ui.dp(44)
-        minHeight = ui.dp(44)
+    private val commandButtons = linkedMapOf<MobileMusicCommandDto, View>()
+    private val contentLink = musicIconControl(context, ui, MobileMusicCommandDto.OPEN_PROVIDER) {}.apply {
         tag = "music.spotify-content-link"
         contentDescription = context.getString(R.string.music_spotify_content_link)
         visibility = View.GONE
@@ -109,6 +107,13 @@ class MusicCompactPlayer(
         setOnClickListener { onOpenDetails() }
         isClickable = true
         isFocusable = true
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = android.widget.Button::class.java.name
+            }
+        }
         contentDescription = context.getString(R.string.music_expand)
     }
 
@@ -120,6 +125,7 @@ class MusicCompactPlayer(
         setPadding(ui.dp(8), 0, ui.dp(4), 0)
         track.addView(artwork, LayoutParams(ui.dp(32), ui.dp(32)))
         val metadata = ui.column().apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ui.dp(10), 0, ui.dp(4), 0)
             addView(itemTitle, LayoutParams(-1, -2))
@@ -133,11 +139,20 @@ class MusicCompactPlayer(
 
     fun render(state: AndroidMusicPresentation) {
         val snapshot = state.snapshot
-        itemTitle.text = snapshot?.item?.title ?: ui.label(
+        val playback = snapshot?.state ?: MobileMusicPlaybackStateDto.UNAVAILABLE
+        val status = when (playback) {
+            MobileMusicPlaybackStateDto.PLAYING, MobileMusicPlaybackStateDto.PAUSED -> null
+            MobileMusicPlaybackStateDto.STOPPED -> if (snapshot?.provider == MobileMusicProviderDto.SPOTIFY && snapshot.item != null)
+                String.format(java.util.Locale.getDefault(), ui.label("music.open_to_resume").replace("%@", "%s"), context.getString(R.string.music_spotify))
+                else context.getString(playback.settingsStateLabel())
+            else -> context.getString(playback.settingsStateLabel())
+        }
+        val title = snapshot?.item?.title ?: ui.label(
             musicPlaybackTitleKey(snapshot?.state ?: MobileMusicPlaybackStateDto.UNAVAILABLE),
         )
-        itemArtist.text = snapshot?.item?.artist.orEmpty()
-        itemArtist.visibility = if (itemArtist.text.isNullOrBlank()) View.GONE else View.VISIBLE
+        itemTitle.text = if (largeText) status ?: title else title
+        itemArtist.text = if (status == title) snapshot?.item?.artist.orEmpty() else status ?: snapshot?.item?.artist.orEmpty()
+        itemArtist.visibility = if (largeText || itemArtist.text.isNullOrBlank()) View.GONE else View.VISIBLE
         val statusLabel = context.getString((snapshot?.state ?: MobileMusicPlaybackStateDto.UNAVAILABLE).settingsStateLabel())
         track.contentDescription = listOfNotNull(
             context.getString(R.string.music_expand),
@@ -145,7 +160,8 @@ class MusicCompactPlayer(
             snapshot?.item?.artist?.takeIf(String::isNotBlank),
             statusLabel,
         ).joinToString(", ")
-        artwork.setImageBitmap(state.artwork)
+        if (state.artwork == null) artwork.setImageDrawable(CutoutIcon(CutoutSymbol.MUSIC, ui.muted))
+        else artwork.setImageBitmap(state.artwork)
         val spotifyUrl = snapshot?.takeIf { it.provider == MobileMusicProviderDto.SPOTIFY }
             ?.item?.identifier?.let { runCatching { spotifyContentUrl(it) }.getOrNull() }
             ?.takeIf { value -> runCatching { Uri.parse(value).let { it.scheme == "https" && it.host == "open.spotify.com" } }.getOrDefault(false) }
@@ -154,37 +170,13 @@ class MusicCompactPlayer(
             spotifyUrl?.let { value -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(value))) } }
         }
         val visibleCommands = state.availableCommands(includePrevious = false, includeOpenProvider = true).toSet()
-        val symbols = mapOf(
-            MobileMusicCommandDto.PLAY to "▶", MobileMusicCommandDto.PAUSE to "Ⅱ",
-            MobileMusicCommandDto.NEXT to "›", MobileMusicCommandDto.OPEN_PROVIDER to "↗",
-        )
         commandButtons.keys.toList().filterNot(visibleCommands::contains).forEach { commandButtons[it]?.visibility = View.GONE }
-        visibleCommands.forEach { command -> addCommand(symbols.getValue(command), command).visibility = View.VISIBLE }
+        visibleCommands.forEach { command -> addCommand(command).visibility = View.VISIBLE }
     }
 
-    private fun addCommand(title: String, command: MobileMusicCommandDto): TextView {
+    private fun addCommand(command: MobileMusicCommandDto): View {
         commandButtons[command]?.let { return it }
-        val label = when (command) {
-            MobileMusicCommandDto.PLAY -> context.getString(R.string.music_play)
-            MobileMusicCommandDto.PAUSE -> context.getString(R.string.music_pause)
-            MobileMusicCommandDto.PREVIOUS -> context.getString(R.string.music_previous)
-            MobileMusicCommandDto.NEXT -> context.getString(R.string.music_next)
-            MobileMusicCommandDto.OPEN_PROVIDER -> context.getString(R.string.music_open_provider)
-        }
-        val button = TextView(context).apply {
-            tag = "music.command.${command.name.lowercase()}"
-            text = title
-            textSize = 18f
-            typeface = Typeface.create("sans-serif", Typeface.BOLD)
-            setTextColor(ui.brand)
-            gravity = Gravity.CENTER
-            minWidth = ui.dp(48)
-            minHeight = ui.dp(44)
-            setOnClickListener { client.command(command) }
-            isClickable = true
-            isFocusable = true
-            contentDescription = label
-        }
+        val button = musicIconControl(context, ui, command) { client.command(command) }
         controls.addView(button, musicCommandInsertionIndex(controls, commandButtons, command), LayoutParams(-2, -1))
         commandButtons[command] = button
         return button
