@@ -8,6 +8,12 @@ import javax.crypto.spec.SecretKeySpec
 import lol.cutout.AndroidChargingCredentials
 import lol.cutout.ChargingCredentialRecord
 import lol.cutout.ChargingSecretCipher
+import lol.cutout.AndroidChargingClient
+import lol.cutout.RideMapRuntime
+import uniffi.cutout_mobile_ffi.MobileChargingIdentityDto
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -19,6 +25,49 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class LocalChargingCredentialsTest {
+    @Test
+    fun captureCredentialReadsPreserveMissingAndDeletionFencesWithoutRegistration() {
+        val root = Files.createTempDirectory("cutout-capture-credentials").toFile()
+        val context = RuntimeEnvironment.getApplication()
+        val store = AndroidChargingCredentials(context, TestAesGcmCipher(), File(root, "identity.bin"))
+        val runtime = RideMapRuntime(context, "capture-credential-${java.util.UUID.randomUUID()}.sqlite")
+        val client = AndroidChargingClient(context, runtime, store)
+        fun read(allowRegistration: Boolean = false): MobileChargingIdentityDto? {
+            if (!allowRegistration) return kotlinx.coroutines.runBlocking { client.existingCredentialForCaptureSubmission() }
+            val ready = CountDownLatch(1)
+            val result = AtomicReference<Result<MobileChargingIdentityDto?>?>()
+            client.credentialForCaptureSubmission { result.set(it); ready.countDown() }
+            check(awaitWithMainLooper(ready, 10, TimeUnit.SECONDS))
+            return checkNotNull(result.get()).getOrThrow()
+        }
+        try {
+            assertEquals(null, read())
+            assertEquals(null, store.load())
+            store.beginRegistration()
+            assertEquals(null, read())
+            assertEquals(ChargingCredentialRecord.RegistrationStarted, store.load())
+            store.saveIdentity("existing-identity", "existing-test-token")
+            assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), read())
+            assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), read(true))
+            val workerEntered = CountDownLatch(1)
+            val releaseWorker = CountDownLatch(1)
+            val workerFinished = CountDownLatch(1)
+            client.withDatabase({ workerEntered.countDown(); releaseWorker.await(); Unit }) { workerFinished.countDown() }
+            try {
+                check(awaitWithMainLooper(workerEntered, 10, TimeUnit.SECONDS))
+                val independentRead = java.util.concurrent.CompletableFuture.supplyAsync { read() }
+                assertEquals(MobileChargingIdentityDto("existing-identity", "existing-test-token"), independentRead.get(3, TimeUnit.SECONDS))
+                assertEquals("Credential read must complete before the charging network worker is released", 1L, releaseWorker.count)
+            } finally { releaseWorker.countDown(); check(awaitWithMainLooper(workerFinished, 10, TimeUnit.SECONDS)) }
+            store.markDeletionPending()
+            assertEquals(null, read())
+            assertEquals(ChargingCredentialRecord.DeletionPending("existing-identity", "existing-test-token"), store.load())
+            store.finishDeletion()
+            assertEquals(null, read())
+            assertEquals(ChargingCredentialRecord.Deleted, store.load())
+        } finally { client.close(); runtime.close(); root.deleteRecursively() }
+    }
+
     @Test
     fun registrationAndDeletionFencesSurviveAtomicEncryptedStorage() {
         val root = Files.createTempDirectory("cutout-charging-credentials").toFile()
