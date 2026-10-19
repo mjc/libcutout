@@ -169,8 +169,12 @@ class SavedCaptureDetailPanel(
 
     private fun metric(parent: LinearLayout, label: String, value: String, viewTag: String) {
         val row = ui.row().apply { tag = viewTag }
-        row.addView(ui.text(label, 15f, color = ui.muted), LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(ui.text(value, 16f, true).apply { gravity = android.view.Gravity.END })
+        row.addView(ui.text(label, 15f, color = ui.muted).apply { tag = "$viewTag.label" },
+            LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.text(value, 16f, true).apply {
+            tag = "$viewTag.value"
+            gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(0, -2, 1f))
         parent.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(5); bottomMargin = ui.dp(5) })
     }
 
