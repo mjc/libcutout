@@ -1,8 +1,11 @@
 package lol.cutout.local
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.res.Configuration
 import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.Spinner
@@ -128,29 +131,98 @@ class LocalMusicPresentationParityTest {
 
     @Test
     fun settingsUseNativePickersAndRespectProviderAndDisconnectAvailability() {
+        for (scale in listOf(1f, 1.5f)) {
+            val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+            val base = host.get()
+            val context = base.createConfigurationContext(Configuration(base.resources.configuration).apply { fontScale = scale })
+            val panel = MusicSettingsPanel(context, (base.application as CutoutApplication).music, onRequestListenerAccess = {})
+            base.setContentView(panel)
+            try {
+                shadowOf(Looper.getMainLooper()).idle()
+                val noSession = presentation().let { value ->
+                    value.copy(
+                        error = base.getString(R.string.music_no_active_session),
+                        snapshot = value.snapshot!!.copy(
+                            state = MobileMusicPlaybackStateDto.UNAVAILABLE,
+                            item = null,
+                            positionMilliseconds = null,
+                            durationMilliseconds = null,
+                            capabilities = MobileMusicCapabilitiesDto(false, false, false, false, true),
+                        ),
+                    )
+                }
+                panel.render(noSession)
+                assertEquals(base.getString(R.string.music_state_unavailable),
+                    panel.findViewWithTag<TextView>("music.connection-status").text.toString())
+                assertEquals(base.getString(R.string.music_no_active_session),
+                    panel.findViewWithTag<TextView>("music.provider-error").text.toString())
+                val connect = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.connect-provider"))
+                assertEquals(View.VISIBLE, connect.visibility)
+                assertTrue(connect.text.toString().startsWith("Connect "))
+                assertEquals(Gravity.START or Gravity.CENTER_VERTICAL, connect.gravity)
+                assertTrue(connect.minimumHeight >= CutoutUi(context).dp(44))
+                val flatBackground = connect.background as android.graphics.drawable.RippleDrawable
+                assertEquals("Flat Form actions have no filled or outlined content layer", 0, flatBackground.numberOfLayers)
+                val open = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.open-provider"))
+                assertTrue(open.text.toString().startsWith("Open "))
+                val disconnect = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.disconnect-spotify"))
+                assertEquals(CutoutUi(context).red, disconnect.currentTextColor)
+
+                panel.render(presentation().copy(snapshot = presentation().snapshot!!.copy(state = MobileMusicPlaybackStateDto.STALE)))
+                assertTrue("Stale sessions offer reconnect using the shared label", connect.text.toString().startsWith("Reconnect "))
+                panel.render(presentation())
+                assertEquals(presentation().snapshot!!.item!!.title,
+                    panel.findViewWithTag<TextView>("music.connection-status").text.toString())
+
+                panel.render(presentation().copy(selectedProvider = MobileMusicProviderDto.SOUND_CLOUD))
+                val provider = checkNotNull(panel.findViewWithTag<Spinner>("music.provider-picker"))
+                val history = checkNotNull(panel.findViewWithTag<Spinner>("music.history-picker"))
+                assertEquals(3, provider.count)
+                assertEquals(3, history.count)
+                assertNull(panel.findViewWithTag<View>("music.history.forget"))
+                assertFalse(history.isEnabled)
+                assertEquals(View.GONE, panel.findViewWithTag<View>("music.connect-provider").visibility)
+                panel.render(presentation().copy(spotifyDisconnectPending = true))
+                assertFalse(provider.isEnabled)
+                assertFalse(history.isEnabled)
+                assertFalse(panel.findViewWithTag<View>("music.open-provider").isEnabled)
+                panel.render(presentation())
+                assertTrue(provider.isEnabled)
+                assertTrue(history.isEnabled)
+                NativeSurfaceCapture.save(panel, if (scale > 1f) "music-settings-large-text" else "music-settings-dark")
+            } finally { panel.dispose(); host.pause().stop().destroy() }
+        }
+    }
+
+    @Test
+    fun connectWithNoActiveMediaSessionUsesExplicitProviderLaunchRecovery() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val base = host.get()
-        val panel = MusicSettingsPanel(base, (base.application as CutoutApplication).music, onRequestListenerAccess = {})
-        base.setContentView(panel)
+        val client = (base.application as CutoutApplication).music
+        val previousAccess = Settings.Secure.getString(base.contentResolver, "enabled_notification_listeners")
+        val previousProvider = client.latestPresentation.selectedProvider
         try {
+            Settings.Secure.putString(
+                base.contentResolver,
+                "enabled_notification_listeners",
+                ComponentName(base, AndroidMusicNotificationListenerService::class.java).flattenToString(),
+            )
+            client.selectProvider(MobileMusicProviderDto.SPOTIFY)
+            client.connectOrRetrySelectedProvider()
             shadowOf(Looper.getMainLooper()).idle()
-            panel.render(presentation().copy(selectedProvider = MobileMusicProviderDto.SOUND_CLOUD))
-            val provider = checkNotNull(panel.findViewWithTag<Spinner>("music.provider-picker"))
-            val history = checkNotNull(panel.findViewWithTag<Spinner>("music.history-picker"))
-            assertEquals(3, provider.count)
-            assertEquals(3, history.count)
-            assertNull(panel.findViewWithTag<View>("music.history.forget"))
-            assertFalse(history.isEnabled)
-            assertEquals(View.GONE, panel.findViewWithTag<View>("music.connect-provider").visibility)
-            panel.render(presentation().copy(spotifyDisconnectPending = true))
-            assertFalse(provider.isEnabled)
-            assertFalse(history.isEnabled)
-            assertFalse(panel.findViewWithTag<View>("music.open-provider").isEnabled)
-            panel.render(presentation())
-            assertTrue(provider.isEnabled)
-            assertTrue(history.isEnabled)
-            NativeSurfaceCapture.save(panel, "music-settings-dark")
-        } finally { panel.dispose(); host.pause().stop().destroy() }
+
+            // Robolectric has no Spotify package installed. The unavailable-app
+            // result proves Connect/Retry reached the normal provider-launch
+            // effect, rather than merely polling an absent MediaSession again.
+            assertEquals(MobileMusicProviderDto.SPOTIFY, client.latestPresentation.selectedProvider)
+            assertEquals(base.getString(R.string.music_provider_unavailable), client.latestPresentation.error)
+            assertTrue(client.latestPresentation.listenerAccessGranted)
+        } finally {
+            Settings.Secure.putString(base.contentResolver, "enabled_notification_listeners", previousAccess)
+            client.selectProvider(previousProvider)
+            client.refreshSessions()
+            host.pause().stop().destroy()
+        }
     }
 
     private fun settle(view: View) {
