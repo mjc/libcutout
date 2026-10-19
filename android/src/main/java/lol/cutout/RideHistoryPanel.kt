@@ -22,7 +22,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import uniffi.cutout_mobile_ffi.MobileRideElapsedTimeDto
-import uniffi.cutout_mobile_ffi.MobileRideHistoryVehicleOptionDto
 import uniffi.cutout_mobile_ffi.MobileRideMapRoutePresenceDto
 import uniffi.cutout_mobile_ffi.MobileRideMovingTimeDto
 import uniffi.cutout_mobile_ffi.MobileRideRecordDto
@@ -43,8 +42,13 @@ class RideHistoryPanel(
     private val ui = CutoutUi(context)
     private val content = ui.column()
     private val filters = ui.row()
-    private val dateFilter = ui.action(context.getString(R.string.ride_map_last_30_days)) { showDateMenu() }
-    private val vehicleFilter = ui.action(context.getString(R.string.ride_map_all_vehicles)) { showVehicleMenu() }
+    private val filterTopRow = ui.row()
+    private val dateFilter = ui.action(context.getString(R.string.ride_map_last_30_days)) { showDateMenu() }.apply {
+        tag = "ride_map_date_filter"
+    }
+    private val vehicleFilter = ui.action(context.getString(R.string.ride_map_all_vehicles)) { showVehicleMenu() }.apply {
+        tag = "ride_map_vehicle_filter"
+    }
     private val clearFilters = ui.action("×", false) {
         search.setText("")
         controller.clearFilters()
@@ -80,12 +84,24 @@ class RideHistoryPanel(
         addView(content, LayoutParams(-1, -2))
         content.addView(search, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         filters.setPadding(ui.dp(4), 0, ui.dp(4), 0)
+        filters.tag = "ride_map_filters"
         filters.background = ui.rounded(14, ui.card, false).also { it.setStroke(ui.dp(1), ui.stroke) }
-        filters.addView(dateFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
-        filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
-        filters.addView(vehicleFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
-        filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
-        filters.addView(clearFilters, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+        if (usesStackedHistoryFilters(resources.configuration.fontScale)) {
+            filters.orientation = LinearLayout.VERTICAL
+            filterTopRow.addView(dateFilter, LinearLayout.LayoutParams(0, -2, 1f))
+            filterTopRow.addView(clearFilters, LinearLayout.LayoutParams(ui.dp(48), -2))
+            filters.addView(filterTopRow, LinearLayout.LayoutParams(-1, -2))
+            filters.addView(ui.divider(), LinearLayout.LayoutParams(-1, ui.dp(1)))
+            filters.addView(vehicleFilter, LinearLayout.LayoutParams(-1, -2))
+            dateFilter.maxLines = 2
+            vehicleFilter.maxLines = 2
+        } else {
+            filters.addView(dateFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+            filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
+            filters.addView(vehicleFilter, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
+            filters.addView(ui.divider(), LinearLayout.LayoutParams(ui.dp(1), ui.dp(20)))
+            filters.addView(clearFilters, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+        }
         content.addView(filters, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
         content.addView(message, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(4) })
         content.addView(rows, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
@@ -104,10 +120,18 @@ class RideHistoryPanel(
 
     fun render() {
         dateFilter.text = context.getString(if (controller.last30Days) R.string.ride_map_last_30_days else R.string.ride_map_all_time)
-        vehicleFilter.text = controller.vehicleIdentity?.let { identity ->
-            controller.state.vehicles.firstOrNull { it.platformIdentifier == identity }?.displayName?.takeIf(String::isNotBlank)
-                ?: context.getString(R.string.ride_map_gps_only)
-        } ?: context.getString(R.string.ride_map_all_vehicles)
+        val vehicleOptions = historyVehicleOptions(
+            controller.state.vehicles.map { option ->
+                option.platformIdentifier to (option.displayName?.takeIf(String::isNotBlank).orEmpty())
+            },
+            controller.vehicleIdentity,
+        )
+        vehicleFilter.text = historyVehicleFilterLabel(
+            controller.vehicleIdentity,
+            vehicleOptions,
+            context.getString(R.string.ride_map_all_vehicles),
+            context.getString(R.string.ride_map_vehicle_name_unavailable),
+        )
         clearFilters.isEnabled = controller.hasActiveFilters
         clearFilters.alpha = if (controller.hasActiveFilters) 1f else .48f
 
@@ -425,20 +449,32 @@ class RideHistoryPanel(
 
     private fun showVehicleMenu() {
         PopupMenu(context, vehicleFilter).apply {
-            menu.add(context.getString(R.string.ride_map_all_vehicles)).setOnMenuItemClickListener {
+            menu.setGroupCheckable(0, true, true)
+            menu.add(0, 0, 0, context.getString(R.string.ride_map_all_vehicles)).apply {
+                isCheckable = true
+                isChecked = controller.vehicleIdentity == null
+                setOnMenuItemClickListener {
                 controller.setVehicle(null); true
+                }
             }
-            controller.state.vehicles.forEach { option ->
-                menu.add(vehicleOptionLabel(option)).setOnMenuItemClickListener {
-                    controller.setVehicle(option.platformIdentifier); true
+            historyVehicleOptions(
+                controller.state.vehicles.map { option ->
+                    option.platformIdentifier to (option.displayName?.takeIf(String::isNotBlank).orEmpty())
+                },
+                controller.vehicleIdentity,
+            ).forEachIndexed { index, (identity, label) ->
+                menu.add(0, index + 1, index + 1,
+                    label.ifBlank { context.getString(R.string.ride_map_vehicle_name_unavailable) }).apply {
+                    isCheckable = true
+                    isChecked = controller.vehicleIdentity == identity
+                    setOnMenuItemClickListener {
+                        controller.setVehicle(identity); true
+                    }
                 }
             }
             show()
         }
     }
-
-    private fun vehicleOptionLabel(option: MobileRideHistoryVehicleOptionDto): String =
-        option.displayName?.takeIf(String::isNotBlank) ?: context.getString(R.string.ride_map_vehicle_name_unavailable)
 
     private fun vehicleLabel(ride: MobileRideRecordDto): String =
         ride.associatedVehicleName?.takeIf(String::isNotBlank)
@@ -470,3 +506,5 @@ class RideHistoryPanel(
     private fun duration(milliseconds: ULong): String = RideMetricFormatting.duration(milliseconds)
 
 }
+
+internal fun usesStackedHistoryFilters(fontScale: Float): Boolean = fontScale >= 1.3f

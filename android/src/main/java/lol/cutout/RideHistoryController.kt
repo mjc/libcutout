@@ -12,6 +12,7 @@ import uniffi.cutout_mobile_ffi.MobileRideRecordDto
 import uniffi.cutout_mobile_ffi.MobileMusicHistoryDto
 import uniffi.cutout_mobile_ffi.MobileMusicHistoryStateDto
 import uniffi.cutout_mobile_ffi.mobileRideMapLimits
+import java.util.Locale
 
 data class RideHistoryState(
     val rides: List<MobileRideRecordDto> = emptyList(),
@@ -43,6 +44,34 @@ internal fun historyRouteMatchesRide(projectedIdentity: ByteArray?, selectedIden
 
 internal fun shouldFitHistoryRoute(previousIdentity: ByteArray?, currentIdentity: ByteArray, explicitFit: Boolean): Boolean =
     explicitFit || previousIdentity?.contentEquals(currentIdentity) != true
+
+/** Keep a selected identity visible when refreshed vehicle metadata no longer resolves it. */
+internal fun historyVehicleOptions(
+    options: List<Pair<String, String>>,
+    selectedIdentity: String?,
+): List<Pair<String, String>> {
+    val byIdentity = linkedMapOf<String, String>()
+    options.forEach { (identity, label) -> byIdentity.putIfAbsent(identity, label) }
+    if (selectedIdentity != null && selectedIdentity !in byIdentity) {
+        byIdentity[selectedIdentity] = ""
+    }
+    return byIdentity.toList().sortedWith(
+        compareBy<Pair<String, String>> { it.second.lowercase(Locale.ROOT) }
+            .thenBy { it.first },
+    )
+}
+
+internal fun historyVehicleFilterLabel(
+    identity: String?,
+    options: List<Pair<String, String>>,
+    allVehiclesLabel: String,
+    unavailableLabel: String,
+): String = when {
+    identity == null -> allVehiclesLabel
+    else -> options.firstOrNull { it.first == identity }?.second
+        ?.takeIf(String::isNotBlank)
+        ?: unavailableLabel
+}
 
 /** Rust-backed bounded ride-history queries. Stale asynchronous page and detail results are ignored. */
 class RideHistoryController(private val runtime: RideMapRuntime, private val now: () -> Long = System::currentTimeMillis) {
