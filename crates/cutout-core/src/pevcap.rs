@@ -42,8 +42,8 @@ pub const PEVCAP_MAX_ADVERTISED_SERVICES: usize = 8;
 /// Maximum GATT fingerprints stored in the PEVCAP header.
 pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 16;
 
-/// Maximum annotations stored in the PEVCAP header.
-pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
+/// Maximum header annotations, including capture metadata and action boundaries.
+pub const PEVCAP_MAX_ANNOTATIONS: usize = 256;
 
 /// Stable annotation key used for labeled capture sessions.
 pub const PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY: &str = "capture_label";

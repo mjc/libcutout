@@ -80,6 +80,75 @@ fn capture_with_setup(
 }
 
 #[test]
+fn manual_capture_preserves_device_metadata_and_action_labels_through_submission() {
+    let metadata = [
+        "source=ios-app",
+        "capture_reason=record-only",
+        "capture_privacy=private",
+        "capture_evidence=hardware_tested",
+        "route=record_only",
+        "capture_description=Stationary Aero label test",
+        "user_note=user-initiated Bluetooth capture",
+        "resolved_evidence=Veteran protocol model id",
+        "resolved_detail=NOSFET Aero confirmed by model id 43",
+    ];
+    let capture = capture_with_setup(
+        |builder| {
+            assert!(builder.set_recording_origin(MobileCaptureOriginDto::Manual));
+            for annotation in metadata {
+                assert_eq!(
+                    builder.add_annotation(annotation.to_owned()),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
+            }
+        },
+        |builder| {
+            for at in 110..114 {
+                builder
+                    .change_label(MobileCaptureLabelActionDto::Start {
+                        label: MobileCaptureLabelDto::PoweredOnStationary,
+                    })
+                    .unwrap();
+                decoded_notification(builder, at, stationary_snapshot(at));
+                builder
+                    .change_label(MobileCaptureLabelActionDto::Stop {
+                        label: MobileCaptureLabelDto::PoweredOnStationary,
+                    })
+                    .unwrap();
+            }
+        },
+    );
+    assert_eq!(&capture.header.annotations[..metadata.len()], metadata);
+    assert_eq!(capture.header.annotations.len(), metadata.len() + 8);
+    assert_eq!(
+        cutout_core::CaptureLabelState::from_annotations(
+            capture.header.annotations.iter().map(String::as_str)
+        )
+        .active(),
+        []
+    );
+    assert_eq!(
+        &capture.header.annotations[metadata.len()..],
+        [
+            "capture_label=powered_on_stationary_start",
+            "capture_label=powered_on_stationary_stop"
+        ]
+        .repeat(4)
+    );
+    assert_eq!(capture.records.len(), 4);
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let bytes = capture.encode(encoding).unwrap();
+        let restored = PevcapCapture::decode(&bytes, encoding).unwrap();
+        assert_eq!(restored.header, capture.header);
+        let summary = cutout_core::validate_capture_submission(bytes.as_slice(), encoding).unwrap();
+        assert_eq!(summary.annotation_count, 17);
+        assert_eq!(summary.events, 4);
+        assert!(summary.categories.annotations);
+        assert!(summary.categories.notes);
+    }
+}
+
+#[test]
 fn automatic_capture_origin_freezes_and_filters_actual_mobile_clock_wrappers() {
     let capture = capture(MobileCaptureOriginDto::Automatic, |builder| {
         assert!(!builder.set_recording_origin(MobileCaptureOriginDto::Manual));
