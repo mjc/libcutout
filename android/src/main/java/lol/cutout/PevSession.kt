@@ -13,6 +13,11 @@ class PevSession(
         ULong,
         MobileRideMapSpeedObservationDto?,
     ) -> Unit = { _, _, _ -> },
+    private val onVerified: (MobileConnectionAttemptTokenDto) -> Unit = {},
+    private val onCaptureNotification: (
+        ByteArray, ByteArray, ByteArray, MobileTelemetrySnapshotDto?,
+        MobileCaptureNotificationEvidenceDto, ULong,
+    ) -> Unit = { _, _, _, _, _, _ -> },
     private val updated: (MobileDeviceSessionSnapshotDto, MobileTelemetrySnapshotDto?, MobileSettingsDto) -> Unit,
 ) {
     private var protocolLinked = false
@@ -23,6 +28,7 @@ class PevSession(
         if (!isCurrent) return
         val session = state.resolveDeviceSession(token, complete, now())
         if (session.connection.readiness == MobileConnectionReadinessDto.VERIFIED && !protocolLinked) {
+            onVerified(token)
             protocolLinked = true
             input(MobileSessionInputKindDto.LINK_UP, writeLimit = writeLimit)
         }
@@ -38,13 +44,22 @@ class PevSession(
         writeLimit = minOf(mtu - 3, 512).toUShort()
     }
 
-    fun notification(channel: ByteArray, bytes: ByteArray) {
+    fun notification(channel: ByteArray, service: ByteArray, bytes: ByteArray, capture: Boolean = true) {
         if (!isCurrent) return
+        val receivedAtMs = now()
         state.observeConnectionNotification(token, bytes)
         identify()
-        if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes)
+        val step = if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes, receivedAtMs = receivedAtMs) else null
+        if (capture) onCaptureNotification(
+            channel.copyOf(), service.copyOf(), bytes.copyOf(), telemetry,
+            step?.captureNotificationEvidence ?: MobileCaptureNotificationEvidenceDto.UNCLASSIFIED,
+            receivedAtMs,
+        )
         publish()
     }
+
+    /** Compatibility for session-only fixtures without native service metadata. */
+    fun notification(channel: ByteArray, bytes: ByteArray) = notification(channel, byteArrayOf(), bytes)
 
     fun tick() {
         if (!isCurrent) return
@@ -94,11 +109,12 @@ class PevSession(
         channel: ByteArray = byteArrayOf(),
         bytes: ByteArray = byteArrayOf(),
         writeLimit: UShort? = null,
-    ) {
-        val receivedAtMs = now()
-        state.ingestDeviceSession(token, MobileSessionInputDto(kind,
+        receivedAtMs: ULong = now(),
+    ): MobileDeviceSessionStepDto? {
+        val step = state.ingestDeviceSession(token, MobileSessionInputDto(kind,
             MobileMonotonicMillisDto(receivedAtMs), writeLimit?.let(::MobileTransportWriteLimitDto), channel, bytes))
-            ?.let { process(it, receivedAtMs) }
+        step?.let { process(it, receivedAtMs) }
+        return step
     }
 
     private fun process(step: MobileDeviceSessionStepDto, receivedAtMs: ULong) {

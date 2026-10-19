@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import uniffi.cutout_mobile_ffi.*
 
 data class NearbyPev(val id: String, val name: String, val rssi: Int, val suggested: Boolean,
-    val candidate: DiscoveryCandidate? = null, val advertisedName: String? = null)
+    val candidate: DiscoveryCandidate? = null, val advertisedName: String? = null,
+    val advertisedServices: List<ByteArray> = emptyList())
 enum class NativePhase { IDLE, CONNECTING, DISCOVERING, IDENTIFYING }
 data class BlePresentation(
     val scanning: Boolean = false,
@@ -29,6 +30,8 @@ data class BlePresentation(
     val bms: MobileBmsSnapshotDto? = null,
     val problem: Boolean = false,
     val selectedVehicleIdentifier: String? = null,
+    val notificationCount: ULong = 0UL,
+    val chargeEstimate: MobileChargeEstimateStateDto? = null,
 )
 
 /** Application-owned Android effects. Every Rust call and GATT operation uses one owner. */
@@ -37,12 +40,22 @@ class AndroidBleClient(
     private val onSessionObservation: (BlePresentation, CutoutSessionStateHandle) -> Unit = { _, _ -> },
 ) {
     private val owner = Handler(HandlerThread("CutoutBluetooth").apply { start() }.looper)
+    private val chargeEstimates by lazy(LazyThreadSafetyMode.NONE) { ChargeEstimateRuntime() }
     private val main = Handler(Looper.getMainLooper())
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val stateOwner = lazy {
         (context.applicationContext as CutoutApplication).sessionStateForNativeOwner()
     }
     private val state by stateOwner
+    val diagnostics by lazy {
+        AndroidDiagnosticCaptureClient(
+            context = context,
+            state = { state },
+            database = { (context.applicationContext as CutoutApplication).rides.databaseForNativeOwner() },
+            postOwner = ::postOnOwner,
+            onFinishManual = { connection?.finishTransport(failed = false) },
+        )
+    }
     // Saved editor drafts belong to this native owner, not merely a reusable attempt number.
     val settingsDraftOwnerId: String = UUID.randomUUID().toString()
     private val found = linkedMapOf<String, Pair<BluetoothDevice, NearbyPev>>()
@@ -120,6 +133,7 @@ class AndroidBleClient(
 
     fun setDiagnosticRecordingEnabled(enabled: Boolean, completed: (Result<Unit>) -> Unit) = postOnOwner {
         val result = runCatching { state.setAutomaticDiagnosticRecordingEnabled(enabled) }
+        result.getOrNull()?.let(diagnostics::finishWithdrawn)
         main.post { completed(result.map { Unit }) }
     }
 
@@ -144,7 +158,8 @@ class AndroidBleClient(
                         state.observeDiscovery(DiscoveryObservation(id, name?.encodeToByteArray(),
                             signal.second, emptyList(), signal.first.toShort()))
                         found[id] = device to NearbyPev(id, name ?: context.getString(R.string.device_fallback),
-                            signal.first, false, advertisedName = name)
+                            signal.first, false, advertisedName = name,
+                            advertisedServices = signal.second.map { it.bytes })
                     }
                     // Rust owns candidate admission and ordering; signal changes do not
                     // independently reorder the native rows or promote Bluetooth noise.
@@ -216,10 +231,19 @@ class AndroidBleClient(
         startConnection(selected.first, token)
     }
 
-    private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto) {
+    private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto, recordOnly: Boolean = false) {
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
-            session = state.deviceSessionSnapshot(), problem = false)
-        val next = Connection(token, device)
+            session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL)
+        if (!recordOnly) {
+            val advertisement = found[device.address]?.second
+            diagnostics.start(
+                MobileCaptureOriginDto.AUTOMATIC, device.address,
+                advertisement?.advertisedServices ?: emptyList(),
+                advertisement?.advertisedName ?: runCatching { device.name }.getOrNull(),
+                null, token,
+            )
+        }
+        val next = Connection(token, device, recordOnly)
         connection = next
         try {
             next.gatt = device.connectGatt(context, false, next.callback, BluetoothDevice.TRANSPORT_LE)
@@ -240,6 +264,75 @@ class AndroidBleClient(
             view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
                 telemetry = null, settings = null, bms = null)
             publish()
+        }
+    }
+
+    /** Starts the Swift-style diagnostic-only route; it never promotes this link to protocol control. */
+    fun startManualCapture(
+        platformId: String,
+        note: String?,
+        description: String?,
+        completed: (Boolean) -> Unit,
+    ) = postOnOwner {
+        val selected = found[platformId]
+        if (selected == null || connection != null || !state.captureLifecycleSnapshot().canStart) {
+            main.post { completed(false) }
+            return@postOnOwner
+        }
+        cancelPendingRetryOnOwner()
+        restoreSuppressed = true
+        pendingConnectId = null
+        stopScanOnOwner()
+        state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
+        state.selectDiscoveredPlatform(platformId)
+        val token = state.beginConnectionAttempt(platformId, now()).token
+        if (token == null) {
+            main.post { completed(false) }
+            return@postOnOwner
+        }
+        state.observeConnectionAdvertisement(token, selected.second.advertisedName?.encodeToByteArray())
+        val annotation = listOfNotNull(note?.takeIf(String::isNotBlank), description?.takeIf(String::isNotBlank))
+            .joinToString(" — ").ifBlank { null }
+        val generation = diagnostics.start(
+            origin = MobileCaptureOriginDto.MANUAL,
+            platformId = platformId,
+            advertisedServices = selected.second.advertisedServices,
+            advertisedName = selected.second.advertisedName,
+            description = annotation,
+            connectionToken = token,
+        )
+        if (generation == null) {
+            state.disconnectConnectionAttempt()
+            main.post { completed(false) }
+            return@postOnOwner
+        }
+        selectedDeviceId = platformId
+        restoreSuppressed = true
+        startConnection(selected.first, token, recordOnly = true)
+        main.post { completed(true) }
+    }
+
+    fun finishManualCapture(completed: (Boolean) -> Unit) = diagnostics.beginManualFinish(completed)
+
+    /** Drain the current transport and finalize any capture before closing the capture worker. */
+    fun close(completed: () -> Unit = {}) {
+        postOnOwner {
+            restoreSuppressed = true
+            pendingConnectId = null
+            cancelPendingRetryOnOwner()
+            stopScanOnOwner()
+            val active = connection
+            if (active == null) {
+                publishTimer?.invoke(); publishTimer = null
+                chargeEstimates.close()
+                diagnostics.close(completed)
+            } else {
+                active.finishTransport(failed = false) {
+                    publishTimer?.invoke(); publishTimer = null
+                    chargeEstimates.close()
+                    diagnostics.close(completed)
+                }
+            }
         }
     }
 
@@ -384,8 +477,11 @@ class AndroidBleClient(
         if (publishTimer != null) return
         publishTimer = timers.after(100) {
             publishTimer = null
-            val owned = view.copy(selectedVehicleIdentifier = if (stateOwner.isInitialized())
-                state.discoverySnapshot().selectedPlatformIdentifier else null)
+            val owned = view.copy(
+                selectedVehicleIdentifier = if (stateOwner.isInitialized())
+                    state.discoverySnapshot().selectedPlatformIdentifier else null,
+                chargeEstimate = chargeEstimates.observe(view.session, view.settings, view.telemetry),
+            )
             latestPresentation = owned
             if (stateOwner.isInitialized()) onSessionObservation(owned, state)
             main.post {
@@ -395,11 +491,15 @@ class AndroidBleClient(
         }
     }
 
-    private inner class Connection(val token: MobileConnectionAttemptTokenDto, val device: BluetoothDevice) {
+    private inner class Connection(val token: MobileConnectionAttemptTokenDto, val device: BluetoothDevice, private val recordOnly: Boolean = false) {
         var gatt: BluetoothGatt? = null
+        private var nativeNotificationCount = 0UL
+        private var captureWriteId = 0UL
+        private var captureLinkUp = false
         private var retired = false
         private var ending = false
         private var draining = false
+        private val afterDrainCallbacks = mutableListOf<() -> Unit>()
         private val callbackOverflow = AtomicBoolean()
         private var cancelWakeup: (() -> Unit)? = null
         private var cancelDeadline: (() -> Unit)? = null
@@ -410,6 +510,9 @@ class AndroidBleClient(
                 (context.applicationContext as CutoutApplication).rides.observeRideTelemetry(
                     state, attempt, receivedAtMs, speed,
                 )
+            },
+            onCaptureNotification = { channel, service, bytes, semantic, evidence, atMs ->
+                diagnostics.notification(token, channel, service, bytes, semantic, evidence, atMs)
             }) { snapshot, telemetry, settings ->
             if (current()) {
                 if (snapshot.connection.deadlineMs == null) {
@@ -443,6 +546,10 @@ class AndroidBleClient(
                     fail("Bluetooth link disconnected: $status")
                 } else if (newState == BluetoothProfile.STATE_CONNECTED) {
                     state.connectionLinkEstablished(token)
+                    if (diagnostics.hasWriter(token)) {
+                        diagnostics.linkUp(token, session.writeLimit.toInt())
+                        captureLinkUp = diagnostics.hasWriter(token)
+                    }
                     view = view.copy(phase = NativePhase.DISCOVERING)
                     queue.enqueue(GattOperationQueue.Operation("mtu", {
                         if (gatt.requestMtu(517)) NativeStart.PENDING else NativeStart.COMPLETE
@@ -474,6 +581,9 @@ class AndroidBleClient(
                         roles, MobileVerificationStatusDto.HARDWARE_VERIFIED)
                 }
                 state.observeConnectionGatt(token, inventory)
+                if (diagnostics.hasWriter(token)) {
+                    inventory.forEach { diagnostics.recordFingerprint(token, it) }
+                }
                 view = view.copy(phase = NativePhase.IDENTIFYING)
                 val detectionServices = mobileDiscoveryScanServiceUuids().map { wireUuid(it.bytes) }.toSet()
                 characteristics.filter { it.service.uuid in detectionServices }
@@ -503,7 +613,9 @@ class AndroidBleClient(
                 value: ByteArray, status: Int) {
                 val owned = value.copyOf()
                 callback(gatt) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) session.notification(characteristic.uuid.wireBytes(), owned)
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        session.notification(characteristic.uuid.wireBytes(), characteristic.service.uuid.wireBytes(), owned, capture = false)
+                    }
                     // Protected/unreadable metadata is an observation gap, not a failed BLE link.
                     queue.complete(key("read", characteristic), true)
                     probe(); reschedule()
@@ -511,7 +623,11 @@ class AndroidBleClient(
             }
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
                 val owned = value.copyOf()
-                callback(gatt) { session.notification(characteristic.uuid.wireBytes(), owned); probe(); reschedule() }
+                callback(gatt) {
+                    recordNativeNotification(characteristic)
+                    session.notification(characteristic.uuid.wireBytes(), characteristic.service.uuid.wireBytes(), owned)
+                    probe(); reschedule()
+                }
             }
         }
 
@@ -520,6 +636,21 @@ class AndroidBleClient(
 
         private fun key(kind: String, characteristic: BluetoothGattCharacteristic): String =
             "$kind:${characteristic.service.uuid}:${characteristic.uuid}"
+
+        private fun recordNativeNotification(characteristic: BluetoothGattCharacteristic) {
+            nativeNotificationCount++
+            view = view.copy(notificationCount = nativeNotificationCount)
+            publish()
+        }
+
+        private fun BluetoothGattCharacteristic.rolesForCapture(): List<MobileGattRoleDto> = buildList {
+            val properties = properties
+            if (properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) add(MobileGattRoleDto.READ)
+            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) add(MobileGattRoleDto.WRITE)
+            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) add(MobileGattRoleDto.WRITE_WITHOUT_RESPONSE)
+            if (properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) add(MobileGattRoleDto.NOTIFY)
+            if (properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) add(MobileGattRoleDto.INDICATE)
+        }
 
         private fun subscribe(channel: ByteArray) {
             val characteristic = characteristic(channel) ?: run { fail("Missing or ambiguous Bluetooth channel"); return }
@@ -556,7 +687,22 @@ class AndroidBleClient(
                 fail("Missing or ambiguous Bluetooth write channel"); return
             }
             val chunks = attChunks(bytes, session.writeLimit.toInt())
-            val receipt = NativeWriteReceipt(chunks.size) { session.writeReceipt(operationId, it) }
+            val writeType = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            val isWithoutResponse = writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            val captureId = if (isWithoutResponse && diagnostics.hasWriter(token)) ++captureWriteId else null
+            val receipt = NativeWriteReceipt(chunks.size) { result ->
+                session.writeReceipt(operationId, result)
+                if (captureId != null) {
+                    val disposition = when (result) {
+                        NativeReceipt.QUEUED -> MobilePevcapWriteDispositionDto.QUEUED
+                        NativeReceipt.SUBMITTED -> MobilePevcapWriteDispositionDto.SUBMITTED
+                        NativeReceipt.REJECTED -> MobilePevcapWriteDispositionDto.REJECTED
+                        NativeReceipt.CANCELLED -> MobilePevcapWriteDispositionDto.CANCELLED
+                    }
+                    diagnostics.writeReceipt(token, channel, bytes, captureId, disposition, now())
+                }
+            }
             chunks.forEachIndexed { index, chunk ->
                 queue.enqueue(GattOperationQueue.Operation(key("write", characteristic), {
                     if (!session.writeIsCurrent(operationId)) NativeStart.REJECTED else {
@@ -617,7 +763,8 @@ class AndroidBleClient(
         }
 
         /** Preserve admitted callback order until Rust has settled the recording prefix. */
-        fun finishTransport(failed: Boolean) {
+    fun finishTransport(failed: Boolean, afterDrain: (() -> Unit)? = null) {
+            if (afterDrain != null) afterDrainCallbacks += afterDrain
             if (retired || draining) return
             ending = true
             draining = true
@@ -627,32 +774,52 @@ class AndroidBleClient(
             (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
                 postOnOwner {
                     if (retired || connection !== this) return@postOnOwner
-                    draining = false
                     if (result.isFailure) {
+                        draining = false
                         view = view.copy(problem = true)
                         publish()
                         return@postOnOwner
                     }
-                    val wasVerified = state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED
-                    if (failed && wasVerified && !restoreSuppressed) {
-                        state.connectionLinkDown(token)
-                        retire(invalidate = false)
-                        connection = null
-                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                            telemetry = null, settings = null, bms = null, problem = true)
-                        scheduleRustRetry(device, token)
+                    if (diagnostics.hasWriter(token)) {
+                        if (captureLinkUp) diagnostics.linkDown(token)
+                        captureLinkUp = false
+                        diagnostics.finishAfterLinkDown(token) {
+                            completeTransportOnOwner(failed)
+                        }
                     } else {
-                        if (failed) restoreAttemptedId = device.address
-                        if (failed) state.connectionTransportFailed(token) else state.disconnectConnectionAttempt()
-                        retire(invalidate = false)
-                        connection = null
-                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                            telemetry = null, settings = null, bms = null, problem = failed)
+                        completeTransportOnOwner(failed)
                     }
-                    publish()
-                    connectPendingOnOwner()
                 }
             }
+        }
+
+        private fun completeTransportOnOwner(failed: Boolean) {
+            if (retired || connection !== this) return
+            draining = false
+            val wasVerified = state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED
+            if (failed && wasVerified && !restoreSuppressed) {
+                state.connectionLinkDown(token)
+                retire(invalidate = false)
+                connection = null
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                    telemetry = null, settings = null, bms = null, problem = true)
+                scheduleRustRetry(device, token)
+            } else {
+                if (failed) restoreAttemptedId = device.address
+                if (failed) state.connectionTransportFailed(token) else state.disconnectConnectionAttempt()
+                retire(invalidate = false)
+                connection = null
+                view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                    telemetry = null, settings = null, bms = null, problem = failed)
+            }
+            publish()
+            connectPendingOnOwner()
+            afterDrainCallbacks.toList().forEach { callback ->
+                try { callback() } catch (error: Exception) {
+                    Log.w("CutoutBle", "Bluetooth shutdown callback failed", error)
+                }
+            }
+            afterDrainCallbacks.clear()
         }
 
         fun retire(invalidate: Boolean = true) {
