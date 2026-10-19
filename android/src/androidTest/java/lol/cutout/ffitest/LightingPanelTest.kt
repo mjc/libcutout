@@ -100,6 +100,31 @@ open class LightingPanelTest {
     }
 
     @Test
+    fun quickColorPresetsUseCompactLabeledSwatchesLikeSwift() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val solid = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 100u, MobileLightingPlaybackDto.Solid)
+                val panel = LightingPanel(activity, client) {}
+                panel.render(LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(MobileMelkLightingSessionStateDto.Ready, "test", "Test", 0u, true),
+                    emptyList(), "test", null, null, false, solid, solid, emptyList(), permissionMissing = false,
+                ))
+                activity.setContentView(panel)
+                listOf("red", "blue", "night").forEach { color ->
+                    val swatch = checkNotNull(panel.findViewWithTag<View>("lighting.quick-preset.$color"))
+                    check(swatch.isClickable && swatch.isFocusable && swatch.minimumHeight >= lol.cutout.CutoutUi(activity).dp(44))
+                    check(swatch.contentDescription == lol.cutout.CutoutUi(activity).label("lighting.preset.$color"))
+                    check(swatch is android.widget.LinearLayout && (swatch.getChildAt(0) as View).layoutParams.width == lol.cutout.CutoutUi(activity).dp(42))
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
     fun controlsAreNativeAndRemainUnavailableUntilRustReportsReady() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

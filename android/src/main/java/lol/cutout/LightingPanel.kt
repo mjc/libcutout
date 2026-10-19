@@ -449,7 +449,37 @@ class LightingPanel internal constructor(
     private fun renderPresets(state: MobileMelkLightingRestoreStateDto) {
         val card = card(); card.addView(ui.text(ui.label("lighting.preset.scenes"), 18f, true))
         val quick = listOf(Triple("lighting.preset.red", 255, 0 to 0), Triple("lighting.preset.blue", 0, 0 to 255), Triple("lighting.preset.night", 16, 20 to 32))
-        card.addView(ui.row().apply { quick.forEach { (key, red, rest) -> addView(ui.action(ui.label(key)) { client.setSolidColor(red, rest.first, rest.second) }.apply { isEnabled = ready() }, LinearLayout.LayoutParams(0, -2, 1f)) } })
+        card.addView(ui.row().apply {
+            quick.forEach { (key, red, rest) ->
+                val preset = LinearLayout(context).apply {
+                    tag = "lighting.quick-preset.${key.substringAfterLast('.') }"
+                    gravity = Gravity.CENTER
+                    orientation = LinearLayout.VERTICAL
+                    minimumHeight = ui.dp(64)
+                    isClickable = true
+                    isFocusable = true
+                    isEnabled = ready()
+                    contentDescription = ui.label(key)
+                    addView(View(context).apply {
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            shape = android.graphics.drawable.GradientDrawable.OVAL
+                            setColor(Color.rgb(red, rest.first, rest.second))
+                            setStroke(ui.dp(1), ui.stroke)
+                        }
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
+                    addView(ui.text(ui.label(key), 12f, color = ui.muted).apply { gravity = Gravity.CENTER })
+                    accessibilityDelegate = object : View.AccessibilityDelegate() {
+                        override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                            super.onInitializeAccessibilityNodeInfo(host, info)
+                            info.className = Button::class.java.name
+                        }
+                    }
+                    setOnClickListener { if (ready()) client.setSolidColor(red, rest.first, rest.second) }
+                }
+                addView(preset, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        })
         current?.presets.orEmpty().forEach { preset ->
             val summary = presetSummary(preset.requested)
             val row = ui.column().apply {
