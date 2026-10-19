@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import lol.cutout.ChargingConnectorArtwork
 import lol.cutout.ChargingEditorContextResolver
 import lol.cutout.ChargingSpotEditorPanel
@@ -172,7 +173,9 @@ class LocalChargingEditorParityTest {
             )
             activity.setContentView(panel)
             checkNotNull(panel.findViewWithTag<View>("charging.editor.kind.charging")).performClick()
-            checkNotNull(panel.findViewWithTag<EditText>("charging.editor.access-note")).setText("Outlet by the entrance")
+            val note = checkNotNull(panel.findViewWithTag<EditText>("charging.editor.access-note"))
+            note.setText("Outlet by the entrance")
+            note.requestFocus()
             val save = checkNotNull(panel.findViewWithTag<Button>("charging.editor.save"))
             val cancel = checkNotNull(panel.findViewWithTag<Button>("charging.editor.cancel"))
 
@@ -180,6 +183,7 @@ class LocalChargingEditorParityTest {
 
             assertEquals(1, saveCount)
             assertTrue(panel.isSaving)
+            assertFalse("Accepted save retires text editing before waiting for storage", note.isFocused)
             assertFalse("Save is inert until its async owner reports completion", save.isEnabled)
             assertTrue("Disabled Save has a visible pending-state treatment", save.alpha < 1f)
             assertFalse("Cancel is inert while save is pending", cancel.isEnabled)
@@ -392,6 +396,20 @@ class LocalChargingEditorParityTest {
                 val save = checkNotNull(panel.findViewWithTag<Button>("charging.editor.save"))
                 assertTrue("Save label stays laid out at text scale $fontScale", save.lineCount > 0)
                 assertTrue("Save retains a native 44dp target", save.measuredHeight >= (44 * context.resources.displayMetrics.density).toInt())
+                checkNotNull(panel.findViewWithTag<View>("charging.editor.add-details")).performClick()
+                panel.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+                )
+                panel.layout(0, 0, width, height)
+                val scroll = checkNotNull(panel.findViewWithTag<ScrollView>("charging.editor.scroll"))
+                val beforeScroll = IntArray(2).also(save::getLocationOnScreen)
+                scroll.scrollTo(0, scroll.getChildAt(0).height)
+                shadowOf(activity.mainLooper).idle()
+                val afterScroll = IntArray(2).also(save::getLocationOnScreen)
+                assertTrue("Expanded details scroll independently of the navigation actions", scroll.scrollY > 0)
+                assertTrue("Save remains fixed while optional details scroll", beforeScroll.contentEquals(afterScroll))
+                assertTrue("Save remains visible above the scrolling form", save.isShown && save.bottom <= scroll.top)
             }
         } finally {
             host.pause().stop().destroy()

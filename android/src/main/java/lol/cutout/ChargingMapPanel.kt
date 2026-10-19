@@ -429,9 +429,11 @@ class ChargingMapPanel(
         modalSpotSnapshot = if (sheetMode == Mode.DETAILS) controller.state.selected else null
         val sheet = ui.column().apply {
             background = ui.rounded(28)
-            setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(20))
+            if (sheetMode == Mode.EDITOR) setPadding(0, ui.dp(6), 0, 0)
+            else setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(20))
         }
         val header = ui.row()
+        header.visibility = if (sheetMode == Mode.EDITOR) View.GONE else View.VISIBLE
         val titleArea = ui.row().apply { gravity = Gravity.CENTER_VERTICAL }
         modalTitle = ui.text(title, 22f, true)
         titleArea.addView(modalTitle, LinearLayout.LayoutParams(0, -2, 1f))
@@ -450,7 +452,9 @@ class ChargingMapPanel(
         val bodyContainer = FrameLayout(context)
         modalBodyContainer = bodyContainer
         bodyContainer.addView(body, FrameLayout.LayoutParams(-1, -1))
-        sheet.addView(bodyContainer, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = ui.dp(8) })
+        sheet.addView(bodyContainer, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            if (sheetMode != Mode.EDITOR) topMargin = ui.dp(8)
+        })
         dialog.setContentView(sheet)
         dialog.setOnDismissListener {
             if (modalDialog === dialog) {

@@ -31,7 +31,7 @@ class ChargingSpotEditorPanel(
     initialInput: MobileChargingInputDto? = spot?.input,
     initialLocation: MobileMapCoordinateDto? = null,
     private val contextResolver: ChargingEditorContextResolver? = null,
-) : ScrollView(context) {
+) : LinearLayout(context) {
     internal enum class Kind { CHARGING, FOOD, EV }
 
     private val ui = CutoutUi(context)
@@ -104,10 +104,47 @@ class ChargingSpotEditorPanel(
     private var hadFreshLocation = initialLocation != null
 
     init {
+        orientation = VERTICAL
         clipToPadding = false
+        val header = ui.row().apply {
+            tag = "charging.editor.navigation"
+            setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(ui.action(ui.label("charging.editor.cancel")) {
+            if (!saving && !disposed) onCancel()
+        }.apply {
+            tag = "charging.editor.cancel"
+            setTextColor(ui.brand)
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(Color.argb(40, 255, 214, 0)), null, null)
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(ui.dp(8), ui.dp(4), ui.dp(8), ui.dp(4))
+        }, LayoutParams(-2, -2))
+        header.addView(ui.text(ui.label(if (spot == null) "charging.editor.title" else "charging.editor.edit_title"), 17f, true).apply {
+            tag = "charging.editor.title"
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(4); rightMargin = ui.dp(4) })
+        saveButton = ui.action(ui.label("charging.editor.save"), true) { save() }.apply {
+            tag = "charging.editor.save"
+            minWidth = ui.dp(64)
+            minimumWidth = ui.dp(64)
+            minHeight = ui.dp(44)
+            minimumHeight = ui.dp(44)
+            setPadding(ui.dp(12), ui.dp(4), ui.dp(12), ui.dp(4))
+        }
+        header.addView(saveButton, LayoutParams(-2, -2))
+        addView(header, LayoutParams(-1, -2))
         body.setPadding(ui.dp(18), ui.dp(12), ui.dp(18), ui.dp(20))
-        addView(body, LayoutParams(-1, -2))
-        body.addView(ui.text(ui.label(if (spot == null) "charging.editor.title" else "charging.editor.edit_title"), 24f, true))
+        addView(ScrollView(context).apply {
+            tag = "charging.editor.scroll"
+            isFillViewport = true
+            clipToPadding = false
+            addView(body, ScrollView.LayoutParams(-1, -2))
+        }, LayoutParams(-1, 0, 1f))
 
         val choices = ui.row().apply { tag = "charging.editor.kind-choices" }
         Kind.values().forEach { kind ->
@@ -189,16 +226,6 @@ class ChargingSpotEditorPanel(
         currency.hint = ""
         detailsContent.addView(currency)
         detailsContent.addView(basisButton, spaced())
-        val actions = ui.row()
-        actions.addView(ui.action(context.getString(R.string.charging_cancel)) { if (!saving && !disposed) onCancel() }.apply {
-            tag = "charging.editor.cancel"
-        },
-            LinearLayout.LayoutParams(0, -2, 1f))
-        saveButton = ui.action(ui.label("charging.editor.save"), true) { save() }.apply {
-            tag = "charging.editor.save"
-        }
-        actions.addView(saveButton, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(8) })
-        body.addView(actions, spaced())
         initialInput?.supplies.orEmpty().forEach { addSupply(it) }
         if (initialInput?.supplies.isNullOrEmpty()) {
             price.visibility = if (cost == MobileChargingCostDto.PAID) View.VISIBLE else View.GONE
@@ -258,6 +285,9 @@ class ChargingSpotEditorPanel(
         if (disposed || saving == value) return
         saving = value
         if (value) {
+            findFocus()?.clearFocus()
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                ?.hideSoftInputFromWindow(windowToken, 0)
             val states = IdentityHashMap<View, Boolean>()
             fun capture(view: View) {
                 states[view] = view.isEnabled
@@ -266,7 +296,7 @@ class ChargingSpotEditorPanel(
                     for (index in 0 until view.childCount) capture(view.getChildAt(index))
                 }
             }
-            capture(body)
+            capture(this)
             enabledBeforeSaving = states
             updateSaveAppearance()
         } else {
