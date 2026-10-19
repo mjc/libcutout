@@ -1,15 +1,27 @@
 package lol.cutout.ffitest
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.test.platform.app.InstrumentationRegistry
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import lol.cutout.RideHistoryController
 import lol.cutout.restoreRideSelection
 import lol.cutout.historyRouteMatchesRide
 import lol.cutout.shouldFitHistoryRoute
+import lol.cutout.historyVehicleFilterLabel
+import lol.cutout.historyVehicleOptions
+import lol.cutout.RideMapSurface
 import lol.cutout.routeSegmentsForStyle
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
+import uniffi.cutout_mobile_ffi.MobileChargingSpotDto
+import uniffi.cutout_mobile_ffi.MobileGeoBoundsDto
 import uniffi.cutout_mobile_ffi.MobileRideSegmentStartReasonDto
+import uniffi.cutout_mobile_ffi.MobileRideMapRouteProjectionDto
 import lol.cutout.RideMapRuntime
 import org.junit.Test
 
@@ -59,6 +71,95 @@ open class RideHistoryControllerTest {
         }
         check(shouldFitHistoryRoute(ride, nextRide, explicitFit = false)) {
             "Selecting a different ride should fit its route"
+        }
+    }
+
+    @Test
+    fun vehicleFilterKeepsAnUnresolvedSelectionAcrossMetadataRefresh() {
+        val selection = "board:retired"
+        val refreshed = historyVehicleOptions(
+            listOf("board:z" to "Zeta", "board:a" to "Alpha", "board:z" to "Duplicate"),
+            selection,
+        )
+
+        check(refreshed == listOf("board:a" to "Alpha", "board:retired" to "", "board:z" to "Zeta")) {
+            "Vehicle options should be unique and stable, while retaining an active identity no longer in metadata"
+        }
+        check(historyVehicleFilterLabel(selection, refreshed, "All vehicles", "Vehicle name unavailable") ==
+            "Vehicle name unavailable") {
+            "An unresolved selected identity must not be relabeled as a GPS-only ride"
+        }
+        check(historyVehicleFilterLabel(null, refreshed, "All vehicles", "Vehicle name unavailable") ==
+            "All vehicles")
+    }
+
+    @Test
+    fun historyFiltersFitNarrowWidthsAtNormalAndAccessibilityTextSizes() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val baseContext = instrumentation.targetContext
+        val runtime = RideMapRuntime(baseContext)
+        try {
+            instrumentation.runOnMainSync {
+                val base = baseContext.resources.configuration
+                listOf(1f, 2f).forEach { fontScale ->
+                    val configuration = Configuration(base).apply { this.fontScale = fontScale }
+                    val context = baseContext.createConfigurationContext(configuration)
+                    val panel = lol.cutout.RideHistoryPanel(
+                        context,
+                        RideHistoryController(runtime),
+                        HistoryTestRideMapSurface(context),
+                    ) {}
+                    val density = context.resources.displayMetrics.density
+                    val width = (320 * density).toInt()
+                    panel.measure(
+                        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec((1000 * density).toInt(), View.MeasureSpec.AT_MOST),
+                    )
+                    panel.layout(0, 0, width, panel.measuredHeight)
+
+                    val filters = checkNotNull(panel.findViewWithTag<View>("ride_map_filters"))
+                    val date = checkNotNull(panel.findViewWithTag<TextView>("ride_map_date_filter"))
+                    val vehicle = checkNotNull(panel.findViewWithTag<TextView>("ride_map_vehicle_filter"))
+                    val clear = checkNotNull(panel.findViewWithTag<View>("ride_map_clear_filters"))
+                    val search = checkNotNull(panel.findViewWithTag<TextView>("ride_map_search"))
+                    val minTargetHeight = (44 * density).toInt()
+
+                    check(filters.width <= width && filters.left >= 0 && filters.right <= width) {
+                        "History filter group escaped the 320dp viewport at font scale $fontScale"
+                    }
+                    check(search.width >= filters.width - (8 * density).toInt()) {
+                        "History search field did not use the available narrow width at font scale $fontScale"
+                    }
+                    listOf(date, vehicle).forEach { label ->
+                        check(label.text.isNotBlank() && label.layout != null &&
+                            (0 until label.layout.lineCount).all { label.layout.getEllipsisCount(it) == 0 }) {
+                            "History filter label was blank, unlaid out, or ellipsized at font scale $fontScale: ${label.text}"
+                        }
+                    }
+                    check(date.height >= minTargetHeight && vehicle.height >= minTargetHeight && clear.height >= minTargetHeight) {
+                        "History filter target fell below 44dp at font scale $fontScale: ${date.height}/${vehicle.height}/${clear.height}px"
+                    }
+                    check(date.left >= filters.left && date.right <= filters.right &&
+                        vehicle.left >= filters.left && vehicle.right <= filters.right &&
+                        clear.left >= filters.left && clear.right <= filters.right) {
+                        "A history filter control extended beyond its container at font scale $fontScale"
+                    }
+                    if (fontScale >= 1.3f) {
+                        check(vehicle.top >= date.bottom && clear.top == date.top) {
+                            "Accessibility filters should stack vehicle below date and keep clear beside date"
+                        }
+                    } else {
+                        check(date.top == vehicle.top && date.right <= vehicle.left && vehicle.right <= clear.left) {
+                            "Normal-size history filters should remain in one non-overlapping row"
+                        }
+                    }
+                    check(clear.contentDescription?.isNotBlank() == true) {
+                        "Clear-filters target must retain its accessible name"
+                    }
+                }
+            }
+        } finally {
+            runtime.close()
         }
     }
 
@@ -150,4 +251,25 @@ open class RideHistoryControllerTest {
     /** Local Robolectric wrappers override this to drain their paused main looper. */
     protected open fun awaitCallback(latch: CountDownLatch, timeout: Long, unit: TimeUnit): Boolean =
         latch.await(timeout, unit)
+
+    private class HistoryTestRideMapSurface(context: Context) : FrameLayout(context), RideMapSurface {
+        override val view: View get() = this
+        override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
+        override var onChargingSpotSelected: ((String) -> Unit)? = null
+        override fun show(projection: MobileRideMapRouteProjectionDto) = Unit
+        override fun showCurrentLocation(latitude: Double, longitude: Double) = Unit
+        override fun clearRoute() = Unit
+        override fun currentMapCenter(): LatLng? = null
+        override fun currentCameraPosition(): CameraPosition? = null
+        override fun restoreCameraPosition(position: CameraPosition?) = Unit
+        override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) = Unit
+        override fun recenter() = Unit
+        override fun setActive(value: Boolean) = Unit
+        override fun onHostStart() = Unit
+        override fun onHostResume() = Unit
+        override fun onHostPause() = Unit
+        override fun onHostStop() = Unit
+        override fun onHostDestroy() = Unit
+        override fun onHostLowMemory() = Unit
+    }
 }
