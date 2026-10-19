@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private val navigation = linkedMapOf<Int, LinearLayout>()
     private var map: RideMapPanel? = null
     private var lighting: LightingPanel? = null
+    private var restoredLightingUiState: Bundle? = null
     private var pack: PackPanel? = null
     private var soundCloud: AndroidSoundCloudPanel? = null
     private var debug: VescDebugPanel? = null
@@ -68,6 +69,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         page = savedInstanceState?.getInt("page") ?: intent.getIntExtra("page", R.string.devices)
         restoredMapUiState = savedInstanceState?.getBundle("map-ui")
+        restoredLightingUiState = savedInstanceState?.getBundle("lighting-ui")
         setupReturnPage = savedInstanceState?.getInt("setup-return", R.string.devices) ?: R.string.devices
         musicReturnPage = savedInstanceState?.getInt("music-return", R.string.more) ?: R.string.more
         soundCloudReturnPage = savedInstanceState?.getInt("soundcloud-return", R.string.music_settings) ?: R.string.music_settings
@@ -176,6 +178,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt("page", page)
         (map?.saveUiState() ?: restoredMapUiState)?.let { outState.putBundle("map-ui", it) }
+        (lighting?.saveUiState() ?: restoredLightingUiState)?.let { outState.putBundle("lighting-ui", it) }
         outState.putInt("setup-return", setupReturnPage); outState.putInt("music-return", musicReturnPage)
         outState.putInt("soundcloud-return", soundCloudReturnPage)
         outState.putBundle("settings-ui", settings.saveUiState())
@@ -274,6 +277,8 @@ class MainActivity : Activity() {
             R.string.lighting -> {
                 app.lighting.selectVehicle(latest.selectedVehicleIdentifier ?: latest.session?.connection?.token?.platformIdentifier)
                 val panel = LightingPanel(this, app.lighting, ::scanOrRequestPermission)
+                panel.restoreUiState(restoredLightingUiState)
+                restoredLightingUiState = null
                 lighting = panel; addPanel(id, panel)
                 observations += app.lighting.addObserver { if (resumed) maintainForegroundWork() }
             }

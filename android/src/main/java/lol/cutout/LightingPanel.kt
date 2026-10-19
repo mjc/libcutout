@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.os.Bundle
 import android.widget.FrameLayout
 import android.os.Looper
 import android.widget.*
@@ -109,6 +110,17 @@ class LightingPanel(
         if (active == value) return
         active = value
         if (value) client.resume() else client.stopIfUnpaired()
+    }
+
+    /** Saves only native page selection; accessory state remains owned by the Rust-backed client. */
+    fun saveUiState(): Bundle = Bundle().apply { putString(STATE_PAGE, page.name) }
+
+    /** Restores the selected native page without issuing a device command. */
+    fun restoreUiState(state: Bundle?) {
+        val restored = state?.getString(STATE_PAGE)?.let { name -> Page.values().firstOrNull { it.name == name } } ?: return
+        page = restored
+        updatePagePicker()
+        if (current?.permissionMissing != true) renderSelected()
     }
 
     fun render(value: LightingPresentation) {
@@ -261,7 +273,12 @@ class LightingPanel(
     }
 
     private fun renderEffects(state: MobileMelkLightingRestoreStateDto) {
-        val card = card(); card.addView(powerControl(state)); card.addView(ui.text(ui.label("lighting.patterns"), 18f, true))
+        controls.addView(card().apply {
+            tag = "lighting.effects.power-card"
+            addView(powerControl(state))
+        })
+        val card = card().apply { tag = "lighting.effects.patterns-card" }
+        card.addView(ui.text(ui.label("lighting.patterns"), 18f, true))
         val patterns = mobileMelkLightingPatternCatalog().filter { it.verified }
         val groups = mobileMelkLightingEffectGroups()
         val currentPattern = (state.playback as? MobileLightingPlaybackDto.Effect)?.pattern?.toInt()
@@ -407,6 +424,8 @@ class LightingPanel(
 
     private fun card() = ui.column().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(16)); background = ui.rounded(20); addView(ui.space(2)) }
     private fun defaultState() = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 100u, null)
+
+    private companion object { const val STATE_PAGE = "lighting.selected-page" }
 
     private fun showPairing() {
         val presentation = current ?: return
