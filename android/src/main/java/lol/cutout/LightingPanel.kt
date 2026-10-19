@@ -44,6 +44,9 @@ class LightingPanel(
     private var active = false
     private var page = Page.COLOR
     private var current: LightingPresentation? = null
+    private var trackingSliderCount = 0
+    private var trackingColorWheel = false
+    private var rebuildingControls = false
 
     private enum class Page { COLOR, EFFECTS, MUSIC }
 
@@ -108,8 +111,8 @@ class LightingPanel(
     }
 
     fun render(value: LightingPresentation) {
-        current = value
         if (Looper.myLooper() != Looper.getMainLooper()) { post { render(value) }; return }
+            current = value
             val snapshot = value.snapshot
             connectionName.text = value.alias?.takeIf(String::isNotBlank) ?: snapshot.name ?: ui.label("lighting.default_name")
             connectionName.tag = "lighting.accessory.name"
@@ -137,7 +140,7 @@ class LightingPanel(
             if (error != null) connectionActions.addView(ui.text(error, 13f, color = ui.orange).apply { setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(4)) })
             updatePagePicker()
             if (value.permissionMissing) { controls.removeAllViews(); return }
-            renderSelected()
+            if (!ready() || !hasActiveControlInteraction()) renderSelected()
     }
 
     private fun updatePagePicker() {
@@ -151,16 +154,57 @@ class LightingPanel(
 
     private fun ready() = current?.snapshot?.state == MobileMelkLightingSessionStateDto.Ready && current?.permissionMissing == false
 
-    private fun renderSelected() {
-        controls.removeAllViews()
-        val state = current?.requested ?: current?.confirmed ?: defaultState()
-        when (page) {
-            Page.COLOR -> renderColor(state)
-            Page.EFFECTS -> renderEffects(state)
-            Page.MUSIC -> renderMusic(state)
+    private fun hasActiveControlInteraction(): Boolean = trackingSliderCount > 0 || trackingColorWheel ||
+        controls.anyView { it is EditText && it.hasFocus() }
+
+    private fun ViewGroup.anyView(predicate: (View) -> Boolean): Boolean {
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (predicate(child) || (child is ViewGroup && child.anyView(predicate))) return true
         }
-        renderBrightness(state)
-        renderPresets(state)
+        return false
+    }
+
+    private fun trackSlider(started: Boolean) {
+        trackingSliderCount = (trackingSliderCount + if (started) 1 else -1).coerceAtLeast(0)
+    }
+
+    private fun scheduleControlRefreshAfterInteraction() {
+        post {
+            if (ready() && !hasActiveControlInteraction() && current != null) renderSelected()
+        }
+    }
+
+    private fun renderSelected() {
+        rebuildingControls = true
+        try {
+            trackingSliderCount = 0
+            trackingColorWheel = false
+            controls.removeAllViews()
+            val state = current?.requested ?: current?.confirmed ?: defaultState()
+            when (page) {
+                Page.COLOR -> renderColor(state)
+                Page.EFFECTS -> renderEffects(state)
+                Page.MUSIC -> renderMusic(state)
+            }
+            renderBrightness(state)
+            renderPresets(state)
+            installFocusRefreshListeners(controls)
+        } finally {
+            rebuildingControls = false
+        }
+    }
+
+    private fun installFocusRefreshListeners(parent: ViewGroup) {
+        for (index in 0 until parent.childCount) {
+            val child = parent.getChildAt(index)
+            if (child is EditText) {
+                child.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+                    if (!hasFocus && !rebuildingControls) post { if (!hasActiveControlInteraction() && current != null) renderSelected() }
+                }
+            }
+            if (child is ViewGroup) installFocusRefreshListeners(child)
+        }
     }
 
     private fun renderColor(state: MobileMelkLightingRestoreStateDto) {
@@ -168,14 +212,18 @@ class LightingPanel(
         card.addView(powerControl(state))
         card.addView(ui.text(ui.label("lighting.solid_color"), 18f, true))
         val hsv = FloatArray(3).also { Color.RGBToHSV(state.red.toInt(), state.green.toInt(), state.blue.toInt(), it) }
-        val color = LightingColorWheelView(context, hsv[0], hsv[1]) { red, green, blue, final ->
+        val color = LightingColorWheelView(context, hsv[0], hsv[1], onInteractionChanged = { tracking ->
+            trackingColorWheel = tracking
+            if (!tracking) scheduleControlRefreshAfterInteraction()
+        }) { red, green, blue, final ->
             client.setSolidColor(red, green, blue, preview = !final)
         }.apply {
+            tag = "lighting.color-wheel"
             contentDescription = ui.label("lighting.color_wheel"); isEnabled = ready()
             layoutParams = LinearLayout.LayoutParams(-1, ui.dp(248))
         }
         card.addView(color)
-        card.addView(ui.action(ui.label("lighting.set_white")) { client.setSolidColor(255, 255, 255) }.apply { isEnabled = ready() })
+        card.addView(ui.action(ui.label("lighting.set_white")) { client.setSolidColor(255, 255, 255) }.apply { isEnabled = ready(); tag = "lighting.set-white" })
         controls.addView(card)
     }
 
@@ -196,11 +244,15 @@ class LightingPanel(
         })
         val slider = SeekBar(context).apply {
             max = 100; progress = state.brightness.toInt(); isEnabled = ready()
-            contentDescription = ui.label("lighting.brightness")
+            contentDescription = ui.label("lighting.brightness"); tag = "lighting.brightness"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) { if (fromUser) (seekBar?.parent as? LinearLayout)?.let { (it.getChildAt(0) as? LinearLayout)?.let { row -> (row.getChildAt(1) as? TextView)?.text = context.getString(R.string.lighting_percent, progress) } } }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-                override fun onStopTrackingTouch(seekBar: SeekBar?) { if (ready()) seekBar?.let { client.setBrightness(it.progress) } }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { trackSlider(true) }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    trackSlider(false)
+                    if (ready()) seekBar?.let { client.setBrightness(it.progress) }
+                    scheduleControlRefreshAfterInteraction()
+                }
             })
         }
         card.addView(slider)
@@ -240,11 +292,15 @@ class LightingPanel(
             addView(ui.text(ui.label("lighting.slower"), 13f, color = ui.muted)); addView(ui.space(4)); addView(ui.text(ui.label("lighting.faster"), 13f, color = ui.muted))
         })
         val speed = (state.playback as? MobileLightingPlaybackDto.Effect)?.speed?.toInt() ?: 128
-        card.addView(SeekBar(context).apply { max = 255; progress = 255 - speed; isEnabled = ready(); contentDescription = ui.label("lighting.effect.speed")
+        card.addView(SeekBar(context).apply { max = 255; progress = 255 - speed; isEnabled = ready(); contentDescription = ui.label("lighting.effect.speed"); tag = "lighting.effect.speed"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) = Unit
-                override fun onStartTrackingTouch(s: SeekBar?) = Unit
-                override fun onStopTrackingTouch(s: SeekBar?) { s?.let { client.setEffectSpeed(255 - it.progress) } }
+                override fun onStartTrackingTouch(s: SeekBar?) { trackSlider(true) }
+                override fun onStopTrackingTouch(s: SeekBar?) {
+                    trackSlider(false)
+                    if (ready()) s?.let { client.setEffectSpeed(255 - it.progress) }
+                    scheduleControlRefreshAfterInteraction()
+                }
             }) })
         controls.addView(card)
     }
@@ -293,11 +349,15 @@ class LightingPanel(
         }
         card.addView(ui.text(ui.label("lighting.sensitivity"), 17f, true))
         val sensitivity = playback?.sensitivity?.toInt() ?: 50
-        card.addView(SeekBar(context).apply { max = 100; progress = sensitivity; isEnabled = ready(); contentDescription = ui.label("lighting.microphone_sensitivity")
+        card.addView(SeekBar(context).apply { max = 100; progress = sensitivity; isEnabled = ready(); contentDescription = ui.label("lighting.microphone_sensitivity"); tag = "lighting.music.sensitivity"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, user: Boolean) = Unit
-                override fun onStartTrackingTouch(s: SeekBar?) = Unit
-                override fun onStopTrackingTouch(s: SeekBar?) { if (ready()) s?.let { client.applyPlayback(MobileLightingPlaybackDto.Music(selection.selectedItemPosition.toUByte(), it.progress.toUByte())) } }
+                override fun onStartTrackingTouch(s: SeekBar?) { trackSlider(true) }
+                override fun onStopTrackingTouch(s: SeekBar?) {
+                    trackSlider(false)
+                    if (ready()) s?.let { client.applyPlayback(MobileLightingPlaybackDto.Music(selection.selectedItemPosition.toUByte(), it.progress.toUByte())) }
+                    scheduleControlRefreshAfterInteraction()
+                }
             }) })
         card.addView(ui.action(ui.label("lighting.stop_music")) { client.stopMusic() }.apply { isEnabled = ready() })
         controls.addView(card)
@@ -325,7 +385,10 @@ class LightingPanel(
             }
             card.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
         }
-        val name = EditText(context).apply { hint = ui.label("lighting.preset.name"); setSingleLine(true); contentDescription = ui.label("lighting.preset.name") }
+        val name = EditText(context).apply {
+            hint = ui.label("lighting.preset.name"); setSingleLine(true); contentDescription = ui.label("lighting.preset.name")
+            tag = "lighting.preset.name"
+        }
         card.addView(ui.row().apply {
             addView(name, LinearLayout.LayoutParams(0, -2, 1f))
             addView(ui.action(ui.label("lighting.save")) { client.savePreset(name.text.toString()); name.text.clear() }.apply { isEnabled = ready() })
@@ -452,6 +515,7 @@ private class LightingColorWheelView(
     context: Context,
     initialHue: Float,
     initialSaturation: Float,
+    private val onInteractionChanged: (Boolean) -> Unit,
     private val onColor: (Int, Int, Int, Boolean) -> Unit,
 ) : View(context) {
     private val bitmapSize = 240
@@ -493,6 +557,7 @@ private class LightingColorWheelView(
         when (event.action) {
             android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE, android.view.MotionEvent.ACTION_UP -> {
                 val diameter = minOf(width, height).toFloat(); if (diameter <= 0f) return false
+                if (event.action == android.view.MotionEvent.ACTION_DOWN) onInteractionChanged(true)
                 val cx = width / 2f; val cy = height / 2f
                 val dx = event.x - cx; val dy = event.y - cy
                 val saturationValue = (kotlin.math.sqrt(dx * dx + dy * dy) / (diameter * .47f)).coerceIn(0f, 1f)
@@ -500,9 +565,10 @@ private class LightingColorWheelView(
                 saturation = saturationValue; invalidate()
                 val rgb = Color.HSVToColor(floatArrayOf(hue, saturation, 1f))
                 onColor(Color.red(rgb), Color.green(rgb), Color.blue(rgb), event.action == android.view.MotionEvent.ACTION_UP)
+                if (event.action == android.view.MotionEvent.ACTION_UP) onInteractionChanged(false)
                 return true
             }
-            android.view.MotionEvent.ACTION_CANCEL -> return true
+            android.view.MotionEvent.ACTION_CANCEL -> { onInteractionChanged(false); return true }
         }
         return super.onTouchEvent(event)
     }
