@@ -216,6 +216,14 @@ class RideHistoryPanel(
         } else if (state.error != null) {
             message.text = state.error
             message.visibility = View.VISIBLE
+            rows.addView(ui.action(context.getString(R.string.ride_map_retry_detail)) {
+                // Keep the current rows, active filters, and a list preview available while
+                // retrying. RideHistoryController owns result generations and selection restore.
+                controller.refresh(preserveSelection = state.rides.isNotEmpty() || state.listPreviewRide != null)
+            }.apply {
+                tag = "ride_map_history_refresh_retry"
+                isEnabled = !state.loading
+            }, LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(8) })
         } else if (state.rides.isEmpty()) {
             message.text = context.getString(R.string.ride_map_empty_history)
             message.visibility = View.VISIBLE
@@ -307,11 +315,20 @@ class RideHistoryPanel(
             val routeText = when (route.routePresence) {
                 MobileRideMapRoutePresenceDto.VISIBLE -> context.getString(R.string.ride_map_recorded_points_detail,
                     ride.summary.pointCount.toInt())
-                MobileRideMapRoutePresenceDto.EMPTY_VIEWPORT -> context.getString(R.string.ride_map_no_route)
+                MobileRideMapRoutePresenceDto.EMPTY_VIEWPORT -> context.getString(R.string.ride_map_detail_viewport_empty)
                 MobileRideMapRoutePresenceDto.EMPTY_RIDE -> context.getString(R.string.ride_map_no_route)
             }
             rows.addView(ui.text(routeText, 14f, false, ui.muted),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
+            if (route.routePresence == MobileRideMapRoutePresenceDto.EMPTY_VIEWPORT) {
+                rows.addView(ui.action(context.getString(R.string.ride_map_route_preview)) {
+                    // The selected ride still has route points, just outside this viewport.
+                    // Reuse the existing bounded full-extent Rust projection and fit it once.
+                    explicitRouteFitRequested = true
+                    controller.select(ride)
+                }.apply { tag = "ride_map_route_preview" },
+                    LinearLayout.LayoutParams(-1, ui.dp(48)).apply { topMargin = ui.dp(6) })
+            }
             if (route.routePresence == MobileRideMapRoutePresenceDto.VISIBLE) {
                 rows.addView(ui.text(context.getString(R.string.ride_map_projected_points, route.points.size), 13f, false, ui.muted), spaced())
                 if (route.sourcePointCount > route.points.size.toULong()) {
@@ -334,10 +351,14 @@ class RideHistoryPanel(
                     context.getString(R.string.ride_map_background_gaps, route.backgroundGapCount.toInt()),
                     13f, false, ui.muted), spaced())
             }
-            val shouldFit = shouldFitHistoryRoute(fittedRouteRideIdentity, ride.id.bytes, explicitRouteFitRequested)
+            val shouldFit = !state.loading && state.error == null &&
+                route.routePresence == MobileRideMapRoutePresenceDto.VISIBLE &&
+                shouldFitHistoryRoute(fittedRouteRideIdentity, ride.id.bytes, explicitRouteFitRequested)
             mapView.showRoute(route, fitCamera = shouldFit)
-            if (shouldFit) fittedRouteRideIdentity = ride.id.bytes.copyOf()
-            explicitRouteFitRequested = false
+            if (shouldFit) {
+                fittedRouteRideIdentity = ride.id.bytes.copyOf()
+                explicitRouteFitRequested = false
+            }
         } ?: mapView.clearRoute()
         renderMusic(ride, state)
         state.error?.let { error ->

@@ -15,6 +15,7 @@
     <string name="ride_map_retry">Retry map</string>
     <string name="ride_map_recenter">Recenter map</string>
     <string name="ride_map_no_route">No route points recorded yet.</string>
+    <string name="ride_map_detail_viewport_empty">No route points are visible in this map area.</string>
     <string name="ride_map_live_title">Live ride</string>
     <string name="ride_map_idle">Ready to record a ride.</string>
     <string name="ride_map_search">Search rides</string>
