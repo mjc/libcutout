@@ -1,10 +1,8 @@
 package lol.cutout.local
 
 import android.app.Activity
-import android.content.ComponentName
 import android.content.res.Configuration
 import android.os.Looper
-import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -158,7 +156,7 @@ class LocalMusicPresentationParityTest {
                     panel.findViewWithTag<TextView>("music.provider-error").text.toString())
                 val connect = checkNotNull(panel.findViewWithTag<android.widget.Button>("music.connect-provider"))
                 assertEquals(View.VISIBLE, connect.visibility)
-                assertTrue(connect.text.toString().startsWith("Connect "))
+                assertEquals(base.getString(R.string.spotify_reauthorize), connect.text.toString())
                 assertEquals(Gravity.START or Gravity.CENTER_VERTICAL, connect.gravity)
                 assertTrue(connect.minimumHeight >= CutoutUi(context).dp(44))
                 val flatBackground = connect.background as android.graphics.drawable.RippleDrawable
@@ -203,30 +201,21 @@ class LocalMusicPresentationParityTest {
     }
 
     @Test
-    fun connectWithNoActiveMediaSessionUsesExplicitProviderLaunchRecovery() {
+    fun connectWithoutSpotifyClientIdRefusesAuthorization() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val base = host.get()
         val client = (base.application as CutoutApplication).music
-        val previousAccess = Settings.Secure.getString(base.contentResolver, "enabled_notification_listeners")
         val previousProvider = client.latestPresentation.selectedProvider
         try {
-            Settings.Secure.putString(
-                base.contentResolver,
-                "enabled_notification_listeners",
-                ComponentName(base, AndroidMusicNotificationListenerService::class.java).flattenToString(),
-            )
             client.selectProvider(MobileMusicProviderDto.SPOTIFY)
-            client.connectOrRetrySelectedProvider()
+            client.connectOrRetrySelectedProvider(base)
             shadowOf(Looper.getMainLooper()).idle()
 
-            // Robolectric has no Spotify package installed. The unavailable-app
-            // result proves Connect/Retry reached the normal provider-launch
-            // effect, rather than merely polling an absent MediaSession again.
             assertEquals(MobileMusicProviderDto.SPOTIFY, client.latestPresentation.selectedProvider)
-            assertEquals(base.getString(R.string.music_provider_unavailable), client.latestPresentation.error)
-            assertTrue(client.latestPresentation.listenerAccessGranted)
+            assertFalse("the host fixture has no Spotify client ID", client.latestPresentation.spotifyConfigured)
+            assertEquals(base.getString(R.string.spotify_not_configured), client.latestPresentation.error)
+            assertNull("unconfigured Spotify must not start an authorization browser", shadowOf(base).nextStartedActivity)
         } finally {
-            Settings.Secure.putString(base.contentResolver, "enabled_notification_listeners", previousAccess)
             client.selectProvider(previousProvider)
             client.refreshSessions()
             host.pause().stop().destroy()
@@ -248,6 +237,8 @@ class LocalMusicPresentationParityTest {
                 item, 30_000UL, 3_600_000UL, 100UL, MobileMusicCapabilitiesDto(true, true, true, true, true)),
             history = MobileMusicHistoryDto(MobileMusicHistoryStatusDto.AVAILABLE, listOf(
                 MobileMusicRideEventDto(0UL, MobileMusicProviderDto.SPOTIFY, item.identifier, item.title, item.artist,
-                    MobileMusicRideEventKindDto.ITEM_CHANGED, 100UL, 100UL, 1_792_000_000_000UL, 0UL))))
+                    MobileMusicRideEventKindDto.ITEM_CHANGED, 100UL, 100UL, 1_792_000_000_000UL, 0UL))),
+            spotifyConfigured = true,
+            spotifyAuthorized = true)
     }
 }

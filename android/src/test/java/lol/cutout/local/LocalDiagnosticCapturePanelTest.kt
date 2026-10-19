@@ -130,10 +130,7 @@ class LocalDiagnosticCapturePanelTest {
                 deviceKind = "Bench capture",
             ))
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
-            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
             assertEquals("Bench capture", checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.source")).text.toString())
-
-            assertTrue(panel.handleBack())
             panel.renderCapture(DiagnosticCapturePresentation(
                 ready = true,
                 lifecycle = MobileCaptureLifecycleSnapshotDto(
@@ -142,7 +139,6 @@ class LocalDiagnosticCapturePanelTest {
                 ),
             ))
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
-            checkNotNull(panel.findViewWithTag<View>("captures.active.open")).performClick()
             assertEquals(
                 lol.cutout.CutoutUi(activity).label("captures.automatic"),
                 checkNotNull(panel.findViewWithTag<android.widget.TextView>("captures.active.source")).text.toString(),
