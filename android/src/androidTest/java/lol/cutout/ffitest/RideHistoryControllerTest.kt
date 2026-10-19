@@ -155,7 +155,9 @@ open class RideHistoryControllerTest {
                         }
                     }
                     check(listOf(date, vehicle, clear).all { control ->
-                        (control.background as? RippleDrawable)?.getDrawable(0) == null
+                        (control.background as? RippleDrawable)?.let { ripple ->
+                            ripple.numberOfLayers == 1 && ripple.getId(0) == android.R.id.mask
+                        } == true
                     }) {
                         "Filter controls should keep the parent filter surface visible instead of drawing nested card fills"
                     }
