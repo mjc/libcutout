@@ -9,6 +9,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
@@ -39,8 +40,15 @@ class CameraPanel(
     private val previewControls = ui.row()
     private val mediaTitle = ui.text(ui.label("camera.evidence.media_title"), 17f, true)
     private val mediaRows = ui.column()
+    private val mediaError = ui.text("", 14f, color = ui.red).apply { tag = "camera.files.error" }
+    private val thumbnailError = ui.text("", 14f, color = ui.red).apply { tag = "camera.files.thumbnail-error" }
     private val loadMedia = ui.action(ui.label("camera.evidence.media_title")) { client.loadMedia() }
-    private val loadMoreMedia = ui.action(ui.label("camera.evidence.media_load_more")) { mediaPage++ ; renderMedia(currentState.evidence!!) }.apply {
+    private val loadMoreMedia = ui.action(ui.label("camera.evidence.media_load_more")) {
+        currentState.evidence?.let { evidence ->
+            mediaPage++
+            renderMedia(evidence)
+        }
+    }.apply {
         tag = "camera.files.load-more"
     }
     private val filesCard = ui.column()
@@ -111,6 +119,8 @@ class CameraPanel(
         loadMedia.tag = "camera.files.load"
         filesCard.addView(loadMedia)
         filesCard.addView(mediaRows)
+        filesCard.addView(mediaError)
+        filesCard.addView(thumbnailError)
         content.addView(filesCard)
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         render(currentState)
@@ -249,6 +259,12 @@ class CameraPanel(
         mediaRows.removeAllViews()
         mediaPage = mediaPage.coerceAtLeast(1)
         loadMedia.visibility = if (evidence.media != null) View.GONE else View.VISIBLE
+        loadMedia.text = ui.label(if (currentState.isReading) "camera.origin.reading" else "camera.evidence.media_title")
+        loadMedia.isEnabled = !currentState.isReading
+        mediaError.text = currentState.mediaError.orEmpty()
+        mediaError.visibility = if (currentState.mediaError == null) View.GONE else View.VISIBLE
+        thumbnailError.text = currentState.thumbnailError.orEmpty()
+        thumbnailError.visibility = if (currentState.thumbnailError == null) View.GONE else View.VISIBLE
         if (evidence.media == null) return
         if (media.isEmpty()) {
             mediaRows.addView(ui.text(ui.label("camera.evidence.metadata_only"), 14f, color = ui.muted))
@@ -280,9 +296,18 @@ class CameraPanel(
                     LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginStart = ui.dp(8) })
             }
             if (mobileNovatekMediaThumbnailsSupported(evidence.firmwareVersion, evidence.configuration)) {
-                val thumbnailButton = ui.action(ui.label("camera.evidence.thumbnail_request")) { client.loadThumbnail(entry) }
-                thumbnailButton.isEnabled = currentState.thumbnailPath == null || currentState.thumbnailPath == entry.path
-                buttons.addView(thumbnailButton, LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginStart = ui.dp(8) })
+                if (currentState.thumbnailPath == entry.path) {
+                    buttons.addView(ProgressBar(context).apply {
+                        isIndeterminate = true
+                        contentDescription = ui.label("camera.evidence.thumbnail")
+                        tag = "camera.media.thumbnail.loading.${entry.name}"
+                    }, LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)).apply { marginStart = ui.dp(8) })
+                } else {
+                    val thumbnailButton = ui.action(ui.label("camera.evidence.thumbnail_request")) { client.loadThumbnail(entry) }
+                    thumbnailButton.isEnabled = currentState.thumbnailPath == null
+                    thumbnailButton.tag = "camera.media.thumbnail.${entry.name}"
+                    buttons.addView(thumbnailButton, LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginStart = ui.dp(8) })
+                }
             }
             if (buttons.childCount > 0) row.addView(buttons)
             mediaRows.addView(row)

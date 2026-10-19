@@ -56,6 +56,8 @@ data class CameraPanelState(
     val downloadProvenance: Map<String, MobileCameraMediaProvenanceDto> = emptyMap(),
     val thumbnailPath: String? = null,
     val thumbnails: Map<String, ByteArray> = emptyMap(),
+    val mediaError: String? = null,
+    val thumbnailError: String? = null,
     val operationError: String? = null,
     val savedPreviewFile: File? = null,
 )
@@ -264,7 +266,8 @@ class AndroidCameraClient(
         val discoveryToken = state.cameraDiscoveryToken()
         val preserveConnection = includeMedia && view.evidence != null
         update(view.copy(isReading = true, error = null,
-            connection = if (preserveConnection) CameraConnectionState.CONNECTED else CameraConnectionState.DISCOVERING))
+            connection = if (preserveConnection) CameraConnectionState.CONNECTED else CameraConnectionState.DISCOVERING,
+            thumbnailPath = null, thumbnails = emptyMap()))
         try {
             val origin = mobileNovatekR3ProOrigin()
             val firmware = request(origin, MobileNovatekReadCommandDto.FIRMWARE_VERSION, 4 * 1024, routeToken, network)
@@ -483,29 +486,34 @@ class AndroidCameraClient(
 
     fun loadMedia() = loadEvidence(includeMedia = true)
 
-    fun download(media: MobileNovatekMediaEntryDto) = enqueue {
+    fun download(media: MobileNovatekMediaEntryDto) = enqueue(
+        onRejected = { update(view.copy(mediaError = context.getString(R.string.camera_worker_busy))) },
+    ) {
         if (!active || !view.wifiReady || view.evidence?.media?.none { it.path == media.path && it.sizeBytes == media.sizeBytes } != false) {
-            update(view.copy(operationError = context.getString(R.string.camera_media_unavailable))); return@enqueue
+            update(view.copy(mediaError = context.getString(R.string.camera_media_unavailable))); return@enqueue
         }
         val state = sessionState()
         val token = state.cameraSessionToken()
-        val origin = state.novatekSessionOrigin() ?: return@enqueue
+        val origin = state.novatekSessionOrigin() ?: run {
+            update(view.copy(mediaError = context.getString(R.string.camera_media_unavailable)))
+            return@enqueue
+        }
         val network = wifiNetwork ?: run {
-            update(view.copy(operationError = context.getString(R.string.camera_media_unavailable)))
+            update(view.copy(mediaError = context.getString(R.string.camera_media_unavailable)))
             return@enqueue
         }
         val routeToken = routeFence.token()
         val generation = downloadGeneration.incrementAndGet()
         val networkGeneration = wifiNetworkGeneration.get()
         val request = try { state.authorizeNovatekMediaDownload(media.path) } catch (_: Exception) {
-            update(view.copy(operationError = context.getString(R.string.camera_media_unavailable))); return@enqueue
+            update(view.copy(mediaError = context.getString(R.string.camera_media_unavailable))); return@enqueue
         }
         val capture = currentCaptureIdentity?.invoke()
         val capturedAtMonotonic = android.os.SystemClock.elapsedRealtime().toULong()
         val capturedAtWallClock = System.currentTimeMillis().coerceAtLeast(0).toULong()
         val destination = cameraDirectory().resolve("camera-media-${System.currentTimeMillis()}-${safeName(media.name)}")
         val temporary = File(context.cacheDir, "camera-download-${request.operationId}.tmp")
-        update(view.copy(downloadingPath = media.path, operationError = null))
+        update(view.copy(downloadingPath = media.path, mediaError = null, operationError = null))
         try {
             val actualSize = download(origin, request.target, request.sizeBytes.toLong(), temporary, network, routeToken)
             if (!routeFence.isActive(routeToken) || generation != downloadGeneration.get() ||
@@ -524,7 +532,7 @@ class AndroidCameraClient(
                 result.provenance?.let { put(media.path, it) } ?: remove(media.path)
             }
             update(view.copy(downloadingPath = null, downloaded = downloaded,
-                downloadProvenance = provenance, operationError = null))
+                downloadProvenance = provenance, mediaError = null, operationError = null))
             if (capture != null && result.provenance != null) onMediaReference?.invoke(capture, result.provenance!!, destination)
         } catch (error: Exception) {
             temporary.delete(); destination.delete()
@@ -533,7 +541,7 @@ class AndroidCameraClient(
             if (generation == downloadGeneration.get() && routeFence.isActive(routeToken) &&
                 networkGeneration == wifiNetworkGeneration.get() &&
                 state.cameraSessionTokenIsCurrent(token) && wifiNetwork == network) {
-                update(view.copy(downloadingPath = null, operationError = context.getString(R.string.camera_media_download_failed)))
+                update(view.copy(downloadingPath = null, mediaError = context.getString(R.string.camera_media_download_failed)))
             }
         }
     }
@@ -546,27 +554,37 @@ class AndroidCameraClient(
 
     fun loadThumbnail(media: MobileNovatekMediaEntryDto) {
         val routeToken = routeFence.token()
-        enqueueForRoute(routeToken) {
+        enqueueForRoute(routeToken, onRejected = {
+            if (routeFence.isActive(routeToken)) {
+                update(view.copy(thumbnailError = context.getString(R.string.camera_worker_busy)))
+            }
+        }) {
             val state = sessionState()
             val token = state.cameraSessionToken()
-            val origin = state.novatekSessionOrigin() ?: return@enqueueForRoute
-            val network = wifiNetwork ?: return@enqueueForRoute
-            val networkGeneration = wifiNetworkGeneration.get()
-            val target = try { state.novatekMediaThumbnailTarget(media.path, media.sizeBytes) } catch (_: Exception) {
-                update(view.copy(operationError = context.getString(R.string.camera_thumbnail_unavailable)))
+            val origin = state.novatekSessionOrigin() ?: run {
+                update(view.copy(thumbnailError = context.getString(R.string.camera_thumbnail_unavailable)))
                 return@enqueueForRoute
             }
-            update(view.copy(thumbnailPath = media.path, operationError = null))
+            val network = wifiNetwork ?: run {
+                update(view.copy(thumbnailError = context.getString(R.string.camera_thumbnail_unavailable)))
+                return@enqueueForRoute
+            }
+            val networkGeneration = wifiNetworkGeneration.get()
+            val target = try { state.novatekMediaThumbnailTarget(media.path, media.sizeBytes) } catch (_: Exception) {
+                update(view.copy(thumbnailError = context.getString(R.string.camera_thumbnail_unavailable)))
+                return@enqueueForRoute
+            }
+            update(view.copy(thumbnailPath = media.path, thumbnailError = null, operationError = null))
             try {
                 val bytes = fetch(origin, target, MAX_THUMBNAIL_BYTES, network, routeToken)
                 if (!state.cameraSessionTokenIsCurrent(token) || wifiNetwork != network ||
                     networkGeneration != wifiNetworkGeneration.get()) throw StaleCameraWork()
                 val images = view.thumbnails.toMutableMap().apply { put(media.path, bytes) }
-                update(view.copy(thumbnailPath = null, thumbnails = images))
+                update(view.copy(thumbnailPath = null, thumbnails = images, thumbnailError = null))
             } catch (_: Exception) {
                 if (routeFence.isActive(routeToken) && state.cameraSessionTokenIsCurrent(token) &&
                     wifiNetwork == network && networkGeneration == wifiNetworkGeneration.get()) {
-                    update(view.copy(thumbnailPath = null, operationError = context.getString(R.string.camera_thumbnail_failed)))
+                    update(view.copy(thumbnailPath = null, thumbnailError = context.getString(R.string.camera_thumbnail_failed)))
                 }
             }
         }
@@ -654,7 +672,11 @@ class AndroidCameraClient(
         wifiNetwork = connectedNetwork
         update(view.copy(wifiReady = wifi, connection = expectedConnection,
             evidence = if (changed) null else view.evidence, preview = sessionState().cameraSnapshot(),
-            isReading = if (changed) false else view.isReading, error = if (changed) null else view.error))
+            isReading = if (changed) false else view.isReading, error = if (changed) null else view.error,
+            downloadingPath = if (changed) null else view.downloadingPath,
+            thumbnailPath = if (changed) null else view.thumbnailPath,
+            mediaError = if (changed) null else view.mediaError,
+            thumbnailError = if (changed) null else view.thumbnailError))
         if (!wifi) autoReadGate.reset()
         else if (autoReadGate.claim(active, wifi, view.isReading, view.evidence != null, usableNetwork)) loadEvidenceForRoute(routeToken)
     }
@@ -829,21 +851,23 @@ class AndroidCameraClient(
         worker.shutdown()
     }
 
-    private fun enqueue(action: () -> Unit) {
+    private fun enqueue(onRejected: (() -> Unit)? = null, action: () -> Unit) {
         if (closed) return
         try {
             worker.execute { action() }
         } catch (_: RejectedExecutionException) {
-            update(view.copy(isReading = false, operationError = context.getString(R.string.camera_worker_busy)))
+            if (onRejected != null) onRejected()
+            else update(view.copy(isReading = false, operationError = context.getString(R.string.camera_worker_busy)))
         }
     }
 
-    private fun enqueueForRoute(routeToken: Long, action: () -> Unit) {
+    private fun enqueueForRoute(routeToken: Long, onRejected: (() -> Unit)? = null, action: () -> Unit) {
         if (closed) return
         try {
             routeFence.submit(worker, routeToken, action)
         } catch (_: RejectedExecutionException) {
-            update(view.copy(isReading = false, operationError = context.getString(R.string.camera_worker_busy)))
+            if (onRejected != null) onRejected()
+            else update(view.copy(isReading = false, operationError = context.getString(R.string.camera_worker_busy)))
         }
     }
 

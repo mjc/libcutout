@@ -3,6 +3,7 @@ package lol.cutout.ffitest
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.app.Activity
 import android.content.Intent
@@ -14,6 +15,7 @@ import lol.cutout.CameraPanelState
 import lol.cutout.CameraConnectionState
 import lol.cutout.CameraRequestState
 import lol.cutout.CameraAutoReadGate
+import lol.cutout.R
 import lol.cutout.MainActivity
 import org.junit.Test
 import uniffi.cutout_mobile_ffi.*
@@ -182,6 +184,101 @@ open class CameraPanelTest {
                     "A replacement media result must reset the visible list to page one"
                 }
                 check(descendants(panel).filterIsInstance<TextView>().any { it.text == "refreshed-file-0.mp4" })
+            }
+        } finally {
+            client.close()
+            state.close()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test
+    fun mediaActionsExposeAndRespectReadAndThumbnailInFlightStates() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Activity
+        val state = CutoutSessionStateHandle()
+        val client = AndroidCameraClient(activity.applicationContext, { state })
+        try {
+            instrumentation.runOnMainSync {
+                val media = listOf(mediaEntry(0), mediaEntry(1))
+                val evidence = MobileNovatekReadOnlySnapshotDto(
+                    "R3V1.1_20240411", "rtsp://192.168.1.254/movie", "",
+                    listOf(MobileNovatekCommandStatusDto(4001u.toUShort(), 0u.toUShort())),
+                    true, null,
+                )
+                val panel = CameraPanel(activity, client)
+                activity.setContentView(panel)
+                panel.render(CameraPanelState(
+                    wifiReady = true, isReading = true,
+                    connection = CameraConnectionState.CONNECTED,
+                    evidence = evidence,
+                ))
+                val loadMedia = panel.findViewWithTag<Button>("camera.files.load")
+                check(loadMedia?.isEnabled == false) {
+                    "The media-list action must be disabled while the shared camera read is in flight"
+                }
+                check(loadMedia?.text == lol.cutout.CutoutUi(activity).label("camera.origin.reading")) {
+                    "The media action should expose the in-flight read state"
+                }
+
+                val listing = evidence.copy(media = media)
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = listing, thumbnailPath = media.first().path,
+                ))
+                check(panel.findViewWithTag<ProgressBar>("camera.media.thumbnail.loading.${media.first().name}") != null) {
+                    "The active thumbnail row should show progress in place of its request action"
+                }
+                check(panel.findViewWithTag<Button>("camera.media.thumbnail.${media.first().name}") == null) {
+                    "The in-flight thumbnail must not remain tappable for duplicate requests"
+                }
+                check(panel.findViewWithTag<Button>("camera.media.thumbnail.${media.last().name}")?.isEnabled == false) {
+                    "A thumbnail request in flight must disable other rows until it completes"
+                }
+            }
+        } finally {
+            client.close()
+            state.close()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
+    @Test
+    fun mediaAndThumbnailFailuresRenderBesideTheirOwningEvidence() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        ) as Activity
+        val state = CutoutSessionStateHandle()
+        val client = AndroidCameraClient(activity.applicationContext, { state })
+        try {
+            instrumentation.runOnMainSync {
+                val evidence = MobileNovatekReadOnlySnapshotDto(
+                    "R3V1.1_20240411", "rtsp://192.168.1.254/movie", "",
+                    listOf(MobileNovatekCommandStatusDto(4001u.toUShort(), 0u.toUShort())),
+                    true, listOf(mediaEntry(0)),
+                )
+                val panel = CameraPanel(activity, client)
+                activity.setContentView(panel)
+                panel.render(CameraPanelState(
+                    wifiReady = true, connection = CameraConnectionState.CONNECTED,
+                    evidence = evidence,
+                    mediaError = activity.getString(R.string.camera_media_download_failed),
+                    thumbnailError = activity.getString(R.string.camera_thumbnail_failed),
+                ))
+
+                val mediaError = panel.findViewWithTag<TextView>("camera.files.error")
+                val thumbnailError = panel.findViewWithTag<TextView>("camera.files.thumbnail-error")
+                check(mediaError != null && mediaError.visibility == View.VISIBLE &&
+                    mediaError.text == activity.getString(R.string.camera_media_download_failed)) {
+                    "A failed media transfer should be reported in the media list section"
+                }
+                check(thumbnailError != null && thumbnailError.visibility == View.VISIBLE &&
+                    thumbnailError.text == activity.getString(R.string.camera_thumbnail_failed)) {
+                    "A failed thumbnail request should be reported separately from file downloads"
+                }
             }
         } finally {
             client.close()
