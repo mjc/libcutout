@@ -1,5 +1,6 @@
 package lol.cutout
 
+import androidx.core.widget.addTextChangedListener
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Canvas
