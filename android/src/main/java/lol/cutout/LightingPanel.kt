@@ -14,12 +14,14 @@ import android.widget.FrameLayout
 import android.os.Looper
 import android.widget.*
 import uniffi.cutout_mobile_ffi.*
+import java.util.Locale
 
 /** Standalone MELK RGB route. Connection identity, profile validation and command framing stay Rust-owned. */
 class LightingPanel(
     context: Context,
     private val client: AndroidMelkLightingClient,
     private val onRequestBluetooth: () -> Unit,
+    private val submitPreset: (String) -> Unit = client::savePreset,
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
     private val root = ui.column().apply { setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(30)) }
@@ -49,6 +51,15 @@ class LightingPanel(
     private var trackingSliderCount = 0
     private var trackingColorWheel = false
     private var rebuildingControls = false
+    // Preset-name entry is native draft state. The control tree is rebuilt from
+    // Rust snapshots, so keep the unfinished text independently of that tree.
+    private var presetNameDraft = ""
+    private var presetDraftRevision = 0L
+    private var presetNameEditor: EditText? = null
+    private var presetSaveButton: Button? = null
+    private var pendingPresetSave: PendingPresetSave? = null
+
+    private data class PendingPresetSave(val name: String, val existingNames: Set<String>, val draftRevision: Long)
 
     private enum class Page { COLOR, EFFECTS, MUSIC }
 
@@ -126,6 +137,7 @@ class LightingPanel(
     fun render(value: LightingPresentation) {
         if (Looper.myLooper() != Looper.getMainLooper()) { post { render(value) }; return }
             current = value
+            acknowledgePresetSave(value)
             val snapshot = value.snapshot
             connectionName.text = value.alias?.takeIf(String::isNotBlank) ?: snapshot.name ?: ui.label("lighting.default_name")
             connectionName.tag = "lighting.accessory.name"
@@ -284,20 +296,23 @@ class LightingPanel(
         val groups = mobileMelkLightingEffectGroups()
         val currentPattern = (state.playback as? MobileLightingPlaybackDto.Effect)?.pattern?.toInt()
         val groupNames = groups.map { it.name }
+        val groupLabels = groupNames.map(::localizedGroupName)
         val selectedGroup = groups.firstOrNull { it.effectIds.any { id -> id.toUByte().toInt() == currentPattern } }?.name ?: groupNames.firstOrNull().orEmpty()
         val spinner = Spinner(context).apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, groupNames)
-            setSelection(groupNames.indexOf(selectedGroup).coerceAtLeast(0)); isEnabled = ready(); contentDescription = ui.label("lighting.pattern_group")
+            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, groupLabels)
+            setSelection(groupNames.indexOf(selectedGroup).coerceAtLeast(0)); isEnabled = ready(); contentDescription = ui.label("lighting.pattern_group"); tag = "lighting.pattern.group"
         }
         card.addView(spinner)
         card.addView(ui.text(ui.label("lighting.quick_picks"), 15f, true, ui.muted))
         val favorites = listOf(1, 16, 22, 75).mapNotNull { id -> patterns.firstOrNull { it.id.toInt() == id } }
         addPatternRows(card, favorites, currentPattern)
-        card.addView(ui.text(ui.label("lighting.group_patterns"), 15f, true, ui.muted))
+        val groupHeading = ui.text("", 15f, true, ui.muted).apply { tag = "lighting.pattern.group.heading" }
+        card.addView(groupHeading)
         val rows = ui.column(); card.addView(rows)
         fun populate() {
             rows.removeAllViews()
-            val groupName = spinner.selectedItem?.toString()
+            val groupName = groupNames.getOrNull(spinner.selectedItemPosition)
+            groupHeading.text = formatLabel("lighting.group_patterns", groupName?.let(::localizedGroupName).orEmpty())
             val ids = groups.firstOrNull { it.name == groupName }?.effectIds?.map { it.toUByte().toInt() }?.toSet().orEmpty()
             addPatternRows(rows, patterns.filter { it.id.toInt() in ids }, currentPattern)
         }
@@ -407,10 +422,25 @@ class LightingPanel(
         val name = EditText(context).apply {
             hint = ui.label("lighting.preset.name"); setSingleLine(true); contentDescription = ui.label("lighting.preset.name")
             tag = "lighting.preset.name"
+            setText(presetNameDraft)
+        }
+        presetNameEditor = name
+        val saveButton = ui.action(ui.label("lighting.save")) { requestPresetSave(name.text.toString()) }.apply {
+            tag = "lighting.preset.save"
+            isEnabled = ready() && presetNameDraft.isNotBlank() && pendingPresetSave == null
+        }
+        presetSaveButton = saveButton
+        name.addTextChangedListener { text ->
+            val next = text?.toString().orEmpty()
+            if (next != presetNameDraft) {
+                presetNameDraft = next
+                presetDraftRevision++
+            }
+            updatePresetSaveButton()
         }
         card.addView(ui.row().apply {
             addView(name, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(ui.action(ui.label("lighting.save")) { client.savePreset(name.text.toString()); name.text.clear() }.apply { isEnabled = ready() })
+            addView(saveButton)
         })
         val confirmed = current?.confirmed
         if (confirmed != null) card.addView(ui.text(context.getString(R.string.lighting_confirmed, confirmed.red.toInt(), confirmed.green.toInt(), confirmed.blue.toInt()), 13f, color = ui.muted))
@@ -425,6 +455,56 @@ class LightingPanel(
 
     private fun card() = ui.column().apply { setPadding(ui.dp(16), ui.dp(16), ui.dp(16), ui.dp(16)); background = ui.rounded(20); addView(ui.space(2)) }
     private fun defaultState() = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 100u, null)
+
+    private fun localizedGroupName(name: String): String {
+        val key = name.lowercase(Locale.ROOT).replace(" ", "_")
+        val translated = ui.label("lighting.effect.group.$key")
+        return translated.takeUnless { it == ui.label("setting_unknown") } ?: name
+    }
+
+    private fun formatLabel(key: String, value: String): String = String.format(
+        Locale.getDefault(), ui.label(key).replace("%@", "%s"), value,
+    )
+
+    private fun requestPresetSave(name: String) {
+        val trimmed = name.trim()
+        if (!ready() || trimmed.isEmpty() || pendingPresetSave != null) return
+        pendingPresetSave = PendingPresetSave(
+            trimmed,
+            current?.presets.orEmpty().map { it.name }.toSet(),
+            presetDraftRevision,
+        )
+        updatePresetSaveButton()
+        submitPreset(trimmed)
+    }
+
+    private fun updatePresetSaveButton() {
+        presetSaveButton?.isEnabled = ready() && presetNameDraft.isNotBlank() && pendingPresetSave == null
+    }
+
+    private fun acknowledgePresetSave(value: LightingPresentation) {
+        val pending = pendingPresetSave ?: return
+        if (value.error != null) {
+            pendingPresetSave = null
+            updatePresetSaveButton()
+            return
+        }
+        if (pending.name !in pending.existingNames && value.presets.any { it.name == pending.name }) {
+            // The client publishes its refreshed Rust-backed store only after
+            // addPreset succeeds. Failed/duplicate requests leave the draft intact.
+            if (presetDraftRevision == pending.draftRevision && presetNameDraft.trim() == pending.name) {
+                val editor = presetNameEditor
+                if (editor != null && editor.text.toString().trim() == pending.name) {
+                    editor.setText("")
+                } else {
+                    presetNameDraft = ""
+                    presetDraftRevision++
+                }
+            }
+            pendingPresetSave = null
+            updatePresetSaveButton()
+        }
+    }
 
     private companion object { const val STATE_PAGE = "lighting.selected-page" }
 

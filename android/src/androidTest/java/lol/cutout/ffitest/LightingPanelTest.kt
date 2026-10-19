@@ -6,6 +6,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.EditText
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.view.MotionEvent
 import android.os.Bundle
 import android.app.Activity
@@ -344,6 +345,136 @@ open class LightingPanelTest {
                 val retained = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
                 check(retained === name && retained.text.toString() == "Weekend ride" && retained.selectionStart == 7) {
                     "A telemetry snapshot replaced the focused preset editor or changed its draft/caret"
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun presetSaveReceiptClearsOnlyTheDraftRevisionThatWasSubmitted() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            instrumentation.runOnMainSync {
+                val requested = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(
+                        MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true,
+                    ),
+                    emptyList(), "synthetic-light", null, null, false, requested, null, emptyList(),
+                    permissionMissing = false,
+                )
+                val submissions = mutableListOf<String>()
+                val panel = LightingPanel(activity, client, {}, submissions::add)
+                panel.render(snapshot)
+                activity.setContentView(panel)
+
+                var editor = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                editor.isFocusableInTouchMode = true
+                check(editor.requestFocus())
+                editor.setText("Scene submitted")
+                checkNotNull(panel.findViewWithTag<View>("lighting.preset.save")).performClick()
+                check(submissions == listOf("Scene submitted"))
+
+                // The user keeps typing while the addPreset receipt is pending.
+                editor.setText("Newer unfinished draft")
+                val save = checkNotNull(panel.findViewWithTag<Button>("lighting.preset.save"))
+                check(!save.isEnabled) { "A second save must remain disabled until the first receipt arrives" }
+                // Android's performClick invokes listeners even for disabled Views,
+                // so this also exercises the production admission guard directly.
+                save.performClick()
+                check(submissions == listOf("Scene submitted")) { "Overlapping preset saves must be coalesced" }
+
+                panel.render(snapshot.copy(error = "Preset store unavailable"))
+                check(save.isEnabled) { "A failed save receipt should allow retry of the preserved draft" }
+                save.performClick()
+                check(submissions == listOf("Scene submitted", "Newer unfinished draft")) {
+                    "Retry should submit the current draft after the earlier failure is received"
+                }
+                val firstReceipt = snapshot.copy(presets = listOf(MobileRgbLightingPresetDto("Scene submitted", requested)))
+                panel.render(firstReceipt)
+                check(editor.text.toString() == "Newer unfinished draft") {
+                    "A successful save receipt cleared a newer draft typed after submission"
+                }
+
+                editor.clearFocus()
+                panel.render(firstReceipt.copy(requested = requested.copy(brightness = 41u)))
+                editor = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                check(editor.text.toString() == "Newer unfinished draft") {
+                    "A controls rebuild resurrected the submitted name or lost the newer draft"
+                }
+
+                editor.requestFocus()
+                val secondReceipt = firstReceipt.copy(
+                    presets = firstReceipt.presets + MobileRgbLightingPresetDto("Newer unfinished draft", requested),
+                )
+                panel.render(secondReceipt)
+                check(editor.text.isEmpty()) {
+                    "A receipt for the still-current submitted draft should clear its focused editor"
+                }
+                editor.clearFocus()
+                panel.render(secondReceipt.copy(requested = requested.copy(brightness = 42u)))
+                check(checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name")).text.isEmpty()) {
+                    "The cleared draft reappeared after a controls rebuild"
+                }
+            }
+        } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
+    fun presetDraftSurvivesEditorFocusLossAndGroupNamesUseSharedLocalization() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as Activity
+        val client = AndroidMelkLightingClient(activity.applicationContext)
+        try {
+            lateinit var panel: LightingPanel
+            lateinit var originalEditor: EditText
+            instrumentation.runOnMainSync {
+                panel = LightingPanel(activity, client) {}
+                val requested = MobileMelkLightingRestoreStateDto(false, 255u, 0u, 0u, 40u, null)
+                val snapshot = LightingPresentation(
+                    MobileMelkLightingSessionSnapshotDto(
+                        MobileMelkLightingSessionStateDto.Ready, "synthetic-light", "Test light", 0u, true,
+                    ),
+                    emptyList(), "synthetic-light", null, null, false, requested, null, emptyList(),
+                    permissionMissing = false,
+                )
+                activity.setContentView(panel)
+                panel.render(snapshot)
+                checkNotNull(panel.findViewWithTag<View>("lighting.tab.effects")).performClick()
+                val spinner = checkNotNull(panel.findViewWithTag<Spinner>("lighting.pattern.group"))
+                val labels = CutoutUi(activity)
+                val rustGroups = mobileMelkLightingEffectGroups()
+                val displayedGroups = (spinner.adapter as android.widget.ArrayAdapter<*>).let { adapter ->
+                    (0 until adapter.count).map { adapter.getItem(it).toString() }
+                }
+                check(displayedGroups == rustGroups.map { group ->
+                    val label = labels.label("lighting.effect.group." + group.name.lowercase(java.util.Locale.ROOT).replace(" ", "_"))
+                    if (label == labels.label("setting_unknown")) group.name else label
+                }) { "The effect picker must localize Rust group names without changing their Rust-owned order" }
+                val heading = checkNotNull(panel.findViewWithTag<TextView>("lighting.pattern.group.heading"))
+                check(heading.text.toString().contains(displayedGroups[spinner.selectedItemPosition])) {
+                    "The group-pattern heading should use the same localized group name as the picker"
+                }
+
+                val name = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                originalEditor = name
+                name.isFocusableInTouchMode = true
+                check(name.requestFocus())
+                name.setText("Unfinished scene")
+                name.clearFocus()
+                activity.window?.decorView?.clearFocus()
+                panel.render(snapshot.copy(requested = requested.copy(brightness = 81u)))
+            }
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                val restored = checkNotNull(panel.findViewWithTag<EditText>("lighting.preset.name"))
+                check(restored !== originalEditor) { "The focus-loss/snapshot path should exercise a rebuilt preset editor" }
+                check(restored.text.toString() == "Unfinished scene") {
+                    "An unfinished preset name must survive keyboard dismissal and a controls rebuild"
                 }
             }
         } finally { client.stop(); instrumentation.runOnMainSync { activity.finish() } }
