@@ -2,6 +2,7 @@ package lol.cutout.local
 
 import android.app.Activity
 import android.os.Looper
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Spinner
@@ -46,6 +47,8 @@ class LocalCaptureSettingsWorksheetTest {
             findTagged<android.widget.CheckBox>(dialog, "capture.settings.earlier").performClick()
             findTagged<EditText>(dialog, "capture.settings.time").setText("12.5")
             findTagged<EditText>(dialog, "capture.settings.note").setText("Observed on the display")
+            shadowOf(Looper.getMainLooper()).idle()
+            NativeSurfaceCapture.save(dialog.window!!.decorView, "capture-settings-worksheet-dark")
 
             val save = findTagged<Button>(dialog, "capture.settings.save")
             save.performClick()
@@ -92,13 +95,86 @@ class LocalCaptureSettingsWorksheetTest {
             button.performClick()
             assertEquals(1, callbacks.size)
             callbacks.removeAt(0)(Result.failure(IllegalStateException("temporary failure")))
-            shadowOf(activity.mainLooper).idle()
+            shadowOf(Looper.getMainLooper()).idle()
             assertTrue(dialog.isShowing)
             assertTrue(findTagged<android.widget.TextView>(dialog, "capture.settings.error").text.isNotEmpty())
             assertEquals("17", valueView?.text?.toString())
             assertTrue(button.isEnabled)
             button.performClick()
             assertEquals("a failed attempt can be retried", 1, callbacks.size)
+        } finally {
+            if (dialog.isShowing) dialog.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun numberEditorPreservesOffUnobservedAndSelectableSpeedUnits() {
+        val profile = captureResearchCatalogs().firstOrNull { catalog ->
+            catalog.fields.any { (it.control as? MobileSettingControlDto.Number)?.canDisable == true } &&
+                catalog.fields.any { (it.control as? MobileSettingControlDto.Number)?.unit == MobileSettingUnitDto.KILOMETRES_PER_HOUR }
+        }
+        assertNotNull("Rust should expose a disable-capable field and a speed field", profile)
+        val selectedProfile = checkNotNull(profile)
+        val disabledField = selectedProfile.fields.first { candidate ->
+            (candidate.control as? MobileSettingControlDto.Number)?.canDisable == true
+        }
+        val speedField = selectedProfile.fields.first { candidate ->
+            (candidate.control as? MobileSettingControlDto.Number)?.unit == MobileSettingUnitDto.KILOMETRES_PER_HOUR
+        }
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        data class Request(
+            val draft: MobileCaptureSettingsDraftDto,
+            val done: (Result<MobileCaptureSettingsObservationDto>) -> Unit,
+        )
+        val requests = mutableListOf<Request>()
+        val dialog = CaptureSettingsWorksheet(activity) { draft, done -> requests += Request(draft, done) }.show()
+        try {
+            findTagged<Spinner>(dialog, "capture.settings.profile")
+                .setSelection(captureResearchCatalogs().indexOfFirst { it.profileId == selectedProfile.profileId } + 1)
+            shadowOf(Looper.getMainLooper()).idle()
+            val state = findTagged<Spinner>(dialog, "capture.settings.state.${disabledField.id}")
+            val editorRow = findTagged<View>(dialog, "capture.settings.editor.${disabledField.id}")
+            val value = findTagged<EditText>(dialog, "capture.settings.value.${speedField.id}")
+            value.setText("33")
+            val unit = findTagged<Spinner>(dialog, "capture.settings.unit.${speedField.id}")
+            unit.setSelection(2)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            state.setSelection(1)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(View.GONE, editorRow.visibility)
+            assertEquals(View.VISIBLE, findTagged<View>(dialog, "capture.settings.editor.${speedField.id}").visibility)
+            findTagged<Button>(dialog, "capture.settings.save").performClick()
+            val off = requests.removeAt(0)
+            val offValue = off.draft.values.single { it.settingId == disabledField.id }
+            assertEquals(MobileCaptureObservedValueDto.Off, offValue.value)
+            val unknownSpeedUnit = off.draft.values.single { it.settingId == speedField.id }
+            assertEquals(MobileCaptureObservedValueDto.Entered("33"), unknownSpeedUnit.value)
+            assertNull("unknown speed unit is represented as absent", unknownSpeedUnit.unit)
+            off.done(Result.failure(IllegalStateException("keep worksheet open")))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            state.setSelection(2)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(View.GONE, editorRow.visibility)
+            findTagged<Button>(dialog, "capture.settings.save").performClick()
+            val unobserved = requests.removeAt(0)
+            val unobservedValue = unobserved.draft.values.single { it.settingId == disabledField.id }
+            assertEquals(MobileCaptureObservedValueDto.Unobserved, unobservedValue.value)
+            unobserved.done(Result.failure(IllegalStateException("keep worksheet open")))
+            shadowOf(Looper.getMainLooper()).idle()
+
+            state.setSelection(0)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(View.VISIBLE, editorRow.visibility)
+            unit.setSelection(1)
+            shadowOf(Looper.getMainLooper()).idle()
+            findTagged<Button>(dialog, "capture.settings.save").performClick()
+            val entered = requests.removeAt(0).draft.values.single { it.settingId == speedField.id }
+            assertEquals(MobileCaptureObservedValueDto.Entered("33"), entered.value)
+            assertEquals("mph", entered.unit)
         } finally {
             if (dialog.isShowing) dialog.dismiss()
             host.pause().stop().destroy()
