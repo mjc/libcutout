@@ -89,12 +89,12 @@ class SavedCaptureDetailPanel(
             exportCard = this
         }
         renderExportCard()
-        section("capture.settings.review.title", "captures.database.settings") {
+        section(null, "captures.database.settings") {
             addView(ui.action(ui.label("capture.settings.review.title")) {
                 if (!disposed) onSettings()
             }.apply { tag = "captures.detail.settings" })
         }
-        section("capture.submission.review", "captures.database.submission") {
+        section(null, "captures.database.submission") {
             addView(submission, LinearLayout.LayoutParams(-1, -2))
         }
     }
@@ -168,13 +168,19 @@ class SavedCaptureDetailPanel(
     }
 
     private fun metric(parent: LinearLayout, label: String, value: String, viewTag: String) {
-        val row = ui.row().apply { tag = viewTag }
-        row.addView(ui.text(label, 15f, color = ui.muted).apply { tag = "$viewTag.label" },
-            LinearLayout.LayoutParams(0, -2, 1f))
+        val largeText = resources.configuration.fontScale >= 1.3f
+        val row = ui.row().apply {
+            tag = viewTag
+            if (largeText) orientation = LinearLayout.VERTICAL
+        }
+        fun cellParams() = if (largeText) LinearLayout.LayoutParams(-1, -2)
+            else LinearLayout.LayoutParams(0, -2, 1f)
+        row.addView(ui.text(label, 15f, color = ui.muted).apply { tag = "$viewTag.label" }, cellParams())
         row.addView(ui.text(value, 16f, true).apply {
             tag = "$viewTag.value"
-            gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+            gravity = (if (largeText) android.view.Gravity.START else android.view.Gravity.END) or android.view.Gravity.CENTER_VERTICAL
+            if (largeText) setPadding(0, ui.dp(4), 0, 0)
+        }, cellParams())
         parent.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(5); bottomMargin = ui.dp(5) })
     }
 
