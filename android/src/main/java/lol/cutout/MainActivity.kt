@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -35,6 +37,7 @@ class MainActivity : Activity() {
     private var soundCloudReturnPage = R.string.music_settings
     private var latest = BlePresentation()
     private var latestCapture = DiagnosticCapturePresentation()
+    private var latestPhoneLocation: MobilePhoneLocationSampleDto? = null
     private var scanned = false
     private var resumed = false
     private var hostStarted = false
@@ -42,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var ride: RideDashboardView
     private lateinit var picker: DevicePickerPanel
     private lateinit var settings: SettingsPanel
+    private lateinit var chargingStopPrompt: AndroidChargingStopPrompt
     private lateinit var bottomNavigation: LinearLayout
     private lateinit var nestedToolbar: LinearLayout
     private lateinit var nestedTitle: TextView
@@ -60,6 +64,14 @@ class MainActivity : Activity() {
     private var phoneAlarms: PhoneAlarmPanel? = null
     private val observations = mutableListOf<AutoCloseable>()
     private val preferences by lazy { getSharedPreferences("cutout.presentation", MODE_PRIVATE) }
+    private val chargingPromptHandler = Handler(Looper.getMainLooper())
+    private val chargingPromptTick = object : Runnable {
+        override fun run() {
+            if (!resumed) return
+            chargingStopPrompt.refresh(canPresentChargingStopPrompt())
+            chargingPromptHandler.postDelayed(this, CHARGING_PROMPT_POLL_MS)
+        }
+    }
     private var musicHidden = false
     private var moreIdentity: String? = null
     private var restoreMusicRow: View? = null
@@ -94,7 +106,10 @@ class MainActivity : Activity() {
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         ride = RideDashboardView(this, onDisconnect = { client.disconnect() }, onChooseDevice = { showPage(R.string.devices) })
-        observations += app.locations.observePhoneSpeed(ride::renderPhoneSpeed)
+        observations += app.locations.observePhoneSpeed { readback ->
+            ride.renderPhoneSpeed(readback)
+            latestPhoneLocation = readback.snapshot.latestSample
+        }
         picker = DevicePickerPanel(this, onScan = ::scanOrRequestPermission,
             onOpenSettings = ::openAppSettings,
             onOpenConfiguration = { setupReturnPage = page; showPage(R.string.setup) },
@@ -104,6 +119,16 @@ class MainActivity : Activity() {
             submit = { token, id, value, refused -> client.submit(token, id, value, refused) },
             submitAction = { token, id, refused -> client.submitAction(token, id, refused) })
         settings.restoreUiState(savedInstanceState?.getBundle("settings-ui"))
+        chargingStopPrompt = AndroidChargingStopPrompt(
+            this,
+            app.rides,
+            app::sessionStateForNativeOwner,
+            { latestPhoneLocation },
+            preferences,
+            ::canPresentChargingStopPrompt,
+            ::acceptChargingStop,
+        )
+        root.addView(chargingStopPrompt, LinearLayout.LayoutParams(-1, -2))
         addPanel(R.string.ride, ride)
         addPanel(R.string.devices, picker)
         addPanel(R.string.configuration, settings)
@@ -161,8 +186,24 @@ class MainActivity : Activity() {
         map?.onHostResume(); map?.refreshLocation(); camera?.setActive(page == R.string.camera); lighting?.setActive(page == R.string.lighting)
         setup?.takeIf { page == R.string.setup }?.reload()
         scanIfNeeded(); maintainForegroundWork()
+        chargingStopPrompt.refresh(canPresentChargingStopPrompt())
+        chargingPromptHandler.removeCallbacks(chargingPromptTick)
+        chargingPromptHandler.postDelayed(chargingPromptTick, CHARGING_PROMPT_POLL_MS)
     }
-    override fun onPause() { resumed = false; map?.onHostPause(); super.onPause() }
+    override fun onPause() {
+        resumed = false
+        chargingPromptHandler.removeCallbacks(chargingPromptTick)
+        chargingStopPrompt.refresh(false)
+        map?.onHostPause()
+        super.onPause()
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (::chargingStopPrompt.isInitialized) {
+            if (hasFocus && resumed) chargingStopPrompt.refresh(canPresentChargingStopPrompt())
+            else chargingStopPrompt.refresh(false)
+        }
+    }
     override fun onStop() {
         client.observe(null); client.stopScan(); lighting?.setActive(false); camera?.setActive(false)
         if (page == R.string.devices) scanned = false
@@ -170,6 +211,8 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         observations.forEach { it.close() }; observations.clear()
+        chargingPromptHandler.removeCallbacks(chargingPromptTick)
+        if (::chargingStopPrompt.isInitialized) chargingStopPrompt.close()
         map?.onHostDestroy()
         if (lighting != null) app.lighting.observe(null)
         panels.values.filterIsInstance<MusicPanel>().forEach { it.dispose() }
@@ -233,6 +276,25 @@ class MainActivity : Activity() {
         if (!app.rideServiceActive) RideForegroundService.startForCurrentWork(this)
     }
 
+    private fun canPresentChargingStopPrompt(): Boolean {
+        if (!resumed || !hasWindowFocus() || isFinishing || isDestroyed) return false
+        if (page in setOf(
+                R.string.setup,
+                R.string.phone_alarm_title,
+                R.string.music,
+                R.string.music_settings,
+                R.string.music_soundcloud_brand,
+            )) return false
+        return map?.canPresentChargingStopPrompt() ?: true
+    }
+
+    private fun acceptChargingStop(prompt: MobileChargingStopPromptDto): Boolean {
+        val target = ensureMapPanel()
+        if (!target.beginChargingStop(prompt)) return false
+        showPage(R.string.map)
+        return true
+    }
+
     private fun verifiedRidePage(value: BlePresentation): Int? {
         val session = value.session ?: return null
         if (session.connection.readiness != MobileConnectionReadinessDto.VERIFIED) return null
@@ -289,19 +351,7 @@ class MainActivity : Activity() {
         } else requestedId
         if (page == R.string.devices && id != page) { client.stopScan(); scanned = false }
         if (!panels.containsKey(id)) when (id) {
-            R.string.map -> {
-                val panel = RideMapPanel(this, app.rides, app.charging, ::requestLocation, ::shareRide, app.music::historyPolicyForNewRide,
-                    resolveVehicleName = { identifier ->
-                        latest.session?.takeIf { it.connection?.token?.platformIdentifier == identifier }?.identity?.model
-                            ?: latest.devices.firstOrNull { it.id == identifier }?.name
-                    }, onOpenLocationSettings = ::openAppSettings,
-                    mapSurfaceFactory = app::createRideMapSurface)
-                map = panel; addPanel(id, panel)
-                panel.restoreUiState(restoredMapUiState)
-                restoredMapUiState = null
-                if (hostStarted) panel.onHostStart()
-                if (resumed) panel.onHostResume()
-            }
+            R.string.map -> ensureMapPanel()
             R.string.more -> addPanel(id, ScrollView(this).apply { addView(ui.column()) })
             R.string.camera -> { val panel = CameraPanel(this, app.camera); camera = panel; addPanel(id, panel) }
             R.string.lighting -> {
@@ -366,6 +416,27 @@ class MainActivity : Activity() {
         nestedTitle.text = if (id == R.string.captures) captures?.navigationTitle ?: getString(id) else getString(id)
         updateCompactPlayer(app.music.latestPresentation)
         updateNavigation(); scanIfNeeded()
+        if (::chargingStopPrompt.isInitialized) chargingStopPrompt.refresh(canPresentChargingStopPrompt())
+    }
+
+    private fun ensureMapPanel(): RideMapPanel {
+        map?.let { return it }
+        val panel = RideMapPanel(this, app.rides, app.charging, ::requestLocation, ::shareRide, app.music::historyPolicyForNewRide,
+            resolveVehicleName = { identifier ->
+                latest.session?.takeIf { it.connection?.token?.platformIdentifier == identifier }?.identity?.model
+                    ?: latest.devices.firstOrNull { it.id == identifier }?.name
+            }, onOpenLocationSettings = ::openAppSettings,
+            mapSurfaceFactory = app::createRideMapSurface)
+        map = panel
+        panel.onPromptAvailabilityChanged = {
+            if (::chargingStopPrompt.isInitialized) chargingStopPrompt.refresh(canPresentChargingStopPrompt())
+        }
+        addPanel(R.string.map, panel)
+        panel.restoreUiState(restoredMapUiState)
+        restoredMapUiState = null
+        if (hostStarted) panel.onHostStart()
+        if (resumed) panel.onHostResume()
+        return panel
     }
 
     private fun renderMore() {
@@ -492,6 +563,7 @@ class MainActivity : Activity() {
         private const val BLUETOOTH_PERMISSION = 1
         private const val LOCATION_PERMISSION = 2
         private const val NOTIFICATION_PERMISSION = 3
+        private const val CHARGING_PROMPT_POLL_MS = 2_000L
         private val nestedPages = setOf(R.string.phone_alarm_title, R.string.setup, R.string.camera, R.string.lighting, R.string.pack, R.string.music, R.string.music_settings, R.string.music_soundcloud_brand,
             R.string.vesc_debug, R.string.captures)
     }

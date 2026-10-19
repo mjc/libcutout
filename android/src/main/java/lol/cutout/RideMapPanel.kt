@@ -534,6 +534,11 @@ class RideMapPanel(
     private val chargingPage = ChargingMapPanel(context, chargingClient, mapView, onRequestLocation).apply {
         tag = "ride_map_charging_page"
     }
+    var onPromptAvailabilityChanged: (() -> Unit)? = null
+        set(value) {
+            field = value
+            chargingPage.onPromptAvailabilityChanged = value
+        }
     private var lastProjectionRevision: ULong? = null
     private var lastPresentation = RideMapPresentation()
     private val cameraPositions = mutableMapOf<Mode, CameraPosition>()
@@ -681,6 +686,22 @@ class RideMapPanel(
     }
     fun refreshLocation() {
         if (activePage && mode == Mode.CHARGING) chargingPage.refreshLocation()
+    }
+
+    /** Do not surface an app-wide prompt over an existing charging editor or modal. */
+    internal fun canPresentChargingStopPrompt(): Boolean = chargingPage.canPresentChargingStopPrompt()
+
+    /** Routes the accepted suggestion into the ordinary unsaved charging editor flow. */
+    internal fun beginChargingStop(prompt: MobileChargingStopPromptDto): Boolean {
+        if (!chargingPage.canPresentChargingStopPrompt()) return false
+        setMode(Mode.CHARGING)
+        val previous = cameraPositions[Mode.CHARGING] ?: mapView.currentCameraPosition()
+        cameraPositions[Mode.CHARGING] = CameraPosition.Builder()
+            .target(LatLng(prompt.coordinate.latitudeDegrees, prompt.coordinate.longitudeDegrees))
+            .zoom(previous?.zoom ?: 14.0)
+            .build()
+        mapView.restoreCameraPosition(cameraPositions[Mode.CHARGING])
+        return chargingPage.beginChargingStop(prompt)
     }
     fun communityAccountDeletionCompleted() = chargingPage.communityAccountDeletionCompleted()
     fun handleBack(): Boolean = when (mode) {
