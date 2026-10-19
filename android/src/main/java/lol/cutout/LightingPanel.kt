@@ -1,6 +1,7 @@
 package lol.cutout
 
-import androidx.core.widget.addTextChangedListener
+import android.text.Editable
+import android.text.TextWatcher
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Canvas
@@ -431,14 +432,18 @@ class LightingPanel(
             isEnabled = ready() && presetNameDraft.isNotBlank() && pendingPresetSave == null
         }
         presetSaveButton = saveButton
-        name.addTextChangedListener { text ->
-            val next = text?.toString().orEmpty()
-            if (next != presetNameDraft) {
-                presetNameDraft = next
-                presetDraftRevision++
+        name.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(text: Editable?) {
+                val next = text?.toString().orEmpty()
+                if (next != presetNameDraft) {
+                    presetNameDraft = next
+                    presetDraftRevision++
+                }
+                updatePresetSaveButton()
             }
-            updatePresetSaveButton()
-        }
+        })
         card.addView(ui.row().apply {
             addView(name, LinearLayout.LayoutParams(0, -2, 1f))
             addView(saveButton)
