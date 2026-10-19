@@ -55,7 +55,7 @@ open class CutoutApplication : Application() {
         }
     }
     val bluetooth: AndroidBleClient get() = bluetoothOwner.value
-    private val phoneAlarmOwner = lazy { AndroidPhoneAlarmClient(this) }
+    private val phoneAlarmOwner = lazy { AndroidPhoneAlarmClient(this, rides) }
     val phoneAlarms: AndroidPhoneAlarmClient get() = phoneAlarmOwner.value
     fun refreshPhoneAlarmAuthorization() {
         if (!phoneAlarmOwner.isInitialized()) return
