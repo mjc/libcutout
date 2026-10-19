@@ -28,6 +28,7 @@ data class DiagnosticCapturePresentation(
     val nextCursor: MobileLiveCaptureHistoryCursorDto? = null,
     val loading: Boolean = false,
     val activeLabels: List<MobileCaptureLabelDto> = emptyList(),
+    val settingsObservations: List<MobileCaptureSettingsObservationDto> = emptyList(),
 )
 
 data class DiagnosticCaptureArtifact(
@@ -149,6 +150,83 @@ class AndroidDiagnosticCaptureClient internal constructor(
         }) main.post { completed(Result.failure(MobileCaptureAnnotationException.NotRecording())) }
     }
 
+    /** The existing bounded I/O worker waits for Rust's durable receipt, never the BLE owner. */
+    fun recordSettings(
+        generation: MobileCaptureGenerationDto,
+        draft: MobileCaptureSettingsDraftDto,
+        completed: (Result<MobileCaptureSettingsObservationDto>) -> Unit,
+    ) {
+        val submittedDraft = draft.copy(profile = draft.profile.copy(), values = draft.values.map { it.copy() })
+        withActiveResearchWriter(generation, { builder ->
+            val saved = builder.recordSettingsObservation(submittedDraft, SystemClock.elapsedRealtime().toULong())
+            saved to builder.settingsObservations()
+        }) { result ->
+            result.onSuccess { (_, observations) ->
+                publish(presentation.copy(settingsObservations = observations))
+            }
+            main.post { completed(result.map { it.first }) }
+        }
+    }
+
+    fun activeSettingsReadback(
+        generation: MobileCaptureGenerationDto,
+        requests: List<MobileCaptureResearchReadbackRequestDto>,
+        completed: (Result<List<MobileCaptureResearchReadbackDto>>) -> Unit,
+    ) {
+        val submittedRequests = requests.map { it.copy() }
+        withActiveResearchWriter(generation, { it.captureResearchReadbackBatch(submittedRequests) }) { result ->
+            main.post { completed(result) }
+        }
+    }
+
+    fun activeSettings(
+        generation: MobileCaptureGenerationDto,
+        completed: (Result<List<MobileCaptureSettingsObservationDto>>) -> Unit,
+    ) = withActiveResearchWriter(generation, { it.settingsObservations() }) { result ->
+        main.post { completed(result) }
+    }
+
+    fun savedSettings(
+        source: MobileCaptureSubmissionSourceDto,
+        completed: (Result<List<MobileCaptureSettingsObservationDto>>) -> Unit,
+    ) = researchIo({ database().captureSettingsObservations(source) }, completed)
+
+    fun savedSettingsReadback(
+        source: MobileCaptureSubmissionSourceDto,
+        requests: List<MobileCaptureResearchReadbackRequestDto>,
+        completed: (Result<List<MobileCaptureResearchReadbackDto>>) -> Unit,
+    ) {
+        val submittedRequests = requests.map { it.copy() }
+        researchIo({ database().captureResearchReadbackBatch(source, submittedRequests) }, completed)
+    }
+
+    private fun <T> researchIo(operation: () -> T, completed: (Result<T>) -> Unit) {
+        try { enqueueIo { val result = runCatching(operation); main.post { completed(result) } } }
+        catch (error: java.util.concurrent.RejectedExecutionException) { main.post { completed(Result.failure(error)) } }
+    }
+
+    /** Select on the BLE owner and return there before publishing, including after a slow receipt. */
+    private fun <T> withActiveResearchWriter(
+        generation: MobileCaptureGenerationDto,
+        operation: (MobilePevcapCaptureBuilder) -> T,
+        completedOnOwner: (Result<T>) -> Unit,
+    ) {
+        val expected = generation.value
+        if (!postOwner {
+            val active = writer?.takeIf { it.generation.value == expected && !it.finalizationStarted }
+            if (active == null) { completedOnOwner(Result.failure(MobileCaptureResearchException.NotRecording())); return@postOwner }
+            try {
+                enqueueIo {
+                    val result = runCatching { operation(active.builder) }
+                    if (!postOwner {
+                        completedOnOwner(if (writer === active) result
+                            else Result.failure(MobileCaptureResearchException.NotRecording()))
+                    }) completedOnOwner(Result.failure(MobileCaptureResearchException.NotRecording()))
+                }
+            } catch (error: java.util.concurrent.RejectedExecutionException) { completedOnOwner(Result.failure(error)) }
+        }) completedOnOwner(Result.failure(MobileCaptureResearchException.NotRecording()))
+    }
+
     fun export(liveCaptureId: String, completed: (Result<File>) -> Unit) {
         try {
             enqueueIo {
@@ -243,6 +321,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 deviceName = advertisedName,
                 note = description,
                 activeLabels = emptyList(),
+                settingsObservations = emptyList(),
                 error = null,
             ))
             return generation
@@ -460,10 +539,11 @@ class AndroidDiagnosticCaptureClient internal constructor(
         note: String? = presentation.note,
         sessionArtifacts: List<DiagnosticCaptureArtifact> = presentation.sessionArtifacts,
         activeLabels: List<MobileCaptureLabelDto> = if (writer == null) emptyList() else presentation.activeLabels,
+        settingsObservations: List<MobileCaptureSettingsObservationDto> = if (writer == null) emptyList() else presentation.settingsObservations,
     ) = publish(presentation.copy(
         lifecycle = lifecycle, error = error, writerStatus = writerStatus, notificationCount = notificationCount,
         fileName = fileName, deviceName = deviceName, note = note,
-        sessionArtifacts = sessionArtifacts, activeLabels = activeLabels,
+        sessionArtifacts = sessionArtifacts, activeLabels = activeLabels, settingsObservations = settingsObservations,
     ))
 
     private fun publish(next: DiagnosticCapturePresentation) {

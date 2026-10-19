@@ -49,6 +49,36 @@ class LocalDiagnosticCaptureClientTest {
 
             check(client.current().notificationCount == 1UL) { "The fixture notification was not admitted" }
 
+            val catalog = checkNotNull(captureResearchCatalog("nosfet_aero"))
+            val draft = MobileCaptureSettingsDraftDto(
+                MobileCaptureResearchProfileDto(catalog.profileId, catalog.pevCategory, catalog.model, null,
+                    MobileCaptureResearchProfileSelectionDto.MANUAL),
+                0UL, MobileCaptureObservationSourceDto.WHEEL_DISPLAY,
+                listOf(MobileCaptureSettingObservationValueDto("displayed_pack_voltage",
+                    MobileCaptureObservedValueDto.Entered("124.7"), "V", null)), "independent display reading",
+            )
+            val savedSettings = await<MobileCaptureSettingsObservationDto> { done ->
+                client.recordSettings(generation, draft, done)
+            }.getOrThrow()
+            check(client.current().settingsObservations == listOf(savedSettings))
+            check(savedSettings.observedAtMs == 0UL)
+            val activeSettings = await<List<MobileCaptureSettingsObservationDto>> { done -> client.activeSettings(generation, done) }.getOrThrow()
+            check(activeSettings == listOf(savedSettings))
+            val requests = listOf(MobileCaptureResearchReadbackRequestDto(catalog.profileId, 0UL))
+            val activeReadback = await<List<MobileCaptureResearchReadbackDto>> { done ->
+                client.activeSettingsReadback(generation, requests, done)
+            }.getOrThrow()
+            check(activeReadback.single().values.isEmpty()) { "Unrelated packet bytes must not invent decoded settings" }
+            val staleSettings = await<MobileCaptureSettingsObservationDto> { done ->
+                client.recordSettings(MobileCaptureGenerationDto(generation.value + 1UL), draft, done)
+            }
+            check(staleSettings.exceptionOrNull() is MobileCaptureResearchException.NotRecording)
+            val invalidSettings = await<MobileCaptureSettingsObservationDto> { done ->
+                client.recordSettings(generation, draft.copy(values = listOf(draft.values.single().copy(settingId = "not-a-field"))), done)
+            }
+            check(invalidSettings.exceptionOrNull() is MobileCaptureResearchException.InvalidObservation)
+            check(client.current().settingsObservations == activeSettings) { "Rejected drafts must not appear saved" }
+
             val ride = await<List<MobileCaptureLabelDto>> { done ->
                 client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.RIDE), done)
             }.getOrThrow()
@@ -89,6 +119,14 @@ class LocalDiagnosticCaptureClientTest {
                 "expected link-up, notification, and link-down events; got ${capture.eventCount}"
             }
 
+            val savedSource = MobileCaptureSubmissionSourceDto.LiveCapture(capture.liveCaptureId)
+            val reopenedSettings = await<List<MobileCaptureSettingsObservationDto>> { done -> client.savedSettings(savedSource, done) }.getOrThrow()
+            check(reopenedSettings == activeSettings) { "Settings must survive durable capture publication and database readback" }
+            val savedReadback = await<List<MobileCaptureResearchReadbackDto>> { done ->
+                client.savedSettingsReadback(savedSource, requests, done)
+            }.getOrThrow()
+            check(savedReadback == activeReadback)
+
             exported = await { done -> client.export(capture.liveCaptureId, done) }.getOrThrow()
             check(exported?.parentFile?.canonicalFile == File(context.cacheDir, "diagnostic-exports").canonicalFile)
             check(exported?.isFile == true && exported!!.length() > 0L)
@@ -97,6 +135,7 @@ class LocalDiagnosticCaptureClientTest {
             check(text.contains("capture_label=${slug}_start")) { "Start marker must survive durable export" }
             check(text.contains("capture_label=${slug}_stop")) { "Finishing must close every active interval" }
             check(client.current().activeLabels.isEmpty())
+            check(client.current().settingsObservations.isEmpty())
             val nextGeneration = checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, "$platformId-next", emptyList(), "Next device", null, token,
                 evidence = "unverified",
@@ -107,6 +146,9 @@ class LocalDiagnosticCaptureClientTest {
             }
             check(previousCaptureAction.exceptionOrNull() is MobileCaptureAnnotationException.NotRecording)
             check(client.current().activeLabels.isEmpty()) { "Old controls must not annotate a replacement writer" }
+            val oldSettings = await<MobileCaptureSettingsObservationDto> { done -> client.recordSettings(generation, draft, done) }
+            check(oldSettings.exceptionOrNull() is MobileCaptureResearchException.NotRecording)
+            check(client.current().settingsObservations.isEmpty()) { "Old worksheets must not write to the replacement capture" }
 
         } finally {
             exported?.delete()
