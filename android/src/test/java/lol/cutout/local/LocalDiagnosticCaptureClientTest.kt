@@ -38,10 +38,16 @@ class LocalDiagnosticCaptureClientTest {
         var exported: File? = null
         try {
             val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
+            val startWindow = android.os.SystemClock.elapsedRealtime().toULong()
             val generation = checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "Test device", "read-only test", token,
                 evidence = "unverified",
             ))
+            val startedElapsedMillis = checkNotNull(client.current().startedElapsedMillis)
+            check(startedElapsedMillis >= startWindow && startedElapsedMillis <= android.os.SystemClock.elapsedRealtime().toULong())
+            check(client.current().finishedElapsedMillis == null)
+            // Swift presents the capture description as deviceKind; it is annotation text, not a type claim.
+            check(client.current().deviceKind == "read-only test")
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.RECORDING)
             check(client.activeCameraCaptureIdentity()?.generation == state.captureLifecycleSnapshot().attempt?.generation)
             client.linkUp(token, 20)
@@ -67,6 +73,9 @@ class LocalDiagnosticCaptureClientTest {
             check(savedSettings.observedAtMs == 0UL)
             val activeSettings = await<List<MobileCaptureSettingsObservationDto>> { done -> client.activeSettings(generation, done) }.getOrThrow()
             check(activeSettings == listOf(savedSettings))
+            check(client.current().settingsObservations == activeSettings) {
+                "A successful active observation read must publish the loaded list for the capture summary"
+            }
             val requests = listOf(MobileCaptureResearchReadbackRequestDto(catalog.profileId, 0UL))
             val activeReadback = await<List<MobileCaptureResearchReadbackDto>> { done ->
                 client.activeSettingsReadback(generation, requests, done)
@@ -103,9 +112,27 @@ class LocalDiagnosticCaptureClientTest {
             val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
             check(admitted) { "Rust refused a durable manual finish flush" }
             client.linkDown(token)
+            val finishTimestamp = AtomicReference<ULong?>()
+            val finishPublished = CountDownLatch(1)
+            val finishObserver = client.observe { snapshot ->
+                snapshot.finishedElapsedMillis?.let {
+                    check(snapshot.lifecycle.attempt?.stage == MobileCaptureStageDto.FINALIZING) {
+                        "The admitted end timestamp must carry the Rust finalizing stage"
+                    }
+                    finishTimestamp.compareAndSet(null, it)
+                    finishPublished.countDown()
+                }
+            }
             await { done -> client.finishAfterLinkDown(token) { done(Result.success(Unit)) } }.getOrThrow()
+            check(awaitCallback(finishPublished, 10, TimeUnit.SECONDS)) { "finish admission timestamp was not published" }
+            finishObserver.close()
+            val finishedElapsedMillis = checkNotNull(finishTimestamp.get())
+            check(finishedElapsedMillis >= startedElapsedMillis)
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.SAVED)
             check(client.activeCameraCaptureIdentity() == null)
+            check(client.current().startedElapsedMillis == null && client.current().finishedElapsedMillis == null) {
+                "Completion must clear active-capture monotonic metadata"
+            }
 
             val observer = client.observe { snapshot ->
                 if (!snapshot.loading && snapshot.captures.any {
@@ -168,6 +195,8 @@ class LocalDiagnosticCaptureClientTest {
                 evidence = "unverified",
             ))
             check(nextGeneration != generation)
+            check(client.current().startedElapsedMillis != null && client.current().finishedElapsedMillis == null)
+            check(client.current().deviceKind == null) { "A new identity must not inherit capture presentation metadata" }
             val previousCaptureAction = await<List<MobileCaptureLabelDto>> { done ->
                 client.changeLabel(generation, MobileCaptureLabelActionDto.Start(MobileCaptureLabelDto.RIDE), done)
             }
