@@ -75,7 +75,7 @@ class PackPanel(context: Context) : ScrollView(context) {
             snapshot?.bmsPackCurrent0 != null,
             snapshot?.bmsPackCurrent1 != null,
             snapshot?.cellDelta != null,
-            snapshot?.balancingSummary != null,
+            snapshot?.balancingSummary?.isNotBlank() == true,
             snapshot?.faultSummary != null,
             groups.map { g -> listOf(
                 g.index, g.packNumber, g.label, g.voltage != null, g.alertLevel,
@@ -199,20 +199,34 @@ class PackPanel(context: Context) : ScrollView(context) {
                 bms?.highestTemperature?.let { number(it.value.value.toDouble() / 1000, 1) + " °C" }
             }
         }
+        snapshot.balancingSummary?.takeIf(String::isNotBlank)?.let { summary ->
+            val balancing = card()
+            balancing.addView(ui.text(context.getString(R.string.pack_balancing), 17f, true))
+            val detail = ui.text(summary, 14f, color = ui.muted).apply { tag = "pack.balancing.detail" }
+            bind { detail.text = bms?.balancingSummary.orEmpty() }
+            balancing.addView(detail)
+        }
         snapshot.faults.forEach { fault -> page.addView(ui.text("⚠  ${fault.label}", 16f, true, alertColor(fault.alertLevel))) }
     }
 
     private fun renderMeasurements(snapshot: MobileBmsSnapshotDto) {
         if (snapshot.energyPercent == null && snapshot.voltage == null && snapshot.current == null && snapshot.bmsPackCurrent0 == null && snapshot.bmsPackCurrent1 == null) return
         val card = card()
-        metric(card, context.getString(R.string.battery)) { bms?.energyPercent?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + "${it.value.value} %" } }
-        metric(card, context.getString(R.string.voltage)) { bms?.voltage?.value?.value?.let { number(it.toDouble() / 1000, 2) + " V" } }
-        metric(card, ui.label("bms.pack.current")) { bms?.current?.value?.let(::currentText) }
-        metric(card, context.getString(R.string.pack_current_1)) { bms?.bmsPackCurrent0?.value?.let(::currentText) }
-        metric(card, context.getString(R.string.pack_current_2)) { bms?.bmsPackCurrent1?.value?.let(::currentText) }
-        metric(card, context.getString(R.string.pack_delta)) { bms?.cellDelta?.value?.value?.let { "$it mV" } }
-        metric(card, context.getString(R.string.pack_balancing)) { bms?.balancingSummary }
-        metric(card, context.getString(R.string.pack_faults)) { bms?.faultSummary }
+        if (snapshot.energyPercent != null) metric(card, context.getString(R.string.battery)) {
+            bms?.energyPercent?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + "${it.value.value} %" }
+        }
+        if (snapshot.voltage != null) metric(card, context.getString(R.string.voltage)) {
+            bms?.voltage?.value?.value?.let { number(it.toDouble() / 1000, 2) + " V" }
+        }
+        if (snapshot.current != null) metric(card, ui.label("bms.pack.current")) {
+            bms?.current?.value?.let(::currentText)
+        }
+        if (snapshot.bmsPackCurrent0 != null) metric(card, context.getString(R.string.pack_current_1)) {
+            bms?.bmsPackCurrent0?.value?.let(::currentText)
+        }
+        if (snapshot.bmsPackCurrent1 != null) metric(card, context.getString(R.string.pack_current_2)) {
+            bms?.bmsPackCurrent1?.value?.let(::currentText)
+        }
     }
 
     private fun renderCellMap(snapshot: MobileBmsSnapshotDto) {
