@@ -27,6 +27,40 @@ import uniffi.cutout_mobile_ffi.*
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalPackPanelTest : PackPanelTest() {
     @Test
+    fun noBmsRendersSharedEvidenceAndDoesNotPromoteRetainedReadingsToLiveConfidence() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val panel = PackPanel(activity)
+        activity.setContentView(panel)
+        try {
+            val replay = productionReplayPresentation()
+            val fallback = partialSnapshot().copy(availability = MobileReadbackAvailabilityDto.UNSUPPORTED,
+                energyPercent = BatteryLevelReading(BatteryLevel(45u), MobileValueSourceDto.REPORTED,
+                    MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED))
+            val telemetry = checkNotNull(replay.telemetry).copy(
+                batteryLevelReported = BatteryLevelReading(BatteryLevel(0u), MobileValueSourceDto.REPORTED,
+                    MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED),
+                voltageSag = VoltageDeltaReading(VoltageDelta(0), MobileValueSourceDto.CALCULATED,
+                    MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED),
+            )
+            panel.render(replay.copy(bms = fallback, telemetry = telemetry, chargeEstimate = null))
+            val confidence = checkNotNull(panel.findViewWithTag<TextView>("bms.no-data.confidence"))
+            assertEquals("Medium", confidence.text.toString())
+            assertTrue(texts(panel).contains("0 %"))
+            assertNotNull(panel.findViewWithTag<View>("bms.no-data.warning"))
+            assertNull(panel.findViewWithTag<View>("pack.group.1"))
+            NativeSurfaceCapture.save(panel, "pack-controller-only")
+
+            panel.render(replay.copy(bms = fallback, telemetry = null, chargeEstimate = null))
+            assertSame(confidence, panel.findViewWithTag("bms.no-data.confidence"))
+            assertEquals("Unknown", confidence.text.toString())
+            assertTrue(texts(panel).contains("45 %"))
+            panel.render(lol.cutout.BlePresentation())
+            assertNull(panel.findViewWithTag<View>("bms.no-data.warning"))
+        } finally { host.pause().stop().destroy() }
+    }
+
+    @Test
     fun balancingCardAppearsForNonblankSummaryAndUpdatesInPlace() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()

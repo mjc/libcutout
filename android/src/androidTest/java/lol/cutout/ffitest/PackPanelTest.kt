@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
+import lol.cutout.CutoutUi
 import lol.cutout.MainActivity
 import lol.cutout.PackPanel
 import lol.cutout.R
@@ -28,12 +29,12 @@ open class PackPanelTest {
                     "No live snapshot must not be described as a reported empty pack"
                 }
                 panel.render(productionReplayPresentation())
-                check(texts(panel).contains(activity.getString(R.string.pack_no_readback)))
+                check(texts(panel).contains(CutoutUi(activity).label("bms.no_data.title")))
 
                 val verified = productionReplayPresentation()
                 val base = snapshot().copy(groups = emptyList())
                 panel.render(verified.copy(bms = base.copy(availability = MobileReadbackAvailabilityDto.UNSUPPORTED)))
-                check(texts(panel).contains(activity.getString(R.string.pack_unsupported)))
+                check(texts(panel).contains(CutoutUi(activity).label("bms.no_data.title")))
                 panel.render(verified.copy(bms = base.copy(availability = MobileReadbackAvailabilityDto.UNAVAILABLE)))
                 check(texts(panel).contains(activity.getString(R.string.pack_unavailable)))
                 panel.render(verified.copy(bms = base.copy(

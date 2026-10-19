@@ -19,6 +19,7 @@ class PackPanel(context: Context) : ScrollView(context) {
     private val page = ui.column()
     private val bindings = mutableListOf<() -> Unit>()
     private var latest = BlePresentation()
+    private var controllerBattery: MobileControllerBatteryProjectionDto? = null
     private var selectedGroup: UShort? = null
     private var showCells = false
     private var readingQuery = ""
@@ -41,6 +42,18 @@ class PackPanel(context: Context) : ScrollView(context) {
 
     fun render(value: BlePresentation) {
         latest = value
+        controllerBattery = if (verified) mobileControllerBatteryProjection(
+            MobileControllerBatteryInputDto.Live(
+                MobileControllerBatteryReadingsDto(
+                    telemetry?.batteryLevelReported?.value, telemetry?.batteryLevelEstimated?.value,
+                    telemetry?.voltage?.value, telemetry?.batteryCurrent?.value,
+                    latest.chargeEstimate?.voltageSag?.let { VoltageDelta(it.deltaMillivolts) }
+                        ?: telemetry?.voltageSag?.value,
+                ),
+                MobileControllerBatteryReadingsDto(bms?.energyPercent?.value, null,
+                    bms?.voltage?.value, bms?.current?.value, null),
+            ),
+        ) else null
         if (renderedStructure != structure()) rebuild() else bindings.forEach { it() }
     }
 
@@ -103,26 +116,74 @@ class PackPanel(context: Context) : ScrollView(context) {
         val snapshot = bms
         val detail = selectedGroup?.let(::group)
         if (detail != null) renderDetail(snapshot!!, detail) else renderMain(snapshot)
-        if (snapshot == null && verified) renderControllerMeasurements()
     }
 
-    private fun renderControllerMeasurements() {
-        val card = card()
-        card.addView(ui.text(context.getString(R.string.pack_controller_readings), 17f, true))
-        metric(card, context.getString(R.string.battery)) {
-            telemetry?.let(::mobileRiderDashboardProjection)?.dashboardMetrics
-                ?.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.BatteryLevel>()?.firstOrNull()?.reading
-                ?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + "${it.value.value} %" }
+    private fun renderControllerBattery() {
+        val warning = card().apply { tag = "bms.no-data.warning" }
+        warning.addView(ui.text(ui.label("bms.no_data.title"), 20f, true, ui.orange))
+        listOf("cell_balance_warning", "diagnostics_warning").forEach { key ->
+            warning.addView(ui.text(ui.label("bms.no_data.row.$key"), 16f).apply { setPadding(0, ui.dp(8), 0, 0) })
         }
-        metric(card, context.getString(R.string.voltage)) { telemetry?.voltage?.value?.value?.let { number(it.toDouble() / 1000, 2) + " V" } }
-        metric(card, ui.label("bms.pack.current")) { telemetry?.batteryCurrent?.value?.let(::currentText) }
+        val estimateCard = card().apply { tag = "bms.no-data.estimate" }
+        val largeText = resources.configuration.fontScale >= 1.3f
+        val hero = if (largeText) ui.column() else ui.row()
+        estimateCard.addView(hero, LinearLayout.LayoutParams(-1, -2))
+        val estimate = ui.column()
+        val certainty = ui.column().apply {
+            setPadding(ui.dp(10), ui.dp(14), ui.dp(10), ui.dp(14))
+            background = ui.rounded(18)
+        }
+        fun heroParams() = if (largeText) LinearLayout.LayoutParams(-1, -2)
+            else LinearLayout.LayoutParams(0, -2, 1f)
+        hero.addView(estimate, heroParams())
+        hero.addView(certainty, heroParams())
+        estimate.addView(ui.text(ui.label("bms.no_data.pack_estimate"), 13f, true, ui.muted))
+        val amount = ui.text("", 34f, true)
+        bind { amount.text = controllerBattery?.level?.let { "${it.value} %" } ?: "— %" }
+        estimate.addView(amount)
+        val detail = ui.text("", 14f, color = ui.muted)
+        bind { detail.text = ui.label("bms.no_data.estimate_detail." + when (controllerBattery?.detail) {
+            MobileControllerBatteryEstimateDetailDto.RECENT_SAG -> "recent_sag"
+            MobileControllerBatteryEstimateDetailDto.VOLTAGE_CURVE -> "voltage_curve"
+            MobileControllerBatteryEstimateDetailDto.UNAVAILABLE, null -> "unavailable"
+        }) }
+        estimate.addView(detail)
+        certainty.addView(ui.space(4))
+        certainty.addView(ui.text(ui.label("bms.no_data.confidence"), 13f, true, ui.muted))
+        val confidence = ui.text("", 23f, true).apply { tag = "bms.no-data.confidence" }
+        val confidenceDetail = ui.text("", 14f, color = ui.muted)
+        bind {
+            val confidenceValue = controllerBattery?.confidence
+            confidence.text = ui.label("bms.no_data.confidence." + when (confidenceValue) {
+                MobileControllerBatteryConfidenceDto.MEDIUM -> "medium"
+                MobileControllerBatteryConfidenceDto.LOW -> "low"
+                MobileControllerBatteryConfidenceDto.UNKNOWN, null -> "unknown"
+            })
+            confidenceDetail.text = ui.label(if (confidenceValue == MobileControllerBatteryConfidenceDto.UNKNOWN || confidenceValue == null)
+                "bms.no_data.confidence_detail.telemetry_unavailable" else "bms.no_data.confidence_detail.not_cell_safe")
+        }
+        certainty.addView(confidence)
+        certainty.addView(confidenceDetail)
+        val readings = card()
+        readings.addView(ui.text(ui.label("bms.no_data.what_we_can_see"), 13f, true, ui.muted))
+        metric(readings, ui.label("bms.no_data.pack_voltage")) {
+            controllerBattery?.voltage?.let { number(it.value.toDouble() / 1000, 1) + " V" }
+        }
+        metric(readings, ui.label("bms.no_data.ride_sag")) {
+            controllerBattery?.voltageSag?.let { number(kotlin.math.abs(it.value.toDouble()) / 1000, 1) + " V" }
+        }
+        metric(readings, ui.label("bms.no_data.load_now")) { controllerBattery?.current?.let(::currentText) }
+        val unknown = card()
+        unknown.addView(ui.text(ui.label("bms.no_data.what_is_unknown"), 13f, true, ui.muted))
+        listOf("cell_voltages", "weak_groups", "diagnostics").forEach { key ->
+            unknown.addView(ui.text(ui.label("bms.no_data.row.$key"), 15f, color = ui.muted).apply { setPadding(0, ui.dp(8), 0, 0) })
+        }
     }
 
     private fun renderMain(snapshot: MobileBmsSnapshotDto?) {
         when {
             !verified -> emptyState(context.getString(R.string.pack_no_readback), context.getString(R.string.pack_no_readback_detail))
-            snapshot == null -> emptyState(context.getString(R.string.pack_no_readback), context.getString(R.string.pack_waiting_detail))
-            snapshot.availability == MobileReadbackAvailabilityDto.UNSUPPORTED -> emptyState(context.getString(R.string.pack_unsupported), context.getString(R.string.pack_unsupported_detail))
+            snapshot == null || snapshot.availability == MobileReadbackAvailabilityDto.UNSUPPORTED -> renderControllerBattery()
             snapshot.groups.isEmpty() && snapshot.topology.confidence == MobileBmsTopologyConfidenceDto.UNVERIFIED && snapshot.topology.seriesGroupCount == null -> {
                 heading(topologyLabel(snapshot))
                 emptyState(context.getString(R.string.pack_unknown_topology), context.getString(R.string.pack_unknown_topology_detail))
