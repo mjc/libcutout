@@ -145,7 +145,14 @@ Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
 manifest, so the generated binary package uses compatible iOS 18 and macOS 15
 floors. The app package and Xcode targets still require iOS 27 and macOS 27.
 Every supported prepare operation invokes `cargo swift`, including when the
-source hash and selected generation are unchanged. Cargo owns incremental
+source hash and selected generation are unchanged. Cargo Swift compiles and
+bundles the ARM64 archives. Before sealing the package, the shared prepare step
+runs `cutout-uniffi-bindgen` from the same immutable workspace snapshot against
+the packaged macOS archive, then installs its Swift wrapper and matching headers
+and module maps in every slice. This uses the workspace's locked UniFFI version
+for both Swift and Kotlin; Cargo Swift 0.11.1 embeds an older generator whose
+callback pointers fail Swift 6 concurrency checking. No consumer edits or
+separate preparation command are needed. Cargo owns incremental
 compilation and configuration freshness; the project has no separate Cargo
 environment resolver or source-fingerprint early reuse shortcut.
 
