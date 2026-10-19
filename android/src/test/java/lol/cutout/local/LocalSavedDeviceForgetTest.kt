@@ -11,6 +11,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowLog
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -85,10 +86,12 @@ class LocalSavedDeviceForgetTest {
         val shadowScanner = shadowOf(scanner)
         val enteredDatabase = CountDownLatch(1)
         val releaseDatabase = CountDownLatch(1)
+        val scanStarted = CountDownLatch(1)
         val candidateReady = CountDownLatch(1)
         val forgetResult = AtomicReference<Result<Unit>>()
         val forgetDone = CountDownLatch(1)
         val observer = client.addObserver { presentation ->
+            if (presentation.scanning) scanStarted.countDown()
             if (presentation.devices.any { it.id == address }) candidateReady.countDown()
         }
         val previous = await { done -> app.rides.withDatabase({ it.selectedDevice() }, done) }
@@ -98,11 +101,25 @@ class LocalSavedDeviceForgetTest {
                 database.selectedDevice()
             }, done) }
 
-            // Robolectric replays cached scan results through AndroidBleClient's actual callback.
-            shadowScanner.addScanResult(result)
             client.scan()
+            fun scanDiagnostics(): String =
+                "presentation=${client.latestPresentation}, " +
+                    "activeScans=${shadowScanner.getActiveScans().size}, " +
+                    "callbacks=${shadowScanner.getScanCallbacks().size}, " +
+                    "CutoutBleLogs=${ShadowLog.getLogsForTag("CutoutBle").joinToString()}"
+
+            check(awaitWithMainLooper(scanStarted, 10, TimeUnit.SECONDS)) {
+                "The production Bluetooth scan did not start: ${scanDiagnostics()}"
+            }
+            val callback = shadowScanner.getScanCallbacks().singleOrNull()
+            check(callback != null && shadowScanner.getActiveScans().isNotEmpty()) {
+                "Android did not register the production scan callback: ${scanDiagnostics()}"
+            }
+            // Deliver through the registered Android callback so the real callback-to-Rust
+            // observation path runs; do not rely on Robolectric's cached-result replay.
+            callback!!.onScanResult(android.bluetooth.le.ScanSettings.CALLBACK_TYPE_ALL_MATCHES, result)
             check(awaitWithMainLooper(candidateReady, 10, TimeUnit.SECONDS)) {
-                "The production Bluetooth scan callback did not publish the Rust candidate"
+                "The production Bluetooth scan callback did not publish the Rust candidate: ${scanDiagnostics()}"
             }
 
             app.rides.withDatabase({
