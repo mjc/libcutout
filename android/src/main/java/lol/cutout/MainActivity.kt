@@ -285,7 +285,9 @@ class MainActivity : Activity() {
             R.string.pack -> { val panel = PackPanel(this); pack = panel; panel.render(latest); addPanel(id, panel) }
             R.string.vesc_debug -> { val panel = VescDebugPanel(this); debug = panel; panel.render(latest); addPanel(id, panel) }
             R.string.captures -> {
-                val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission)
+                val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission) { title ->
+                    if (page == R.string.captures) nestedTitle.text = title
+                }
                 captures = panel; addPanel(id, panel)
             }
             R.string.phone_alarm_title -> {
@@ -330,7 +332,7 @@ class MainActivity : Activity() {
         if (id == R.string.setup) setup?.reload()
         if (id == R.string.captures) captures?.refresh()
         nestedToolbar.visibility = if (id in nestedPages) View.VISIBLE else View.GONE
-        nestedTitle.text = getString(id)
+        nestedTitle.text = if (id == R.string.captures) captures?.navigationTitle ?: getString(id) else getString(id)
         updateCompactPlayer(app.music.latestPresentation)
         updateNavigation(); scanIfNeeded()
     }
@@ -372,6 +374,7 @@ class MainActivity : Activity() {
     private fun navigateBack() {
         if (page == R.string.map && map?.handleBack() == true) return
         if (page == R.string.pack && pack?.handleBack() == true) return
+        if (page == R.string.captures && captures?.handleBack() == true) return
         when (page) {
             R.string.phone_alarm_title -> showPage(R.string.configuration)
             R.string.setup -> showPage(setupReturnPage)

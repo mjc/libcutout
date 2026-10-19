@@ -19,9 +19,22 @@ class DiagnosticCapturePanel(
     private val bluetooth: AndroidBleClient,
     private val onShare: (File) -> Unit,
     private val onRequestBluetooth: () -> Unit = {},
-) : ScrollView(context) {
+    private val onTitleChanged: (String) -> Unit = {},
+) : FrameLayout(context) {
     private val ui = CutoutUi(context)
     private val content = ui.column()
+    private val library = ScrollView(context).apply {
+        isFillViewport = true
+        addView(content, LayoutParams(-1, -2))
+    }
+    private var detail: SavedCaptureDetailPanel? = null
+    private var showsActive = false
+    val navigationTitle: String
+        get() = when {
+            detail != null -> ui.label("captures.detail.title")
+            showsActive -> ui.label("captures.active")
+            else -> ui.label("captures.title")
+        }
     private val renderHandler = Handler(Looper.getMainLooper())
     private val queuedRender = Runnable { render() }
     private var captureState = bluetooth.diagnostics.current()
@@ -43,8 +56,7 @@ class DiagnosticCapturePanel(
 
     init {
         setBackgroundColor(ui.background)
-        isFillViewport = true
-        addView(content, LayoutParams(-1, -2))
+        addView(library, LayoutParams(-1, -1))
         content.tag = "captures.home"
         render()
         refresh()
@@ -62,6 +74,8 @@ class DiagnosticCapturePanel(
         bleObserver.close()
         researchDialog?.dismiss()
         researchDialog = null
+        detail?.dispose()
+        detail = null
     }
 
     /** Progress and admitted label updates retain controls and their accessibility focus. */
@@ -99,12 +113,27 @@ class DiagnosticCapturePanel(
         progressText = null
         packetText = null
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(28))
-        content.addView(ui.title(context.getString(R.string.capture_title)))
-        content.addView(ui.space(18))
-
         val lifecycle = captureState.lifecycle
         val attempt = lifecycle.attempt
-        if (attempt != null && attempt.stage !in setOf(MobileCaptureStageDto.SAVED, MobileCaptureStageDto.FAILED)) {
+        val hasActive = attempt != null && attempt.stage !in setOf(MobileCaptureStageDto.SAVED, MobileCaptureStageDto.FAILED)
+        if (showsActive && !hasActive) showsActive = false
+        content.addView(ui.title(if (showsActive) ui.label("captures.active") else ui.label("captures.title")))
+        content.addView(ui.space(18))
+
+        if (hasActive && !showsActive) {
+            section("") {
+                addView(ui.navigationRow(ui.label("captures.active"), CutoutSymbol.SIGNAL) {
+                    showsActive = true
+                    library.scrollTo(0, 0)
+                    render()
+                }.apply { tag = "captures.active.open" })
+                captureState.deviceName?.takeIf(String::isNotBlank)?.let {
+                    addView(ui.text(it, 14f, color = ui.muted))
+                }
+            }
+            content.addView(ui.space(18))
+        }
+        if (showsActive && attempt != null) {
             section(context.getString(R.string.capture_active)) {
                 val stage = stageLabel(attempt.stage)
                 addView(ui.text(stage, 18f, true))
@@ -167,8 +196,10 @@ class DiagnosticCapturePanel(
                         R.string.capture_retry_save else R.string.capture_stop
                     addView(ui.action(context.getString(actionLabel), primary = true) {
                         bluetooth.finishManualCapture { admitted ->
-                            if (!admitted) Toast.makeText(context, R.string.capture_save_failed, Toast.LENGTH_LONG).show()
-                            refresh()
+                            if (!disposed) {
+                                if (!admitted) Toast.makeText(context, R.string.capture_save_failed, Toast.LENGTH_LONG).show()
+                                refresh()
+                            }
                         }
                     }.apply { tag = "captures.active.stop" })
                 } else if (attempt.origin == MobileCaptureOriginDto.AUTOMATIC) {
@@ -176,13 +207,14 @@ class DiagnosticCapturePanel(
                     addView(ui.text(context.getString(R.string.capture_automatic_description), 13f, color = ui.muted))
                 }
             }
-            content.addView(ui.space(18))
+            captureState.error?.let { content.addView(ui.text(it, 14f, color = ui.red)) }
+            content.addView(ui.text(ui.label("captures.leave_hint"), 13f, color = ui.muted))
+            onTitleChanged(navigationTitle)
+            return
         }
 
-        section(context.getString(R.string.capture_manual_new)) {
-            addView(ui.text(context.getString(R.string.capture_privacy), 14f, color = ui.muted))
-            addView(ui.space(8))
-            addView(ui.action(context.getString(R.string.capture_manual_new), primary = true) {
+        section("") {
+            addView(ui.action(ui.label("captures.new"), primary = true) {
                 if (!bluetooth.hasPermissions() || !bluetooth.isEnabled()) onRequestBluetooth()
                 else chooseDevice(lifecycle)
             }.apply {
@@ -201,6 +233,9 @@ class DiagnosticCapturePanel(
         content.addView(ui.space(22))
         section(context.getString(R.string.capture_recent)) {
             if (captureState.loading) addView(ProgressBar(context).apply { isIndeterminate = true })
+            if (captureState.historyError != null) {
+                addView(ui.action(ui.label("captures.retry")) { refresh() }.apply { tag = "captures.history.retry" })
+            }
             if (captureState.captures.isEmpty() && !captureState.loading) {
                 addView(ui.text(context.getString(R.string.capture_empty), 15f, color = ui.muted))
             }
@@ -243,12 +278,15 @@ class DiagnosticCapturePanel(
             }
         }
         content.addView(ui.space(20))
+        if (detail == null) onTitleChanged(navigationTitle)
     }
 
     private fun section(title: String, build: LinearLayout.() -> Unit) {
         val block = ui.column().apply {
-            addView(ui.text(title, 20f, true).apply { isAccessibilityHeading = true })
-            addView(ui.space(9))
+            if (title.isNotEmpty()) {
+                addView(ui.text(title, 20f, true).apply { isAccessibilityHeading = true })
+                addView(ui.space(9))
+            }
             addView(ui.column().apply {
                 setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14))
                 background = ui.rounded(22)
@@ -266,39 +304,87 @@ class DiagnosticCapturePanel(
         MobileCaptureStageDto.SAVED -> context.getString(R.string.capture_recent)
     }
 
+    /** Native navigation only; a detail view never owns the recording or transfer lifetime. */
+    fun handleBack(): Boolean {
+        if (detail != null) {
+            researchDialog?.dismiss()
+            researchDialog = null
+            detail?.dispose()
+            detail = null
+            removeAllViews()
+            addView(library, LayoutParams(-1, -1))
+            onTitleChanged(navigationTitle)
+            return true
+        }
+        if (showsActive) {
+            showsActive = false
+            render()
+            return true
+        }
+        return false
+    }
+
+    private fun openSaved(entry: MobileLiveCaptureHistoryEntryDto) {
+        if (disposed) return
+        val source = MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)
+        val owner = (context.applicationContext as CutoutApplication).captureSubmissions
+        detail?.dispose()
+        detail = SavedCaptureDetailPanel(context, entry, bluetooth.diagnostics::export, onShare,
+            owner.controller(source), { showSettingsReview(source) })
+        removeAllViews()
+        addView(detail, LayoutParams(-1, -1))
+        onTitleChanged(navigationTitle)
+    }
+
     private fun historyRow(entry: MobileLiveCaptureHistoryEntryDto): View {
-        val row = ui.column()
-        row.addView(ui.text(entry.recording?.advertisedName ?: entry.platformIdentifier, 17f, true))
-        val started = Date(entry.startedAtMilliseconds.toLong())
-        row.addView(ui.text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(started), 14f, color = ui.muted))
-        row.addView(ui.text("${entry.eventCount} events · ${android.text.format.Formatter.formatShortFileSize(context, entry.storedBytes.toLong())}", 14f, color = ui.muted))
-        if (entry.interrupted) row.addView(ui.text(context.getString(R.string.capture_interrupted), 14f, color = ui.orange))
-        else row.addView(ui.text(when (entry.integrity) {
-            MobileCaptureIntegrityDto.Complete -> context.getString(R.string.capture_complete)
-            is MobileCaptureIntegrityDto.Incomplete -> context.getString(R.string.capture_incomplete)
-            MobileCaptureIntegrityDto.Unknown -> context.getString(R.string.capture_integrity_unknown)
-        }, 14f, color = ui.muted))
-        val buttons = ui.row()
-        buttons.addView(ui.action(context.getString(R.string.capture_share)) {
-            bluetooth.diagnostics.export(entry.liveCaptureId) { result ->
-                result.onSuccess(onShare).onFailure {
-                    Toast.makeText(context, it.message ?: context.getString(R.string.capture_error), Toast.LENGTH_LONG).show()
-                }
+        val row = ui.row().apply {
+            minimumHeight = ui.dp(64)
+            setPadding(0, ui.dp(8), 0, ui.dp(8))
+            isClickable = true
+            isFocusable = true
+            tag = "captures.database.${entry.liveCaptureId}"
+            setOnClickListener { openSaved(entry) }
+        }
+        row.addView(ui.column().apply {
+            addView(ui.text(entry.recording?.advertisedName ?: entry.platformIdentifier, 17f, true))
+            val started = Date(entry.startedAtMilliseconds.toLong())
+            addView(ui.text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(started), 14f, color = ui.muted))
+            val status = if (entry.interrupted) context.getString(R.string.capture_interrupted) else when (entry.integrity) {
+                MobileCaptureIntegrityDto.Complete -> null
+                is MobileCaptureIntegrityDto.Incomplete -> context.getString(R.string.capture_incomplete)
+                MobileCaptureIntegrityDto.Unknown -> context.getString(R.string.capture_integrity_unknown)
             }
-        }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
-        row.addView(buttons)
-        row.addView(settingsReviewAction(MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)))
-        row.addView(submissionAction(MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)))
+            status?.let { addView(ui.text(it, 14f, color = ui.orange)) }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(ui.icon(CutoutSymbol.CHEVRON, ui.muted, 16))
+        fun textIn(view: View): List<String> = when (view) {
+            is TextView -> listOf(view.text.toString())
+            is ViewGroup -> (0 until view.childCount).flatMap { textIn(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        row.contentDescription = textIn(row).joinToString(", ")
+        row.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        for (index in 0 until row.childCount) row.getChildAt(index).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        row.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
         return row
+    }
+
+    private fun showSettingsReview(source: MobileCaptureSubmissionSourceDto) {
+        researchDialog?.dismiss()
+        researchDialog = CaptureSettingsReview(context,
+            { done -> bluetooth.diagnostics.savedSettings(source, done) },
+            { requests, done -> bluetooth.diagnostics.savedSettingsReadback(source, requests, done) },
+        ).show()
     }
 
     private fun settingsReviewAction(source: MobileCaptureSubmissionSourceDto): View =
         ui.action(ui.label("capture.settings.review.title")) {
-            researchDialog?.dismiss()
-            researchDialog = CaptureSettingsReview(context,
-                { done -> bluetooth.diagnostics.savedSettings(source, done) },
-                { requests, done -> bluetooth.diagnostics.savedSettingsReadback(source, requests, done) },
-            ).show()
+            showSettingsReview(source)
         }.apply { tag = "capture.settings.saved.review" }
 
     private fun submissionAction(source: MobileCaptureSubmissionSourceDto): View =
@@ -320,7 +406,8 @@ class DiagnosticCapturePanel(
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
         val candidates = bleState.devices.filter { !it.id.isBlank() }
         if (candidates.isEmpty()) {
-            AlertDialog.Builder(context).setMessage(R.string.capture_no_devices)
+            researchDialog?.dismiss()
+            researchDialog = AlertDialog.Builder(context).setMessage(R.string.capture_no_devices)
                 .setPositiveButton(R.string.capture_scan) { _, _ -> requestBluetoothOrScan() }
                 .setNegativeButton(android.R.string.cancel, null).show()
             return
@@ -329,7 +416,8 @@ class DiagnosticCapturePanel(
             val name = item.advertisedName?.takeIf(String::isNotBlank) ?: item.name
             "$name  ·  ${item.id.takeLast(8)}"
         }.toTypedArray()
-        AlertDialog.Builder(context)
+        researchDialog?.dismiss()
+        researchDialog = AlertDialog.Builder(context)
             .setTitle(R.string.capture_choose_device)
             .setItems(labels) { _, which -> descriptionDialog(candidates[which], lifecycle) }
             .setNegativeButton(android.R.string.cancel, null)
@@ -349,24 +437,29 @@ class DiagnosticCapturePanel(
             addView(input, LinearLayout.LayoutParams(-1, -2))
         }
         val name = device.advertisedName?.takeIf(String::isNotBlank) ?: device.name
-        AlertDialog.Builder(context).setTitle(name).setView(wrapper)
+        researchDialog?.dismiss()
+        researchDialog = AlertDialog.Builder(context).setTitle(name).setView(wrapper)
             .setPositiveButton(R.string.capture_start, null)
             .setNegativeButton(android.R.string.cancel, null)
             .create().also { dialog ->
                 dialog.setOnShowListener {
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        if (!lifecycle.canStart || bleState.phase != NativePhase.IDLE) return@setOnClickListener
+                        if (disposed || !lifecycle.canStart || bleState.phase != NativePhase.IDLE) return@setOnClickListener
                         bluetooth.startManualCapture(device.id, null, input.text.toString()) { started ->
-                            if (!started) Toast.makeText(context, R.string.capture_start_failed, Toast.LENGTH_LONG).show()
-                            refresh()
+                            if (!disposed) {
+                                if (!started) Toast.makeText(context, R.string.capture_start_failed, Toast.LENGTH_LONG).show()
+                                else showsActive = true
+                                refresh()
+                            }
                         }
                         dialog.dismiss()
                     }
                 }
-            }.show()
+            }.also { it.show() }
     }
 
     private fun requestBluetoothOrScan() {
+        if (disposed) return
         if (!bluetooth.hasPermissions() || !bluetooth.isEnabled()) onRequestBluetooth()
         else bluetooth.scan()
     }
