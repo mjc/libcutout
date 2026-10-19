@@ -31,6 +31,7 @@ class DiagnosticCapturePanel(
     private var packetText: TextView? = null
     private var labels: CaptureLabelControls? = null
     private var labelGeneration: MobileCaptureGenerationDto? = null
+    private var researchDialog: android.app.Dialog? = null
     private val captureObserver = bluetooth.diagnostics.observe { next ->
         renderCapture(next)
     }
@@ -59,6 +60,8 @@ class DiagnosticCapturePanel(
         renderHandler.removeCallbacks(queuedRender)
         captureObserver.close()
         bleObserver.close()
+        researchDialog?.dismiss()
+        researchDialog = null
     }
 
     /** Progress and admitted label updates retain controls and their accessibility focus. */
@@ -136,6 +139,27 @@ class DiagnosticCapturePanel(
                     controls.render(captureState)
                     addView(controls, LinearLayout.LayoutParams(-1, -2))
                 }
+                addView(ui.space(12))
+                val canAnnotate = attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)
+                addView(ui.action(ui.label("capture.settings.worksheet.title")) {
+                    val expected = attempt.generation.copy()
+                    researchDialog?.dismiss()
+                    researchDialog = CaptureSettingsWorksheet(context) { draft, done ->
+                        bluetooth.diagnostics.recordSettings(expected, draft, done)
+                    }.show()
+                }.apply {
+                    tag = "capture.settings.open"
+                    isEnabled = canAnnotate
+                    alpha = if (isEnabled) 1f else .45f
+                })
+                addView(ui.action(ui.label("capture.settings.review.title")) {
+                    val expected = attempt.generation.copy()
+                    researchDialog?.dismiss()
+                    researchDialog = CaptureSettingsReview(context,
+                        { done -> bluetooth.diagnostics.activeSettings(expected, done) },
+                        { requests, done -> bluetooth.diagnostics.activeSettingsReadback(expected, requests, done) },
+                    ).show()
+                }.apply { tag = "capture.settings.review.open"; isEnabled = canAnnotate })
                 if (attempt.origin == MobileCaptureOriginDto.MANUAL &&
                     attempt.stage in setOf(MobileCaptureStageDto.RECORDING, MobileCaptureStageDto.SAVE_FAILED)) {
                     addView(ui.space(12))
@@ -213,6 +237,7 @@ class DiagnosticCapturePanel(
                             }
                         }
                     }.apply { tag = "captures.session.${artifact.id}.share" })
+                    addView(settingsReviewAction(MobileCaptureSubmissionSourceDto.RecordedArtifact(artifact.id)))
                 }
             }
         }
@@ -261,8 +286,18 @@ class DiagnosticCapturePanel(
             }
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         row.addView(buttons)
+        row.addView(settingsReviewAction(MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId)))
         return row
     }
+
+    private fun settingsReviewAction(source: MobileCaptureSubmissionSourceDto): View =
+        ui.action(ui.label("capture.settings.review.title")) {
+            researchDialog?.dismiss()
+            researchDialog = CaptureSettingsReview(context,
+                { done -> bluetooth.diagnostics.savedSettings(source, done) },
+                { requests, done -> bluetooth.diagnostics.savedSettingsReadback(source, requests, done) },
+            ).show()
+        }.apply { tag = "capture.settings.saved.review" }
 
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
         val candidates = bleState.devices.filter { !it.id.isBlank() }
