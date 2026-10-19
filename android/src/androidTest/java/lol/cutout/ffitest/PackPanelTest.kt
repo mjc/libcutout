@@ -76,6 +76,34 @@ open class PackPanelTest {
     }
 
     @Test
+    fun cellMapKeepsObservedGroupsWhoseCurrentVoltageIsUnavailable() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            instrumentation.runOnMainSync {
+                val panel = PackPanel(activity)
+                activity.setContentView(panel)
+                val replay = productionReplayPresentation()
+                val observed = snapshot()
+                val withoutVoltage = observed.copy(groups = observed.groups.mapIndexed { index, group ->
+                    if (index == 0) group.copy(voltage = null) else group
+                })
+                panel.render(replay.copy(bms = withoutVoltage))
+                buttons(panel).single { it.text == activity.getString(R.string.pack_cell_map) }.performClick()
+
+                val first = panel.findViewWithTag<Button>("pack.group.1")
+                    ?: error("An observed group with unavailable voltage disappeared from the cell map")
+                check(first.contentDescription.toString().contains(activity.getString(R.string.unavailable)))
+                first.performClick()
+                check(panel.findViewWithTag<TextView>("pack.detail.voltage")?.text == "—") {
+                    "A group without a voltage must remain selectable while reporting its missing reading honestly"
+                }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test
     fun sameShapeBmsReadingsUpdateExistingMetricViews() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)

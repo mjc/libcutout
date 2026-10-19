@@ -27,7 +27,10 @@ class PackPanel(context: Context) : ScrollView(context) {
     private val bms get() = latest.bms.takeIf { verified }
     private val telemetry get() = latest.telemetry.takeIf { verified }
     private val allGroups get() = bms?.groups.orEmpty()
-    private val visibleGroups get() = allGroups.filter { it.voltage != null && (readingQuery.isBlank() || it.index.toString().contains(readingQuery) || it.label?.contains(readingQuery, true) == true) }
+    // Swift's cell map includes every Rust-observed group, including one whose current
+    // voltage is unavailable. Keep that group addressable so its retained metadata and
+    // detail state are not silently lost just because this sample has no voltage.
+    private val visibleGroups get() = allGroups.filter { readingQuery.isBlank() || it.index.toString().contains(readingQuery) || it.label?.contains(readingQuery, true) == true }
 
     init {
         setBackgroundColor(ui.background)
