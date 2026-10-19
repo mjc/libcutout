@@ -33,8 +33,10 @@ let
     platformVersions = [ androidApi ];
     buildToolsVersions = [ androidBuildTools ];
     toolsVersion = null;
-    includeEmulator = false;
-    includeSystemImages = false;
+    includeEmulator = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
+    includeSystemImages = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
+    systemImageTypes = [ "google_apis" ];
+    abiVersions = [ "x86_64" ];
     cmakeVersions = [ ];
   };
   androidNdk = androidPackages.ndk-bundle;
@@ -84,6 +86,8 @@ in
   env.CUTOUT_JNA_VERSION = pkgs.jna.version;
   env.CC_aarch64_linux_android = androidArm64Clang;
   env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidArm64Clang;
+  env.CC_x86_64_linux_android = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
+  env.CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
@@ -234,6 +238,7 @@ in
   tasks."build:android-tests".exec = "python3 scripts/test-mobile-ffi.py build";
   tasks."build:android-app".after = [ "build:android-tests" ];
   tasks."test:android-device".exec = "python3 scripts/test-mobile-ffi.py device";
+  tasks."test:android-emulator".exec = "python3 scripts/test-mobile-ffi.py emulator";
   tasks."test:android-ui".exec = "python3 scripts/test-mobile-ffi.py local";
   tasks."run:android-app".exec = "python3 scripts/test-mobile-ffi.py app";
   tasks."build:ios-ui-tests" = {

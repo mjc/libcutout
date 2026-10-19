@@ -31,3 +31,7 @@ nixpkgs:
     - cmdline-tools
     - platforms
     - ndk
+    - android-sdk-emulator
+    - android-sdk-system-image-35-google_apis-x86_64
+    - system-image-35-google_apis-x86_64
+    - emulator
