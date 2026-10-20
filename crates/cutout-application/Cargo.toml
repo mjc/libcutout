@@ -1,0 +1,18 @@
+[package]
+name = "cutout-application"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable application services shared by Cutout interfaces"
+readme = "../../README.md"
+keywords = ["pev", "application", "mobile"]
+categories = ["hardware-support"]
+
+[lints]
+workspace = true
+
+[dependencies]
+cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }

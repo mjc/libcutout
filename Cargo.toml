@@ -2,6 +2,7 @@
 resolver = "3"
 exclude = ["vendor/retina"]
 members = [
+    "crates/cutout-application",
     "crates/cutout-core",
     "crates/cutout-music",
     "crates/cutout-ride-maps",
@@ -16,6 +17,7 @@ members = [
     "crates/cutout-server",
 ]
 default-members = [
+    "crates/cutout-application",
     "crates/cutout-core",
     "crates/cutout-music",
     "crates/cutout-protocols",

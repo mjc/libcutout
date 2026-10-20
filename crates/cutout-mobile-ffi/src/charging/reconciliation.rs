@@ -1,136 +1,25 @@
-//! Revision-aware projection of charging pages and local reads.
+//! Native binding adapter for the shared charging reconciliation service.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Mutex, PoisonError},
-};
+use super::dto::MobileChargingSpotDto;
+use crate::persistence::ChargingStatus;
+use cutout_application::charging::reconciliation::{ChargingObservation, ChargingReconciliation};
 
-use crate::persistence::{ChargingRevision, ChargingStatus};
-
-use super::dto::{MobileChargingSpotDto, MobileChargingStatusDto};
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ObservationTicket(u64);
-
-#[derive(Clone, Copy, Debug)]
-struct Withdrawal {
-    ticket: ObservationTicket,
-    revision: ChargingRevision,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ObservationSource {
-    Page,
-    Readback,
-}
-
-#[derive(Debug)]
-struct LatestObservation {
-    ticket: ObservationTicket,
-    source: ObservationSource,
-    revision: ChargingRevision,
-    spot: MobileChargingSpotDto,
-}
-
-#[derive(Debug, Default)]
-struct ProjectionState {
-    next_ticket: u64,
-    latest: HashMap<String, LatestObservation>,
-    withdrawals: HashMap<String, Withdrawal>,
-}
-
-impl ProjectionState {
-    fn next_ticket(&mut self) -> ObservationTicket {
-        self.next_ticket = self.next_ticket.saturating_add(1);
-        ObservationTicket(self.next_ticket)
+impl ChargingObservation for MobileChargingSpotDto {
+    fn id(&self) -> &str {
+        &self.id
     }
-
-    fn accept_observation(
-        &mut self,
-        ticket: ObservationTicket,
-        source: ObservationSource,
-        spot: MobileChargingSpotDto,
-    ) -> Option<MobileChargingSpotDto> {
-        let revision = revision(&spot)?;
-        if let Some(withdrawal) = self.withdrawals.get(&spot.id).copied() {
-            if ticket < withdrawal.ticket
-                || revision <= withdrawal.revision
-                || !is_published(spot.status)
-            {
-                return None;
-            }
-            self.withdrawals.remove(&spot.id);
-        }
-        Some(self.record_latest(ticket, source, revision, spot))
+    fn revision(&self) -> u64 {
+        self.local_revision
     }
-
-    fn accept_resolution(
-        &mut self,
-        ticket: ObservationTicket,
-        spot: MobileChargingSpotDto,
-    ) -> Option<MobileChargingSpotDto> {
-        let accepted_revision = revision(&spot)?;
-        if let Some(withdrawal) = self.withdrawals.get(&spot.id).copied() {
-            if ticket < withdrawal.ticket {
-                return None;
-            }
-            if is_published(spot.status) && accepted_revision > withdrawal.revision {
-                self.withdrawals.remove(&spot.id);
-            }
-        }
-        Some(self.record_latest(ticket, ObservationSource::Readback, accepted_revision, spot))
+    fn status(&self) -> ChargingStatus {
+        self.status.into()
     }
-
-    fn record_latest(
-        &mut self,
-        ticket: ObservationTicket,
-        source: ObservationSource,
-        incoming_revision: ChargingRevision,
-        spot: MobileChargingSpotDto,
-    ) -> MobileChargingSpotDto {
-        if let Some(known) = self.latest.get(&spot.id)
-            && (known.revision > incoming_revision
-                || (known.revision == incoming_revision && known.ticket > ticket))
-        {
-            return known.spot.clone();
-        }
-        self.latest.insert(
-            spot.id.clone(),
-            LatestObservation {
-                ticket,
-                source,
-                revision: incoming_revision,
-                spot: spot.clone(),
-            },
-        );
-        spot
-    }
-}
-
-fn revision(spot: &MobileChargingSpotDto) -> Option<ChargingRevision> {
-    ChargingRevision::new(spot.local_revision).ok()
-}
-
-fn is_published(status: MobileChargingStatusDto) -> bool {
-    let status: ChargingStatus = status.into();
-    match status {
-        ChargingStatus::Published => true,
-        ChargingStatus::Queued
-        | ChargingStatus::Hidden
-        | ChargingStatus::Withdrawn
-        | ChargingStatus::Removed => false,
-    }
-}
-
-fn is_visible(status: MobileChargingStatusDto) -> bool {
-    let status: ChargingStatus = status.into();
-    status.visible()
 }
 
 /// Owns the revision and withdrawal rules for the charging map projection.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobileChargingReconciliation {
-    state: Mutex<ProjectionState>,
+    inner: ChargingReconciliation<MobileChargingSpotDto>,
 }
 
 #[uniffi::export]
@@ -139,37 +28,21 @@ impl MobileChargingReconciliation {
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            state: Mutex::default(),
-        }
+        Self::default()
     }
 
     /// Starts an observation and returns its ordering ticket.
     pub fn begin_observation(&self) -> u64 {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .next_ticket()
-            .0
+        self.inner.begin_observation()
     }
 
     /// Records a successful withdrawal and prevents older observations restoring it.
     pub fn record_withdrawal(&self, id: String, revision: u64) {
-        let Some(revision) = ChargingRevision::new(revision).ok() else {
-            return;
-        };
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let ticket = state.next_ticket();
-        state
-            .withdrawals
-            .insert(id, Withdrawal { ticket, revision });
+        self.inner.record_withdrawal(id, revision);
     }
 
     /// Reconciles a page against newer local observations and returns page membership.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "UniFFI owns optional strings at this boundary"
-    )]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings")]
     pub fn reconcile_page(
         &self,
         request_ticket: u64,
@@ -178,50 +51,13 @@ impl MobileChargingReconciliation {
         selected_spot_id: Option<String>,
         incoming: Vec<MobileChargingSpotDto>,
     ) -> Vec<MobileChargingSpotDto> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let ticket = ObservationTicket(request_ticket);
-        let page_ids: HashSet<String> = if append {
-            current_page.iter().map(|spot| spot.id.clone()).collect()
-        } else {
-            HashSet::new()
-        };
-        let withdrawal_ids: HashSet<String> = state.withdrawals.keys().cloned().collect();
-        state.latest.retain(|id, observation| {
-            observation.source == ObservationSource::Readback
-                || Some(id) == selected_spot_id.as_ref()
-                || page_ids.contains(id)
-                || withdrawal_ids.contains(id)
-                || observation.ticket > ticket
-        });
-        let mut membership = if append {
-            current_page
-                .into_iter()
-                .filter(|spot| is_visible(spot.status))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        for spot in incoming {
-            let Some(spot) = state.accept_observation(ticket, ObservationSource::Page, spot) else {
-                continue;
-            };
-            if !is_visible(spot.status) {
-                membership.retain(|existing| existing.id != spot.id);
-                continue;
-            }
-            if let Some(existing) = membership
-                .iter_mut()
-                .find(|existing| existing.id == spot.id)
-                && let (Some(existing_revision), Some(spot_revision)) =
-                    (revision(existing), revision(&spot))
-                && spot_revision >= existing_revision
-            {
-                *existing = spot;
-            } else if !membership.iter().any(|existing| existing.id == spot.id) {
-                membership.push(spot);
-            }
-        }
-        membership
+        self.inner.reconcile_page(
+            request_ticket,
+            append,
+            current_page,
+            selected_spot_id.as_deref(),
+            incoming,
+        )
     }
 
     /// Accepts a readback only when it is current for this spot.
@@ -230,14 +66,7 @@ impl MobileChargingReconciliation {
         request_ticket: u64,
         spot: MobileChargingSpotDto,
     ) -> Option<MobileChargingSpotDto> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .accept_observation(
-                ObservationTicket(request_ticket),
-                ObservationSource::Readback,
-                spot,
-            )
+        self.inner.reconcile_readback(request_ticket, spot)
     }
 
     /// Reconciles the authoritative local row after a conflict resolution.
@@ -246,31 +75,20 @@ impl MobileChargingReconciliation {
         request_ticket: u64,
         spot: MobileChargingSpotDto,
     ) -> Option<MobileChargingSpotDto> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .accept_resolution(ObservationTicket(request_ticket), spot)
+        self.inner.reconcile_resolution(request_ticket, spot)
     }
 
     /// Reports whether a successful withdrawal still fences actions on this spot.
-    // UniFFI exports owned strings, so this FFI argument cannot borrow `str`.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "UniFFI requires an owned String argument"
-    )]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings")]
     pub fn is_withdrawn(&self, id: String) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .withdrawals
-            .contains_key(&id)
+        self.inner.is_withdrawn(&id)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::dto::MobileChargingStatusDto;
     use super::*;
-
     fn spot(id: &str, revision: u64, status: MobileChargingStatusDto) -> MobileChargingSpotDto {
         MobileChargingSpotDto {
             id: id.into(),
@@ -292,215 +110,39 @@ mod tests {
     }
 
     #[test]
-    fn out_of_range_revisions_are_rejected_before_caching() {
-        let state = MobileChargingReconciliation::new();
-        let ticket = state.begin_observation();
-        let invalid = spot("a", u64::MAX, MobileChargingStatusDto::Published);
-        assert!(state.reconcile_readback(ticket, invalid.clone()).is_none());
+    fn adapter_preserves_newer_payload_and_withdrawal_fences() {
+        let adapter = MobileChargingReconciliation::new();
+        let page = adapter.begin_observation();
+        let readback = adapter.begin_observation();
+        let mut latest = spot("a", 7, MobileChargingStatusDto::Published);
+        latest.votes_up = 12;
+        latest.pending_operations = 3;
+        assert_eq!(
+            adapter.reconcile_readback(readback, latest.clone()),
+            Some(latest.clone())
+        );
+        assert_eq!(
+            adapter.reconcile_page(
+                page,
+                false,
+                vec![],
+                None,
+                vec![spot("a", 6, MobileChargingStatusDto::Published)]
+            ),
+            vec![latest]
+        );
+        adapter.record_withdrawal("a".into(), 7);
+        assert!(adapter.is_withdrawn("a".into()));
         assert!(
-            state
-                .reconcile_resolution(ticket, invalid.clone())
+            adapter
+                .reconcile_readback(page, spot("a", 8, MobileChargingStatusDto::Published))
                 .is_none()
         );
+        let restored = spot("a", 8, MobileChargingStatusDto::Published);
         assert_eq!(
-            state.reconcile_page(ticket, false, vec![], None, vec![invalid]),
-            Vec::new()
+            adapter.reconcile_resolution(adapter.begin_observation(), restored.clone()),
+            Some(restored)
         );
-        state.record_withdrawal("a".into(), u64::MAX);
-        assert!(!state.is_withdrawn("a".into()));
-        let accepted =
-            state.reconcile_readback(ticket, spot("a", 0, MobileChargingStatusDto::Published));
-        assert_eq!(accepted.map(|spot| spot.local_revision), Some(0));
-    }
-
-    #[test]
-    fn delayed_page_preserves_newer_vote_readback() {
-        let state = MobileChargingReconciliation::new();
-        let page = state.begin_observation();
-        let read = state.begin_observation();
-        state.reconcile_readback(read, spot("a", 4, MobileChargingStatusDto::Published));
-        let projected = state.reconcile_page(
-            page,
-            false,
-            vec![],
-            None,
-            vec![spot("a", 3, MobileChargingStatusDto::Published)],
-        );
-        assert_eq!(projected[0].local_revision, 4);
-    }
-
-    #[test]
-    fn older_readback_does_not_downgrade_projection() {
-        let state = MobileChargingReconciliation::new();
-        let old = state.begin_observation();
-        let new = state.begin_observation();
-        state.reconcile_readback(new, spot("a", 8, MobileChargingStatusDto::Published));
-        let result =
-            state.reconcile_readback(old, spot("a", 7, MobileChargingStatusDto::Published));
-        assert_eq!(result.map(|spot| spot.local_revision), Some(8));
-    }
-
-    #[test]
-    fn withdrawal_blocks_old_pages_and_newer_publication_restores() {
-        let state = MobileChargingReconciliation::new();
-        let old = state.begin_observation();
-        state.record_withdrawal("a".into(), 3);
-        assert_eq!(
-            state.reconcile_page(
-                old,
-                false,
-                vec![],
-                None,
-                vec![spot("a", 3, MobileChargingStatusDto::Published),]
-            ),
-            vec![]
-        );
-        let restoration = state.begin_observation();
-        let restored = state.reconcile_resolution(
-            restoration,
-            spot("a", 4, MobileChargingStatusDto::Published),
-        );
-        assert_eq!(restored.map(|spot| spot.local_revision), Some(4));
-        assert!(
-            !state
-                .reconcile_page(
-                    old,
-                    false,
-                    vec![],
-                    None,
-                    vec![spot("a", 3, MobileChargingStatusDto::Published),]
-                )
-                .iter()
-                .any(|spot| spot.local_revision < 4)
-        );
-    }
-
-    #[test]
-    fn resolution_returns_queued_and_hidden_rows_without_clearing_withdrawal_fence() {
-        let state = MobileChargingReconciliation::new();
-        state.record_withdrawal("a".into(), 1);
-        let queued_ticket = state.begin_observation();
-        let queued = state
-            .reconcile_resolution(queued_ticket, spot("a", 2, MobileChargingStatusDto::Queued));
-        assert_eq!(
-            queued.map(|spot| spot.status),
-            Some(MobileChargingStatusDto::Queued)
-        );
-        assert!(state.is_withdrawn("a".into()));
-
-        let hidden_ticket = state.begin_observation();
-        let hidden = state
-            .reconcile_resolution(hidden_ticket, spot("a", 3, MobileChargingStatusDto::Hidden));
-        assert_eq!(
-            hidden.map(|spot| spot.status),
-            Some(MobileChargingStatusDto::Hidden)
-        );
-        assert!(state.is_withdrawn("a".into()));
-    }
-
-    #[test]
-    fn filtered_membership_does_not_add_retained_non_page_rows() {
-        let state = MobileChargingReconciliation::new();
-        let ticket = state.begin_observation();
-        state.reconcile_readback(
-            ticket,
-            spot("detail", 1, MobileChargingStatusDto::Published),
-        );
-        assert_eq!(
-            state.reconcile_page(ticket, false, vec![], None, vec![]),
-            vec![]
-        );
-    }
-
-    #[test]
-    fn page_replacement_keeps_readback_for_delayed_page_after_selection_changes() {
-        let state = MobileChargingReconciliation::new();
-        let delayed_page = state.begin_observation();
-        let vote_readback = state.begin_observation();
-        state.reconcile_readback(
-            vote_readback,
-            spot("voted", 4, MobileChargingStatusDto::Published),
-        );
-
-        let replacement_page = state.begin_observation();
-        state.reconcile_page(
-            replacement_page,
-            false,
-            vec![],
-            Some("selected".into()),
-            vec![spot("selected", 1, MobileChargingStatusDto::Published)],
-        );
-        let delayed = state.reconcile_page(
-            delayed_page,
-            false,
-            vec![],
-            None,
-            vec![spot("voted", 3, MobileChargingStatusDto::Published)],
-        );
-
-        assert_eq!(delayed[0].local_revision, 4);
-    }
-
-    #[test]
-    fn delayed_page_does_not_restore_nonvisible_readbacks() {
-        for status in [
-            MobileChargingStatusDto::Hidden,
-            MobileChargingStatusDto::Withdrawn,
-            MobileChargingStatusDto::Removed,
-        ] {
-            let state = MobileChargingReconciliation::new();
-            let delayed_page = state.begin_observation();
-            let readback = state.begin_observation();
-            let hidden = spot("a", 4, status);
-            state.reconcile_readback(readback, hidden.clone());
-
-            let page = state.reconcile_page(
-                delayed_page,
-                false,
-                vec![],
-                None,
-                vec![spot("a", 3, MobileChargingStatusDto::Published)],
-            );
-
-            assert_eq!(
-                page,
-                vec![],
-                "cached status {status:?} must stay out of page"
-            );
-            assert_eq!(
-                state.reconcile_readback(state.begin_observation(), hidden.clone()),
-                Some(hidden),
-                "the nonvisible row remains available as selected detail"
-            );
-        }
-    }
-
-    #[test]
-    fn newer_page_acknowledges_readback_for_later_projection_pruning() {
-        let state = MobileChargingReconciliation::new();
-        let readback_ticket = state.begin_observation();
-        state.reconcile_readback(
-            readback_ticket,
-            spot("seen", 4, MobileChargingStatusDto::Published),
-        );
-        let page_ticket = state.begin_observation();
-        state.reconcile_page(
-            page_ticket,
-            false,
-            vec![],
-            None,
-            vec![spot("seen", 4, MobileChargingStatusDto::Published)],
-        );
-        let next_page = state.begin_observation();
-        state.reconcile_page(next_page, false, vec![], None, vec![]);
-
-        assert!(
-            !state
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .latest
-                .contains_key("seen")
-        );
+        assert!(!adapter.is_withdrawn("a".into()));
     }
 }
