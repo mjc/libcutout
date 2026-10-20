@@ -1406,34 +1406,96 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testStoredProbeEligibleDeviceAutoConnectsThroughProtocolDetection() {
-        let suiteName = "CutoutAppModelTests.autoProbe"
+        for alreadyDiscovered in [true, false] {
+            let suiteName = "CutoutAppModelTests.autoProbe.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+
+            let platformIdentifier = "aero-1234"
+            let store = DevicePickerSelectionStore(defaults: defaults)
+            store.save(platformIdentifier: platformIdentifier, displayName: "NF2557")
+            let row = aeroAdvertisementPickerRow(platformIdentifier: platformIdentifier)
+            let otherWheel = aeroAdvertisementPickerRow(platformIdentifier: "another-wheel")
+            XCTAssertTrue(row.isProbeRecommended)
+            let driver = SessionDriverSpy(
+                rows: alreadyDiscovered ? [otherWheel, row] : [otherWheel],
+                notifyBluetoothRestorationOnStart: false)
+            let model = CutoutAppModel(
+                core: driver,
+                selectedDeviceStore: store,
+                rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults))
+
+            model.start()
+            XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+            driver.onBluetoothRestorationResolved?(nil)
+            if !alreadyDiscovered {
+                XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+            }
+            let scan = DevicePickerScanState(status: .scanning, rows: [otherWheel, row])
+            driver.onScanStateChange?(scan)
+            driver.onScanStateChange?(scan)
+
+            XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+            XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testSavedAeroAutoConnectsWhenScanSnapshotPrecedesScanningPhase() {
+        let suiteName = "CutoutAppModelTests.autoProbeOrdering.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let platformIdentifier = "aero-1234"
         let store = DevicePickerSelectionStore(defaults: defaults)
-        store.save(platformIdentifier: platformIdentifier, displayName: "NF2557")
-        let row = DevicePickerRow(
-            id: platformIdentifier,
-            title: "NF2557",
-            subtitle: "Electric unicycle",
-            detail: "Protocol detection required",
-            state: DevicePickerRowState(action: .probe),
-            symbolName: "circle.hexagongrid.circle"
-        )
-        let driver = SessionDriverSpy(rows: [row], notifyBluetoothRestorationOnStart: false)
+        let row = aeroAdvertisementPickerRow(platformIdentifier: "aero-1234")
+        store.save(platformIdentifier: row.id, displayName: "NF2557")
+        let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(
-            core: driver,
-            selectedDeviceStore: store,
-            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults)
-        )
-
+            core: driver, selectedDeviceStore: store,
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults))
         model.start()
-        driver.onBluetoothRestorationResolved?(nil)
 
-        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
-        XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
+        driver.emitPhase(.bluetoothUnavailable(rawState: 4))
+        let scan = DevicePickerScanState(status: .scanning, rows: [row])
+        // The real powered-on callback publishes its scan snapshot before its phase.
+        driver.onScanStateChange?(scan)
+        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+        driver.emitPhase(.scanning)
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
+        driver.onScanStateChange?(scan)
+        driver.emitPhase(.scanning)
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
+    }
+
+    @MainActor
+    func testSavedAeroStaysDisconnectedAfterExplicitDisconnectOrForget() async {
+        for forget in [false, true] {
+            let suiteName = "CutoutAppModelTests.autoProbeDisconnect.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = DevicePickerSelectionStore(defaults: defaults)
+            let row = aeroAdvertisementPickerRow(platformIdentifier: "aero-1234")
+            store.save(platformIdentifier: row.id, displayName: "NF2557")
+            let driver = SessionDriverSpy(rows: [row])
+            let model = CutoutAppModel(
+                core: driver, selectedDeviceStore: store,
+                rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults))
+            model.start()
+            XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
+
+            if forget {
+                await model.forgetSavedDevice()
+            } else {
+                let disconnected = await model.disconnectTransport()
+                XCTAssertTrue(disconnected)
+            }
+            driver.emitPhase(.bluetoothUnavailable(rawState: 4))
+            driver.onScanStateChange?(DevicePickerScanState(status: .scanning, rows: [row]))
+            driver.emitPhase(.scanning)
+
+            XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
+            XCTAssertEqual(store.platformIdentifier, forget ? nil : row.id)
+        }
     }
 
     @MainActor

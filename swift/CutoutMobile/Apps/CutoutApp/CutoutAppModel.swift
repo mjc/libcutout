@@ -1176,6 +1176,10 @@ final class CutoutAppModel {
         if let row = scanState.rows.first(where: { $0.id == capture.device?.platformIdentifier }) {
             capture.updateDevice(row)
         }
+        attemptStoredDeviceAutoPairing()
+    }
+
+    private func attemptStoredDeviceAutoPairing() {
         guard phase == .starting || phase == .scanning else { return }
         switch rideSessionRestorationState {
         case .complete:
@@ -1187,8 +1191,8 @@ final class CutoutAppModel {
         }
         guard permitsStoredDeviceAutoPairing else { return }
         guard let platformIdentifier = device.savedPlatformIdentifier else { return }
-        guard let row = scanState.rows.first(where: { $0.id == platformIdentifier }) else { return }
-        guard row.isSupported || row.isProbeRecommended else { return }
+        guard let row = device.scanState?.rows.first(where: { $0.id == platformIdentifier }) else { return }
+        guard row.canConnect else { return }
         _ = pair(platformIdentifier: platformIdentifier, isAutomatic: true)
     }
 
@@ -1276,6 +1280,9 @@ final class CutoutAppModel {
         case .starting, .scanning:
             break
         }
+        // Bluetooth publishes its cached scan before its scanning phase. Recheck
+        // readiness here as well so that callback order cannot strand a saved device.
+        attemptStoredDeviceAutoPairing()
     }
 
     private func handleReconnectScheduled(_ retry: SessionConnectionRetry) {
