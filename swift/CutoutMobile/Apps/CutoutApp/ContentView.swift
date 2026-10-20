@@ -438,7 +438,7 @@ struct ContentView: View {
                     }
                 }
                 Section {
-                    Button(action: openMusicPlayer) {
+                    Button(action: { presentedSheet = .musicSettings }) {
                         HStack(spacing: 12) {
                             Image(systemName: "music.note")
                                 .accessibilityHidden(true)
