@@ -16,6 +16,9 @@ const SCREENSHOT_EUC_MAIN: &[u8] =
     include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/euc-main.png");
 const SCREENSHOT_RIDE_HISTORY: &[u8] =
     include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/ride-tracking.png");
+const SCREENSHOT_RIDE_MUSIC_HISTORY: &[u8] = include_bytes!(
+    "../../../docs/mockups/cutout-site/assets/screenshots/en/ride-music-history.png"
+);
 const SCREENSHOT_CHARGING_MAP: &[u8] =
     include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/charging-map.png");
 const SCREENSHOT_TUNE: &[u8] =
@@ -39,6 +42,10 @@ pub(crate) fn router() -> Router<Store> {
         .route(
             "/assets/screenshots/en/ride-tracking.png",
             get(screenshot_ride_history),
+        )
+        .route(
+            "/assets/screenshots/en/ride-music-history.png",
+            get(screenshot_ride_music_history),
         )
         .route(
             "/assets/screenshots/en/charging-map.png",
@@ -76,6 +83,10 @@ async fn screenshot_euc_main() -> Response {
 
 async fn screenshot_ride_history() -> Response {
     asset(SCREENSHOT_RIDE_HISTORY, "image/png")
+}
+
+async fn screenshot_ride_music_history() -> Response {
+    asset(SCREENSHOT_RIDE_MUSIC_HISTORY, "image/png")
 }
 
 async fn screenshot_charging_map() -> Response {

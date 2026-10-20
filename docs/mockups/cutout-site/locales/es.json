@@ -30,6 +30,7 @@
   },
   "screenshots": {
     "live": "Pantalla de conducción de CutOut con datos en directo de un EUC NOSFET Aero.",
+    "musicHistory": "Detalles de un recorrido guardado en CutOut con su historial de música.",
     "history": "Historial de recorridos de CutOut con el mapa y los recorridos guardados.",
     "charging": "Mapa comunitario de carga de CutOut con puntos de carga cercanos.",
     "rgb": "Controles de efectos RGB de CutOut para un accesorio de iluminación MELK conectado.",

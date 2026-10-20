@@ -30,6 +30,7 @@
   },
   "screenshots": {
     "live": "CutOut live ride screen with telemetry for a NOSFET Aero EUC.",
+    "musicHistory": "CutOut saved ride details with its recorded music timeline.",
     "history": "CutOut ride history showing the map and saved rides.",
     "charging": "CutOut community charging map with nearby charging spots.",
     "rgb": "CutOut RGB effects controls for a connected MELK lighting accessory.",

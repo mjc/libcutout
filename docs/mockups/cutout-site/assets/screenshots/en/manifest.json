@@ -23,6 +23,26 @@
       "visibleState": "Parked Aero; 0.0 mph, 100% PWM headroom, 93% battery, 123.2 V, 0.00 kW and 32 °C; Spotify player visible."
     },
     {
+      "scene": "ride-music-history",
+      "file": "ride-music-history.png",
+      "caption": "Ride detail with music history",
+      "method": "native-ios-device-screenshot",
+      "label": "iPhone screenshot",
+      "dimensionsPixels": {
+        "width": 1290,
+        "height": 2796
+      },
+      "sha256": "0797bf33e1b1480497c3bba7db65543c30ca8c283798e04d921b4b56d214dd76",
+      "visibleState": "Existing saved parked session with ride summary and recorded Spotify music timeline; no identifiable route or location marker visible.",
+      "provenance": {
+        "appBuildRevision": "4483781480bea7be0505b9ca315a9601c0d3061e",
+        "appVersion": "1.0 (2026.10.1902)",
+        "capturedAt": "2026-10-19T21:59:00-06:00",
+        "device": "iPhone 15 Pro Max",
+        "capture": "Device screenshot of the iPhone Mirroring display; cropped to the original 1290 × 2796 phone viewport, without resizing or changing its pixels."
+      }
+    },
+    {
       "scene": "rgb",
       "file": "rgb.jpg",
       "caption": "RGB Effects",
