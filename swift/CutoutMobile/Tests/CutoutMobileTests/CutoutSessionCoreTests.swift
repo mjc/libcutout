@@ -1679,6 +1679,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let core = CutoutSessionCore(
             rideMapState: MobileRideMapState(storageUnavailable: "map database unavailable")
         )
+        defer { core.onRideMapAvailabilityChange = nil }
         var lastAvailability: MobileRideMapAvailability?
         var observedStorageFailure = false
         core.onRideMapAvailabilityChange = { availability in
@@ -1695,6 +1696,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let refreshed = expectation(description: "Authorization refresh retains Rust storage failure")
         core.onRideMapAvailabilityChange = { availability in
             lastAvailability = availability
+            core.onRideMapAvailabilityChange = nil
             refreshed.fulfill()
         }
         core.refreshPhoneLocationAuthorizationForTesting()

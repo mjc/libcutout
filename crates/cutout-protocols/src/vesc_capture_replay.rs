@@ -54,6 +54,8 @@ pub enum VescReplayRejection {
     UnsupportedTarget,
     /// The characteristic belongs to a different input stream.
     WrongCharacteristic,
+    /// The recorded service belongs to a different input stream.
+    WrongService,
     /// There has been no link-up, or the capture explicitly closed its link.
     Disconnected,
     /// A previously retired attempt cannot become current without a new link boundary.
@@ -158,6 +160,11 @@ impl VescCaptureReplaySession {
     ) -> Option<VescReplayRejection> {
         if record.characteristic != crate::VESC_NOTIFY_CHANNEL {
             return Some(VescReplayRejection::WrongCharacteristic);
+        }
+        if record.service.is_some_and(|service| {
+            service.as_bytes() != *cutout_core::BluetoothServiceUuid::VESC_NORDIC_UART.as_bytes()
+        }) {
+            return Some(VescReplayRejection::WrongService);
         }
         if !self.inner.replay_is_connected() {
             return Some(VescReplayRejection::Disconnected);
@@ -339,7 +346,9 @@ mod tests {
         PevcapRecord::inbound_notification(
             MonotonicTimestamp::new(at),
             crate::VESC_NOTIFY_CHANNEL,
-            GattChannel::from_bytes([0; 16]),
+            GattChannel::from_bytes(
+                *cutout_core::BluetoothServiceUuid::VESC_NORDIC_UART.as_bytes(),
+            ),
             vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
         )
         .with_semantic_telemetry(PevcapSemanticTelemetry {
@@ -558,6 +567,136 @@ mod tests {
                 .as_millimetres_per_second(),
             1617
         );
+    }
+
+    #[test]
+    fn captured_geometry_replay_wrong_service_cannot_retire_context_or_partial_frame() {
+        let mut host = host(VescReplayGeometryPolicy::Captured);
+        let mut first = record(90_000, 283, 1, 1, 100);
+        let rest = first.bytes.slice(7..);
+        first.bytes = first.bytes.slice(..7);
+        let before = ingest(&mut host, &first);
+        let scope = host.protocol_session().scope.clone();
+        let mut wrong = record(100_000, 314, 2, 2, 200);
+        wrong.service = Some(GattChannel::from_bytes([7; 16]));
+        let ignored = ingest(&mut host, &wrong);
+        assert_eq!(
+            ignored.disposition,
+            VescReplayRecordDisposition::Ignored(VescReplayRejection::WrongService)
+        );
+        assert_eq!(ignored.telemetry, before.telemetry);
+        assert_eq!(ignored.geometry, before.geometry);
+        assert_eq!(ignored.original, wrong.semantic_telemetry);
+        assert_eq!(host.protocol_session().scope, scope);
+        assert_eq!(
+            host.protocol_session().last_receipt,
+            Some(first.monotonic_ms)
+        );
+        let mut end = record(90_000, 283, 1, 1, 120);
+        end.bytes = rest;
+        let result = ingest(&mut host, &end);
+        assert_eq!(result.disposition, VescReplayRecordDisposition::Accepted);
+        assert_eq!(
+            result
+                .telemetry
+                .speed
+                .unwrap()
+                .value
+                .as_millimetres_per_second(),
+            1617
+        );
+        assert_eq!(
+            result.telemetry.speed_observed_at_ms,
+            Some(end.monotonic_ms)
+        );
+    }
+
+    #[test]
+    fn captured_geometry_replay_absent_service_remains_compatible_at_record_boundary() {
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            let mut expected_host = host(policy);
+            let mut actual_host = host(policy);
+            let mut legacy = record(90_000, 283, 1, 1, 100);
+            let expected = ingest(&mut expected_host, &legacy);
+            legacy.service = None;
+            let actual = ingest(&mut actual_host, &legacy);
+            assert_eq!(actual, expected);
+            assert!(actual.telemetry.speed.is_some());
+            assert_eq!(
+                actual.telemetry.speed_observed_at_ms,
+                Some(legacy.monotonic_ms)
+            );
+        }
+    }
+
+    #[test]
+    fn captured_geometry_replay_service_admission_preserves_original_bytes() {
+        use cutout_core::{PevcapEncoding, PevcapReader, PevcapReplayMode};
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            for (service, disposition) in [
+                (
+                    Some(GattChannel::from_bytes(
+                        *cutout_core::BluetoothServiceUuid::VESC_NORDIC_UART.as_bytes(),
+                    )),
+                    VescReplayRecordDisposition::Accepted,
+                ),
+                (
+                    Some(GattChannel::from_bytes([0; 16])),
+                    VescReplayRecordDisposition::Ignored(VescReplayRejection::WrongService),
+                ),
+            ] {
+                let mut capture = reconnect_capture();
+                let good = record(90_000, 283, 1, 1, 100);
+                let mut last = record(100_000, 314, 2, 2, 200);
+                last.service = service;
+                let expected_record = if disposition == VescReplayRecordDisposition::Accepted {
+                    &last
+                } else {
+                    &good
+                };
+                let mut expected_host = host(policy);
+                let expected = ingest(&mut expected_host, expected_record);
+                capture.records = vec![
+                    PevcapRecord::link_up(MonotonicTimestamp::new(0), None),
+                    good,
+                    last.clone(),
+                ];
+                for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+                    let bytes = capture.encode(encoding).unwrap();
+                    for mode in [PevcapReplayMode::Whole, PevcapReplayMode::OneByte] {
+                        let mut host = HostSession::new(VescCaptureReplaySession::new(policy));
+                        let mut outputs = Vec::new();
+                        PevcapReader::new(std::io::Cursor::new(&bytes), encoding)
+                            .unwrap()
+                            .replay_into_host_with_record_context(
+                                mode,
+                                &mut host,
+                                &mut outputs,
+                                true,
+                                VescCaptureReplaySession::observe_record,
+                            )
+                            .unwrap();
+                        let observed = VescCaptureReplaySession::observation(&host);
+                        assert_eq!(observed.telemetry, expected.telemetry);
+                        assert_eq!(observed.geometry, expected.geometry);
+                        assert_eq!(observed.original, last.semantic_telemetry);
+                        assert_eq!(observed.disposition, disposition);
+                        assert!(
+                            !outputs
+                                .iter()
+                                .any(|output| matches!(output, SessionOutput::Transport(_)))
+                        );
+                        assert_eq!(capture.encode(encoding).unwrap(), bytes);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

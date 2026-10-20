@@ -5315,7 +5315,9 @@ mod tests {
                 PevcapRecord::inbound_notification(
                     ms(at),
                     VESC_NOTIFY_CHANNEL,
-                    GattChannel::from_bytes([0; 16]),
+                    GattChannel::from_bytes(
+                        *cutout_core::BluetoothServiceUuid::VESC_NORDIC_UART.as_bytes(),
+                    ),
                     vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
                 )
                 .with_semantic_telemetry(PevcapSemanticTelemetry {
@@ -5384,7 +5386,9 @@ mod tests {
         let good = PevcapRecord::inbound_notification(
             ms(100),
             VESC_NOTIFY_CHANNEL,
-            GattChannel::from_bytes([0; 16]),
+            GattChannel::from_bytes(
+                *cutout_core::BluetoothServiceUuid::VESC_NORDIC_UART.as_bytes(),
+            ),
             vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
         );
         let geometry = cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap();
@@ -5410,12 +5414,24 @@ mod tests {
                 accepted_line.contains("record_disposition=Accepted"),
                 "{accepted_line}"
             );
-            for (characteristic, at, reason) in [
-                (GattChannel::from_bytes([0; 16]), 200, "WrongCharacteristic"),
-                (VESC_NOTIFY_CHANNEL, 99, "OutOfOrder"),
+            for (characteristic, service, at, reason) in [
+                (
+                    GattChannel::from_bytes([0; 16]),
+                    good.service,
+                    200,
+                    "WrongCharacteristic",
+                ),
+                (
+                    VESC_NOTIFY_CHANNEL,
+                    Some(GattChannel::from_bytes([0; 16])),
+                    200,
+                    "WrongService",
+                ),
+                (VESC_NOTIFY_CHANNEL, good.service, 99, "OutOfOrder"),
             ] {
                 let mut ignored = good.clone();
                 ignored.characteristic = characteristic;
+                ignored.service = service;
                 ignored.monotonic_ms = ms(at);
                 capture.records = vec![good.clone(), ignored];
                 let bytes = capture.encode(encoding).unwrap();
