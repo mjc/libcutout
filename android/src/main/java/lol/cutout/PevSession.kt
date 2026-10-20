@@ -51,7 +51,7 @@ class PevSession(
         identify()
         val step = if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes, receivedAtMs = receivedAtMs) else null
         if (capture) onCaptureNotification(
-            channel.copyOf(), service.copyOf(), bytes.copyOf(), telemetry,
+            channel.copyOf(), service.copyOf(), bytes.copyOf(), step?.telemetry,
             step?.captureNotificationEvidence ?: MobileCaptureNotificationEvidenceDto.UNCLASSIFIED,
             receivedAtMs,
         )
@@ -95,6 +95,68 @@ class PevSession(
         if (setting != null) state.markSettingTransport(token, setting.id, operationId, status, now())
         else state.markSettingReadTransport(token, operationId, status, now())
         publish()
+    }
+
+    fun writeReceipt(output: MobileSessionOutputDto, receipt: NativeReceipt) {
+        val query = output.applicationQuery
+        if (query == null) writeReceipt(output.operationId, receipt)
+        else queryReceipt(query, 0, 1, receipt)
+    }
+
+    private fun queryReceipt(
+        query: MobileApplicationQueryWriteDto,
+        index: Int,
+        count: Int,
+        receipt: NativeReceipt,
+    ) {
+        if (!isCurrent) return
+        val status = when (receipt) {
+            NativeReceipt.QUEUED -> MobileApplicationQueryTransportStatusDto.QUEUED
+            NativeReceipt.SUBMITTED -> MobileApplicationQueryTransportStatusDto.SUBMITTED
+            NativeReceipt.REJECTED -> MobileApplicationQueryTransportStatusDto.REJECTED
+            NativeReceipt.CANCELLED -> MobileApplicationQueryTransportStatusDto.CANCELLED
+        }
+        state.markApplicationQueryTransport(token, query.queryId, index.toUShort(), count.toUShort(), status, now())
+        publish()
+    }
+
+    /** Shared production submission path; Android supplies only the native write call. */
+    fun enqueueWrite(
+        output: MobileSessionOutputDto,
+        queue: GattOperationQueue,
+        key: String,
+        onReceipt: ((NativeReceipt) -> Unit)? = null,
+        submit: (ByteArray) -> NativeStart,
+    ) = enqueueWrite(output.bytes, output.operationId, queue, key, output.applicationQuery, onReceipt, submit)
+
+    fun enqueueWrite(
+        bytes: ByteArray,
+        operationId: ULong?,
+        queue: GattOperationQueue,
+        key: String,
+        applicationQuery: MobileApplicationQueryWriteDto? = null,
+        onReceipt: ((NativeReceipt) -> Unit)? = null,
+        submit: (ByteArray) -> NativeStart,
+    ) {
+        val chunks = attChunks(bytes, writeLimit.toInt())
+        val receipt = NativeWriteReceipt(chunks.size) {
+            if (applicationQuery == null) writeReceipt(operationId, it)
+            onReceipt?.invoke(it)
+        }
+        chunks.forEachIndexed { index, chunk ->
+            queue.enqueue(GattOperationQueue.Operation(key, {
+                val admitted = if (applicationQuery == null) writeIsCurrent(operationId)
+                    else state.applicationQueryTransportIsCurrent(token, applicationQuery.queryId, now())
+                when {
+                    admitted -> submit(chunk)
+                    applicationQuery != null -> NativeStart.CANCELLED
+                    else -> NativeStart.REJECTED
+                }
+            }, {
+                if (applicationQuery != null) queryReceipt(applicationQuery, index, chunks.size, it)
+                receipt.observe(index, it)
+            }))
+        }
     }
 
     fun nextWakeup(canPoll: Boolean): ULong? =

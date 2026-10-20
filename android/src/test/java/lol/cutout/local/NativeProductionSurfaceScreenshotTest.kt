@@ -25,6 +25,18 @@ import org.robolectric.Robolectric
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import uniffi.cutout_mobile_ffi.DiscoveryServiceUuid
+import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
+import uniffi.cutout_mobile_ffi.MobileVehicleKindDto
+import uniffi.cutout_mobile_ffi.MobileVehicleClassificationProvenanceDto
+import uniffi.cutout_mobile_ffi.MobileVehicleClassificationRequirementDto
+import uniffi.cutout_mobile_ffi.MobileVescApplicationDiscoveryDto
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainContextDto
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainSourceDto
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainTargetDto
+import uniffi.cutout_mobile_ffi.MobileValueSourceDto
+import uniffi.cutout_mobile_ffi.RideOperatingState
+import uniffi.cutout_mobile_ffi.Speed
+import uniffi.cutout_mobile_ffi.Voltage
 import uniffi.cutout_mobile_ffi.mobileDiscoveryCandidateFromAdvertisement
 import java.io.File
 import java.util.UUID
@@ -124,8 +136,97 @@ class NativeProductionSurfaceScreenshotTest {
         }
     }
 
-    private fun configuredContext(context: Context, dark: Boolean): Context {
+    /** DTO-shaped host presentation captures; these do not exercise Bluetooth or vehicle detection. */
+    @Test
+    @Config(qualifiers = "w430dp-h932dp-xhdpi")
+    fun rendersStandardVescRideAtApprovedViewportInLightDarkAndLargeText() {
+        val app = RuntimeEnvironment.getApplication()
+        val replay = productionReplayPresentation()
+        for (dark in listOf(false, true)) {
+            for (fontScale in listOf(1f, 2f)) {
+                val controller = Robolectric.buildActivity(Activity::class.java).setup()
+                val activity = controller.get()
+                try {
+                    val context = configuredContext(app, dark, fontScale)
+                    val ride = RideDashboardView(context, {}, {})
+                    activity.setContentView(ride)
+                    controller.visible()
+                    for (knownSpeed in listOf(false, true)) {
+                        val presentation = standardVescPresentationFixture(replay, knownSpeed)
+                        ride.render(presentation)
+                        val state = if (knownSpeed) "known-speed" else "missing-geometry"
+                        val textSize = if (fontScale >= 1.5f) "large-text" else "standard-text"
+                        NativeSurfaceCapture.save(ride,
+                            "host-standard-vesc-ride-$state-${mode(dark)}-$textSize",
+                            widthDp = 430, heightDp = 932)
+                        val speed = checkNotNull(ride.findViewWithTag<android.widget.TextView>("ride.hero.speed"))
+                        check((speed.text.toString() != "--") == knownSpeed) {
+                            "$state capture did not display the intended speed availability"
+                        }
+                        check((presentation.telemetry?.vescDrivetrainContext != null) == knownSpeed)
+                        val energyTag = if (fontScale >= 1.5f) "ride.accessible.metric.energy" else "ride.metric.energy"
+                        val energy = checkNotNull(ride.findViewWithTag<android.widget.TextView>(energyTag))
+                        check(energy.text.toString().endsWith(" V")) { "Standard Ride did not show its pack-voltage fallback" }
+                        val energyLabel = descendants(ride).filterIsInstance<android.widget.TextView>().single {
+                            it.text.toString() == lol.cutout.CutoutUi(context).label("vesc.metric.pack_voltage")
+                        }
+                        fun textCenter(view: android.widget.TextView): Float {
+                            val position = IntArray(2)
+                            view.getLocationOnScreen(position)
+                            val text = checkNotNull(view.layout)
+                            return position[0] + view.totalPaddingLeft - view.scrollX +
+                                (text.getLineLeft(0) + text.getLineRight(0)) / 2f
+                        }
+                        check(kotlin.math.abs(textCenter(energyLabel) - textCenter(energy)) <= context.resources.displayMetrics.density) {
+                            "Pack-voltage label is not centered over its energy value"
+                        }
+                        check(ride.findViewWithTag<View>("ride.readings.open") != null)
+                        check(ride.findViewWithTag<View>("ride.open-tune") != null)
+                        check(descendants(ride).none { it.tag == "vesc.ride.footpad" ||
+                            it.tag == "euc.ride.headroom" || it.tag == "ride.metric.board_angle" ||
+                            it.tag == "ride.accessible.metric.board_angle" || it.tag == "ride.accessible.metric.headroom" }) {
+                            "A standard VESC host capture included balance-board instruments"
+                        }
+                    }
+                } finally {
+                    controller.pause().stop().destroy()
+                }
+            }
+        }
+    }
+
+    /** Copy exported DTO shapes, with explicit standard application/class and local geometry. */
+    private fun standardVescPresentationFixture(replay: BlePresentation, knownSpeed: Boolean): BlePresentation {
+        val session = checkNotNull(replay.session)
+        val telemetry = checkNotNull(replay.telemetry)
+        // Same 90 mm / 7 pole-pair / 2.5 reduction example as the Rust drivetrain tests.
+        val geometry = if (knownSpeed) MobileVescDrivetrainContextDto(
+            target = MobileVescDrivetrainTargetDto.Local,
+            connectionAttempt = checkNotNull(session.connection.token), revision = 1UL,
+            source = MobileVescDrivetrainSourceDto.USER_CONFIGURED,
+            wheelDiameterMicrometres = 90_000u, wheelCircumferenceMm = 283UL,
+            motorPolePairs = 7u, motorToWheelRatioMilli = 2_500u,
+        ) else null
+        return replay.copy(session = session.copy(identity = checkNotNull(session.identity).copy(
+            protocol = MobileProtocolFamilyDto.VESC, vehicleKind = MobileVehicleKindDto.ESKATE,
+            classificationProvenance = MobileVehicleClassificationProvenanceDto.USER_PROVIDED,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.RESOLVED,
+            vescApplication = MobileVescApplicationDiscoveryDto.ABSENT, vescApplicationQuery = null, model = null)),
+            telemetry = telemetry.copy(
+                speed = if (knownSpeed) checkNotNull(telemetry.speed).copy(value = Speed(10_000),
+                    source = MobileValueSourceDto.CALCULATED) else null,
+                speedObservedAtMs = if (knownSpeed) telemetry.speedObservedAtMs else null,
+                vescDrivetrainContext = geometry,
+                operatingState = if (knownSpeed) RideOperatingState.RIDING else RideOperatingState.PARKED,
+                voltage = checkNotNull(telemetry.voltage).copy(value = Voltage(50_400)),
+                batteryLevelReported = null, batteryLevelEstimated = null,
+                vescOperatingMode = null, vescWarning = null, vescStopReason = null,
+                pitch = null, balanceAngle = null, roll = null, footpad = null, pwm = null))
+    }
+
+    private fun configuredContext(context: Context, dark: Boolean, fontScale: Float? = null): Context {
         val configuration = Configuration(context.resources.configuration)
+        fontScale?.let { configuration.fontScale = it }
         val nightMask = Configuration.UI_MODE_NIGHT_MASK
         configuration.uiMode = (configuration.uiMode and nightMask.inv()) or
             (if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
@@ -155,10 +256,10 @@ internal object NativeSurfaceCapture {
     private const val WIDTH_DP = 393
     private const val HEIGHT_DP = 852
 
-    fun save(view: View, name: String) {
+    fun save(view: View, name: String, widthDp: Int = WIDTH_DP, heightDp: Int = HEIGHT_DP) {
         val density = view.resources.displayMetrics.density
-        val width = (WIDTH_DP * density).toInt()
-        val height = (HEIGHT_DP * density).toInt()
+        val width = (widthDp * density).toInt()
+        val height = (heightDp * density).toInt()
         var settled = false
         repeat(4) {
             if (!settled) {

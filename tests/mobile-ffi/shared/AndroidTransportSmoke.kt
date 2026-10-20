@@ -101,6 +101,7 @@ fun checkNativeGattQueue() {
 }
 
 fun checkProductionSessionReplay() {
+    checkProductionApplicationQueryTransport()
     CutoutSessionStateHandle().use { state ->
         var clock = 0UL
         val token = checkNotNull(state.beginConnectionAttempt("production-adapter", clock).token)
@@ -132,5 +133,143 @@ fun checkProductionSessionReplay() {
         check(!session.writeIsCurrent(null))
         check(state.deviceSessionSnapshot().identity == null)
         state.disconnectConnectionAttempt()
+    }
+}
+
+/** Generated Kotlin -> Rust policy, through the same submission path as Android WRITE effects. */
+private fun checkProductionApplicationQueryTransport() {
+    for (scenario in listOf("submitted", "fragmented", "deadline", "partial-deadline", "native-rejected", "partial", "retired")) {
+        CutoutSessionStateHandle().use { state ->
+            var clock = 1UL
+            val token = checkNotNull(state.beginConnectionAttempt("query-$scenario", 0UL).token)
+            state.connectionLinkEstablished(token)
+            val outputs = mutableListOf<MobileSessionOutputDto>()
+            val session = PevSession(state, token, { clock }, { outputs += it }) { _, _, _ -> }
+            val reply = byteArrayOf(2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0,
+                117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208.toByte(), 3)
+            session.notification(byteArrayOf(), reply)
+            val query = outputs.first { it.applicationQuery != null }
+            val admission = checkNotNull(query.applicationQuery)
+            var submissions = 0
+            var failures = 0
+            val queue = GattOperationQueue({ session.isCurrent }, ManualTimer(), {
+                failures++
+                // Match AndroidBleClient: native queue failures retire the connection.
+                state.disconnectConnectionAttempt()
+            })
+            if (scenario == "deadline" || scenario == "retired") {
+                queue.enqueue(GattOperationQueue.Operation("blocker", { NativeStart.PENDING }))
+            }
+            // Force three actual ATT submissions for one authorized protocol output.
+            val write = if (scenario == "partial" || scenario == "fragmented" || scenario == "partial-deadline") query.copy(bytes = ByteArray(45)) else query
+            val captureReceipts = mutableListOf<NativeReceipt>()
+            session.enqueueWrite(write, queue, "query", onReceipt = { captureReceipts += it }) {
+                submissions++
+                when (scenario) {
+                    "partial", "fragmented", "partial-deadline" -> NativeStart.PENDING
+                    "native-rejected" -> NativeStart.REJECTED
+                    else -> NativeStart.COMPLETE
+                }
+            }
+            when (scenario) {
+                "submitted" -> {
+                    check(submissions > 0)
+                    val awaiting = state.deviceSessionSnapshot().identity?.vescApplicationQuery
+                    check(awaiting is MobileVescApplicationQueryStateDto.AwaitingResponse) {
+                        "Actual Android query submission must reach Rust: $awaiting"
+                    }
+                    clock = awaiting.responseDeadlineMs
+                    session.tick()
+                    check(state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)
+                }
+                "fragmented" -> {
+                    check(submissions == 1)
+                    check(state.deviceSessionSnapshot().identity?.vescApplicationQuery is
+                        MobileVescApplicationQueryStateDto.Queued)
+                    clock = 100UL
+                    check(queue.complete("query", true))
+                    check(submissions == 2)
+                    check(state.deviceSessionSnapshot().identity?.vescApplicationQuery is
+                        MobileVescApplicationQueryStateDto.Queued)
+                    clock = 200UL
+                    check(queue.complete("query", true))
+                    check(submissions == 3)
+                    val awaiting = state.deviceSessionSnapshot().identity?.vescApplicationQuery
+                    check(awaiting is MobileVescApplicationQueryStateDto.AwaitingResponse)
+                    check(awaiting.submittedAtMs == clock)
+                    clock = awaiting.responseDeadlineMs
+                    session.tick()
+                    check(state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)
+                }
+                "deadline" -> {
+                    var followingStarted = false
+                    check(queue.enqueue(GattOperationQueue.Operation("following", {
+                        followingStarted = true
+                        NativeStart.COMPLETE
+                    })))
+                    clock = admission.submitBeforeMs
+                    check(queue.complete("blocker", true))
+                    check(submissions == 0) { "Expired query reached native GATT" }
+                    check(failures == 0) { "Expired optional query disconnected a healthy link" }
+                    check(followingStarted && queue.isIdle)
+                    check(session.isCurrent)
+                    check(state.deviceSessionSnapshot().identity?.vescApplicationQuery is
+                        MobileVescApplicationQueryStateDto.KnownUnsent)
+                    check(queue.enqueue(GattOperationQueue.Operation("later", { NativeStart.COMPLETE })))
+                    check(state.deviceSessionSnapshot().identity?.vescApplication != MobileVescApplicationDiscoveryDto.ABSENT)
+                }
+                "partial-deadline" -> {
+                    check(submissions == 1)
+                    var followingStarted = false
+                    check(queue.enqueue(GattOperationQueue.Operation("following", {
+                        followingStarted = true
+                        NativeStart.COMPLETE
+                    })))
+                    clock = admission.submitBeforeMs
+                    check(queue.complete("query", true))
+                    check(submissions == 1) { "Expired query fragments reached native GATT" }
+                    check(failures == 0 && session.isCurrent && followingStarted && queue.isIdle)
+                    check(state.deviceSessionSnapshot().identity?.vescApplicationQuery is
+                        MobileVescApplicationQueryStateDto.PartialUncertain)
+                    check(state.deviceSessionSnapshot().identity?.vescApplication != MobileVescApplicationDiscoveryDto.ABSENT)
+                }
+                "native-rejected" -> {
+                    check(submissions == 1 && failures == 1)
+                    check(!session.isCurrent)
+                    var followingStarted = false
+                    check(!queue.enqueue(GattOperationQueue.Operation("after native failure", {
+                        followingStarted = true
+                        NativeStart.COMPLETE
+                    })))
+                    check(!followingStarted)
+                }
+                "partial" -> {
+                    check(submissions == 1)
+                    queue.close()
+                    check(state.deviceSessionSnapshot().identity?.vescApplicationQuery is
+                        MobileVescApplicationQueryStateDto.PartialUncertain)
+                    clock = admission.submitBeforeMs + 10_000UL
+                    session.tick()
+                    check(state.deviceSessionSnapshot().identity?.vescApplication != MobileVescApplicationDiscoveryDto.ABSENT)
+                }
+                "retired" -> {
+                    state.beginConnectionAttempt("replacement", clock)
+                    queue.close()
+                    check(submissions == 0)
+                    check(state.deviceSessionSnapshot().identity == null)
+                }
+            }
+            queue.close()
+            val expectedReceipt = when (scenario) {
+                "submitted", "fragmented" -> NativeReceipt.SUBMITTED
+                "deadline", "retired" -> NativeReceipt.CANCELLED
+                "partial", "partial-deadline", "native-rejected" -> NativeReceipt.REJECTED
+                else -> error("Unknown query scenario")
+            }
+            check(captureReceipts == listOf(NativeReceipt.QUEUED, expectedReceipt)) {
+                "Whole-frame capture receipts for $scenario: $captureReceipts"
+            }
+            state.disconnectConnectionAttempt()
+        }
     }
 }

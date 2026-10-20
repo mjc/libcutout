@@ -329,6 +329,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 return null
             }
             this.writer = writer
+            connectionToken?.let(::updateIdentity)
             publish(presentation.copy(
                 ready = true,
                 lifecycle = owner.captureLifecycleSnapshot(),
@@ -362,6 +363,13 @@ class AndroidDiagnosticCaptureClient internal constructor(
         if (attempt.stage != MobileCaptureStageDto.RECORDING) return null
         val name = snapshot.fileName?.takeIf(String::isNotBlank) ?: return null
         return CameraCaptureIdentity(attempt.generation, name)
+    }
+
+    /** The Rust owner admits protocol evidence and updates this attempt's writer atomically. */
+    internal fun updateIdentity(token: MobileConnectionAttemptTokenDto) {
+        ownedWriter(token)?.let { active ->
+            state().updateCaptureIdentity(token, active.builder)?.let { applyWriteOutcome(active, it) }
+        }
     }
 
     internal fun recordFingerprint(token: MobileConnectionAttemptTokenDto, fingerprint: MobileGattFingerprintDto) {
@@ -400,6 +408,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
             )
             applyWriteOutcome(active, outcome)
             if (outcome == MobileCaptureWriteOutcomeDto.Accepted) active.notificationCount++
+            state().updateCaptureIdentity(token, active.builder)?.let { applyWriteOutcome(active, it) }
             publish(presentation.copy(notificationCount = active.notificationCount))
         }
     }

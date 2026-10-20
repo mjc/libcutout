@@ -3,6 +3,10 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
+import io
+from unittest.mock import patch
+import zipfile
 
 SPEC = importlib.util.spec_from_file_location(
     "mobile_ffi_runner", Path(__file__).resolve().parents[2] / "scripts/test-mobile-ffi.py"
@@ -52,6 +56,66 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(runner.select_device("List of devices attached\nUSB device usb:1\n", None), "USB")
         with self.assertRaises(ValueError):
             runner.select_device("List of devices attached\n", None)
+
+
+class EmulatorSelectionTests(unittest.TestCase):
+    def test_emulator_requires_its_explicit_transport_avd_and_guest_abi(self):
+        valid = {"serial": "EMULATOR", "abi": "x86_64", "api": "35", "emulator": "1"}
+        runner.validate_emulator(valid, "emulator-5554", "cutout-api35-x86_64", "cutout-api35-x86_64", "35")
+        for override in ({"abi": "arm64-v8a"}, {"api": "32"}, {"api": "34"}, {"emulator": ""}, {"serial": ""}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                runner.validate_emulator(dict(valid, **override), "emulator-5554", "owned", "owned", "35")
+        for selector, avd in (("PHONE", "owned"), ("emulator-5554", "other")):
+            with self.subTest(selector=selector, avd=avd), self.assertRaises(ValueError):
+                runner.validate_emulator(valid, selector, avd, "owned", "35")
+        # An emulator remains forbidden in physical-device mode.
+        with self.assertRaises(ValueError):
+            runner.validate_device(valid, None)
+
+    def test_nonbuild_modes_cannot_silently_ignore_an_explicit_abi(self):
+        for mode in ("device", "app", "emulator", "host", "local"):
+            with self.subTest(mode=mode), patch("sys.argv", ["runner", mode, "--abi", "x86_64"]), \
+                    patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit) as result:
+                runner.main()
+            self.assertEqual(result.exception.code, 2)
+
+    def test_reuse_requires_both_unchanged_apks_matching_source_and_abi(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apks = [root / "app.apk", root / "test.apk"]
+            for apk in apks:
+                apk.write_bytes(b"built artifact")
+            receipt = {"build_status": "passed", "android_abi": "x86_64", "source_sha256": "source",
+                       "artifacts": [{"path": apk.name, "sha256": runner.digest(apk)} for apk in apks]}
+            self.assertEqual(runner.reusable_artifacts(receipt, "x86_64", "source", root), apks)
+            for change in ({"build_status": "failed"}, {"android_abi": "arm64-v8a"},
+                           {"source_sha256": "old"}, {"artifacts": receipt["artifacts"][:1]}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    runner.reusable_artifacts(dict(receipt, **change), "x86_64", "source", root)
+            apks[1].write_bytes(b"replaced instrumentation")
+            with self.assertRaisesRegex(ValueError, "hash changed"):
+                runner.reusable_artifacts(receipt, "x86_64", "source", root)
+
+    def test_packaged_jni_rejects_wrong_abi_or_missing_rust_library(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "app.apk"
+            test = root / "test.apk"
+            test.write_bytes(b"instrumentation")
+            run = runner.Run.__new__(runner.Run)
+            run.receipt = {}
+            with patch.object(runner, "ROOT", root):
+                for libraries in ({"lib/arm64-v8a/libcutout_mobile_ffi.so": b"rust"},
+                                  {"lib/x86_64/libjnidispatch.so": b"jna"}):
+                    with zipfile.ZipFile(app, "w") as archive:
+                        for name, contents in libraries.items():
+                            archive.writestr(name, contents)
+                    with self.subTest(libraries=libraries), self.assertRaises(ValueError):
+                        run.check_apks([app, test], "x86_64")
+                with zipfile.ZipFile(app, "w") as archive:
+                    archive.writestr("lib/x86_64/libcutout_mobile_ffi.so", b"rust")
+                run.check_apks([app, test], "x86_64")
+                self.assertIn("lib/x86_64/libcutout_mobile_ffi.so", run.receipt["packaged_libraries"])
 
 
 class InstrumentationTests(unittest.TestCase):

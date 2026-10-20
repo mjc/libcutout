@@ -52,6 +52,9 @@ class SettingsPanel(
     context: Context,
     private val ownerLifetimeId: String,
     private val onOpenPhoneAlarms: () -> Unit = {},
+    private val onChooseVehicleKind: () -> Unit = {},
+    private val loadDrivetrain: (MobileConnectionAttemptTokenDto, (Result<uniffi.cutout_mobile_ffi.MobileVescDrivetrainDraft?>) -> Unit) -> Unit = { _, done -> done(Result.success(null)) },
+    private val saveDrivetrain: (MobileConnectionAttemptTokenDto, uniffi.cutout_mobile_ffi.MobileVescDrivetrainDraft, (Result<uniffi.cutout_mobile_ffi.MobileVescDrivetrainDraft>) -> Unit) -> Unit = { _, _, done -> done(Result.failure(IllegalStateException("Drivetrain persistence unavailable"))) },
     private val submitAction: (MobileConnectionAttemptTokenDto, MobileDeviceActionIdDto, () -> Unit) -> Unit = { _, _, refused -> refused() },
     private val submit: (MobileConnectionAttemptTokenDto, MobileSettingIdDto, MobileSettingValueDto, () -> Unit) -> Unit,
 ) : ScrollView(context) {
@@ -59,6 +62,11 @@ class SettingsPanel(
     private val page = ui.column()
     private val catalog = ui.column()
     private val actionsSection = ui.column()
+    private val vehicleSetup = ui.column()
+    private val chooseVehicleKind = ui.action(ui.label("device.type.choose"), onClick = onChooseVehicleKind).apply {
+        tag = "settings.choose-vehicle-kind"
+    }
+    private val drivetrain = DrivetrainPanel(context, loadDrivetrain, saveDrivetrain)
     private val header = ui.title(ui.label("controls.tune.title"))
     private var renderedGeneration: ULong? = null
     private var renderedToken: MobileConnectionAttemptTokenDto? = null
@@ -82,6 +90,10 @@ class SettingsPanel(
         page.setPadding(ui.dp(24), ui.dp(24), ui.dp(24), ui.dp(32))
         page.addView(header)
         page.addView(ui.space(20))
+        vehicleSetup.addView(chooseVehicleKind, LinearLayout.LayoutParams(-1, -2))
+        vehicleSetup.addView(drivetrain, LinearLayout.LayoutParams(-1, -2))
+        vehicleSetup.visibility = View.GONE
+        page.addView(vehicleSetup)
         page.addView(catalog)
         page.addView(ui.space(20))
         page.addView(ui.text(ui.label("controls.alarms.title"), 17f, true).apply { isAccessibilityHeading = true })
@@ -94,6 +106,21 @@ class SettingsPanel(
         page.addView(actionsSection)
         addView(page, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         render(null)
+    }
+
+    /** Reflect Rust's application/type projection; speed availability never removes setup. */
+    fun renderVehicleSetup(value: BlePresentation) {
+        val identity = value.session?.identity
+        val token = value.session?.connection?.token
+        val standardVesc = identity?.protocol == uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto.VESC &&
+            identity.vescApplication == uniffi.cutout_mobile_ffi.MobileVescApplicationDiscoveryDto.ABSENT
+        val typeChoice = identity?.classificationRequirement ==
+            uniffi.cutout_mobile_ffi.MobileVehicleClassificationRequirementDto.USER_SELECTION_REQUIRED ||
+            identity?.classificationProvenance == uniffi.cutout_mobile_ffi.MobileVehicleClassificationProvenanceDto.USER_PROVIDED
+        vehicleSetup.visibility = if (token != null && (standardVesc || typeChoice)) View.VISIBLE else View.GONE
+        chooseVehicleKind.visibility = if (typeChoice && token != null) View.VISIBLE else View.GONE
+        drivetrain.visibility = if (standardVesc && token != null) View.VISIBLE else View.GONE
+        drivetrain.bind(token.takeIf { standardVesc })
     }
 
     /** Apply owner snapshots without replacing editors when only their observation age changes. */

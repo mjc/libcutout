@@ -16,11 +16,13 @@ import lol.cutout.MainActivity
 import lol.cutout.RideDashboardView
 import org.junit.Test
 import java.util.Locale
+import uniffi.cutout_mobile_ffi.*
 import uniffi.cutout_mobile_ffi.MobileFootpadContactState
 import uniffi.cutout_mobile_ffi.MobileFootpadTelemetryDto
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
 import uniffi.cutout_mobile_ffi.MobileVehicleKindDto
+import uniffi.cutout_mobile_ffi.MobileVescApplicationDiscoveryDto
 import uniffi.cutout_mobile_ffi.MobileVescRideOperatingModeDto
 import uniffi.cutout_mobile_ffi.MobileVescRideStopReasonDto
 import uniffi.cutout_mobile_ffi.MobileVescRideWarningDto
@@ -106,7 +108,7 @@ open class RideDashboardProjectionTest {
         check(tagged<View>(ride, "euc.ride.headroom") === gauge) {
             "Pending Rust readiness replaced the identified EUC headroom instrument"
         }
-        check(speed.text.toString() == activity.getString(lol.cutout.R.string.unavailable)) {
+        check(speed.text.toString() == "--") {
             "Unverified readiness retained a previously verified speed reading"
         }
         check(speed.text.toString() != verifiedSpeed)
@@ -115,6 +117,58 @@ open class RideDashboardProjectionTest {
         check(tagged<TextView>(ride, "ride.hero.speed") === speed)
         check(speed.text.toString() == verifiedSpeed) {
             "Verified readiness did not restore the current Rust speed on the retained instrument"
+        }
+    }
+
+    @Test
+    fun vescBalanceInstrumentsRequireRefloatEvidenceRegardlessOfPhysicalKind() = withActivity { activity ->
+        val replay = productionReplayPresentation().withVesc(
+            footpad = MobileFootpadTelemetryDto(1u, MobileFootpadContactState.BOTH, null, null),
+        )
+        val session = checkNotNull(replay.session)
+        val identity = checkNotNull(session.identity)
+        for (fontScale in listOf(1f, 2f)) {
+            val context = activity.createConfigurationContext(
+                Configuration(activity.resources.configuration).apply { this.fontScale = fontScale },
+            )
+            val ui = CutoutUi(context)
+            val ride = RideDashboardView(context, {}, {})
+            activity.setContentView(ride)
+            ride.render(replay)
+            val speed = tagged<TextView>(ride, "ride.hero.speed").text.toString()
+            check(children(ride).any { it.tag == "vesc.ride.footpad" }) {
+                "Validated Refloat lost its existing balance surface at font scale $fontScale"
+            }
+            val balanceLabels = setOf(
+                context.getString(lol.cutout.R.string.pwm_headroom),
+                ui.label("vesc.duty_headroom.label"),
+                ui.label("vesc.metric.board_angle"),
+                ui.label("footpad.title"),
+            )
+            val balanceTags = setOf(
+                "euc.ride.headroom", "vesc.ride.footpad", "ride.accessible.metric.headroom",
+            )
+            for (kind in MobileVehicleKindDto.entries) {
+                for (application in listOf(null, MobileVescApplicationDiscoveryDto.PENDING, MobileVescApplicationDiscoveryDto.ABSENT)) {
+                    ride.render(replay.copy(session = session.copy(identity = identity.copy(
+                        vehicleKind = kind, vescApplication = application,
+                    ))))
+                    layout(ride, 1080, 1920)
+                    check(children(ride).none { view -> balanceTags.any { tag -> view.tag == tag } }) {
+                        "$kind/$application exposed a balance instrument at font scale $fontScale"
+                    }
+                    check(children(ride).filterIsInstance<TextView>().none { it.text.toString() in balanceLabels }) {
+                        "$kind/$application exposed a balance label at font scale $fontScale"
+                    }
+                    check(tagged<TextView>(ride, "ride.hero.speed").text.toString() == speed) {
+                        "Suppressing unsupported balance instruments discarded reported speed"
+                    }
+                }
+            }
+            ride.render(replay)
+            check(children(ride).any { it.tag == "vesc.ride.footpad" }) {
+                "A later validated Refloat projection did not restore its balance surface"
+            }
         }
     }
 
@@ -244,7 +298,7 @@ open class RideDashboardProjectionTest {
 
         state.clear()
         ride.renderPhoneSpeed(state.currentReadbackAt(4_000UL))
-        check(gpsSpeed.text.toString() == "GPS ${activity.getString(lol.cutout.R.string.unavailable)}")
+        check(gpsSpeed.text.toString() == "GPS --")
         check(gpsSpeed.contentDescription.toString().contains(CutoutUi(activity).label("gps.detail.unavailable")))
     }
 
@@ -299,6 +353,224 @@ open class RideDashboardProjectionTest {
         }
     }
 
+    @Test
+    fun standardVescUsesEnergyAndRecordingInstrumentsWithoutBalanceBoardReadings() = withActivity { activity ->
+        val replay = productionReplayPresentation().withStandardVesc()
+        val ride = RideDashboardView(activity, {}, {})
+        val ui = CutoutUi(activity)
+        activity.setContentView(ride)
+        ride.render(replay)
+        check(tagged<TextView>(ride, "ride.hero.speed").text.toString() == "--") {
+            "Standard VESC without Rust drivetrain speed must remain unavailable"
+        }
+        check(hasText(ride, ui.label("vesc.metric.pack_voltage")))
+        val voltage = checkNotNull(replay.telemetry?.voltage).value.value
+        val expectedVoltage = String.format(Locale.getDefault(), "%.1f V", voltage.toDouble() / 1000)
+        check(tagged<TextView>(ride, "ride.metric.energy").text.toString() == expectedVoltage)
+        listOf("vesc.metric.trip", "vesc.metric.ride_time", "vesc.metric.battery_current",
+            "vesc.metric.controller_temperature", "vesc.metric.motor_temperature").forEach { key ->
+            check(hasText(ride, localized(ui, activity, key))) { "Standard Ride omitted $key" }
+        }
+        assertNoBalanceInstruments(ride, ui)
+        check(children(ride).none { it is ScrollView }) { "Standard Ride must fit its normal-size instrument surface" }
+
+        // A retained estimated SOC is presented as an estimate; voltage is the fallback.
+        val replayTelemetry = checkNotNull(productionReplayPresentation().telemetry)
+        val battery = checkNotNull(replayTelemetry.batteryLevelReported ?: replayTelemetry.batteryLevelEstimated)
+        ride.render(replay.copy(telemetry = checkNotNull(replay.telemetry).copy(batteryLevelEstimated =
+            battery.copy(source = MobileValueSourceDto.ESTIMATED))))
+        check(tagged<TextView>(ride, "ride.metric.energy").text.toString() == "≈${battery.value.value} %")
+        check(hasText(ride, activity.getString(lol.cutout.R.string.battery)))
+        ride.render(replay)
+        check(tagged<TextView>(ride, "ride.metric.energy").text.toString() == expectedVoltage)
+    }
+
+    @Test
+    fun genericVescAndPendingApplicationNeverAcquireRefloatInstrumentsFromVehicleClass() = withActivity { activity ->
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+        val replay = productionReplayPresentation().withStandardVesc()
+        val session = checkNotNull(replay.session)
+        val identity = checkNotNull(session.identity)
+        for (kind in listOf(MobileVehicleKindDto.UNKNOWN, MobileVehicleKindDto.ESKATE, MobileVehicleKindDto.ONEWHEEL, MobileVehicleKindDto.ELECTRIC_UNICYCLE)) {
+            for (application in listOf(null, MobileVescApplicationDiscoveryDto.PENDING, MobileVescApplicationDiscoveryDto.ABSENT)) {
+                ride.render(replay.copy(session = session.copy(identity = identity.copy(
+                    vehicleKind = kind, vescApplication = application))))
+                assertNoBalanceInstruments(ride, CutoutUi(activity))
+            }
+        }
+        // Refloat is the explicit shared application fact that permits its native surface.
+        ride.render(replay.withVesc())
+        check(children(ride).any { it.tag == "vesc.ride.footpad" })
+    }
+
+    @Test
+    fun standardVescClearsUnverifiedReadingsAndPreservesGeometryAcrossTextSizes() = withActivity { activity ->
+        val replay = productionReplayPresentation().withStandardVesc()
+        for (fontScale in listOf(1f, 2f)) {
+            val context = activity.createConfigurationContext(Configuration(activity.resources.configuration).apply {
+                this.fontScale = fontScale
+            })
+            val ride = RideDashboardView(context, {}, {})
+            activity.setContentView(ride)
+            ride.render(replay)
+            val energyTag = if (fontScale >= 1.5f) "ride.accessible.metric.energy" else "ride.metric.energy"
+            val width = (360 * context.resources.displayMetrics.density).toInt()
+            val height = (760 * context.resources.displayMetrics.density).toInt()
+            layout(ride, width, height)
+            val before = tagged<TextView>(ride, energyTag).text.toString()
+            check(before != context.getString(lol.cutout.R.string.unavailable))
+            layout(ride, height, width)
+            check(tagged<TextView>(ride, energyTag).text.toString() == before)
+            assertNoBalanceInstruments(ride, CutoutUi(context))
+            val session = checkNotNull(replay.session)
+            ride.render(replay.copy(session = session.copy(connection = session.connection.copy(
+                readiness = MobileConnectionReadinessDto.PENDING))))
+            check(tagged<TextView>(ride, energyTag).text.toString() == context.getString(lol.cutout.R.string.unavailable))
+            ride.render(replay)
+            check(tagged<TextView>(ride, energyTag).text.toString() == before)
+        }
+    }
+
+    @Test
+    fun standardVescRecordingSummaryUsesRustStatisticsAndClearsTerminalValues() = withActivity { activity ->
+        val ride = RideDashboardView(activity, {}, {})
+        activity.setContentView(ride)
+        ride.render(productionReplayPresentation().withStandardVesc())
+        val recording = recordingProjection()
+        ride.renderRecording(recording)
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
+        val trip = tagged<TextView>(ride, "ride.metric.trip").text.toString()
+        check(trip != activity.getString(lol.cutout.R.string.unavailable))
+        val width = (360 * activity.resources.displayMetrics.density).toInt()
+        val height = (760 * activity.resources.displayMetrics.density).toInt()
+        layout(ride, height, width)
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == trip)
+        ride.renderRecording(recording.copy(summary = recording.summary.copy(pointCount = 0UL)))
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+        ride.renderRecording(recording.copy(state = MobileRideLifecycleStateDto.STOPPED, liveActivityStatistics = null))
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+        ride.renderRecording(null)
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+    }
+
+    @Test
+    fun standardRideActionsUseTheExistingTuneAndVehicleChoiceRoutes() = withActivity { activity ->
+        var openedTune = 0
+        var choseKind = 0
+        val ride = RideDashboardView(activity, {}, {}, onOpenTune = { openedTune++ },
+            onChooseVehicleKind = { choseKind++ })
+        activity.setContentView(ride)
+        val replay = productionReplayPresentation().withStandardVesc()
+        ride.render(replay)
+        tagged<View>(ride, "ride.open-tune").performClick()
+        check(openedTune == 1)
+        val session = checkNotNull(replay.session)
+        ride.render(replay.copy(session = session.copy(identity = checkNotNull(session.identity).copy(
+            vehicleKind = MobileVehicleKindDto.UNKNOWN,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.USER_SELECTION_REQUIRED))))
+        tagged<View>(ride, "ride.choose-vehicle-kind").performClick()
+        check(choseKind == 1)
+        assertNoBalanceInstruments(ride, CutoutUi(activity))
+    }
+
+    @Test
+    fun unresolvedVescClassificationShowsSetupUntilRustResolvesTheVehicle() = withActivity { activity ->
+        val replay = productionReplayPresentation().withStandardVesc()
+        val session = checkNotNull(replay.session)
+        val identity = checkNotNull(session.identity)
+        val ui = CutoutUi(activity)
+        for (fontScale in listOf(1f, 2f)) {
+            var choices = 0
+            var tuneOpens = 0
+            val context = activity.createConfigurationContext(Configuration(activity.resources.configuration).apply {
+                this.fontScale = fontScale
+            })
+            val ride = RideDashboardView(context, {}, {}, onOpenTune = { tuneOpens++ },
+                onChooseVehicleKind = { choices++ })
+            activity.setContentView(ride)
+            ride.render(replay)
+            check(children(ride).any { it.tag == "ride.hero.speed" })
+            val energyTag = if (fontScale >= 1.5f) "ride.accessible.metric.energy" else "ride.metric.energy"
+            val verifiedEnergy = tagged<TextView>(ride, energyTag).text.toString()
+
+            for (requirement in listOf(MobileVehicleClassificationRequirementDto.PENDING,
+                MobileVehicleClassificationRequirementDto.USER_SELECTION_REQUIRED)) {
+                ride.render(replay.copy(session = session.copy(identity = identity.copy(
+                    vehicleKind = MobileVehicleKindDto.UNKNOWN,
+                    classificationRequirement = requirement,
+                    vescApplication = if (requirement == MobileVehicleClassificationRequirementDto.PENDING)
+                        MobileVescApplicationDiscoveryDto.PENDING else MobileVescApplicationDiscoveryDto.ABSENT))))
+                val width = (360 * context.resources.displayMetrics.density).toInt()
+                val height = (760 * context.resources.displayMetrics.density).toInt()
+                for ((w, h) in listOf(width to height, height to width)) {
+                    layout(ride, w, h)
+                    check(children(ride).none { it.tag == "ride.hero.speed" || it.tag == energyTag ||
+                        it.tag == "ride.readings.open" || it.tag == "ride.open-tune" ||
+                        it.tag == "ride.accessible.readings.scroll" }) {
+                        "$requirement exposed Ride instruments before Rust resolved vehicle classification"
+                    }
+                }
+                if (requirement == MobileVehicleClassificationRequirementDto.PENDING) {
+                    check(hasText(ride, localized(ui, activity, "device.type.discovery_pending")))
+                    check(children(ride).none { it.tag == "ride.choose-vehicle-kind" }) {
+                        "Pending discovery offered physical classification before Rust requested it"
+                    }
+                } else {
+                    check(hasText(ride, localized(ui, activity, "device.type.choose.explanation")))
+                    val choiceButton = tagged<TextView>(ride, "ride.choose-vehicle-kind")
+                    check(choiceButton.text.isNotBlank() && choiceButton.text.toString() != "device.type.choose") {
+                        "Vehicle choice displayed a raw localization key"
+                    }
+                    choiceButton.performClick()
+                    check(choices == 1)
+                    check(tuneOpens == 0) { "Classification choice opened Tune before vehicle resolution" }
+                }
+            }
+
+            // A saved/restored classification is already resolved in Rust; no fresh native choice.
+            ride.render(replay)
+            check(tagged<TextView>(ride, energyTag).text.toString() == verifiedEnergy)
+            tagged<View>(ride, "ride.open-tune").performClick()
+            check(tuneOpens == 1 && choices == 1)
+            check(children(ride).none { it.tag == "ride.choose-vehicle-kind" })
+        }
+    }
+
+    private fun BlePresentation.withStandardVesc(): BlePresentation {
+        val session = checkNotNull(session)
+        return copy(session = session.copy(identity = checkNotNull(session.identity).copy(
+            protocol = MobileProtocolFamilyDto.VESC, vehicleKind = MobileVehicleKindDto.ESKATE,
+            vescApplication = MobileVescApplicationDiscoveryDto.ABSENT,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.RESOLVED)),
+            telemetry = checkNotNull(telemetry).copy(speed = null, batteryLevelReported = null,
+                batteryLevelEstimated = null, vescOperatingMode = null, vescWarning = null,
+                vescStopReason = null, pitch = null, footpad = null))
+    }
+
+    private fun assertNoBalanceInstruments(ride: RideDashboardView, ui: CutoutUi) {
+        check(children(ride).none { it.tag == "vesc.ride.footpad" || it.tag == "euc.ride.headroom" ||
+            it.tag == "ride.accessible.metric.headroom" }) { "Standard VESC acquired balance-board instruments" }
+        listOf("vesc.metric.board_angle", "vesc.duty_headroom.label", "footpad.title", "ride.safety.pwm_headroom").forEach {
+            check(!hasText(ride, ui.label(it))) { "Generic/standard VESC displayed balance-specific $it" }
+        }
+    }
+
+    /** Native presentation fixture over exported Rust projection fields; not wire/clock validation. */
+    private fun recordingProjection() = MobileRideMapCoreSnapshotDto(
+        rideId = "ride-projection", revision = 1UL, recordingToken = null, commandToken = null,
+        locationAcquisition = MobileRideMapSnapshotLocationAcquisitionDto(MobileRideMapAvailabilityDto.READY,
+            MobileRideMapLocationDemandDto.RECORD, MobileRideMapLocationRecoveryActionDto.NONE),
+        state = MobileRideLifecycleStateDto.ACTIVE, allowedActions = emptyList(),
+        telemetryState = MobileRideMapCoreTelemetryStateDto.GPS_ONLY,
+        summary = MobileRideMapCoreSummaryDto(2UL, 1609.344, 65_000UL,
+            MobileRideMovingTimeDto.Unavailable, MobileRideElapsedTimeDto.Unavailable),
+        liveActivityStatistics = MobileRideMapLiveActivityStatisticsDto(65_000UL, 1_609_344UL),
+        liveSpeed = MobileRideMapSpeedDto(0, MobileRideMapSpeedSourceDto.UNAVAILABLE),
+        segmentCount = 1UL, associatedVehicle = null, recordedBoundsAvailable = true,
+    )
+
     private fun BlePresentation.withTelemetry(operatingState: RideOperatingState): BlePresentation = copy(
         telemetry = checkNotNull(telemetry).copy(operatingState = operatingState),
     )
@@ -313,7 +585,8 @@ open class RideDashboardProjectionTest {
         val session = checkNotNull(session)
         val identity = checkNotNull(session.identity).copy(
             protocol = MobileProtocolFamilyDto.VESC,
-            vehicleKind = MobileVehicleKindDto.BOARD,
+            vehicleKind = MobileVehicleKindDto.ONEWHEEL,
+            vescApplication = MobileVescApplicationDiscoveryDto.REFLOAT,
         )
         return copy(
             session = session.copy(identity = identity),
