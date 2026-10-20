@@ -14,11 +14,12 @@ final class CutoutSessionBluetoothWriteAdapter {
     private let recordWrite: (BluetoothUuid, Data) -> Void
 
     init(
-        makeCaptureReceipt: @escaping (
-            BluetoothUuid,
-            Data,
-            UInt64
-        ) -> (CoreBluetoothWriteDisposition) -> Bool,
+        makeCaptureReceipt:
+            @escaping (
+                BluetoothUuid,
+                Data,
+                UInt64
+            ) -> (CoreBluetoothWriteDisposition) -> Bool,
         recordWrite: @escaping (BluetoothUuid, Data) -> Void
     ) {
         self.makeCaptureReceipt = makeCaptureReceipt

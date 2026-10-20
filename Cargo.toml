@@ -28,8 +28,8 @@ default-members = [
 strip = "none"
 
 [patch.crates-io]
-retina = { path = "vendor/retina" }
 askama_derive = { path = "vendor/askama_derive" }
+retina = { path = "vendor/retina" }
 
 [workspace.package]
 edition = "2024"
@@ -38,40 +38,42 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/mjc/libcutout"
 
 [workspace.dependencies]
-async-trait = "0.1"
-anyhow = "1"
-bitflags = "2"
-btleplug = "0.12"
-bytes = { version = "1", features = ["serde"] }
-clap = { version = "4", features = ["derive", "env"] }
-crc32fast = "1"
+async-trait = "0.1.92"
+anyhow = "1.0.104"
+bitflags = "2.13.2"
+btleplug = "0.13.5"
+bytes = { version = "1.12.1", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+crc32fast = "1.5.3"
 crc = { version = "3.4.0", default-features = false }
-futures-util = "0.3"
-hex = "0.4"
-hex-literal = "1"
+futures-util = "0.3.34"
+hex = "0.4.3"
+hex-literal = "1.1.0"
+jni = "0.22.4"
 miniz_oxide = "=0.9.1"
-ratatui = { version = "0.30", default-features = false, features = ["crossterm", "termina"] }
-retina = { version = "=0.4.13", default-features = false }
-proptest = "1"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "termina"] }
+retina = { version = "=0.4.21", default-features = false }
+proptest = "1.12.0"
 quick-xml = { version = "=0.42.0", default-features = false }
-rusqlite = { version = "0.37", default-features = false, features = ["bundled", "hooks", "limits"] }
-sha2 = "0.10"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-signal-hook = "0.3"
-smallvec = "1"
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
-url = "2"
-tracing = "0.1"
-tracing-appender = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uniffi = "0.31.2"
-uuid = { version = "1", features = ["v4"] }
-vesc = { version = "0.4", default-features = false }
-arrayvec = { version = "0.7", features = ["serde"] }
-axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "fallible_uint", "hooks", "limits"] }
+sha2 = "0.11.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+signal-hook = "0.4.5"
+smallvec = "1.16.3"
+thiserror = "2.0.21"
+tokio = { version = "1.54.0", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+url = "2.5.8"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+uniffi = "0.32.2"
+uuid = { version = "1.28.0", features = ["v4"] }
+vesc = { version = "0.4.0", default-features = false }
+arrayvec = { version = "0.7.8", features = ["serde"] }
+axum = "0.8.9"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+rustls-platform-verifier = "0.7.1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

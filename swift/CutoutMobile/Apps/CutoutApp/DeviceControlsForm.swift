@@ -146,7 +146,7 @@ private struct DeviceSettingRow: View {
                         }
                     }
                     applyButton
-                case let .number(minimum, maximum, step, editorStep, _, _, canDisable):
+                case .number(let minimum, let maximum, let step, let editorStep, _, _, let canDisable):
                     titleAndValue
                     let layout =
                         dynamicTypeSize.isAccessibilitySize
@@ -157,7 +157,7 @@ private struct DeviceSettingRow: View {
                             Slider(
                                 value: Binding(
                                     get: {
-                                        if case let .number(value) = draft ?? state?.current {
+                                        if case .number(let value) = draft ?? state?.current {
                                             return Double(min(max(value, minimum), maximum))
                                         }
                                         return Double(minimum)
@@ -530,11 +530,11 @@ enum DeviceControlPresentation {
 
     static func booleanSelection(_ state: DeviceSettingSnapshot?, submissionError: String? = nil) -> Bool? {
         if submissionError == nil, state?.transport != .rejected,
-            acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested
+            acceptsRequestedSelection(state?.status), case .boolean(let value) = state?.requested
         {
             return value
         }
-        if case let .boolean(value) = state?.current { return value }
+        if case .boolean(let value) = state?.current { return value }
         return nil
     }
 
@@ -543,7 +543,7 @@ enum DeviceControlPresentation {
     static func steppedValue(
         draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool
     ) -> DeviceSettingValue? {
-        guard case let .number(minimum, maximum, step, editorStep, _, _, _) = control,
+        guard case .number(let minimum, let maximum, let step, let editorStep, _, _, _) = control,
             minimum <= maximum, step > 0, editorStep > 0
         else { return nil }
         // Unknown wheel state is not a default. Do not manufacture the
@@ -552,7 +552,7 @@ enum DeviceControlPresentation {
         let source = draft ?? current
         let value: Int32
         switch source {
-        case let .number(number):
+        case .number(let number):
             value = number
         case .disabled:
             return .number(value: minimum)
@@ -587,7 +587,7 @@ enum DeviceControlPresentation {
             [.boolean(value: false), .boolean(value: true)]
         case .number:
             []
-        case let .choices(choices):
+        case .choices(let choices):
             choices.filter(\.writable).map { .choice(id: $0.id) }
         case .readOnly:
             []
@@ -599,17 +599,17 @@ enum DeviceControlPresentation {
         switch value {
         case .disabled:
             return localizedAppText("settings.choice.off")
-        case let .boolean(value):
+        case .boolean(let value):
             return localizedAppText(value ? "controls.on" : "settings.choice.off")
-        case let .choice(id):
-            guard case let .choices(choices) = control,
+        case .choice(let id):
+            guard case .choices(let choices) = control,
                 let choice = choices.first(where: { $0.id == id })
             else {
                 return "—"
             }
             return localizedAppText(choice.labelKey)
-        case let .number(value):
-            guard case let .number(_, _, _, _, precision, unit, _) = control else { return String(value) }
+        case .number(let value):
+            guard case .number(_, _, _, _, let precision, let unit, _) = control else { return String(value) }
             let amount = Double(value) / pow(10, Double(precision))
             let text = amount.formatted(.number.precision(.fractionLength(Int(precision))))
             switch unit {
@@ -739,7 +739,7 @@ enum DeviceControlPresentation {
 
     static func error(_ error: Error) -> String {
         switch error {
-        case let CutoutSessionError.commandRefused(reason):
+        case CutoutSessionError.commandRefused(let reason):
             switch reason {
             case .missingArm: refusal(.missingArm)
             case .expiredArm: refusal(.expiredArm)

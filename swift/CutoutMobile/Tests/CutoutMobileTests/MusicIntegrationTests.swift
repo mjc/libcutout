@@ -1401,7 +1401,7 @@ final class MusicIntegrationTests: XCTestCase {
         let deadline = ContinuousClock.now + .seconds(3)
         var stopped: MobileRideMapSnapshotDto?
         while ContinuousClock.now < deadline {
-            if case let .completed(snapshot) = try state.pollLifecycleCommand(stop) {
+            if case .completed(let snapshot) = try state.pollLifecycleCommand(stop) {
                 stopped = snapshot
                 break
             }

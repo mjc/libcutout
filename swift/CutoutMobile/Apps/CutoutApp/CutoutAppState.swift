@@ -20,15 +20,15 @@ enum CaptureStatus: Equatable {
 
     var displayText: String {
         switch self {
-        case let .recordingLocally(fileName):
+        case .recordingLocally(let fileName):
             localizedAppText("capture.status.recording_locally", fileName)
-        case let .recording(label, notificationCount, fileName):
+        case .recording(let label, let notificationCount, let fileName):
             captureProgressText(label: label, notificationCount: notificationCount, fileName: fileName)
-        case let .labelStarted(label, notificationCount, fileName):
+        case .labelStarted(let label, let notificationCount, let fileName):
             captureLabelText(label: label, action: "started", notificationCount: notificationCount, fileName: fileName)
-        case let .labelStopped(label, notificationCount, fileName):
+        case .labelStopped(let label, let notificationCount, let fileName):
             captureLabelText(label: label, action: "stopped", notificationCount: notificationCount, fileName: fileName)
-        case let .saved(fileName):
+        case .saved(let fileName):
             localizedAppText("capture.status.saved", fileName)
         case .stored:
             localizedAppText("capture.status.stored")
@@ -50,9 +50,9 @@ enum CaptureStatus: Equatable {
 
     var accessibilityAnnouncement: String? {
         switch self {
-        case let .labelStarted(label, _, _):
+        case .labelStarted(let label, _, _):
             localizedAppText("capture.announcement.label_started", label)
-        case let .labelStopped(label, _, _):
+        case .labelStopped(let label, _, _):
             localizedAppText("capture.announcement.label_stopped", label)
         case .saved, .stored:
             localizedAppText("capture.announcement.saved")
@@ -72,11 +72,11 @@ enum CaptureStatus: Equatable {
 
     private func captureProgressText(label: String?, notificationCount: Int, fileName: String?) -> String {
         switch (label, fileName) {
-        case let (.some(label), .some(fileName)):
+        case (.some(let label), .some(let fileName)):
             localizedAppText("capture.status.recording_labeled_file", label, Int64(notificationCount), fileName)
-        case let (.some(label), nil):
+        case (.some(let label), nil):
             localizedAppText("capture.status.recording_labeled", label, Int64(notificationCount))
-        case let (nil, .some(fileName)):
+        case (nil, .some(let fileName)):
             localizedAppText("capture.status.recording_file", Int64(notificationCount), fileName)
         case (nil, nil):
             localizedAppText("capture.status.recording", Int64(notificationCount))
@@ -119,8 +119,8 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker:
             nil
-        case let .identified(selection), let .connecting(selection, _), let .retrying(selection, _),
-            let .connected(selection), let .failed(selection, _):
+        case .identified(let selection), .connecting(let selection, _), .retrying(let selection, _),
+            .connected(let selection), .failed(let selection, _):
             selection
         }
     }
@@ -129,13 +129,13 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker, .identified:
             .identified(selection)
-        case let .connecting(_, phase):
+        case .connecting(_, let phase):
             .connecting(selection, phase: phase)
-        case let .retrying(_, retry):
+        case .retrying(_, let retry):
             .retrying(selection, retry: retry)
         case .connected:
             .connected(selection)
-        case let .failed(_, failure):
+        case .failed(_, let failure):
             .failed(selection, failure)
         }
     }
@@ -144,13 +144,13 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker, .identified:
             nil
-        case let .connecting(_, phase):
+        case .connecting(_, let phase):
             phase.displayText
         case .retrying:
             localizedAppText("picker.status.retrying")
         case .connected:
             SessionConnectionPhase.live.displayText
-        case let .failed(_, failure):
+        case .failed(_, let failure):
             failure.displayText
         }
     }
@@ -159,7 +159,7 @@ enum ConnectionState: Equatable {
         guard !isRecordOnlyCapture else { return .openCapture }
 
         switch self {
-        case let .connected(selection):
+        case .connected(let selection):
             return .openRide(selection.route)
         case .picker, .failed:
             return .returnToPicker

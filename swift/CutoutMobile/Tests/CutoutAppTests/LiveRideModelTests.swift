@@ -101,7 +101,7 @@ final class LiveRideModelTests: XCTestCase {
             switch try state.pollVerifiedConnectionAdmission(admission) {
             case .pending:
                 try await Task.sleep(for: .milliseconds(1))
-            case let .completed(snapshot):
+            case .completed(let snapshot):
                 return snapshot
             }
         }

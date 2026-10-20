@@ -219,9 +219,9 @@ final class RideHistoryModel {
         ) {
         case .none:
             return
-        case let .load(rideID):
+        case .load(let rideID):
             reload(selecting: rideID)
-        case let .select(rideID):
+        case .select(let rideID):
             selectFromHistoryList(rideID)
         }
     }

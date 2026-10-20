@@ -14,7 +14,8 @@ categories = ["hardware-support", "command-line-utilities"]
 workspace = true
 
 [dependencies]
-base64 = "0.22.1"
+hex.workspace = true
+base64 = "0.23.1"
 sha2.workspace = true
 arrayvec.workspace = true
 bytes.workspace = true

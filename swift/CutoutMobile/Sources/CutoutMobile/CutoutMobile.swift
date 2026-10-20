@@ -8,7 +8,7 @@ extension BatteryCurrent {
     public var magnitudeMilliamps: UInt32 {
         switch self {
         case .zero: 0
-        case let .currentIn(milliamps), let .currentOut(milliamps), let .unknown(milliamps): milliamps
+        case .currentIn(let milliamps), .currentOut(let milliamps), .unknown(let milliamps): milliamps
         }
     }
 
@@ -1338,7 +1338,7 @@ public enum TelemetryPowerPresentation: Equatable, Hashable, Sendable {
 
     public var power: Power? {
         switch self {
-        case let .calculatedPackCurrent(power), let .calculated(power), let .estimated(power), let .reported(power):
+        case .calculatedPackCurrent(let power), .calculated(let power), .estimated(let power), .reported(let power):
             power
         case .unavailable:
             nil
@@ -1530,7 +1530,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 
     public var packVoltageMetricValue: PevDashboardMetricValue {
-        for case let .packVoltage(voltage) in riderDashboardProjection.dashboardMetrics {
+        for case .packVoltage(let voltage) in riderDashboardProjection.dashboardMetrics {
             guard let voltage else { return .unavailable }
             let text = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
             return .available(display: text, accessibility: text)
@@ -1545,7 +1545,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 
     public var thermalMetricValue: PevDashboardMetricValue {
-        for case let .thermal(readback) in riderDashboardProjection.dashboardMetrics {
+        for case .thermal(let readback) in riderDashboardProjection.dashboardMetrics {
             guard let readback else { return .unavailable }
             let text = RideUnits.temperatureText(millicelsius: readback.maximum.value, fractionDigits: 0)
             return .available(display: text, accessibility: text)
@@ -1554,7 +1554,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 
     public var thermalReadback: TelemetryThermalReadback {
-        for case let .thermal(readback) in riderDashboardProjection.dashboardMetrics {
+        for case .thermal(let readback) in riderDashboardProjection.dashboardMetrics {
             guard let readback else { return .unavailable }
             return TelemetryThermalReadback(
                 controller: readback.controller,
@@ -1566,7 +1566,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 
     public var powerPresentation: TelemetryPowerPresentation {
-        for case let .power(power, source) in riderDashboardProjection.dashboardMetrics {
+        for case .power(let power, let source) in riderDashboardProjection.dashboardMetrics {
             guard let power, let source else { return .unavailable }
             return switch source {
             case .calculatedPackCurrent: .calculatedPackCurrent(power)
@@ -1599,19 +1599,19 @@ public enum TelemetryThermalReadback: Equatable, Hashable, Sendable {
         let battery = battery.map(telemetryTemperatureText)
 
         switch (controller, motor, battery) {
-        case let (.some(controller), .some(motor), .some(battery)):
+        case (.some(let controller), .some(let motor), .some(let battery)):
             self = .all(controller: controller, motor: motor, battery: battery)
-        case let (.some(controller), .some(motor), nil):
+        case (.some(let controller), .some(let motor), nil):
             self = .controllerMotor(controller: controller, motor: motor)
-        case let (.some(controller), nil, .some(battery)):
+        case (.some(let controller), nil, .some(let battery)):
             self = .controllerBattery(controller: controller, battery: battery)
-        case let (nil, .some(motor), .some(battery)):
+        case (nil, .some(let motor), .some(let battery)):
             self = .motorBattery(motor: motor, battery: battery)
-        case let (.some(controller), nil, nil):
+        case (.some(let controller), nil, nil):
             self = .controller(controller)
-        case let (nil, .some(motor), nil):
+        case (nil, .some(let motor), nil):
             self = .motor(motor)
-        case let (nil, nil, .some(battery)):
+        case (nil, nil, .some(let battery)):
             self = .battery(battery)
         case (nil, nil, nil):
             self = .unavailable
@@ -2116,17 +2116,17 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var batteryReadback: VescBatteryReadback {
         switch batteryDetail {
-        case let .reported(level, current):
+        case .reported(let level, let current):
             .reported(
                 level: RideUnits.percentText(level.value),
                 current: current.map(\.displayText)
             )
-        case let .estimated(level, current):
+        case .estimated(let level, let current):
             .estimated(
                 level: RideUnits.percentText(level.value),
                 current: current.map(\.displayText)
             )
-        case let .unavailable(current):
+        case .unavailable(let current):
             .unavailable(current: current.map(\.displayText))
         }
     }
@@ -2150,7 +2150,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var boardAngleReadback: VescBoardAngleReadback {
         switch boardAngleDetail {
-        case let .available(orientation, balanceAngle):
+        case .available(let orientation, let balanceAngle):
             .available(
                 orientation: orientation,
                 balanceAngle: balanceAngle.map { RideUnits.angleText(millidegrees: $0.value) }
@@ -2166,7 +2166,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var controllerTemperatureReadback: VescControllerTemperatureReadback {
         switch controllerTemperatureDetail {
-        case let .available(motorTemperature):
+        case .available(let motorTemperature):
             .available(
                 motorTemperature: RideUnits.temperatureText(
                     millicelsius: motorTemperature.value,
@@ -2199,7 +2199,7 @@ extension VescRideSnapshot {
             return .telemetryStale(elapsed: staleElapsed)
         }
         if let snapshot,
-            case let .available(display, accessibility) = snapshot.dutyHeadroomProgressMetricValue,
+            case .available(let display, let accessibility) = snapshot.dutyHeadroomProgressMetricValue,
             let progress = snapshot.dutyHeadroomProgress
         {
             return .dutyHeadroom(
@@ -2250,12 +2250,12 @@ public enum RideHeroReadout: Equatable, Hashable, Sendable {
     )
 
     public var displayValue: String? {
-        guard case let .available(value, _, _, _) = self else { return nil }
+        guard case .available(let value, _, _, _) = self else { return nil }
         return value
     }
 
     public var displayUnit: String? {
-        guard case let .available(_, unit, _, _) = self else { return nil }
+        guard case .available(_, let unit, _, _) = self else { return nil }
         return unit
     }
 
@@ -2335,7 +2335,7 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
 
 extension TelemetrySnapshot {
     fileprivate var pwmHeadroomValue: RiderHeadroomValue {
-        for case let .pwmHeadroom(value) in riderDashboardProjection.safetyMetrics {
+        for case .pwmHeadroom(let value) in riderDashboardProjection.safetyMetrics {
             return value
         }
         return .unavailable
@@ -2421,21 +2421,21 @@ public struct PedalMode: Equatable, Hashable, Sendable {
     public let value: Value
 
     public var percent: UInt8? {
-        guard case let .hardnessPercent(percent) = value else {
+        guard case .hardnessPercent(let percent) = value else {
             return nil
         }
         return percent
     }
 
     public var rawMode: UInt16? {
-        guard case let .rawMode(rawMode) = value else {
+        guard case .rawMode(let rawMode) = value else {
             return nil
         }
         return rawMode
     }
 
     public var documentedKind: Kind? {
-        guard case let .documented(kind) = value else {
+        guard case .documented(let kind) = value else {
             return nil
         }
         return kind
@@ -2484,14 +2484,14 @@ public struct RollAngle: Equatable, Hashable, Sendable {
     public let value: Value
 
     public var rawAngle: UInt16? {
-        guard case let .rawAngle(rawAngle) = value else {
+        guard case .rawAngle(let rawAngle) = value else {
             return nil
         }
         return rawAngle
     }
 
     public var documentedKind: Kind? {
-        guard case let .documented(kind) = value else {
+        guard case .documented(let kind) = value else {
             return nil
         }
         return kind
@@ -2539,12 +2539,12 @@ public struct SpeedAlarmMode: Equatable, Hashable, Sendable {
     public let value: Value
 
     public var rawMode: UInt16? {
-        guard case let .rawMode(rawMode) = value else { return nil }
+        guard case .rawMode(let rawMode) = value else { return nil }
         return rawMode
     }
 
     public var documentedKind: Kind? {
-        guard case let .documented(kind) = value else { return nil }
+        guard case .documented(let kind) = value else { return nil }
         return kind
     }
 

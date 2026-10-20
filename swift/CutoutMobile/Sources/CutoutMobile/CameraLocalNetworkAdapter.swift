@@ -210,7 +210,8 @@ public typealias CameraMediaDownloadFetcher = @Sendable (URL, UInt64) async thro
 /// adapter treats that as an interrupted preview instead of claiming that a
 /// transport-delivered but undisplayable stream is live.
 public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Bool
-public typealias CameraPreviewConfigurationHandler = @MainActor @Sendable (MobileCameraVideoConfigurationDto) throws ->
+public typealias CameraPreviewConfigurationHandler =
+    @MainActor @Sendable (MobileCameraVideoConfigurationDto) throws ->
     Void
 
 /// Maps Apple path evidence to a conservative camera connection state.

@@ -1,4 +1,4 @@
-// Copyright (C) 2023 Niclas Olmenius <niclas@voysys.se>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! [JPEG](https://www.itu.int/rec/T-REC-T.81-199209-I/en)-encoded video.
@@ -19,7 +19,9 @@
 
 use bytes::{Buf, Bytes};
 
-use crate::{rtp::ReceivedPacket, PacketContext, Timestamp};
+use crate::buf::PacketRef;
+
+use crate::{PacketContext, Timestamp, codec::AllPixelDimensions};
 
 use super::{VideoFrame, VideoParameters};
 
@@ -312,22 +314,26 @@ impl Depacketizer {
         }
     }
 
-    pub(super) fn push(&mut self, pkt: ReceivedPacket) -> Result<(), String> {
+    pub(super) fn push(&mut self, pkt: &PacketRef<'_>) -> Result<(), String> {
         if let Some(p) = self.pending.as_ref() {
             panic!("push with data already pending: {p:?}");
         }
 
-        if pkt.payload().len() < 8 {
+        if (pkt.payload_len() as usize) < 8 {
             return Err("Too short RTP/JPEG packet".to_string());
         }
 
-        let ctx = *pkt.ctx();
-        let loss = pkt.loss();
-        let stream_id = pkt.stream_id();
-        let timestamp = pkt.timestamp();
-        let last_packet_in_frame = pkt.mark();
+        let ctx = pkt.meta.ctx;
+        let loss = pkt.meta.loss;
+        let stream_id = pkt.meta.stream_id;
+        let timestamp = pkt.meta.timestamp;
+        let last_packet_in_frame = pkt.meta.mark;
 
-        let mut payload = pkt.into_payload_bytes();
+        let (s1, s2) = pkt.payload().slices();
+        let mut v = Vec::with_capacity(pkt.payload_len() as usize);
+        v.extend_from_slice(s1);
+        v.extend_from_slice(s2);
+        let mut payload = Bytes::from(v);
 
         //  0                   1                   2                   3
         //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -446,7 +452,10 @@ impl Depacketizer {
                         start_ctx: ctx,
                         timestamp,
                         parameters: Some(VideoParameters {
-                            pixel_dimensions: (width, height),
+                            all_pixel_dimensions: AllPixelDimensions {
+                                coded: (width, height),
+                                display: (width, height),
+                            },
                             rfc6381_codec: "mp4v.6C".to_owned(),
                             pixel_aspect_ratio: None,
                             frame_rate: None,
@@ -500,10 +509,10 @@ impl Depacketizer {
             });
 
             let metadata = self.metadata.take();
-            if let Some(metadata) = metadata {
-                if has_new_parameters {
-                    self.parameters = metadata.parameters;
-                }
+            if let Some(metadata) = metadata
+                && has_new_parameters
+            {
+                self.parameters = metadata.parameters;
             }
         }
 
@@ -515,11 +524,13 @@ impl Depacketizer {
         Ok(())
     }
 
-    pub(super) fn pull(&mut self) -> Option<super::CodecItem> {
-        self.pending.take().map(super::CodecItem::VideoFrame)
+    pub(super) fn pull(&mut self) -> Option<Result<super::CodecItem, super::DepacketizeError>> {
+        self.pending
+            .take()
+            .map(|f| Ok(super::CodecItem::VideoFrame(f)))
     }
 
-    pub(super) fn parameters(&self) -> Option<super::ParametersRef> {
+    pub(super) fn parameters(&self) -> Option<super::ParametersRef<'_>> {
         self.parameters.as_ref().map(super::ParametersRef::Video)
     }
 }
@@ -574,8 +585,22 @@ impl Default for Depacketizer {
 mod tests {
     use std::num::NonZeroU32;
 
+    use crate::buf::{MarkBuf, PacketRef};
     use crate::testutil::{assert_eq_hex, init_logging};
     use crate::{codec::CodecItem, rtp::ReceivedPacketBuilder};
+
+    /// Helper: writes payload into `buf`, then pushes to depacketizer.
+    fn push_via_buf(
+        d: &mut super::Depacketizer,
+        meta: crate::rtp::PacketMeta,
+        payload: &[u8],
+        buf: &mut MarkBuf,
+    ) -> Result<(), String> {
+        let pos = buf.end();
+        buf.extend(payload);
+        buf.advance_unparsed(buf.end());
+        d.push(&PacketRef::new(meta, buf, pos, payload.len() as u16))
+    }
 
     // Raw RTP payload from a MJPEG encoded Big Buck Bunny stream
     // Big Buck Bunny is (c) copyright 2008, Blender Foundation, licensed via
@@ -833,13 +858,14 @@ mod tests {
     fn depacketize() {
         init_logging();
         let mut d = super::Depacketizer::new();
+        let mut buf = MarkBuf::new(65536);
         let timestamp = crate::Timestamp {
             timestamp: 0,
             clock_rate: NonZeroU32::new(90_000).unwrap(),
             start: 0,
         };
-        d.push(
-            ReceivedPacketBuilder {
+        {
+            let pkt = ReceivedPacketBuilder {
                 ctx: crate::PacketContext::dummy(),
                 stream_id: 0,
                 timestamp,
@@ -850,12 +876,18 @@ mod tests {
                 payload_type: 0,
             }
             .build(START_PACKET.iter().copied())
-            .unwrap(),
-        )
+            .unwrap();
+            push_via_buf(
+                &mut d,
+                crate::rtp::PacketMeta::from_received(&pkt),
+                pkt.payload(),
+                &mut buf,
+            )
+        }
         .unwrap();
         assert!(d.pull().is_none());
-        d.push(
-            ReceivedPacketBuilder {
+        {
+            let pkt = ReceivedPacketBuilder {
                 ctx: crate::PacketContext::dummy(),
                 stream_id: 0,
                 timestamp,
@@ -866,12 +898,18 @@ mod tests {
                 payload_type: 0,
             }
             .build(END_PACKET.iter().copied())
-            .unwrap(),
-        )
+            .unwrap();
+            push_via_buf(
+                &mut d,
+                crate::rtp::PacketMeta::from_received(&pkt),
+                pkt.payload(),
+                &mut buf,
+            )
+        }
         .unwrap();
 
         let frame = match d.pull() {
-            Some(CodecItem::VideoFrame(frame)) => frame,
+            Some(Ok(CodecItem::VideoFrame(frame))) => frame,
             _ => panic!(),
         };
         assert_eq_hex!(frame.data(), VALID_JPEG_IMAGE)

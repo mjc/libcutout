@@ -700,6 +700,29 @@ mod tests {
         thread,
     };
 
+    async fn read_rtsp_request_cseq(
+        connection: &mut tokio::io::BufReader<tokio::net::TcpStream>,
+        method: &str,
+    ) -> String {
+        use tokio::io::AsyncBufReadExt;
+
+        let mut request = String::new();
+        loop {
+            let mut line = String::new();
+            assert_ne!(connection.read_line(&mut line).await.unwrap(), 0);
+            request.push_str(&line);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        assert!(request.starts_with(method), "{request}");
+        request
+            .lines()
+            .find_map(|line| line.strip_prefix("CSeq: "))
+            .unwrap()
+            .to_owned()
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_a_truncated_describe_body() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("local listener binds");
@@ -736,7 +759,7 @@ mod tests {
 
     #[tokio::test]
     async fn rtsp_cleanup_never_reconnects_after_a_failed_teardown() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::io::{AsyncWriteExt, BufReader};
 
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
@@ -746,20 +769,7 @@ mod tests {
             let (connection, _) = listener.accept().await.unwrap();
             let mut connection = BufReader::new(connection);
             for method in ["DESCRIBE", "SETUP", "PLAY", "TEARDOWN"] {
-                let mut request = String::new();
-                loop {
-                    let mut line = String::new();
-                    assert_ne!(connection.read_line(&mut line).await.unwrap(), 0);
-                    request.push_str(&line);
-                    if line == "\r\n" {
-                        break;
-                    }
-                }
-                assert!(request.starts_with(method), "{request}");
-                let cseq = request
-                    .lines()
-                    .find_map(|line| line.strip_prefix("CSeq: "))
-                    .unwrap();
+                let cseq = read_rtsp_request_cseq(&mut connection, method).await;
                 let response = match method {
                     "DESCRIBE" => {
                         // This old live555 version triggers Retina Auto's fresh-connection
@@ -798,6 +808,108 @@ mod tests {
         )
         .await
         .unwrap();
+        drop(session);
+        tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rtsp_keyframe_keeps_sdp_parameter_sets_for_native_decoders_and_file_sink() {
+        use tokio::io::{AsyncWriteExt, BufReader};
+
+        // The same R3 SPS/PPS and IDR NAL used by the native renderer fixture.
+        // Parameter sets travel only in SDP, never in the RTP payload.
+        const SPS: &[u8] = &[
+            0x67, 0x64, 0x00, 0x33, 0xac, 0x15, 0x4a, 0x0d, 0x43, 0xda, 0x6e, 0x02, 0x02, 0x02,
+            0x80, 0x00, 0x01, 0xf4, 0x00, 0x00, 0x75, 0x30, 0x02,
+        ];
+        const PPS: &[u8] = &[0x68, 0xee, 0x3c, 0xb0];
+        const IDR: &[u8] = &[0x65, 0x88, 0x80];
+        const START_CODE: &[u8] = &[0, 0, 0, 1];
+
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (connection, _) = listener.accept().await.unwrap();
+            let mut connection = BufReader::new(connection);
+            for method in ["DESCRIBE", "SETUP", "PLAY", "TEARDOWN"] {
+                let cseq = read_rtsp_request_cseq(&mut connection, method).await;
+                let response = match method {
+                    "DESCRIBE" => {
+                        let sdp = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Camera\r\nt=0 0\r\na=control:*\r\nm=video 0 RTP/AVP 96\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;profile-level-id=640033;sprop-parameter-sets=Z2QAM6wVSg1D2m4CAgKAAAH0AAB1MAI=,aO48sA==\r\na=control:trackID=1\r\n";
+                        format!(
+                            "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+                            sdp.len()
+                        )
+                    }
+                    "SETUP" => format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: camera\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+                    ),
+                    "PLAY" => format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: camera\r\nRange: npt=0.000-\r\nRTP-Info: url=trackID=1;seq=1;rtptime=90000\r\n\r\n"
+                    ),
+                    _ => format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n"),
+                };
+                connection
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+                if method == "PLAY" {
+                    // Interleaved channel 0, RTP version 2, marker set, PT 96,
+                    // sequence 1, timestamp 90000, SSRC 0x12345678.
+                    let mut packet = vec![b'$', 0];
+                    let rtp_len = u16::try_from(12 + IDR.len()).unwrap();
+                    packet.extend_from_slice(&rtp_len.to_be_bytes());
+                    packet.extend_from_slice(&[
+                        0x80, 0xe0, 0, 1, 0, 1, 0x5f, 0x90, 0x12, 0x34, 0x56, 0x78,
+                    ]);
+                    packet.extend_from_slice(IDR);
+                    connection.get_mut().write_all(&packet).await.unwrap();
+                }
+            }
+        });
+
+        let mut session = RtspPreviewSession::connect_for_origin(
+            &format!("rtsp://{address}/live"),
+            Ipv4Addr::LOCALHOST,
+        )
+        .await
+        .unwrap();
+        let configuration = session.video_configuration().unwrap();
+        assert_eq!(
+            parse_avcc_parameter_sets(configuration.extra_data()),
+            Some(vec![SPS.to_vec(), PPS.to_vec()])
+        );
+        let frame = session.next_video_frame().await.unwrap().unwrap();
+        assert!(frame.is_random_access_point());
+        assert_eq!(frame.loss(), 0);
+        assert_eq!(frame.timestamp(), 90_000);
+        assert_eq!(frame.clock_rate_hz().get(), 90_000);
+        assert_eq!(frame.parameter_sets(), &[SPS.to_vec(), PPS.to_vec()]);
+        assert_eq!(
+            parse_length_prefixed_access_unit(frame.data()).unwrap(),
+            vec![SPS, PPS, IDR]
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "cutout-camera-sdp-keyframe-{}.h264",
+            std::process::id()
+        ));
+        let mut sink = H264FileSink::create(&path).unwrap();
+        sink.write_frame(&frame).unwrap();
+        sink.finish().unwrap();
+        let saved = fs::read(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(
+            saved,
+            [START_CODE, SPS, START_CODE, PPS, START_CODE, IDR].concat()
+        );
+
         drop(session);
         tokio::time::timeout(Duration::from_secs(3), server)
             .await

@@ -147,7 +147,7 @@ enum CaptureResearchPresentation {
     }
     static func defaultUnit(_ field: MobileCaptureResearchFieldDto) -> String {
         if let unit = field.unitHint { return unit }
-        guard case let .number(_, _, _, _, _, unit, _) = field.control else {
+        guard case .number(_, _, _, _, _, let unit, _) = field.control else {
             return field.id == "displayed_pack_voltage" ? "V" : ""
         }
         switch unit {
@@ -179,7 +179,7 @@ enum CaptureResearchPresentation {
         case .off: text = localizedAppText("settings.choice.off")
         case .boolean(let enabled): text = localizedAppText(enabled ? "controls.on" : "settings.choice.off")
         case .entered(let entered):
-            if let field, case let .choices(choices) = field.control,
+            if let field, case .choices(let choices) = field.control,
                 let choice = choices.first(where: { String($0.id) == entered })
             {
                 text = localizedAppText(choice.labelKey)
@@ -195,14 +195,14 @@ enum CaptureResearchPresentation {
         case .disabled: return localizedAppText("settings.choice.off")
         case .boolean(let enabled): return localizedAppText(enabled ? "controls.on" : "settings.choice.off")
         case .choice(let id):
-            if let field, case let .choices(choices) = field.control,
+            if let field, case .choices(let choices) = field.control,
                 let choice = choices.first(where: { $0.id == id })
             {
                 return localizedAppText(choice.labelKey)
             }
             return String(id)
         case .number(let raw):
-            guard let field, case let .number(_, _, _, _, precision, _, _) = field.control else { return String(raw) }
+            guard let field, case .number(_, _, _, _, let precision, _, _) = field.control else { return String(raw) }
             let amount = Double(raw) / pow(10, Double(precision))
             let text = amount.formatted(.number.precision(.fractionLength(Int(precision))))
             let unit = defaultUnit(field)

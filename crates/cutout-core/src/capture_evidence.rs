@@ -162,7 +162,7 @@ impl CaptureEvidenceManifest {
 /// Digests a complete transfer, retaining raw evidence identity in its manifest.
 #[must_use]
 pub fn capture_evidence_digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 mod jpeg_base64 {
@@ -188,6 +188,19 @@ mod jpeg_base64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evidence_digest_retains_standard_sha256_hex_identity() {
+        assert_eq!(
+            capture_evidence_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            capture_evidence_digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
     #[test]
     fn notes_use_utf8_bytes_and_screenshots_are_bounded() {
         let mut evidence = CaptureAttachments {

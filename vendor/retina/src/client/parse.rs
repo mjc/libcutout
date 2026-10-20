@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use bytes::Bytes;
@@ -209,10 +209,11 @@ fn join_control(base_url: &Url, control: &str) -> Result<Url, String> {
 }
 
 /// Returns the `CSeq` from an RTSP response as a `u32`, or `None` if missing/unparseable.
-pub(crate) fn get_cseq(response: &rtsp_types::Response<Bytes>) -> Option<u32> {
+pub(crate) fn get_cseq(response: &crate::rtsp::msg::Response) -> Option<u32> {
     response
-        .header(&rtsp_types::headers::CSEQ)
-        .and_then(|cseq| u32::from_str_radix(cseq.as_str(), 10).ok())
+        .headers
+        .get("CSeq")
+        .and_then(|cseq| u32::from_str_radix(cseq, 10).ok())
 }
 
 /// Parses a [MediaDescription] to a [Stream].
@@ -312,10 +313,10 @@ fn parse_media(base_url: &Url, media_description: &Media) -> Result<Stream, Stri
                     .transpose()?;
             }
             "framerate" => {
-                if let Some(s) = a.value.as_ref() {
-                    if let Ok(f) = s.parse::<f32>() {
-                        framerate = Some(f);
-                    }
+                if let Some(s) = a.value.as_ref()
+                    && let Ok(f) = s.parse::<f32>()
+                {
+                    framerate = Some(f);
                 }
             }
             _ => (),
@@ -361,7 +362,7 @@ fn parse_media(base_url: &Url, media_description: &Media) -> Result<Stream, Stri
             if type_.media != &*media {
                 return Err(format!(
                     "SDP media type {} must match RTP payload type {:#?}",
-                    &media, type_
+                    media, type_
                 ));
             }
         }
@@ -384,47 +385,22 @@ fn parse_media(base_url: &Url, media_description: &Media) -> Result<Stream, Stri
     })
 }
 
-/// Holds something that's supposed to be mostly ASCII.
-///
-/// Some SDP values are allowed to be UTF-8-encoded ISO-10646 characters, but mostly it's
-/// supposed to be valid ASCII. This has a `Debug` impl that is fairly readable for ASCII
-/// characters and can be copy'n'pasted into Python's `codecs.decode(..., 'string_escape'`)`
-/// or the like.
-struct MostlyAscii<'a>(&'a [u8]);
-
-impl std::fmt::Debug for MostlyAscii<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"")?;
-        for &b in self.0 {
-            match b {
-                b'"' => write!(f, "\"")?,
-                b'\r' => write!(f, "\\r")?,
-                // Note this writes newlines in unescaped form.
-                b' ' | b'\n' | 0x20..=0x7E => write!(f, "{}", b as char)?,
-                _ => write!(f, "\\x{b:02X}")?,
-            }
-        }
-        write!(f, "\"")?;
-        Ok(())
-    }
-}
+use crate::mostly_ascii::MostlyAscii;
 
 /// Parses a successful RTSP `DESCRIBE` response into a [Presentation].
 /// On error, returns a string which is expected to be packed into an `RtspProtocolError`.
 pub(crate) fn parse_describe(
     request_url: Url,
-    response: &rtsp_types::Response<Bytes>,
+    response: &crate::rtsp::msg::Response,
+    body: &Bytes,
 ) -> Result<Presentation, String> {
-    match response.header(&rtsp_types::headers::CONTENT_TYPE) {
-        Some(v) if v.as_str() == "application/sdp" => {}
+    match response.headers.get("Content-Type") {
+        Some(v) if &**v == "application/sdp" => {}
         Some(v) => {
-            let mut buf = vec![];
-            response.write(&mut buf).map_err(|e| e.to_string())?;
             return Err(format!(
-                "DESCRIBE response at {} has unexpected content type {}:\n{:?}",
+                "DESCRIBE response at {} has unexpected content type {}",
                 request_url.as_str(),
                 v,
-                MostlyAscii(&buf)
             ));
         }
         None => {
@@ -434,20 +410,32 @@ pub(crate) fn parse_describe(
             );
         }
     }
-    let raw_sdp = MostlyAscii(&response.body()[..]);
-    let sdp = sdp_types::Session::parse(raw_sdp.0)
+    let raw_sdp = MostlyAscii::new(&body[..]);
+    let sdp = sdp_types::Session::parse(raw_sdp.bytes)
         .map_err(|e| format!("Unable to parse SDP: {e}\n\n{raw_sdp:#?}",))?;
 
     // https://tools.ietf.org/html/rfc2326#appendix-C.1.1
     let base_url = response
-        .header(&rtsp_types::headers::CONTENT_BASE)
-        .map(|v| (rtsp_types::headers::CONTENT_BASE, v))
+        .headers
+        .get("Content-Base")
+        .map(|v| ("Content-Base", v))
         .or_else(|| {
             response
-                .header(&rtsp_types::headers::CONTENT_LOCATION)
-                .map(|v| (rtsp_types::headers::CONTENT_LOCATION, v))
+                .headers
+                .get("Content-Location")
+                .map(|v| ("Content-Location", v))
         })
-        .map(|(h, v)| Url::parse(v.as_str()).map_err(|e| format!("bad {h} {v:?}: {e}")))
+        .map(|(h, v)| {
+            Url::parse(v).or_else(|_| {
+                // Some cameras (e.g. Anjvision) send a Content-Base without a
+                // scheme prefix. Try prepending the request URL's scheme.
+                // See <https://github.com/scottlamb/moonfire-nvr/issues/356>.
+                let fixed = format!("{}://{v}", request_url.scheme());
+                let url = Url::parse(&fixed).map_err(|e| format!("bad {h} {v:?}: {e}"))?;
+                warn!("repaired schemeless {h} {v:?} to {url}");
+                Ok::<_, String>(url)
+            })
+        })
         .unwrap_or_else(|| Ok(request_url.clone()))?;
 
     let mut control = None;
@@ -459,7 +447,6 @@ pub(crate) fn parse_describe(
                 .as_deref()
                 .map(|c| join_control(&base_url, c))
                 .transpose()?;
-            break;
         } else if a.attribute == "tool" {
             tool = a.value.as_deref().map(super::Tool::new);
         }
@@ -475,7 +462,7 @@ pub(crate) fn parse_describe(
                 |e| {
                     warn!(
                         "Ignoring unparseable stream {}: {}\nraw SDP: {:#?}",
-                        i, &e, raw_sdp
+                        i, e, raw_sdp
                     );
                     None
                 },
@@ -505,6 +492,7 @@ pub(crate) struct SessionHeader {
     pub(crate) timeout_sec: u32,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct SetupResponse {
     pub(crate) session: SessionHeader,
     pub(crate) ssrc: Option<u32>,
@@ -535,14 +523,16 @@ fn parse_server_port(server_port: &str) -> Result<u16, ()> {
 /// `session_id` is checked for assignment or reassignment.
 /// Returns an assigned interleaved channel id (implying the next channel id
 /// is also assigned) or errors.
-pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<SetupResponse, String> {
+pub(crate) fn parse_setup(response: &crate::rtsp::msg::Response) -> Result<SetupResponse, String> {
     // https://datatracker.ietf.org/doc/html/rfc2326#section-12.37
     let session = response
-        .header(&rtsp_types::headers::SESSION)
+        .headers
+        .get("Session")
         .ok_or_else(|| "Missing Session header".to_string())?;
-    let session = match session.as_str().split_once(';') {
+    let session_str: &str = session;
+    let session = match session_str.split_once(';') {
         None => SessionHeader {
-            id: session.as_str().into(),
+            id: session_str.into(),
             timeout_sec: 60, // default
         },
         Some((id, timeout_str)) => {
@@ -554,7 +544,7 @@ pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<Setu
                     // This would make Retina send keepalives at an absurd rate; reject.
                     return Err(format!(
                         "Invalid timeout=0 in Session header {:?}",
-                        session.as_str()
+                        session_str
                     ));
                 }
                 SessionHeader {
@@ -562,22 +552,35 @@ pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<Setu
                     timeout_sec,
                 }
             } else {
-                return Err(format!("Unparseable Session header {:?}", session.as_str()));
+                return Err(format!("Unparseable Session header {:?}", session_str));
             }
         }
     };
     let transport = response
-        .header(&rtsp_types::headers::TRANSPORT)
+        .headers
+        .get("Transport")
         .ok_or_else(|| "Missing Transport header".to_string())?;
     let mut channel_id = None;
     let mut ssrc = None;
     let mut source = None;
     let mut server_port = None;
-    for part in transport.as_str().split(';') {
+    let transport_str: &str = transport;
+    for part in transport_str.split(';') {
         if let Some(v) = part.strip_prefix("ssrc=") {
-            let v = u32::from_str_radix(v, 16).map_err(|_| format!("Unparseable ssrc {v}"))?;
-            ssrc = Some(v);
-            break;
+            // RFC 2326 section 12.39 asks for eight hex digits without a
+            // prefix. Some cameras send a 16-bit value instead: Rubetek sends
+            // `ssrc=0x6f7c`, and another camera sends `ssrc=A046` while its
+            // RTP packets carry a different, full 32-bit SSRC, so every packet
+            // would be rejected as a stale session's. The value is advisory:
+            // when absent, the SSRC is learned from the first RTP packet. So
+            // warn and ignore one that does not parse or has four digits or
+            // fewer. Fewer than eight is fine otherwise: Hikvision drops a
+            // leading zero (`ssrc= d6d6627`), and its value is real.
+            let v = v.trim();
+            match u32::from_str_radix(v, 16) {
+                Ok(parsed) if v.len() > 4 => ssrc = Some(parsed),
+                _ => warn!("Ignoring nonconforming ssrc in Transport header {transport_str:?}"),
+            }
         } else if let Some(interleaved) = part.strip_prefix("interleaved=") {
             let mut channels = interleaved.splitn(2, '-');
             let n = channels.next().expect("splitn returns at least one part");
@@ -597,10 +600,7 @@ pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<Setu
             );
         } else if let Some(s) = part.strip_prefix("server_port=") {
             server_port = Some(parse_server_port(s).map_err(|()| {
-                format!(
-                    "Transport header {:?} has bad server_port",
-                    transport.as_str()
-                )
+                format!("Transport header {:?} has bad server_port", &**transport)
             })?);
         }
     }
@@ -615,15 +615,15 @@ pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<Setu
 
 /// Parses a `PLAY` response. The error should always be packed into a `RtspProtocolError`.
 pub(crate) fn parse_play(
-    response: &rtsp_types::Response<Bytes>,
+    response: &crate::rtsp::msg::Response,
     presentation: &mut Presentation,
 ) -> Result<(), String> {
     // https://tools.ietf.org/html/rfc2326#section-12.33
-    let rtp_info = match response.header(&rtsp_types::headers::RTP_INFO) {
+    let rtp_info = match response.headers.get("RTP-Info") {
         Some(rtsp_info) => rtsp_info,
         None => return Ok(()),
     };
-    for s in rtp_info.as_str().split(',') {
+    for s in rtp_info.split(',') {
         let s = s.trim();
         let mut parts = s.split(';');
         let url = parts
@@ -670,6 +670,9 @@ pub(crate) fn parse_play(
             super::StreamState::Playing { .. } => unreachable!(),
         };
         for part in parts {
+            if part.is_empty() {
+                continue;
+            }
             let (key, value) = part
                 .split_once('=')
                 .ok_or_else(|| "RTP-Info param has no =".to_string())?;
@@ -683,11 +686,17 @@ pub(crate) fn parse_play(
                     Ok(v) => state.initial_rtptime = Some(v),
                     Err(_) => warn!("Unparseable rtptime in RTP-Info header {:?}", rtp_info),
                 },
-                "ssrc" => {
-                    let ssrc = u32::from_str_radix(value, 16)
-                        .map_err(|_| format!("Unparseable ssrc {value}"))?;
-                    state.ssrc = Some(ssrc);
-                }
+                // `ssrc` is deliberately not read here. RTSP/1.0 defines no
+                // `ssrc` parameter for `RTP-Info` (RFC 2326 section 12.33);
+                // it is RTSP/2.0 that adds one. Servers that send it anyway
+                // disagree about the radix: Reolink writes hex, while some
+                // Dahua firmware writes decimal here and the same value in
+                // hex in `Transport`. Guessing is worse than ignoring. About
+                // 2.3% of 32-bit values written in decimal also parse as hex,
+                // to a different number, and the session would then reject
+                // every packet for carrying the wrong SSRC. The SSRC comes
+                // from the `Transport` header at SETUP when the server
+                // supplies one there, and from the first packet otherwise.
                 _ => {}
             }
         }
@@ -703,7 +712,7 @@ pub(crate) struct OptionsResponse {
 
 /// Parses an `OPTIONS` response.
 pub(crate) fn parse_options(
-    response: &rtsp_types::Response<Bytes>,
+    response: &crate::rtsp::msg::Response,
 ) -> Result<OptionsResponse, String> {
     let mut interpreted = OptionsResponse::default();
 
@@ -711,8 +720,8 @@ pub(crate) fn parse_options(
     // HTTP/1.1 OPTIONS method: https://www.rfc-editor.org/rfc/rfc2616.html#section-9.2
     // RTSP/1.0 Public header: https://www.rfc-editor.org/rfc/rfc2326.html#section-12.28
     // HTTP/1.1 Public header: https://www.rfc-editor.org/rfc/rfc2068#section-14.35
-    if let Some(public) = response.header(&rtsp_types::headers::PUBLIC) {
-        for method in public.as_str().split(',') {
+    if let Some(public) = response.headers.get("Public") {
+        for method in public.split(',') {
             let method = method.trim();
             match method {
                 "SET_PARAMETER" => interpreted.set_parameter_supported = true,
@@ -731,11 +740,11 @@ mod tests {
     use bytes::Bytes;
     use url::Url;
 
-    use crate::{client::StreamStateInit, codec::ParametersRef};
     use crate::{StreamContext, StreamContextInner, TcpStreamContext};
+    use crate::{client::StreamStateInit, codec::ParametersRef};
 
     use super::super::StreamState;
-    use super::SessionHeader;
+    use super::*;
     use crate::testutil::{init_logging, response};
 
     fn parse_describe(
@@ -743,7 +752,8 @@ mod tests {
         raw_response: &'static [u8],
     ) -> Result<super::Presentation, String> {
         let url = Url::parse(raw_url).unwrap();
-        super::parse_describe(url, &response(raw_response))
+        let (resp, body) = response(raw_response);
+        super::parse_describe(url, &resp, &body)
     }
 
     fn dummy_stream_state_init(ssrc: Option<u32>) -> StreamState {
@@ -770,51 +780,52 @@ mod tests {
     /// > a field parsing implementation MUST exclude such whitespace prior to
     /// > evaluating the field value.
     ///
-    /// Currently we rely on `rtsp-types` doing the stripping.
+    /// Our parser strips OWS around header values.
     #[test]
     fn longse_cseq() {
         init_logging();
-        let response = response(include_bytes!("testdata/longse_unauthorized.txt"));
+        let (response, _body) = response(include_bytes!("testdata/longse_unauthorized.txt"));
         assert_eq!(super::get_cseq(&response), Some(1));
+    }
+
+    fn sdp_response(body: &'static [u8]) -> (crate::rtsp::msg::Response, Bytes) {
+        use crate::rtsp::msg::*;
+        (
+            Response {
+                status_code: StatusCode::OK,
+                reason_phrase: "OK".into(),
+                headers: [(
+                    HeaderName::CONTENT_TYPE,
+                    HeaderValue::try_from("application/sdp").unwrap(),
+                )]
+                .into(),
+            },
+            Bytes::from_static(body),
+        )
     }
 
     #[test]
     fn anvpiz_sdp() {
         init_logging();
         let url = Url::parse("rtsp://127.0.0.1/").unwrap();
-        let response =
-            rtsp_types::Response::builder(rtsp_types::Version::V1_0, rtsp_types::StatusCode::Ok)
-                .header(rtsp_types::headers::CONTENT_TYPE, "application/sdp")
-                .build(Bytes::from_static(include_bytes!(
-                    "testdata/anpviz_sdp.txt"
-                )));
-        super::parse_describe(url, &response).unwrap();
+        let (response, body) = sdp_response(include_bytes!("testdata/anpviz_sdp.txt"));
+        super::parse_describe(url, &response, &body).unwrap();
     }
 
     #[test]
     fn geovision_sdp() {
         init_logging();
         let url = Url::parse("rtsp://127.0.0.1/").unwrap();
-        let response =
-            rtsp_types::Response::builder(rtsp_types::Version::V1_0, rtsp_types::StatusCode::Ok)
-                .header(rtsp_types::headers::CONTENT_TYPE, "application/sdp")
-                .build(Bytes::from_static(include_bytes!(
-                    "testdata/geovision_sdp.txt"
-                )));
-        super::parse_describe(url, &response).unwrap();
+        let (response, body) = sdp_response(include_bytes!("testdata/geovision_sdp.txt"));
+        super::parse_describe(url, &response, &body).unwrap();
     }
 
     #[test]
     fn ubiquiti_sdp() {
         init_logging();
         let url = Url::parse("rtsp://127.0.0.1/").unwrap();
-        let response =
-            rtsp_types::Response::builder(rtsp_types::Version::V1_0, rtsp_types::StatusCode::Ok)
-                .header(rtsp_types::headers::CONTENT_TYPE, "application/sdp")
-                .build(Bytes::from_static(include_bytes!(
-                    "testdata/ubiquiti_sdp.txt"
-                )));
-        let d = super::parse_describe(url, &response).unwrap();
+        let (response, body) = sdp_response(include_bytes!("testdata/ubiquiti_sdp.txt"));
+        let d = super::parse_describe(url, &response, &body).unwrap();
         assert_eq!(d.streams.len(), 3);
     }
 
@@ -826,13 +837,8 @@ mod tests {
     fn tplink_sdp() {
         init_logging();
         let url = Url::parse("rtsp://127.0.0.1/").unwrap();
-        let response =
-            rtsp_types::Response::builder(rtsp_types::Version::V1_0, rtsp_types::StatusCode::Ok)
-                .header(rtsp_types::headers::CONTENT_TYPE, "application/sdp")
-                .build(Bytes::from_static(include_bytes!(
-                    "testdata/tplink_sdp.txt"
-                )));
-        let p = super::parse_describe(url, &response).unwrap();
+        let (response, body) = sdp_response(include_bytes!("testdata/tplink_sdp.txt"));
+        let p = super::parse_describe(url, &response, &body).unwrap();
         assert_eq!(p.streams.len(), 2);
     }
 
@@ -900,7 +906,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/dahua_setup.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -913,7 +919,11 @@ mod tests {
         p.streams[0].state = dummy_stream_state_init(Some(0x30a98ee7));
 
         // PLAY.
-        super::parse_play(&response(include_bytes!("testdata/dahua_play.txt")), &mut p).unwrap();
+        super::parse_play(
+            &response(include_bytes!("testdata/dahua_play.txt")).0,
+            &mut p,
+        )
+        .unwrap();
         match &p.streams[0].state {
             StreamState::Init(s) => {
                 assert_eq!(s.initial_seq, Some(47121));
@@ -924,8 +934,8 @@ mod tests {
         // The other streams don't get filled in because they're in state Uninit.
 
         // OPTIONS.
-        let opts =
-            super::parse_options(&response(include_bytes!("testdata/dahua_options.txt"))).unwrap();
+        let opts = super::parse_options(&response(include_bytes!("testdata/dahua_options.txt")).0)
+            .unwrap();
         assert!(opts.set_parameter_supported);
     }
 
@@ -1010,7 +1020,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/hikvision_setup.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1024,7 +1034,7 @@ mod tests {
 
         // PLAY.
         super::parse_play(
-            &response(include_bytes!("testdata/hikvision_play.txt")),
+            &response(include_bytes!("testdata/hikvision_play.txt")).0,
             &mut p,
         )
         .unwrap();
@@ -1047,6 +1057,13 @@ mod tests {
             include_bytes!("testdata/reolink_describe.txt"),
         )
         .unwrap();
+        let p2 = parse_describe(
+            "rtsp://192.168.5.206:554/h264Preview_01_main",
+            include_bytes!("testdata/reolink_describe_control_first.txt"),
+        )
+        .unwrap();
+        assert_eq!(p.control, p2.control);
+        assert_eq!(p.tool, p2.tool);
         let base = "rtsp://192.168.5.206/h264Preview_01_main/";
         assert_eq!(p.control.as_str(), base);
         assert_eq!(
@@ -1091,7 +1108,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/reolink_setup.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1106,7 +1123,7 @@ mod tests {
 
         // PLAY.
         super::parse_play(
-            &response(include_bytes!("testdata/reolink_play.txt")),
+            &response(include_bytes!("testdata/reolink_play.txt")).0,
             &mut p,
         )
         .unwrap();
@@ -1120,7 +1137,9 @@ mod tests {
         match &p.streams[1].state {
             StreamState::Init(state) => {
                 assert_eq!(state.initial_rtptime, Some(3075976528));
-                assert_eq!(state.ssrc, Some(0x9fc9fff8));
+                // The `ssrc=9fc9fff8` in `RTP-Info` is not read; with none in
+                // `Transport` either, it is learned from the first packet.
+                assert_eq!(state.ssrc, None);
             }
             _ => panic!(),
         };
@@ -1175,7 +1194,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/bunny_setup.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1189,7 +1208,11 @@ mod tests {
         p.streams[1].state = dummy_stream_state_init(None);
 
         // PLAY.
-        super::parse_play(&response(include_bytes!("testdata/bunny_play.txt")), &mut p).unwrap();
+        super::parse_play(
+            &response(include_bytes!("testdata/bunny_play.txt")).0,
+            &mut p,
+        )
+        .unwrap();
         match &p.streams[1].state {
             StreamState::Init(state) => {
                 assert_eq!(state.initial_rtptime, Some(0));
@@ -1223,7 +1246,7 @@ mod tests {
         let mut p = parse_describe(prefix, include_bytes!("testdata/bunny_describe.txt")).unwrap();
         p.streams[0].state = dummy_stream_state_init(None);
         super::parse_play(
-            &response(include_bytes!("testdata/bad_rtptime.txt")),
+            &response(include_bytes!("testdata/bad_rtptime.txt")).0,
             &mut p,
         )
         .unwrap();
@@ -1377,7 +1400,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/gw_main_setup_video.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1390,7 +1413,7 @@ mod tests {
         p.streams[0].state = dummy_stream_state_init(None);
 
         let setup_response = response(include_bytes!("testdata/gw_main_setup_audio.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1404,7 +1427,7 @@ mod tests {
 
         // PLAY.
         super::parse_play(
-            &response(include_bytes!("testdata/gw_main_play.txt")),
+            &response(include_bytes!("testdata/gw_main_play.txt")).0,
             &mut p,
         )
         .unwrap();
@@ -1455,7 +1478,7 @@ mod tests {
 
         // SETUP.
         let setup_response = response(include_bytes!("testdata/gw_sub_setup.txt"));
-        let setup_response = super::parse_setup(&setup_response).unwrap();
+        let setup_response = super::parse_setup(&setup_response.0).unwrap();
         assert_eq!(
             setup_response.session,
             SessionHeader {
@@ -1469,7 +1492,7 @@ mod tests {
 
         // PLAY.
         super::parse_play(
-            &response(include_bytes!("testdata/gw_sub_play.txt")),
+            &response(include_bytes!("testdata/gw_sub_play.txt")).0,
             &mut p,
         )
         .unwrap();
@@ -1509,5 +1532,194 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.streams.len(), 1);
+    }
+
+    /// Tests that a trailing semicolon in the `RTP-Info` header is ignored.
+    /// Reproduces <https://github.com/scottlamb/retina/issues/117>.
+    ///
+    /// The Laureii camera sends, e.g.:
+    /// `RTP-Info: url=rtsp://192.168.1.19:554/0/main/trackID=0;seq=0;rtptime=0;`
+    #[test]
+    fn rtp_info_trailing_semicolon() {
+        init_logging();
+        let base = "rtsp://192.168.1.110:5049/H264?channel=1&subtype=1&unicast=true&proto=Onvif";
+        let mut p = parse_describe(base, include_bytes!("testdata/gw_sub_describe.txt")).unwrap();
+        p.streams[0].state = dummy_stream_state_init(None);
+        super::parse_play(
+            &response(include_bytes!("testdata/laureii_play.txt")).0,
+            &mut p,
+        )
+        .unwrap();
+        match &p.streams[0].state {
+            StreamState::Init(s) => {
+                assert_eq!(s.initial_seq, Some(0));
+                assert_eq!(s.initial_rtptime, Some(0));
+            }
+            _ => panic!(),
+        };
+    }
+
+    /// Some Dahua firmware writes the SSRC in decimal in the `RTP-Info` header
+    /// while writing the same value in hex in `Transport`. One device sent
+    /// `ssrc=FFFFEF2D` at SETUP and `ssrc=4294962989` at PLAY, which are the
+    /// same number.
+    ///
+    /// RTSP/1.0 does not define `ssrc` in `RTP-Info` at all, so the parameter
+    /// is ignored whatever it says: PLAY succeeds, and the SSRC stays the one
+    /// the `Transport` header gave. Parsing it as hex used to turn a session
+    /// that had set up cleanly into a hard failure here.
+    #[test]
+    fn dahua_rtp_info_decimal_ssrc() {
+        init_logging();
+        let prefix =
+            "rtsp://192.168.5.111:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif";
+        let mut p = parse_describe(
+            prefix,
+            include_bytes!("testdata/dahua_describe_h264_aac_onvif.txt"),
+        )
+        .unwrap();
+        p.streams[0].state = dummy_stream_state_init(Some(0xffff_ef2d));
+        super::parse_play(
+            &response(include_bytes!("testdata/dahua_play_decimal_ssrc.txt")).0,
+            &mut p,
+        )
+        .unwrap();
+        match &p.streams[0].state {
+            StreamState::Init(s) => {
+                assert_eq!(s.initial_seq, Some(13210));
+                assert_eq!(s.initial_rtptime, Some(1_067_824_145));
+                assert_eq!(s.ssrc, Some(0xffff_ef2d));
+            }
+            _ => panic!(),
+        };
+    }
+
+    /// Some Hikvision cameras send SSRC with a leading space in the
+    /// Transport header (e.g. `ssrc= d6d6627`). Ensure we trim whitespace
+    /// before parsing.
+    #[test]
+    fn hikvision_ssrc_with_leading_space() {
+        init_logging();
+        let setup_response = response(include_bytes!("testdata/hikvision_setup_ssrc_space.txt"));
+        let r = parse_setup(&setup_response.0).unwrap();
+        assert_eq!(
+            r,
+            SetupResponse {
+                source: None,
+                session: SessionHeader {
+                    id: "708886412".into(),
+                    timeout_sec: 60,
+                },
+                channel_id: Some(0),
+                ssrc: Some(0x0d6d6627),
+                server_port: None,
+            }
+        );
+    }
+
+    /// Rubetek cameras send the SSRC with a `0x` prefix in the Transport
+    /// header (e.g. `ssrc=0x6f7c`). Ignore it rather than fail SETUP.
+    #[test]
+    fn rubetek_ssrc_with_0x_prefix() {
+        init_logging();
+        let setup_response = response(include_bytes!("testdata/rubetek_setup_ssrc_0x.txt"));
+        let r = parse_setup(&setup_response.0).unwrap();
+        assert_eq!(
+            r,
+            SetupResponse {
+                source: None,
+                session: SessionHeader {
+                    id: "5657612475258969210".into(),
+                    timeout_sec: 60,
+                },
+                channel_id: Some(0),
+                ssrc: None,
+                server_port: None,
+            }
+        );
+    }
+
+    /// A camera that sends a four-digit SSRC (`ssrc=A046`) in the Transport
+    /// header and a different one in its RTP packets. The Transport header is
+    /// as the camera sent it; the rest of the response is minimal. Ignore the
+    /// value, so the SSRC is learned from the first RTP packet.
+    #[test]
+    fn setup_ssrc_with_four_hex_digits() {
+        init_logging();
+        let setup_response = response(include_bytes!("testdata/setup_ssrc_4_hex_digits.txt"));
+        let r = parse_setup(&setup_response.0).unwrap();
+        assert_eq!(
+            r,
+            SetupResponse {
+                source: None,
+                session: SessionHeader {
+                    id: "1066441024".into(),
+                    timeout_sec: 60,
+                },
+                channel_id: Some(0),
+                ssrc: None,
+                server_port: None,
+            }
+        );
+    }
+
+    #[test]
+    fn luckfox_setup_tcp() {
+        init_logging();
+        let setup_response = response(include_bytes!("testdata/luckfox_rkipc_setup_tcp.txt"));
+        let r = parse_setup(&setup_response.0).unwrap();
+        assert_eq!(
+            r,
+            SetupResponse {
+                source: None,
+                session: SessionHeader {
+                    id: "12345678".into(),
+                    timeout_sec: 60,
+                },
+                channel_id: Some(0),
+                ssrc: Some(0x22345684),
+                server_port: None,
+            }
+        );
+    }
+
+    #[test]
+    fn luckfox_setup_udp() {
+        init_logging();
+        let setup_response = response(include_bytes!("testdata/luckfox_rkipc_setup_udp.txt"));
+        let r = parse_setup(&setup_response.0).unwrap();
+        assert_eq!(
+            r,
+            SetupResponse {
+                source: None,
+                session: SessionHeader {
+                    id: "12345678".into(),
+                    timeout_sec: 60,
+                },
+                channel_id: None,
+                ssrc: Some(0x22345685),
+                server_port: Some(49152),
+            }
+        );
+    }
+
+    /// Tests parsing a DESCRIBE response from an Anjvision camera whose
+    /// `Content-Base` header (`192.168.1.10:554/stream0/`) lacks the
+    /// `rtsp://` scheme prefix.
+    /// Reproduces <https://github.com/scottlamb/moonfire-nvr/issues/356>.
+    #[test]
+    fn anjvision() {
+        init_logging();
+        let prefix = "rtsp://192.168.1.10:554/stream0";
+        let p = parse_describe(prefix, include_bytes!("testdata/anjvision_describe.txt")).unwrap();
+        assert_eq!(
+            p.tool.as_deref(),
+            Some("LIVE555 Streaming Media v2011.05.25 CHAM.LI@ANJVISION.COM"),
+        );
+        assert_eq!(p.streams.len(), 1);
+        assert_eq!(
+            p.streams[0].control,
+            Some(Url::parse("rtsp://192.168.1.10:554/stream0/trackID=1").unwrap())
+        );
     }
 }

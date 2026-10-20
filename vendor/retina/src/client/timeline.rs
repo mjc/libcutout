@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::convert::TryFrom;
@@ -173,8 +173,8 @@ mod tests {
 
     #[test]
     fn cast() {
-        let a = 0x1FFFF_FFFFi64;
-        let b = 0x10000_0000i64;
+        let a = 0x1_FFFF_FFFFi64;
+        let b = 0x1_0000_0000i64;
         assert_eq!(a as i32, -1);
         assert_eq!(b as i32, 0);
     }

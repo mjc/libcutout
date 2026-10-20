@@ -6,6 +6,7 @@
 }:
 
 let
+  cutoutSwiftFormat = import ./nix/swift-format { inherit pkgs; };
   swiftToolchainCheck = ''
     expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
     if [[ "''${DEVELOPER_DIR:-}" != "$expected_developer_dir" || -n "''${SDKROOT:-}" ]]; then
@@ -25,24 +26,32 @@ let
     after = [ "check:xcode-ios" ];
   };
   nightlyRust = pkgs.rust-bin.nightly.latest.default;
-  androidApi = "35";
-  androidBuildTools = "35.0.0";
+  androidMinApi = "33";
+  androidApi = "37";
+  androidMinorApi = "2";
+  androidPlatform = "${androidApi}.${androidMinorApi}";
+  androidSystemImageType = "google_apis_ps16k";
+  androidBuildTools = "37.0.0";
   androidPackages = (pkgs.androidenv.override { licenseAccepted = true; }).composeAndroidPackages {
+    repoJson = ./nix/android-repository.json;
+    cmdLineToolsVersion = "23.0";
+    platformToolsVersion = "37.0.1";
+    emulatorVersion = "37.2.12";
     includeNDK = true;
-    ndkVersion = "29.0.14206865";
-    platformVersions = [ androidApi ];
+    ndkVersion = "30.0.16248370";
+    platformVersions = [ androidPlatform ];
     buildToolsVersions = [ androidBuildTools ];
     toolsVersion = null;
     includeEmulator = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
     includeSystemImages = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
-    systemImageTypes = [ "google_apis" ];
+    systemImageTypes = [ androidSystemImageType ];
     abiVersions = [ "x86_64" ];
     cmakeVersions = [ ];
   };
   androidNdk = androidPackages.ndk-bundle;
   androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
   androidNdkHost = if pkgs.stdenv.isDarwin then "darwin-x86_64" else "linux-x86_64";
-  androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android21-clang";
+  androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android${androidMinApi}-clang";
   androidLlvmAr = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/llvm-ar";
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
@@ -55,6 +64,65 @@ in
     toolchainFile = ./rust-toolchain.toml;
     clangLinker.enable = false;
   };
+  overlays = [
+    (final: prev: {
+      cargo-nextest =
+        let
+          binaries = {
+            aarch64-darwin = {
+              url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-universal-apple-darwin.tar.gz";
+              hash = "sha256-bCO3+0yoLFcfyN/turRb+nc9RZGPkzFwyF0hzX9LhSs=";
+            };
+            x86_64-linux = {
+              url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-x86_64-unknown-linux-gnu.tar.gz";
+              hash = "sha256-IjupNnFMyGGpze2tWo62ZN/dadb732zqaqgYT1IykNw=";
+            };
+            aarch64-linux = {
+              url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-aarch64-unknown-linux-gnu.tar.gz";
+              hash = "sha256-gUaeuWPviD/VkOYBied9aro9kbQYWR0zkfUP4+lIDSs=";
+            };
+          };
+          binary = binaries.${prev.stdenv.hostPlatform.system};
+        in
+        prev.stdenvNoCC.mkDerivation {
+          pname = "cargo-nextest";
+          version = "0.9.148";
+          src = prev.fetchurl binary;
+          sourceRoot = ".";
+          dontBuild = true;
+          nativeBuildInputs = lib.optionals prev.stdenv.isLinux [ prev.autoPatchelfHook ];
+          buildInputs = lib.optionals prev.stdenv.isLinux [ prev.stdenv.cc.cc.lib ];
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 cargo-nextest "$out/bin/cargo-nextest"
+            runHook postInstall
+          '';
+          meta = prev.cargo-nextest.meta // {
+            platforms = builtins.attrNames binaries;
+          };
+        };
+      # Kotlin and Java tooling share this Gradle/JDK selection.
+      gradle =
+        (prev.gradle-packages.mkGradle {
+          version = "9.8.2";
+          hash = "sha256-Ib1dot5JtkKQQHfzjA79x3eOkrPtCIk5LcphuX44lgc=";
+          defaultJava = final.temurin-bin-27;
+        }).wrapped;
+      kotlin = (prev.kotlin.override { jre = final.temurin-bin-27; }).overrideAttrs (_: {
+        version = "2.4.21";
+        src = prev.fetchurl {
+          url = "https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip";
+          hash = "sha256-fMFA522vQWoEJKVVf5mv18qJ69Rj6hEBJh4+AcM+dc0=";
+        };
+      });
+    })
+  ];
+
+  languages.java = {
+    enable = true;
+    jdk.package = pkgs.temurin-bin-27;
+    lsp.enable = false;
+  };
   languages.kotlin.enable = true;
   languages.nix.enable = true;
 
@@ -66,7 +134,7 @@ in
     pkgs.cargo-mutants
     pkgs.cargo-nextest
     pkgs.jna
-    pkgs.python3Packages.pillow
+    pkgs.python315
     pkgs.secretspec
   ]
   ++ lib.optionals pkgs.stdenv.isDarwin [
@@ -83,15 +151,19 @@ in
   env.ANDROID_NDK_ROOT = androidNdkRoot;
   env.ANDROID_HOME = "${androidPackages.androidsdk}/libexec/android-sdk";
   env.ANDROID_SDK_ROOT = config.env.ANDROID_HOME;
+  env.CUTOUT_ANDROID_MIN_API = androidMinApi;
   env.CUTOUT_ANDROID_API = androidApi;
+  env.CUTOUT_ANDROID_API_MINOR = androidMinorApi;
+  env.CUTOUT_ANDROID_SDK_PLATFORM = androidPlatform;
+  env.CUTOUT_ANDROID_SYSTEM_IMAGE_TYPE = androidSystemImageType;
   env.CUTOUT_ANDROID_BUILD_TOOLS = androidBuildTools;
   env.CUTOUT_JNA_VERSION = pkgs.jna.version;
   env.CC_aarch64_linux_android = androidArm64Clang;
   env.AR_aarch64_linux_android = androidLlvmAr;
   env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidArm64Clang;
-  env.CC_x86_64_linux_android = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
+  env.CC_x86_64_linux_android = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android${androidMinApi}-clang";
   env.AR_x86_64_linux_android = androidLlvmAr;
-  env.CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
+  env.CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android${androidMinApi}-clang";
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
@@ -107,7 +179,7 @@ in
       };
       swift-format = {
         enable = true;
-        package = pkgs.swift-format;
+        package = cutoutSwiftFormat;
       };
     };
   };
@@ -375,7 +447,7 @@ in
   tasks."devenv:enterTest".exec = lib.mkIf pkgs.stdenv.isDarwin swiftToolchainCheck;
 
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
-    export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    export PATH="${pkgs.python315}/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
     # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
     export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"

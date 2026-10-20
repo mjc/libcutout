@@ -68,7 +68,7 @@ public final class LightingAccessoryPersistence {
             record = nil
             recordCapabilitiesFingerprint = nil
             migrateLegacyRecord()
-        case let .valid(record, fingerprint):
+        case .valid(let record, let fingerprint):
             self.record = record
             recordCapabilitiesFingerprint = fingerprint
         case .invalid:

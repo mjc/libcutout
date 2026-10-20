@@ -15,8 +15,8 @@ name = "cutout-novatek-xml-benchmark"
 version = "0.0.0"
 edition = "2024"
 [dependencies]
-arrayvec = "=0.7.7"
-thiserror = "=2.0.18"
+arrayvec = "=0.7.8"
+thiserror = "=2.0.21"
 quick-xml = { version = "=0.42.0", default-features = false }
 TOML
 printf 'baseline=%s\n' "$baseline"

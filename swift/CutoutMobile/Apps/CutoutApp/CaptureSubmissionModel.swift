@@ -8,7 +8,8 @@ import Observation
 @MainActor
 @Observable
 final class CaptureSubmissionModel {
-    typealias LoadStatus = @MainActor (MobileCaptureSubmissionSourceDto) async throws ->
+    typealias LoadStatus =
+        @MainActor (MobileCaptureSubmissionSourceDto) async throws ->
         MobileCaptureSubmissionStatusDto?
     typealias Prepare = @MainActor (MobileCaptureSubmissionSourceDto) async throws -> MobileCaptureSubmissionStatusDto
     typealias Credential = @MainActor () async throws -> ChargingCommunityCredential
@@ -18,7 +19,8 @@ final class CaptureSubmissionModel {
     typealias SendWithProgress = @MainActor (
         String, ChargingCommunityCredential, @escaping Progress
     ) async throws -> MobileCaptureSubmissionStatusDto
-    typealias Cancel = @MainActor (String, ChargingCommunityCredential?) async throws ->
+    typealias Cancel =
+        @MainActor (String, ChargingCommunityCredential?) async throws ->
         MobileCaptureSubmissionStatusDto
 
     let source: MobileCaptureSubmissionSourceDto

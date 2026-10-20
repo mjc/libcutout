@@ -25,9 +25,9 @@ enum RideMapMetricFormatting {
         switch summary.movingTime {
         case .unavailable:
             "--"
-        case let .complete(movingMilliseconds, _):
+        case .complete(let movingMilliseconds, _):
             durationText(milliseconds: movingMilliseconds)
-        case let .partial(movingMilliseconds, _, _):
+        case .partial(let movingMilliseconds, _, _):
             "≥ \(durationText(milliseconds: movingMilliseconds))"
         }
     }
@@ -36,9 +36,9 @@ enum RideMapMetricFormatting {
         switch summary.movingTime {
         case .unavailable:
             localizedAppText("ride_map.moving_time_unavailable")
-        case let .complete(movingMilliseconds, _):
+        case .complete(let movingMilliseconds, _):
             durationText(milliseconds: movingMilliseconds)
-        case let .partial(movingMilliseconds, _, _):
+        case .partial(let movingMilliseconds, _, _):
             localizedAppText("ride_map.moving_time_partial", durationText(milliseconds: movingMilliseconds))
         }
     }
@@ -47,9 +47,9 @@ enum RideMapMetricFormatting {
         switch summary.elapsedTime {
         case .unavailable:
             "--"
-        case let .complete(durationMilliseconds):
+        case .complete(let durationMilliseconds):
             durationText(milliseconds: durationMilliseconds)
-        case let .partial(durationMilliseconds):
+        case .partial(let durationMilliseconds):
             "≥ \(durationText(milliseconds: durationMilliseconds))"
         }
     }
@@ -58,9 +58,9 @@ enum RideMapMetricFormatting {
         switch summary.elapsedTime {
         case .unavailable:
             localizedAppText("ride_map.elapsed_time_unavailable")
-        case let .complete(durationMilliseconds):
+        case .complete(let durationMilliseconds):
             durationText(milliseconds: durationMilliseconds)
-        case let .partial(durationMilliseconds):
+        case .partial(let durationMilliseconds):
             localizedAppText("ride_map.elapsed_time_partial", durationText(milliseconds: durationMilliseconds))
         }
     }

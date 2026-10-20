@@ -72,6 +72,11 @@ open class CutoutApplication : Application() {
         if (locationOwner.isInitialized()) locations.refreshEnvironment()
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        RustTlsPlatformVerifier.initialize(applicationContext)
+    }
+
     override fun onTerminate() {
         if (locationOwner.isInitialized()) locations.close()
         if (cameraOwner.isInitialized()) camera.close()

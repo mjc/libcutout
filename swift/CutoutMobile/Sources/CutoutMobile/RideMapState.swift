@@ -163,9 +163,9 @@ public enum MobileRideMapMovingTimeDto: Equatable, Hashable, Sendable {
         switch value {
         case .unavailable:
             self = .unavailable
-        case let .complete(movingMilliseconds, observedMilliseconds):
+        case .complete(let movingMilliseconds, let observedMilliseconds):
             self = .complete(movingMilliseconds: movingMilliseconds, observedMilliseconds: observedMilliseconds)
-        case let .partial(movingMilliseconds, observedMilliseconds, unknownMilliseconds):
+        case .partial(let movingMilliseconds, let observedMilliseconds, let unknownMilliseconds):
             self = .partial(
                 movingMilliseconds: movingMilliseconds,
                 observedMilliseconds: observedMilliseconds,
@@ -1016,7 +1016,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         switch try admission.poll() {
         case .pending:
             .pending
-        case let .completed(snapshot):
+        case .completed(let snapshot):
             .completed(snapshot.map(mapSnapshot))
         }
     }
@@ -1066,7 +1066,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             return switch try command.poll() {
             case .pending:
                 .pending
-            case let .completed(snapshot):
+            case .completed(let snapshot):
                 .completed(mapSnapshot(snapshot))
             }
         } catch {
@@ -1092,7 +1092,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 switch try pollLifecycleCommand(command) {
                 case .pending:
                     try await Task.sleep(nanoseconds: 10_000_000)
-                case let .completed(snapshot):
+                case .completed(let snapshot):
                     return snapshot
                 }
             }
@@ -1108,7 +1108,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 switch try command.poll() {
                 case .pending:
                     try await Task.sleep(nanoseconds: 10_000_000)
-                case let .completed(snapshot):
+                case .completed(let snapshot):
                     return snapshot.map(mapSnapshot)
                 }
             }
@@ -1268,7 +1268,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         switch try command.poll() {
         case .pending:
             .pending
-        case let .completed(result):
+        case .completed(let result):
             .completed(result)
         }
     }
@@ -1351,7 +1351,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         while true {
             switch try pollMusicCommand(command) {
             case .pending: try await Task.sleep(nanoseconds: 10_000_000)
-            case let .completed(result): return result
+            case .completed(let result): return result
             }
         }
     }
@@ -1375,7 +1375,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 switch try pollMusicCommand(command) {
                 case .pending:
                     try await Task.sleep(nanoseconds: 10_000_000)
-                case let .completed(result):
+                case .completed(let result):
                     return result
                 }
             }
@@ -1389,7 +1389,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             switch try command.poll() {
             case .pending:
                 try await Task.sleep(nanoseconds: 10_000_000)
-            case let .completed(history):
+            case .completed(let history):
                 return history
             }
         }
@@ -1441,7 +1441,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             switch try command.poll() {
             case .pending:
                 try await Task.sleep(nanoseconds: 10_000_000)
-            case let .completed(history):
+            case .completed(let history):
                 guard let history else { throw MobileRideMapError.rideNotFound }
                 return history
             }
@@ -1595,7 +1595,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
     public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
         guard let core else {
-            guard case let .storageError(message)? = storageUnavailableError else { return [] }
+            guard case .storageError(let message)? = storageUnavailableError else { return [] }
             return [.storageError(message: message)]
         }
         return core.pollLocationWrites().map(map)
@@ -1964,7 +1964,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         switch privacy {
         case .precise:
             return .precise
-        case let .grid(e7):
+        case .grid(let e7):
             return .grid(gridE7: e7)
         }
     }
@@ -2008,15 +2008,15 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
-        case let .pending(point):
+        case .pending(let point):
             return .pending(point: mapPoint(point))
-        case let .accepted(point):
+        case .accepted(let point):
             return .accepted(point: mapPoint(point))
-        case let .rejected(reason):
+        case .rejected(let reason):
             return .rejected(reason: map(reason))
-        case let .ignored(reason):
+        case .ignored(let reason):
             return .ignored(reason: map(reason))
-        case let .storageError(message):
+        case .storageError(let message):
             return .storageError(message: message)
         }
     }
@@ -2135,7 +2135,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             case .NotFound: return .rideNotFound
             case .InvalidTransition, .InvalidRideState: return .invalidTransition
             case .Cancelled: return .cancelled
-            case let .InvalidMusicInput(message): return .invalidMusicInput(message)
+            case .InvalidMusicInput(let message): return .invalidMusicInput(message)
             default: return .storageError(String(describing: error))
             }
         }
@@ -2158,8 +2158,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .PendingMusicHistory: return .storageError("previous ride music history is pending")
         case .MusicHistoryFull: return .storageError("pending ride music history is full")
         case .MusicObservationIncomplete: return .storageError("ride music observation is incomplete")
-        case let .InvalidMusicInput(message): return .invalidMusicInput(message)
-        case let .Storage(message): return .storageError(message)
+        case .InvalidMusicInput(let message): return .invalidMusicInput(message)
+        case .Storage(let message): return .storageError(message)
         }
     }
 }

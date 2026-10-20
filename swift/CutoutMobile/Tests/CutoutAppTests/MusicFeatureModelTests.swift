@@ -461,7 +461,7 @@ final class MusicFeatureModelTests: XCTestCase {
     ) async throws -> MobileRideMapSnapshotDto {
         let deadline = ContinuousClock.now + .seconds(3)
         while ContinuousClock.now < deadline {
-            if case let .completed(snapshot) = try state.pollLifecycleCommand(command) { return snapshot }
+            if case .completed(let snapshot) = try state.pollLifecycleCommand(command) { return snapshot }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Stop did not produce its Rust terminal receipt")

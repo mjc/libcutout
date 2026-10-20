@@ -76,7 +76,7 @@ final class VoltageSagModelStoreTests: XCTestCase {
             presentation.metricValue,
             .status(display: "estimating", accessibility: "estimating")
         )
-        guard case let .voltageSag(sag, estimateDetail) = presentation.detail else {
+        guard case .voltageSag(let sag, let estimateDetail) = presentation.detail else {
             return XCTFail("expected the source-owned voltage-sag detail")
         }
         XCTAssertEqual(sag.deltaMillivolts, -1_250)
@@ -91,7 +91,7 @@ final class VoltageSagModelStoreTests: XCTestCase {
             .sagUnavailable
         )
         guard
-            case let .voltageSag(packSag) = TelemetrySnapshot(
+            case .voltageSag(let packSag) = TelemetrySnapshot(
                 voltage: Voltage(value: 84_000),
                 chargeEstimate: state
             ).packVoltageDetail

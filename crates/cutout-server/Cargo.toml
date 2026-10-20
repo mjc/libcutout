@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Cutout music, charging and website server"
 
 [dependencies]
+hex.workspace = true
 axum.workspace = true
 clap.workspace = true
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
@@ -21,14 +22,14 @@ reqwest = { workspace = true, features = ["json"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "fs", "io-util"] }
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5.3", features = ["util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
-tempfile = "3"
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

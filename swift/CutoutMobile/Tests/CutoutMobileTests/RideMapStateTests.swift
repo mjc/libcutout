@@ -551,7 +551,7 @@ final class RideMapStateTests: XCTestCase {
             switch try state.pollVerifiedConnectionAdmission(admission) {
             case .pending:
                 try? await Task.sleep(for: .milliseconds(1))
-            case let .completed(snapshot):
+            case .completed(let snapshot):
                 return snapshot
             }
         }
@@ -772,7 +772,7 @@ final class RideMapStateTests: XCTestCase {
                 atMs: 200
             ))
 
-        guard case let .accepted(point) = decision else {
+        guard case .accepted(let point) = decision else {
             return XCTFail("expected the location to be admitted")
         }
         let secondDecision = await settle(

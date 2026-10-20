@@ -206,7 +206,7 @@ private struct LightingConnectionCard: View {
         case .ready: localizedAppText("lighting.connection.connected")
         case .scanning: localizedAppText("lighting.connection.scanning")
         case .connecting, .discovering: localizedAppText("lighting.connection.connecting")
-        case let .retrying(attempt, delayMilliseconds):
+        case .retrying(let attempt, let delayMilliseconds):
             localizedAppText(
                 "lighting.connection.retrying",
                 Int64(attempt),
@@ -396,13 +396,13 @@ private struct LightingPresetsCard: View {
 
     private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
         switch requested.playback {
-        case let .effect(pattern, speed):
+        case .effect(let pattern, let speed):
             return localizedAppText(
                 "lighting.preset.effect_summary",
                 LightingPatternCatalog.name(for: Int(pattern)),
                 Int64(speed)
             )
-        case let .music(_, sensitivity):
+        case .music(_, let sensitivity):
             return localizedAppText("lighting.preset.music_summary", Int64(sensitivity))
         case .solid, nil:
             return localizedAppText("lighting.preset.solid_summary", Int64(requested.brightness))

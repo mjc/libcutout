@@ -63,16 +63,19 @@ final class CaptureFeatureModel {
         sessionState: CutoutSessionStateHandle,
         flush: @escaping @MainActor () async -> Bool = { false },
         finish: @escaping @MainActor () async -> Bool = { false },
-        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
+        changeCaptureLabel:
+            @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
             [MobileCaptureLabelDto] = { _, _ in
                 throw MobileCaptureAnnotationError.NotRecording
             },
-        saveSettingsObservation: @escaping (CaptureGeneration, MobileCaptureSettingsDraftDto) async throws ->
+        saveSettingsObservation:
+            @escaping (CaptureGeneration, MobileCaptureSettingsDraftDto) async throws ->
             MobileCaptureSettingsObservationDto = { _, _ in throw MobileCaptureResearchError.NotRecording },
         readSettingsObservations: @escaping (CaptureGeneration) throws -> [MobileCaptureSettingsObservationDto] = { _ in
             []
         },
-        readSettingsReadback: @escaping (CaptureGeneration, [MobileCaptureResearchReadbackRequestDto]) async throws ->
+        readSettingsReadback:
+            @escaping (CaptureGeneration, [MobileCaptureResearchReadbackRequestDto]) async throws ->
             [MobileCaptureResearchReadbackDto] = { _, _ in [] }
     ) {
         self.sessionState = sessionState
@@ -283,9 +286,9 @@ final class CaptureFeatureModel {
 
     func apply(_ event: CaptureEvent) {
         switch event {
-        case let .lifecycle(snapshot):
+        case .lifecycle(let snapshot):
             lifecycle = snapshot
-        case let .started(generation, fileURL):
+        case .started(let generation, let fileURL):
             guard generation == activeGeneration else { return }
             if finishRequestGeneration != generation { isFinishRequested = false }
             let context = acceptedStarts.removeValue(forKey: generation) ?? pendingStart
@@ -305,34 +308,34 @@ final class CaptureFeatureModel {
                 isUserInitiated: isUserInitiated
             )
             recordingStatus = .recordingLocally(fileName: fileURL.lastPathComponent)
-        case let .notificationRecorded(generation):
+        case .notificationRecorded(let generation):
             guard generation == activeGeneration else { return }
             notificationCount += 1
             updateRecordingStatus()
-        case let .progress(generation, progress):
+        case .progress(let generation, let progress):
             guard generation == activeGeneration else { return }
             self.progress = progress
             recordings[generation]?.progress = progress
             recordings[generation]?.device = device
             notificationCount = Int(clamping: progress.notificationCount)
             updateRecordingStatus()
-        case let .finished(generation, fileURL, artifactId):
+        case .finished(let generation, let fileURL, let artifactId):
             complete(
                 generation, outcome: .saved, fileURL: fileURL,
                 submissionSource: artifactId.map { .recordedArtifact(id: $0) }
             )
-        case let .databaseFinished(generation, outcome):
-            guard case let .databaseFinished(liveCaptureId, integrity, jsonlExport, _) = outcome else { return }
+        case .databaseFinished(let generation, let outcome):
+            guard case .databaseFinished(let liveCaptureId, let integrity, let jsonlExport, _) = outcome else { return }
             let artifact: MobileSavedCaptureArtifactDto?
             switch jsonlExport {
-            case let .available(saved): artifact = saved
+            case .available(let saved): artifact = saved
             case .notAttempted, .failed: artifact = nil
             }
             let captureOutcome: CaptureArtifact.Outcome
             switch integrity {
             case .complete:
                 captureOutcome = artifact == nil ? .storedWithoutExport : .saved
-            case let .incomplete(droppedMessages):
+            case .incomplete(let droppedMessages):
                 captureOutcome = .incomplete(droppedMessages: droppedMessages)
             case .unknown:
                 captureOutcome = .integrityUnknown
@@ -343,7 +346,7 @@ final class CaptureFeatureModel {
                 fileURL: artifact.map { URL(fileURLWithPath: $0.path) },
                 submissionSource: .liveCapture(id: liveCaptureId)
             )
-        case let .failed(generation):
+        case .failed(let generation):
             complete(generation, outcome: .failed, fileURL: nil, preserveRequestedFile: true)
         }
     }

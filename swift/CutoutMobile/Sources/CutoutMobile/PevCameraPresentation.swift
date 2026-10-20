@@ -160,7 +160,7 @@ extension CameraClockUncertainty {
         switch dto {
         case .unknown:
             self = .unknown
-        case let .milliseconds(value):
+        case .milliseconds(let value):
             self = .milliseconds(value)
         }
     }

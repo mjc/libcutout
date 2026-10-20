@@ -15,7 +15,7 @@ enum PhoneRideAlarmAuthorization: Equatable, Sendable {
 
     var capability: MobilePhoneAlarmDeliveryCapabilityDto {
         switch self {
-        case let .permitted(alerts, sounds, quietly):
+        case .permitted(let alerts, let sounds, let quietly):
             MobilePhoneAlarmDeliveryCapabilityDto(
                 canSchedule: alerts || sounds,
                 playsSound: sounds && !quietly
@@ -120,19 +120,19 @@ struct PhoneRideAlarmAlert: Equatable {
 
     init(event: MobilePhoneAlarmEventDto) {
         switch event {
-        case let .pwmDuty(dutyPercent, headroomPercent):
+        case .pwmDuty(let dutyPercent, let headroomPercent):
             title = localizedAppText("phone_alarm.notification.pwm_title")
             body = localizedAppText(
                 "phone_alarm.notification.pwm_body",
                 Int64(dutyPercent),
                 Int64(headroomPercent)
             )
-        case let .controllerWarning(warning):
+        case .controllerWarning(let warning):
             title = localizedAppText("phone_alarm.notification.controller_warning_title")
             body =
                 phoneRideAlarmWarningAnnouncement(warning)
                 ?? localizedAppText("phone_alarm.notification.controller_warning_unknown")
-        case let .controllerStop(reason):
+        case .controllerStop(let reason):
             title = localizedAppText("phone_alarm.notification.controller_stop_title")
             body =
                 phoneRideAlarmStopAnnouncement(reason)

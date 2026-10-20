@@ -200,16 +200,17 @@ final class MusicProviderTransportExecutor {
         owner: MobileMusicTransportOwner,
         command: MobileMusicCommandDto,
         onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
-        dispatch: @escaping @MainActor @Sendable (
-            MobileMusicTransportRequestId,
-            @escaping @MainActor @Sendable (Bool) -> Void
-        ) -> Void
+        dispatch:
+            @escaping @MainActor @Sendable (
+                MobileMusicTransportRequestId,
+                @escaping @MainActor @Sendable (Bool) -> Void
+            ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
         let providerGeneration =
             switch owner {
-            case let .provider(providerGeneration): providerGeneration
-            case let .connection(providerGeneration, _): providerGeneration
+            case .provider(let providerGeneration): providerGeneration
+            case .connection(let providerGeneration, _): providerGeneration
             }
         let effect = lifecycle.beginTransportEffect(
             owner: owner,
@@ -227,10 +228,11 @@ final class MusicProviderTransportExecutor {
         providerGeneration: MobileMusicProviderSessionId,
         effect: MobileMusicTransportEffect,
         onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
-        dispatch: @escaping @MainActor @Sendable (
-            MobileMusicTransportRequestId,
-            @escaping @MainActor @Sendable (Bool) -> Void
-        ) -> Void
+        dispatch:
+            @escaping @MainActor @Sendable (
+                MobileMusicTransportRequestId,
+                @escaping @MainActor @Sendable (Bool) -> Void
+            ) -> Void
     ) async -> MusicCommandOutcome {
 
         return await withTaskCancellationHandler {
@@ -1348,7 +1350,7 @@ public final class MusicIntegrationCoordinator {
         }
         let lease: MobileMusicObservationLease
         switch submission.admission() {
-        case let .admitted(accepted): lease = accepted
+        case .admitted(let accepted): lease = accepted
         case .full, .exhausted: return completion(.full)
         }
         guard try await lease.wait() == .ready, !Task.isCancelled, submission.isCurrent() else {
@@ -1378,7 +1380,7 @@ public final class MusicIntegrationCoordinator {
             switch try await rideMapState.musicObservationContextAsync(
                 expectedRideID: rideID, observedAtMs: observation.snapshot.observedAtMs, lease: lease)
             {
-            case let .ready(token): recording = token
+            case .ready(let token): recording = token
             case .rideNotOpen: break
             case .outOfOrder: return completion(.outOfOrder)
             }

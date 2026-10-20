@@ -1403,7 +1403,7 @@ async fn deleting_current_identity_preserves_public_spots_and_returns_a_durable_
     let deleted_identities: u64 = connection
         .query_row(
             "SELECT COUNT(*) FROM contributors WHERE token_hash = ?1",
-            [format!("{:x}", sha2::Sha256::digest(owner.as_bytes()))],
+            [hex::encode(sha2::Sha256::digest(owner.as_bytes()))],
             |row| row.get(0),
         )
         .expect("deleted credential count");

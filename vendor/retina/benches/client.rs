@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Tests client performance against a mock server.
@@ -6,7 +6,7 @@
 use std::{io::ErrorKind, net::SocketAddr, num::NonZeroU32};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use futures::StreamExt;
 use retina::{
     client::{PlayOptions, SetupOptions},
@@ -101,12 +101,18 @@ fn make_test_data(max_payload_size: u16) -> Bytes {
 }
 
 async fn read_to_eof(addr: SocketAddr) {
-    let url = Url::parse(&format!("rtsp://{}/", &addr)).unwrap();
+    let url = Url::parse(&format!("rtsp://{}/", addr)).unwrap();
     let mut session =
         retina::client::Session::describe(url, retina::client::SessionOptions::default())
             .await
             .unwrap();
-    session.setup(0, SetupOptions::default()).await.unwrap();
+    session
+        .setup(
+            0,
+            SetupOptions::default().frame_format(retina::codec::FrameFormat::MP4),
+        )
+        .await
+        .unwrap();
     let session = session
         .play(PlayOptions::default())
         .await

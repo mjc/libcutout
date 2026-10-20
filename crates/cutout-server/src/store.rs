@@ -213,7 +213,7 @@ pub(crate) fn now_ms() -> Result<u64, Error> {
 }
 
 pub(crate) fn hash(value: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(value))
+    hex::encode(Sha256::digest(value))
 }
 pub(crate) fn json(value: &impl Serialize) -> Result<String, Error> {
     serde_json::to_string(value).map_err(|_| Error::Unavailable)

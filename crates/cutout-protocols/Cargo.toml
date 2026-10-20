@@ -31,12 +31,13 @@ url.workspace = true
 vesc.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["io-util", "test-util"] }
 hex-literal.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

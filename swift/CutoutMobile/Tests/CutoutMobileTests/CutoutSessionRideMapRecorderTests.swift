@@ -109,8 +109,8 @@ final class CutoutSessionRideMapRecorderTests: XCTestCase {
         }
         for (index, pair) in zip(pending, accepted).enumerated() {
             let (admitted, outcome) = pair
-            guard case let .accepted(point) = outcome.decision else { return XCTFail("material sample was lost") }
-            guard case let .pending(pendingPoint) = admitted.decision else {
+            guard case .accepted(let point) = outcome.decision else { return XCTFail("material sample was lost") }
+            guard case .pending(let pendingPoint) = admitted.decision else {
                 return XCTFail("missing admission receipt")
             }
             XCTAssertEqual(point, pendingPoint)

@@ -2,6 +2,7 @@
 
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod android_tls;
 mod charging;
 pub use charging::*;
 #[cfg(unix)]

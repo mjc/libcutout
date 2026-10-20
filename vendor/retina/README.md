@@ -66,7 +66,7 @@ Try the `mp4` example. It streams from an RTSP server to a `.mp4` file until
 you hit ctrl-C.
 
 ```shell
-$ cargo run --package client mp4 --url rtsp://ip.address.goes.here/ --username admin --password test out.mp4
+$ cargo run --package client mp4 -- --url rtsp://ip.address.goes.here/ --username admin --password test out.mp4
 ...
 ^C
 ```
@@ -80,9 +80,15 @@ $ cargo run --package client <CMD>
 Where CMD:
 
 * **info** - Gets info about available streams and exits.
+* **jpeg** - Writes depacketized JPEG images to disk; exit with CTRL+C.
 * **mp4** - Writes RTSP streams to mp4 file; exit with Ctrl+C.
 * **onvif** - Gets realtime onvif metadata if available; exit with Ctrl+C.
-* **jpeg** - Writes depacketized JPEG images to disk; exit with CTRL+C.
+* **webcodecs** - Decodes video frames using WebCodecs API; exit with Ctrl+C.
+  This is the absolute lowest-latency way to watch RTSP streams from a browser!
+
+The client also respects the common `RUST_LOG` environment variable:
+`RUST_LOG=client=debug,retina=debug,info` will enable `debug` logging for the
+`client` and `retina` crates, leaving other Rust crates at `info` level.
 
 ## Example WebRTC proxy
 
@@ -93,13 +99,18 @@ This allows viewing a H.264 video stream from your browser, with the help of
 $ cargo run --package webrtc-proxy -- --help
 ```
 
+## Example ffmpeg decode tool
+
+This decodes video from an RTSP source into raw video frames in [PPM format](https://en.wikipedia.org/wiki/Netpbm)
+using the `ffmpeg-next` crate.
+
 ## Acknowledgements
 
 This builds on the whole Rust ecosystem. A couple folks have been especially
 helpful:
 
 *   Sebastian Dröge, author of
-    [`rtsp-types`](https://crates.io/crates/rtsp-types)
+    [`sdp-types`](https://crates.io/crates/sdp-types)
 *   David Holroyd, author of
     [`h264-reader`](https://crates.io/crates/h264-reader)
 

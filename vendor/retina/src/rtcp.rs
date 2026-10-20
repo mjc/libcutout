@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Handles RTCP data as described in
@@ -20,6 +20,7 @@ use crate::PacketContext;
 /// *   All packets are RTCP version 2.
 /// *   Non-final packets have no padding.
 /// *   The packets' lengths add up to the compound packet's length.
+#[derive(Eq, PartialEq)]
 pub struct ReceivedCompoundPacket {
     pub(crate) ctx: PacketContext,
     pub(crate) stream_id: usize,
@@ -43,7 +44,7 @@ impl ReceivedCompoundPacket {
     ///
     /// Returns the first packet on success so the caller doesn't need to
     /// recaculate its lengths.
-    pub(crate) fn validate(raw: &[u8]) -> Result<PacketRef, String> {
+    pub(crate) fn validate(raw: &[u8]) -> Result<PacketRef<'_>, String> {
         let (first_pkt, mut rest) = PacketRef::parse(raw)?;
         let mut pkt = first_pkt;
         loop {
@@ -97,7 +98,7 @@ impl ReceivedCompoundPacket {
 
     /// Returns an iterator through all contained packets.
     #[inline]
-    pub fn pkts(&self) -> impl Iterator<Item = PacketRef> {
+    pub fn pkts(&self) -> impl Iterator<Item = PacketRef<'_>> {
         CompoundPacketIterator(&self.raw[..])
     }
 }

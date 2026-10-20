@@ -1,16 +1,19 @@
-# Askama derive 0.14.0 parser patch
+# Cutout patch to Askama derive 0.16.1
 
-Source: crates.io `askama_derive` 0.14.0, upstream commit
-`95867ac8cedc80b69f4047dea9c1272a5bf947b3`.
-The archive SHA-256 is
-`129397200fe83088e8a68407a8e2b1f826cf0086b21ccdb866a722c8bcd3a94f`.
-Both upstream licenses and the unmodified `Cargo.toml.orig` are retained.
-Registry bookkeeping and the independent lockfile are omitted.
+Source: crates.io `askama_derive` 0.16.1, upstream commit
+`9ae4d5bdf4352b35e34106e38944c90d7a7ede3e`.
+The original manifest, source, templates, README and both upstream licenses
+are retained. Registry metadata and the independent lockfile are omitted.
+`Cargo.toml.orig` records the unmodified upstream manifest.
 
-The `config` feature uses maintained `toml` 1.1 instead of `basic-toml`.
-Configuration still borrows nested strings from its input and returns parse
-errors through the existing error owner. Tests cover those contracts alongside
-the retained upstream template and configuration tests. Template generation is
-unchanged, and the workspace continues to use UniFFI 0.31.2.
+The `config` feature uses `toml` 1.1 instead of the unmaintained `basic-toml`
+parser (RUSTSEC-2026-0374). `RawConfig::from_toml_str` still deserializes borrowed
+configuration fields and maps parse failures through the existing error owner.
+`toml` 1.1 supplies the borrowed string visits required by these fields.
+Active dependency requirements, including test and benchmark dependencies, are
+updated to their current stable releases. `similar` 3 is used by the diff tests.
+The template parser and rendering code are unchanged from upstream 0.16.1.
 
-Remove this patch when the selected Askama release uses a maintained parser.
+UniFFI 0.32.2 uses this Askama release. Swift and Kotlin bindings continue to use
+the shared workspace generator and artifact owner. Remove this patch when an
+upstream Askama release selected by UniFFI removes the unmaintained parser.

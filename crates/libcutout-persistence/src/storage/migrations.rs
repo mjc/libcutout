@@ -2650,19 +2650,23 @@ mod tests {
             })
             .unwrap();
         let changes = connection.total_changes();
-        connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-            AuthAction::Read {
-                table_name: "rides" | "pragma_quick_check",
-                ..
-            }
-            | AuthAction::Pragma {
-                pragma_name: "quick_check",
-                ..
-            } => Authorization::Deny,
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(|context: AuthContext<'_>| match context.action {
+                AuthAction::Read {
+                    table_name: "rides" | "pragma_quick_check",
+                    ..
+                }
+                | AuthAction::Pragma {
+                    pragma_name: "quick_check",
+                    ..
+                } => Authorization::Deny,
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
         migrate(&mut connection).unwrap();
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         let after: Vec<rusqlite::types::Value> = connection
             .query_row("SELECT * FROM rides", [], |row| {
                 (0..row.as_ref().column_count())
@@ -2694,15 +2698,19 @@ mod tests {
         let mut connection = old_location_clock_fixture();
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&attempts);
-        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
-            AuthAction::AlterTable {
-                table_name: "rides",
-                ..
-            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::AlterTable {
+                    table_name: "rides",
+                    ..
+                } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
         assert!(migrate(&mut connection).is_err());
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
         assert!(
             !table_has_column(&connection, "rides", "last_location_observed_monotonic_ms").unwrap()
@@ -2847,22 +2855,26 @@ mod tests {
         let before = capture_rows(&connection);
         let reads = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&reads);
-        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
-            AuthAction::Read {
-                table_name: "live_capture_events" | "pragma_quick_check",
-                ..
-            }
-            | AuthAction::Pragma {
-                pragma_name: "quick_check",
-                ..
-            } => {
-                observed.fetch_add(1, Ordering::SeqCst);
-                Authorization::Deny
-            }
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::Read {
+                    table_name: "live_capture_events" | "pragma_quick_check",
+                    ..
+                }
+                | AuthAction::Pragma {
+                    pragma_name: "quick_check",
+                    ..
+                } => {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Authorization::Deny
+                }
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
         migrate(&mut connection).unwrap();
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(reads.load(Ordering::SeqCst), 0);
         assert_eq!(capture_rows_without_encoding(&connection), before);
     }
@@ -2895,15 +2907,19 @@ mod tests {
         let indexes_before = capture_secondary_indexes(&connection);
         let alters = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&alters);
-        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
-            AuthAction::AlterTable {
-                table_name: "live_capture_events",
-                ..
-            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::AlterTable {
+                    table_name: "live_capture_events",
+                    ..
+                } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
         assert!(migrate(&mut connection).is_err());
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(alters.load(Ordering::SeqCst), 2);
         assert!(!table_has_column(&connection, "live_capture_events", "payload_encoding").unwrap());
         assert!(
@@ -3165,16 +3181,22 @@ mod tests {
         let indexes_before = capture_secondary_indexes(&connection);
         let drops = Arc::new(AtomicUsize::new(0));
         let observed_drops = Arc::clone(&drops);
-        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
-            AuthAction::DropIndex { .. } if observed_drops.fetch_add(1, Ordering::SeqCst) == 1 => {
-                Authorization::Deny
-            }
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::DropIndex { .. }
+                    if observed_drops.fetch_add(1, Ordering::SeqCst) == 1 =>
+                {
+                    Authorization::Deny
+                }
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
 
         assert!(migrate(&mut connection).is_err());
 
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(drops.load(Ordering::SeqCst), 2);
         assert_eq!(capture_secondary_indexes(&connection), indexes_before);
         assert_eq!(capture_rows(&connection), before);
@@ -3475,17 +3497,21 @@ mod tests {
 
         let mut connection = moving_time_v41_fixture();
         let changes_before = connection.total_changes();
-        connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-            AuthAction::Read {
-                table_name: "rides" | "ride_points",
-                ..
-            } => Authorization::Deny,
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(|context: AuthContext<'_>| match context.action {
+                AuthAction::Read {
+                    table_name: "rides" | "ride_points",
+                    ..
+                } => Authorization::Deny,
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
 
         migrate_v41_to_v42(&mut connection).unwrap();
 
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(connection.total_changes(), changes_before);
         assert_eq!(
             connection
@@ -3542,17 +3568,21 @@ mod tests {
         let mut connection = moving_time_v41_fixture();
         let alterations = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&alterations);
-        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
-            AuthAction::AlterTable {
-                table_name: "rides",
-                ..
-            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
-            _ => Authorization::Allow,
-        }));
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::AlterTable {
+                    table_name: "rides",
+                    ..
+                } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+                _ => Authorization::Allow,
+            }))
+            .expect("SQLite authorizer hook installs");
 
         assert!(migrate_v41_to_v42(&mut connection).is_err());
 
-        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        connection
+            .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+            .expect("SQLite authorizer hook installs");
         assert_eq!(alterations.load(Ordering::SeqCst), 2);
         assert!(!table_has_column(&connection, "rides", "moving_time_revision").unwrap());
         assert!(!table_has_column(&connection, "rides", "moving_time_ms").unwrap());

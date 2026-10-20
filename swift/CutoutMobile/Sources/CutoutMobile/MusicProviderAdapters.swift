@@ -633,7 +633,7 @@ struct SpotifyRenewalRetryPolicy {
             else { return }
             let attemptEffect: MobileMusicProviderConnectionAttemptEffect
             switch lifecycle.beginConnectionAttempt(nowMs: connectionNowMs) {
-            case let .started(effect):
+            case .started(let effect):
                 attemptEffect = effect
             case .pending, .waitingToRetry:
                 return
@@ -767,7 +767,7 @@ struct SpotifyRenewalRetryPolicy {
                     )
                     guard self.accessToken == accessToken else { return }
                     self.handleWebFailure(error)
-                    if case let SpotifyPlaybackAPI.Failure.rateLimited(seconds) = error {
+                    if case SpotifyPlaybackAPI.Failure.rateLimited(let seconds) = error {
                         // Honor the server's Retry-After while this one cancellable
                         // request owns the poll slot. Never retry a playback command.
                         try? await Task.sleep(for: .seconds(seconds))

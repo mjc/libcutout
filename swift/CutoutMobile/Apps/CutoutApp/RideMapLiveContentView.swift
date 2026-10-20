@@ -70,7 +70,8 @@ struct RideMapLiveContentView: View {
                             },
                             cameraSpanDidChange: cameraSpanDidChange,
                             defaultCameraSpan: isTerminalRide ? nil : cameraSpan,
-                            defaultCameraCenter: isTerminalRide ? nil : RideMapCanvasView.validatedCoordinate(userLocationCenter),
+                            defaultCameraCenter: isTerminalRide
+                                ? nil : RideMapCanvasView.validatedCoordinate(userLocationCenter),
                             currentLocation: Self.phoneLocationAnnotationCoordinate(
                                 routePoints: displayPoints,
                                 location: userLocationCenter
@@ -319,7 +320,8 @@ struct RideMapLiveContentView: View {
         }
         followsLatestPoint = true
         isApplyingCamera = true
-        let center = centerOnUserLocation
+        let center =
+            centerOnUserLocation
             ? (RideMapCanvasView.validatedCoordinate(userLocationCenter) ?? coordinate(for: point))
             : coordinate(for: point)
         guard let region = RideMapCanvasView.localRegion(center: center, span: cameraSpan) else {

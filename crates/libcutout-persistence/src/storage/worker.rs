@@ -807,7 +807,9 @@ impl DatabaseWorker<'_> {
                     &cancellation,
                 );
                 #[cfg(test)]
-                connection.progress_handler(0, None::<fn() -> bool>);
+                connection
+                    .progress_handler(0, None::<fn() -> bool>)
+                    .expect("SQLite progress handler hook installs");
                 cancellation.clear_interrupt();
                 let _ = reply.send(result);
             }
@@ -842,7 +844,9 @@ impl DatabaseWorker<'_> {
                     cancellation.as_ref(),
                 );
                 #[cfg(test)]
-                connection.progress_handler(0, None::<fn() -> bool>);
+                connection
+                    .progress_handler(0, None::<fn() -> bool>)
+                    .expect("SQLite progress handler hook installs");
                 if let Some(cancellation) = cancellation.as_ref() {
                     cancellation.clear_interrupt();
                 }
@@ -896,13 +900,15 @@ fn install_sqlite_progress_gate(
 ) {
     let first_progress_callback = Arc::new(AtomicBool::new(true));
     let callback_is_first = Arc::clone(&first_progress_callback);
-    connection.progress_handler(
-        1,
-        Some(move || {
-            if callback_is_first.swap(false, Ordering::AcqRel) && entered.send(()).is_ok() {
-                let _ = release.recv();
-            }
-            false
-        }),
-    );
+    connection
+        .progress_handler(
+            1,
+            Some(move || {
+                if callback_is_first.swap(false, Ordering::AcqRel) && entered.send(()).is_ok() {
+                    let _ = release.recv();
+                }
+                false
+            }),
+        )
+        .expect("SQLite progress handler hook installs");
 }

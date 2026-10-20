@@ -16,14 +16,16 @@ protocol AppleMusicMonitorDriving: AnyObject {
     func refreshObservation(observedAtMs: UInt64)
 }
 
-typealias MusicMonitorPollWaiter = @MainActor @Sendable (
-    UInt64,
-    @escaping @MainActor @Sendable () -> UInt64
-) async -> Bool
-typealias MusicProviderCommandHandler = @MainActor (
-    MobileMusicProviderDto,
-    MobileMusicCommandDto
-) async -> MusicCommandOutcome
+typealias MusicMonitorPollWaiter =
+    @MainActor @Sendable (
+        UInt64,
+        @escaping @MainActor @Sendable () -> UInt64
+    ) async -> Bool
+typealias MusicProviderCommandHandler =
+    @MainActor (
+        MobileMusicProviderDto,
+        MobileMusicCommandDto
+    ) async -> MusicCommandOutcome
 typealias MusicHistorySnapshotReader = @MainActor () async -> MobileRideMapSnapshotDto?
 
 @MainActor
@@ -1202,9 +1204,9 @@ final class MusicFeatureModel {
                     self.refreshHistoryErrorProjection()
                     if readbackRevision == self.historyReadbackRevision {
                         switch error {
-                        case let MusicIntegrationIngestError.observation(observationError):
+                        case MusicIntegrationIngestError.observation(let observationError):
                             self.setObservationError(appRideMapError(observationError))
-                        case let MusicIntegrationIngestError.history(historyError):
+                        case MusicIntegrationIngestError.history(let historyError):
                             self.setObservationError(nil)
                             if (historyError as? MobileRideMapError) != .noActiveRide {
                                 self.setHistoryPersistenceError(appRideMapError(historyError))

@@ -17,6 +17,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 workspace = true
 
 [dependencies]
+jni.workspace = true
 hex.workspace = true
 futures-util.workspace = true
 cutout-music = { path = "../cutout-music", version = "0.1.0" }
@@ -26,11 +27,14 @@ libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
-reqwest = { workspace = true, features = ["rustls-tls-webpki-roots", "stream"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net"] }
 uniffi = { workspace = true, features = ["tokio"] }
 uuid.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+rustls-platform-verifier.workspace = true
 
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }

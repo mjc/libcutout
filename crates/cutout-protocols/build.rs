@@ -103,8 +103,8 @@ fn emit_replay_decoder_fingerprint(manifest_dir: &Path) {
         digest.update(&bytes);
     }
     println!(
-        "cargo:rustc-env=CUTOUT_REPLAY_DECODER_SOURCE_SHA256={:x}",
-        digest.finalize()
+        "cargo:rustc-env=CUTOUT_REPLAY_DECODER_SOURCE_SHA256={}",
+        hex::encode(digest.finalize())
     );
 }
 

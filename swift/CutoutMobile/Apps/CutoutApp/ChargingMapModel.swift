@@ -20,9 +20,10 @@ typealias ChargingMapVoteWrite =
 
 typealias ChargingMapWithdrawal = @Sendable (String, UInt64) async throws -> Void
 typealias ChargingBlockedOperationsQuery = @Sendable () async throws -> [MobileChargingSyncConflictDto]
-typealias ChargingOperationResolution = @Sendable (
-    String, UInt64, MobileChargingResolutionDto
-) async throws -> Void
+typealias ChargingOperationResolution =
+    @Sendable (
+        String, UInt64, MobileChargingResolutionDto
+    ) async throws -> Void
 
 func withChargingDatabase<Result: Sendable>(
     open: @Sendable () async throws -> RideDatabaseHandle = { try await RustPersistenceStore.open() },

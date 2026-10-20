@@ -38,7 +38,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
         XCTAssertEqual(session.beginIdentificationProbe(at: MonotonicMilliseconds(999)), .unsupported)
         _ = session.observeNotification(bytes: begodeLiveFrame)
-        guard case let .writes(writes) = session.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)) else {
+        guard case .writes(let writes) = session.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)) else {
             return XCTFail("Begode wire evidence should enable identification probes")
         }
         XCTAssertEqual(writes.count, 1)
@@ -205,7 +205,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(aeroSession.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)), .unsupported)
         _ = aeroSession.observeNotification(bytes: begodeLiveFrame)
         guard
-            case let .writes(writes) =
+            case .writes(let writes) =
                 aeroSession
                 .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
         else {

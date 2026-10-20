@@ -262,7 +262,7 @@ final class DevicePresentationModelTests: XCTestCase {
             platformIdentifier: row.id,
             mayRetryCurrentSelection: false
         ) { $0 == row }
-        guard case let .accepted(acceptedRow) = accepted else {
+        guard case .accepted(let acceptedRow) = accepted else {
             return XCTFail("expected the selected row to be accepted")
         }
         XCTAssertEqual(acceptedRow, row)

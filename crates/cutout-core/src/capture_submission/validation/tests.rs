@@ -77,7 +77,7 @@ fn capture_submission_validates_unknown_gps_free_bytes_in_both_encodings() {
     for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
         let bytes = capture.encode(encoding).unwrap();
         let summary = validate_capture_submission(bytes.as_slice(), encoding).unwrap();
-        assert_eq!(summary.sha256, format!("{:x}", Sha256::digest(&bytes)));
+        assert_eq!(summary.sha256, hex::encode(Sha256::digest(&bytes)));
         assert_eq!(summary.bytes, bytes.len() as u64);
         assert_eq!(summary.events, 2);
         assert_eq!(summary.annotation_count, 2);
@@ -107,7 +107,7 @@ fn capture_submission_hashes_exact_jsonl_whitespace_and_opaque_fields() {
     let summary = validate_capture_submission(input.as_bytes(), PevcapEncoding::Jsonl).unwrap();
     assert_eq!(
         summary.sha256,
-        format!("{:x}", Sha256::digest(input.as_bytes()))
+        hex::encode(Sha256::digest(input.as_bytes()))
     );
     assert_eq!(summary.bytes, input.len() as u64);
     assert_eq!(summary.events, 2);
@@ -597,7 +597,7 @@ fn capture_submission_settings_disclosure_matches_retained_note_fields_and_heade
                 summary.annotation_count,
                 u64::try_from(annotations.len()).unwrap()
             );
-            assert_eq!(summary.sha256, format!("{:x}", Sha256::digest(&bytes)));
+            assert_eq!(summary.sha256, hex::encode(Sha256::digest(&bytes)));
             let decoded = PevcapCapture::decode(&bytes, encoding).unwrap();
             let retained = decoded.settings_observations.first().unwrap();
             assert_eq!(retained.note, snapshot_note.map(str::to_owned));

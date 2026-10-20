@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.79"
+edition = "2024"
+rust-version = "1.88"
 name = "retina"
-version = "0.4.13"
+version = "0.4.21"
 authors = ["Scott Lamb <slamb@slamb.org>"]
 build = false
 include = [
@@ -43,14 +43,15 @@ license = "MIT/Apache-2.0"
 repository = "https://github.com/scottlamb/retina"
 
 [package.metadata.docs.rs]
-all-features = true
 rustdoc-args = [
     "--cfg",
     "docsrs",
 ]
+all-features = true
 
-[profile.bench]
-debug = 2
+[features]
+default = ["h265"]
+h265 = []
 
 [lib]
 name = "retina"
@@ -67,82 +68,89 @@ path = "benches/depacketize.rs"
 harness = false
 
 [dependencies.base64]
-version = "0.22.0"
+version = "0.23.1"
 
 [dependencies.bitstream-io]
-version = "2.6"
+version = "4.10.0"
 
 [dependencies.bytes]
-version = "1.0.1"
+version = "1.12.1"
+
+[dependencies.derive_more]
+version = "2.1.1"
+features = [
+    "debug",
+    "display",
+    "error",
+    "from",
+]
 
 [dependencies.futures]
-version = "0.3.14"
+version = "0.3.34"
 
 [dependencies.h264-reader]
-version = "0.8.0"
+version = "0.9.0"
 
 [dependencies.hex]
 version = "0.4.3"
 
 [dependencies.http-auth]
-version = "0.1.2"
+version = "0.1.10"
 
 [dependencies.jiff]
-version = "0.1.8"
+version = "0.2.38"
 
 [dependencies.log]
-version = "0.4.8"
+version = "0.4.34"
 
 [dependencies.memchr]
-version = "2.7.4"
+version = "2.8.3"
 
 [dependencies.pin-project]
-version = "1.0.7"
+version = "1.1.13"
 
 [dependencies.pretty-hex]
-version = "0.4.0"
+version = "0.4.2"
 
 [dependencies.rand]
-version = "0.8.3"
-
-[dependencies.rtsp-types]
-version = "0.1.0"
+version = "0.10.3"
 
 [dependencies.sdp-types]
-version = "0.1.4"
+version = "0.2.0"
 
 [dependencies.smallvec]
-version = "1.6.1"
+version = "1.16.3"
 features = ["union"]
 
-[dependencies.thiserror]
-version = "1.0.25"
+[dependencies.socket2]
+version = "0.6.5"
 
 [dependencies.tokio]
-version = "1.11.0"
+version = "1.54.0"
 features = [
     "macros",
     "net",
     "rt",
+    "sync",
     "time",
 ]
 
-[dependencies.tokio-util]
-version = "0.7.3"
-features = ["codec"]
-
 [dependencies.url]
-version = "2.2.1"
+version = "2.5.8"
 
 [dev-dependencies.criterion]
-version = "0.5.0"
+version = "0.8.2"
 features = ["async_tokio"]
+
+[dev-dependencies.mylog]
+git = "https://github.com/scottlamb/mylog"
+rev = "78a46b9c98521e32b0db04bdb5e026b11609b925"
 
 [dev-dependencies.pretty_assertions]
 version = "1.4.1"
 
 [dev-dependencies.tokio]
-version = "1.5.0"
+version = "1.54.0"
 features = [
     "io-util",
     "macros",
@@ -150,6 +158,5 @@ features = [
     "test-util",
 ]
 
-[features]
-default = ["h265"]
-h265 = []
+[profile.bench]
+debug = 2

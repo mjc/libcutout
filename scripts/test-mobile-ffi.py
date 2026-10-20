@@ -441,9 +441,11 @@ class Run:
         # The owned emulator never connects to the user's gaming/display/audio session.
         for key in ("DISPLAY", "WAYLAND_DISPLAY", "PULSE_SERVER"):
             self.env.pop(key, None)
-        avd_name = "cutout-api" + self.env["CUTOUT_ANDROID_API"] + "-x86_64"
-        image = f"system-images;android-{self.env['CUTOUT_ANDROID_API']};google_apis;x86_64"
-        image_dir = Path(self.env["ANDROID_HOME"]) / "system-images" / ("android-" + self.env["CUTOUT_ANDROID_API"]) / "google_apis/x86_64"
+        sdk_platform = self.env["CUTOUT_ANDROID_SDK_PLATFORM"]
+        image_type = self.env["CUTOUT_ANDROID_SYSTEM_IMAGE_TYPE"]
+        avd_name = f"cutout-api{sdk_platform}-{image_type}-x86_64"
+        image = f"system-images;android-{sdk_platform};{image_type};x86_64"
+        image_dir = Path(self.env["ANDROID_HOME"]) / "system-images" / ("android-" + sdk_platform) / image_type / "x86_64"
         if not (image_dir / "system.img").is_file():
             raise ValueError("The devenv SDK must provide the configured emulator system image")
         if not (avd_home / (avd_name + ".ini")).exists():

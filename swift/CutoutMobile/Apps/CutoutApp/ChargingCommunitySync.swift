@@ -695,7 +695,7 @@ final class ChargingCommunitySync {
                 if summary.downloaded > 0 || step.action != .nextRound {
                     await refreshPersistedLastUpdated()
                 }
-                if case let .retry(afterSeconds: delay) = step.action {
+                if case .retry(afterSeconds: let delay) = step.action {
                     do { try await sleep(.seconds(Int64(delay))) } catch { return }
                     continue
                 }
@@ -705,7 +705,7 @@ final class ChargingCommunitySync {
                 let failure = (error as? MobileChargingError) ?? .StorageFailure
                 let step = mobileChargingSyncObserveError(state: syncRunState, error: failure)
                 syncRunState = step.state
-                guard case let .retry(afterSeconds: delay) = step.action else { return }
+                guard case .retry(afterSeconds: let delay) = step.action else { return }
                 do { try await sleep(.seconds(Int64(delay))) } catch { return }
             }
         }
@@ -739,7 +739,7 @@ final class ChargingCommunitySync {
                 try Task.checkCancellation()
                 let step = mobileChargingSyncObserveSummary(state: state, summary: summary)
                 state = step.state
-                if case let .retry(afterSeconds: delay) = step.action {
+                if case .retry(afterSeconds: let delay) = step.action {
                     try await sleep(.seconds(Int64(delay)))
                     continue
                 }
@@ -750,7 +750,7 @@ final class ChargingCommunitySync {
                 let failure = (error as? MobileChargingError) ?? .StorageFailure
                 let step = mobileChargingSyncObserveError(state: state, error: failure)
                 state = step.state
-                guard case let .retry(afterSeconds: delay) = step.action else { return step }
+                guard case .retry(afterSeconds: let delay) = step.action else { return step }
                 try await sleep(.seconds(Int64(delay)))
             }
         }

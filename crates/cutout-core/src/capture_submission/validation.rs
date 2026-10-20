@@ -157,7 +157,7 @@ pub fn validate_capture_submission_payload<R: Read>(
     }
     summary.categories.notes |= !evidence.note.is_empty();
     let counter = counter.borrow();
-    summary.sha256 = format!("{:x}", counter.digest.clone().finalize());
+    summary.sha256 = hex::encode(counter.digest.clone().finalize());
     summary.bytes = counter.bytes;
     if summary.sha256 != metadata.sha256 || summary.bytes != metadata.bytes {
         return Err(CaptureSubmissionValidationError::InvalidMetadata);
@@ -355,7 +355,7 @@ pub fn validate_capture_submission<R: Read>(
     }
     let counter = counter.borrow();
     Ok(CaptureSubmissionPayloadSummary {
-        sha256: format!("{:x}", counter.digest.clone().finalize()),
+        sha256: hex::encode(counter.digest.clone().finalize()),
         bytes: counter.bytes,
         events: events.count,
         annotation_count,

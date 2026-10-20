@@ -194,9 +194,9 @@ final class LiveRideModel {
         }
         lastDecision = decision
         switch decision {
-        case let .pending(point):
+        case .pending(let point):
             telemetryState = point.telemetryState
-        case let .accepted(point):
+        case .accepted(let point):
             telemetryState = point.telemetryState
             if !routeProgressChanged { requestProjection() }
         case .rejected, .ignored, .storageError:

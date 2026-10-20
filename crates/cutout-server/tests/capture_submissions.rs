@@ -102,7 +102,7 @@ async fn expect_status(response: Response, expected: StatusCode) -> Response {
 
 fn metadata(bytes: &[u8], origin: &str) -> Value {
     json!({
-        "sha256": format!("{:x}", Sha256::digest(bytes)),
+        "sha256": hex::encode(Sha256::digest(bytes)),
         "bytes": bytes.len(),
         "encoding": "jsonl",
         "origin": origin,
@@ -110,7 +110,7 @@ fn metadata(bytes: &[u8], origin: &str) -> Value {
         "provenance": {
             "source_artifact_id": "00000000-0000-4000-8000-000000000099",
             "live_capture_id": null,
-            "source_sha256": format!("{:x}", Sha256::digest(bytes)),
+            "source_sha256": hex::encode(Sha256::digest(bytes)),
             "transformation": "unmodified"
         }
     })
@@ -648,7 +648,7 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
     let owner_id: String = inspector
         .query_row(
             "SELECT id FROM contributors WHERE token_hash=?1",
-            [format!("{:x}", Sha256::digest(owner.as_bytes()))],
+            [hex::encode(Sha256::digest(owner.as_bytes()))],
             |row| row.get(0),
         )
         .expect("owner identity");
@@ -814,7 +814,7 @@ async fn private_capture_review_capability_is_rechecked_after_revocation() {
     connection
         .execute(
             "UPDATE contributors SET private_capture_review=0 WHERE token_hash=?1",
-            [format!("{:x}", Sha256::digest(reviewer.as_bytes()))],
+            [hex::encode(Sha256::digest(reviewer.as_bytes()))],
         )
         .expect("remove capability");
     assert_eq!(
@@ -831,7 +831,7 @@ async fn private_capture_review_capability_is_rechecked_after_revocation() {
     connection
         .execute(
             "UPDATE contributors SET revoked_at_ms=1 WHERE token_hash=?1",
-            [format!("{:x}", Sha256::digest(owner.as_bytes()))],
+            [hex::encode(Sha256::digest(owner.as_bytes()))],
         )
         .expect("revoke owner");
     assert_eq!(

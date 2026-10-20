@@ -2278,20 +2278,22 @@ mod route_projection_cancellation_tests {
         let (query_release_sender, query_release_receiver) = sync_channel(0);
         let first_progress_callback = Arc::new(AtomicBool::new(true));
         let callback_is_first = Arc::clone(&first_progress_callback);
-        connection.progress_handler(
-            1_000,
-            Some(move || {
-                if callback_is_first.swap(false, Ordering::AcqRel) {
-                    query_entered_sender
-                        .send(())
-                        .expect("test query is waiting for cancellation");
-                    query_release_receiver
-                        .recv()
-                        .expect("test query release is sent");
-                }
-                false
-            }),
-        );
+        connection
+            .progress_handler(
+                1_000,
+                Some(move || {
+                    if callback_is_first.swap(false, Ordering::AcqRel) {
+                        query_entered_sender
+                            .send(())
+                            .expect("test query is waiting for cancellation");
+                        query_release_receiver
+                            .recv()
+                            .expect("test query release is sent");
+                    }
+                    false
+                }),
+            )
+            .expect("SQLite progress handler hook installs");
 
         let query = thread::spawn(move || {
             connection.query_row(
@@ -2347,20 +2349,22 @@ mod route_projection_cancellation_tests {
         let (query_release_sender, query_release_receiver) = sync_channel(0);
         let first_progress_callback = Arc::new(AtomicBool::new(true));
         let callback_is_first = Arc::clone(&first_progress_callback);
-        connection.progress_handler(
-            1,
-            Some(move || {
-                if callback_is_first.swap(false, Ordering::AcqRel) {
-                    query_entered_sender
-                        .send(())
-                        .expect("endpoint query is waiting for cancellation");
-                    query_release_receiver
-                        .recv()
-                        .expect("endpoint query release is sent");
-                }
-                false
-            }),
-        );
+        connection
+            .progress_handler(
+                1,
+                Some(move || {
+                    if callback_is_first.swap(false, Ordering::AcqRel) {
+                        query_entered_sender
+                            .send(())
+                            .expect("endpoint query is waiting for cancellation");
+                        query_release_receiver
+                            .recv()
+                            .expect("endpoint query release is sent");
+                    }
+                    false
+                }),
+            )
+            .expect("SQLite progress handler hook installs");
 
         let viewport = RouteViewport::new(
             LatitudeE7::new(399_000_000),

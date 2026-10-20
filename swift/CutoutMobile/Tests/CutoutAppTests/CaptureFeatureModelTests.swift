@@ -518,7 +518,7 @@ final class CaptureFeatureModelTests: XCTestCase {
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, action in
             requestedActions.append(action)
             switch action {
-            case let .start(label): active = [label]
+            case .start(let label): active = [label]
             case .stop: active = []
             }
             return active

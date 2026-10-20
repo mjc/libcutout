@@ -314,19 +314,19 @@ private func liveThermalDetail(readback: RiderThermalReadback?) -> String {
         RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
     }
     switch (controller, motor, battery) {
-    case let (.some(controller), .some(motor), .some(battery)):
+    case (.some(let controller), .some(let motor), .some(let battery)):
         return localizedAppText("ride.thermal.all", controller, unit, motor, unit, battery, unit)
-    case let (.some(controller), .some(motor), nil):
+    case (.some(let controller), .some(let motor), nil):
         return localizedAppText("ride.thermal.controller_motor", controller, unit, motor, unit)
-    case let (.some(controller), nil, .some(battery)):
+    case (.some(let controller), nil, .some(let battery)):
         return localizedAppText("ride.thermal.controller_battery", controller, unit, battery, unit)
-    case let (nil, .some(motor), .some(battery)):
+    case (nil, .some(let motor), .some(let battery)):
         return localizedAppText("ride.thermal.motor_battery", motor, unit, battery, unit)
-    case let (.some(controller), nil, nil):
+    case (.some(let controller), nil, nil):
         return localizedAppText("ride.thermal.controller", controller, unit)
-    case let (nil, .some(motor), nil):
+    case (nil, .some(let motor), nil):
         return localizedAppText("ride.thermal.motor", motor, unit)
-    case let (nil, nil, .some(battery)):
+    case (nil, nil, .some(let battery)):
         return localizedAppText("ride.thermal.battery", battery, unit)
     case (nil, nil, nil):
         return ""

@@ -94,13 +94,15 @@ fn charging_change_page_rolls_back_remote_rows_and_cursor_together() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let snapshot = entry(Some(input(0.5)), ChargingStatus::Published, 1);
-    connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-        AuthAction::Update {
-            table_name: "charging_sync_state",
-            ..
-        } => Authorization::Deny,
-        _ => Authorization::Allow,
-    }));
+    connection
+        .authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Update {
+                table_name: "charging_sync_state",
+                ..
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .expect("SQLite authorizer hook installs");
     assert!(
         apply_changes_page(
             &mut connection,
@@ -110,7 +112,9 @@ fn charging_change_page_rolls_back_remote_rows_and_cursor_together() {
         )
         .is_err()
     );
-    connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    connection
+        .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .expect("SQLite authorizer hook installs");
     assert_eq!(
         changes_cursor(&connection).unwrap(),
         ChargingChangeCursor::ZERO
@@ -958,12 +962,14 @@ fn remote_page_invalidates_stale_editor_and_conflict_review_revisions() {
 #[test]
 fn charging_write_failure_rolls_back_pin_and_spatial_keys() {
     let mut connection = database();
-    connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-        AuthAction::Insert {
-            table_name: "charging_outbox",
-        } => Authorization::Deny,
-        _ => Authorization::Allow,
-    }));
+    connection
+        .authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Insert {
+                table_name: "charging_outbox",
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .expect("SQLite authorizer hook installs");
     assert!(
         save(
             &mut connection,
@@ -972,7 +978,9 @@ fn charging_write_failure_rolls_back_pin_and_spatial_keys() {
         )
         .is_err()
     );
-    connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    connection
+        .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .expect("SQLite authorizer hook installs");
     for table in [
         "charging_outbox",
         "charging_spots",
@@ -1005,14 +1013,18 @@ fn charging_migration_preserves_legacy_and_rolls_back_on_failure() {
             "DROP TABLE charging_outbox; DROP TABLE charging_spots; PRAGMA user_version=42;",
         )
         .unwrap();
-    connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-        AuthAction::CreateTable {
-            table_name: "charging_outbox",
-        } => Authorization::Deny,
-        _ => Authorization::Allow,
-    }));
+    connection
+        .authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::CreateTable {
+                table_name: "charging_outbox",
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .expect("SQLite authorizer hook installs");
     assert!(super::super::migrations::migrate(&mut connection).is_err());
-    connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    connection
+        .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .expect("SQLite authorizer hook installs");
     assert!(!super::super::migrations::table_exists(&connection, "charging_spots").unwrap());
     assert_eq!(
         connection
@@ -1875,24 +1887,26 @@ fn charging_nearby_ranks_beyond_the_first_candidate_page() {
     let candidate_scans = Arc::new(AtomicUsize::new(0));
     let counted_details = Arc::clone(&detail_reads);
     let counted_scans = Arc::clone(&candidate_scans);
-    connection.authorizer(Some(move |context: AuthContext<'_>| {
-        match context.action {
-            AuthAction::Read {
-                table_name: "charging_spots",
-                column_name: "local_revision",
-            } => {
-                counted_details.fetch_add(1, Ordering::Relaxed);
+    connection
+        .authorizer(Some(move |context: AuthContext<'_>| {
+            match context.action {
+                AuthAction::Read {
+                    table_name: "charging_spots",
+                    column_name: "local_revision",
+                } => {
+                    counted_details.fetch_add(1, Ordering::Relaxed);
+                }
+                AuthAction::Read {
+                    table_name: "map_points_rtree",
+                    column_name: "max_lat_e7",
+                } => {
+                    counted_scans.fetch_add(1, Ordering::Relaxed);
+                }
+                _ => {}
             }
-            AuthAction::Read {
-                table_name: "map_points_rtree",
-                column_name: "max_lat_e7",
-            } => {
-                counted_scans.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
-        }
-        Authorization::Allow
-    }));
+            Authorization::Allow
+        }))
+        .expect("SQLite authorizer hook installs");
     let values = nearby(
         &connection,
         &mut spatial,
@@ -2094,12 +2108,14 @@ fn failed_edit_queue_insert_rolls_back_input_revision_and_spatial_move() {
     let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
     let queued = next_operation(&mut connection).unwrap().unwrap();
     let before = detail(&connection, saved.point_id).unwrap().unwrap();
-    connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-        AuthAction::Insert {
-            table_name: "charging_outbox",
-        } => Authorization::Deny,
-        _ => Authorization::Allow,
-    }));
+    connection
+        .authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Insert {
+                table_name: "charging_outbox",
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .expect("SQLite authorizer hook installs");
     assert!(
         change(
             &mut connection,
@@ -2110,7 +2126,9 @@ fn failed_edit_queue_insert_rolls_back_input_revision_and_spatial_move() {
         )
         .is_err()
     );
-    connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    connection
+        .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .expect("SQLite authorizer hook installs");
     assert_eq!(
         detail(&connection, saved.point_id).unwrap().unwrap(),
         before

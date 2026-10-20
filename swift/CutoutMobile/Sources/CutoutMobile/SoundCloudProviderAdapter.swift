@@ -60,7 +60,7 @@ public final class SoundCloudProviderAdapter {
         switch lifecycle.beginSoundcloudCommand(providerGeneration: generation, command: command, nowMs: nowMs()) {
         case .refused: return .refused
         case .unavailable: return .unavailable
-        case let .handoff(url, effect):
+        case .handoff(let url, let effect):
             guard let url = URL(string: url) else {
                 transport.apply(lifecycle.cancelTransport(providerGeneration: generation, requestId: effect.id))
                 return .unavailable

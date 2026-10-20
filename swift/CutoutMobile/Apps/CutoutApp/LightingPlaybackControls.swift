@@ -304,11 +304,11 @@ struct LightingPlaybackControls: View {
                 ) {
                     Text(localizedAppText("lighting.effect.speed"))
                 } onEditingChanged: { editing in
-                    if !editing, case let .effect(activePattern, _) = model.requestedPlayback,
+                    if !editing, case .effect(let activePattern, _) = model.requestedPlayback,
                         Int(activePattern) == pattern
                     {
                         if !model.setEffectSpeed(UInt8(speed)),
-                            case let .effect(_, currentSpeed) = model.requestedPlayback
+                            case .effect(_, let currentSpeed) = model.requestedPlayback
                         {
                             speed = Double(currentSpeed)
                         }
@@ -371,11 +371,11 @@ struct LightingPlaybackControls: View {
         }
         .onChange(of: model.requestedPlayback, initial: true) { _, playback in
             switch playback {
-            case let .effect(selected, selectedSpeed):
+            case .effect(let selected, let selectedSpeed):
                 pattern = Int(selected)
                 selectGroup(for: pattern)
                 speed = Double(selectedSpeed)
-            case let .music(selected, gain):
+            case .music(let selected, let gain):
                 musicEffect = Int(selected)
                 sensitivity = Double(gain)
             case .solid:

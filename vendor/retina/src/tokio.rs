@@ -1,24 +1,35 @@
-// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
+// Copyright (C) The Retina Authors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! tokio-based [`Connection`].
 //!
 //! In theory there could be a similar async-std-based implementation.
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::{Sink, SinkExt, Stream, StreamExt};
-use rtsp_types::{Data, Message};
+use futures::{Sink, Stream};
 use std::time::Instant;
+use tokio::io::AsyncWrite;
 use tokio::net::{TcpStream, UdpSocket};
-use tokio_util::codec::Framed;
 use url::Host;
 
+use crate::buf::MarkBuf;
+use crate::inputs::{Input as _, Split};
+use crate::rtsp::msg::OwnedMessage;
 use crate::{Error, ErrorInt, RtspMessageContext};
 
 use super::{ConnectionContext, ReceivedMessage, WallTime};
 
+/// Default initial capacity for the read ring buffer (64 KiB).
+const DEFAULT_READ_CAPACITY: usize = 64 * 1024;
+
 /// A RTSP connection which implements `Stream`, `Sink`, and `Unpin`.
-pub(crate) struct Connection(Framed<TcpStream, Codec>);
+pub(crate) struct Connection {
+    stream: TcpStream,
+    ctx: ConnectionContext,
+    parser: crate::rtsp::parse::Parser,
+    read_buf: MarkBuf,
+    /// Write buffer for outgoing messages (written then flushed).
+    write_buf: Vec<u8>,
+}
 
 impl Connection {
     pub(crate) async fn connect(host: Host<&str>, port: u16) -> Result<Self, std::io::Error> {
@@ -34,40 +45,124 @@ impl Connection {
         let established_wall = WallTime::now();
         let local_addr = stream.local_addr()?;
         let peer_addr = stream.peer_addr()?;
-        Ok(Self(Framed::new(
+        Ok(Self {
             stream,
-            Codec {
-                ctx: ConnectionContext {
-                    local_addr,
-                    peer_addr,
-                    established_wall,
-                },
-                read_pos: 0,
+            ctx: ConnectionContext {
+                local_addr,
+                peer_addr,
+                established_wall,
             },
-        )))
+            parser: crate::rtsp::parse::Parser::default(),
+            read_buf: MarkBuf::new(DEFAULT_READ_CAPACITY),
+            write_buf: Vec::new(),
+        })
     }
 
     pub(crate) fn ctx(&self) -> &ConnectionContext {
-        &self.0.codec().ctx
+        &self.ctx
+    }
+
+    pub(crate) fn read_buf(&self) -> &MarkBuf {
+        &self.read_buf
+    }
+
+    /// Reads body data from the ring buffer as `Bytes`.
+    ///
+    /// This copies the data out. Use for cold paths (RTSP responses) or the
+    /// public `PacketItem` API. The `Demuxed` path reads directly from the
+    /// ring buffer to avoid this copy.
+    pub(crate) fn body_bytes(&self, body_pos: u64, body_len: u32) -> bytes::Bytes {
+        let (s1, s2) = self.read_buf.split(body_pos, body_len as usize).slices();
+        let mut buf = Vec::with_capacity(body_len as usize);
+        buf.extend_from_slice(s1);
+        buf.extend_from_slice(s2);
+        bytes::Bytes::from(buf)
     }
 
     pub(crate) fn eof_ctx(&self) -> RtspMessageContext {
         RtspMessageContext {
-            pos: self.0.codec().read_pos + crate::to_u64(self.0.read_buffer().remaining()),
+            pos: self.parser.stream_pos() + self.read_buf.unparsed_len() as u64,
             received_wall: WallTime::now(),
             received: Instant::now(),
         }
     }
+}
 
-    fn wrap_write_err(&self, e: CodecError) -> ErrorInt {
-        match e {
-            CodecError::IoError(source) => ErrorInt::WriteError {
-                conn_ctx: *self.ctx(),
-                source,
-            },
-            CodecError::ParseError { .. } => unreachable!(),
+/// Tries to decode a message from the read buffer without I/O.
+///
+/// Separated from `Connection` methods to avoid self-borrow issues.
+///
+/// When `eof` is true, the TCP stream has closed. `Incomplete` and empty
+/// `Ok(None)` with leftover data are promoted to errors.
+fn try_decode(
+    parser: &mut crate::rtsp::parse::Parser,
+    read_buf: &mut MarkBuf,
+    eof: bool,
+) -> Result<Option<ReceivedMessage>, CodecError> {
+    use crate::rtsp::parse::FeedError;
+
+    let pos = parser.stream_pos();
+    let unparsed = read_buf.unparsed();
+    let mut input = {
+        let split = read_buf.unparsed_split();
+        let (first, second) = split.slices();
+        Split::new(first, second)
+    };
+    let initial_len = input.len();
+
+    match parser.feed(&mut input) {
+        Ok(None) => Ok(None), // idle, no data; caller distinguishes EOF from "need more"
+        Ok(Some((msg, body_slice))) => {
+            let consumed = initial_len - input.len();
+            let body_len = body_slice.len();
+            let body_pos = unparsed + (consumed - body_len) as u64;
+            read_buf.advance_unparsed(unparsed + consumed as u64);
+            Ok(Some(ReceivedMessage {
+                msg,
+                body_pos,
+                body_len: body_len as u32,
+                ctx: RtspMessageContext {
+                    pos,
+                    received_wall: WallTime::now(),
+                    received: Instant::now(),
+                },
+            }))
         }
+        Err(FeedError::Incomplete(_)) if !eof => {
+            // On Incomplete, the parser may have stably consumed some bytes
+            // (e.g. header lines). Advance past them.
+            let consumed = initial_len - input.len();
+            if consumed > 0 {
+                read_buf.advance_unparsed(unparsed + consumed as u64);
+            }
+            Ok(None)
+        }
+        Err(FeedError::Incomplete(inc)) => {
+            // EOF with incomplete data: the message is truncated.
+            Err(CodecError::ParseError {
+                description: format!(
+                    "Incomplete RTSP message at EOF ({inc}); buffered:\n{:#?}",
+                    crate::hex::LimitedHex::from_split(read_buf.unparsed_split(), 128),
+                ),
+                pos,
+            })
+        }
+        Err(FeedError::Invalid(inv)) => Err(CodecError::ParseError {
+            description: format!(
+                "Invalid RTSP message: {inv}; buffered:\n{:#?}",
+                crate::hex::LimitedHex::from_split(read_buf.unparsed_split(), 128),
+            ),
+            pos: inv.pos,
+        }),
     }
+}
+
+/// An intermediate error type used internally.
+#[derive(Debug)]
+#[allow(dead_code)] // IoError reserved for future use
+enum CodecError {
+    IoError(std::io::Error),
+    ParseError { description: String, pos: u64 },
 }
 
 impl Stream for Connection {
@@ -77,209 +172,178 @@ impl Stream for Connection {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        self.0.poll_next_unpin(cx).map_err(|e| {
-            wrap!(match e {
-                CodecError::IoError(error) => ErrorInt::RtspReadError {
-                    conn_ctx: *self.ctx(),
-                    msg_ctx: self.eof_ctx(),
-                    source: error,
-                },
-                CodecError::ParseError { description, pos } => ErrorInt::RtspFramingError {
-                    conn_ctx: *self.ctx(),
-                    msg_ctx: RtspMessageContext {
-                        pos,
-                        received_wall: WallTime::now(),
-                        received: Instant::now(),
-                    },
-                    description,
-                },
-            })
-        })
+        let this = &mut *self;
+        loop {
+            // Try decoding from existing buffered data.
+            match try_decode(&mut this.parser, &mut this.read_buf, false) {
+                Ok(Some(msg)) => return std::task::Poll::Ready(Some(Ok(msg))),
+                Ok(None) => {}
+                Err(e) => {
+                    return std::task::Poll::Ready(Some(Err(codec_err_to_error(
+                        &this.ctx,
+                        &this.parser,
+                        &this.read_buf,
+                        e,
+                    ))));
+                }
+            }
+
+            // Need more data. Read from the stream into the ring buffer
+            // using vectored I/O to fill both halves of the ring.
+            match this.stream.poll_read_ready(cx) {
+                std::task::Poll::Ready(Ok(())) => {}
+                std::task::Poll::Ready(Err(error)) => {
+                    let pos = this.parser.stream_pos() + this.read_buf.unparsed_len() as u64;
+                    return std::task::Poll::Ready(Some(Err(wrap!(ErrorInt::RtspReadError {
+                        conn_ctx: this.ctx,
+                        msg_ctx: RtspMessageContext {
+                            pos,
+                            received_wall: WallTime::now(),
+                            received: Instant::now(),
+                        },
+                        source: error,
+                    }))));
+                }
+                std::task::Poll::Pending => return std::task::Poll::Pending,
+            }
+            let (first, second) = this.read_buf.spare_capacity(4096);
+            let mut bufs = [
+                std::io::IoSliceMut::new(first),
+                std::io::IoSliceMut::new(second),
+            ];
+            match this.stream.try_read_vectored(&mut bufs) {
+                Ok(0) => {
+                    // EOF. Try decode with eof=true.
+                    return match try_decode(&mut this.parser, &mut this.read_buf, true) {
+                        Ok(Some(msg)) => std::task::Poll::Ready(Some(Ok(msg))),
+                        Ok(None) => std::task::Poll::Ready(None),
+                        Err(e) => std::task::Poll::Ready(Some(Err(codec_err_to_error(
+                            &this.ctx,
+                            &this.parser,
+                            &this.read_buf,
+                            e,
+                        )))),
+                    };
+                }
+                Ok(n) => {
+                    this.read_buf.advance_end(n);
+                    // Loop to try decoding again.
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Spurious readiness; re-register and wait.
+                    continue;
+                }
+                Err(error) => {
+                    let pos = this.parser.stream_pos() + this.read_buf.unparsed_len() as u64;
+                    return std::task::Poll::Ready(Some(Err(wrap!(ErrorInt::RtspReadError {
+                        conn_ctx: this.ctx,
+                        msg_ctx: RtspMessageContext {
+                            pos,
+                            received_wall: WallTime::now(),
+                            received: Instant::now(),
+                        },
+                        source: error,
+                    }))));
+                }
+            }
+        }
     }
 }
 
-impl Sink<Message<Bytes>> for Connection {
+fn codec_err_to_error(
+    ctx: &ConnectionContext,
+    parser: &crate::rtsp::parse::Parser,
+    read_buf: &MarkBuf,
+    e: CodecError,
+) -> Error {
+    wrap!(match e {
+        CodecError::IoError(error) => ErrorInt::RtspReadError {
+            conn_ctx: *ctx,
+            msg_ctx: RtspMessageContext {
+                pos: parser.stream_pos() + read_buf.unparsed_len() as u64,
+                received_wall: WallTime::now(),
+                received: Instant::now(),
+            },
+            source: error,
+        },
+        CodecError::ParseError { description, pos } => ErrorInt::RtspFramingError {
+            conn_ctx: *ctx,
+            msg_ctx: RtspMessageContext {
+                pos,
+                received_wall: WallTime::now(),
+                received: Instant::now(),
+            },
+            description,
+        },
+    })
+}
+
+impl Sink<OwnedMessage> for Connection {
     type Error = ErrorInt;
 
     fn poll_ready(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0
-            .poll_ready_unpin(cx)
-            .map_err(|e| self.wrap_write_err(e))
+        std::task::Poll::Ready(Ok(()))
     }
 
     fn start_send(
         mut self: std::pin::Pin<&mut Self>,
-        item: Message<Bytes>,
+        item: OwnedMessage,
     ) -> Result<(), Self::Error> {
-        self.0
-            .start_send_unpin(item)
-            .map_err(|e| self.wrap_write_err(e))
+        self.write_buf.clear();
+        item.write(&mut self.write_buf)
+            .expect("Vec Writer is infallible");
+        Ok(())
     }
 
     fn poll_flush(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0
-            .poll_flush_unpin(cx)
-            .map_err(|e| self.wrap_write_err(e))
+        let this = &mut *self;
+        while !this.write_buf.is_empty() {
+            match std::pin::Pin::new(&mut this.stream).poll_write(cx, &this.write_buf) {
+                std::task::Poll::Ready(Ok(n)) => {
+                    this.write_buf.drain(..n);
+                }
+                std::task::Poll::Ready(Err(e)) => {
+                    return std::task::Poll::Ready(Err(ErrorInt::WriteError {
+                        conn_ctx: this.ctx,
+                        source: e,
+                    }));
+                }
+                std::task::Poll::Pending => return std::task::Poll::Pending,
+            }
+        }
+        match std::pin::Pin::new(&mut this.stream).poll_flush(cx) {
+            std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(ErrorInt::WriteError {
+                conn_ctx: this.ctx,
+                source: e,
+            })),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 
     fn poll_close(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0
-            .poll_close_unpin(cx)
-            .map_err(|e| self.wrap_write_err(e))
-    }
-}
-
-/// Encodes and decodes RTSP messages.
-struct Codec {
-    ctx: ConnectionContext,
-
-    /// Number of bytes read and processed (drained from the input buffer).
-    read_pos: u64,
-}
-
-/// An intermediate error type that exists because [`Framed`] expects the
-/// codec's error type to implement `From<std::io::Error>`, and [`Error`]
-/// takes additional context.
-#[derive(Debug)]
-enum CodecError {
-    IoError(std::io::Error),
-    ParseError { description: String, pos: u64 },
-}
-
-impl std::convert::From<std::io::Error> for CodecError {
-    fn from(e: std::io::Error) -> Self {
-        CodecError::IoError(e)
-    }
-}
-
-impl Codec {
-    fn parse_msg(&self, src: &mut BytesMut) -> Result<Option<(usize, Message<Bytes>)>, CodecError> {
-        // Skip whitespace as `rtsp-types` does. It's important to also do it here, or we might
-        // skip the our own data message encoding (next if) then hit
-        // unreachable! after rtsp-types returns Message::Data.
-        while src.starts_with(b"\r\n") {
-            src.advance(2);
+        match self.as_mut().poll_flush(cx) {
+            std::task::Poll::Ready(Ok(())) => {}
+            other => return other,
         }
-
-        if !src.is_empty() && src[0] == b'$' {
-            // Fast path for interleaved data, avoiding MessageRef -> Message<&[u8]> ->
-            // Message<Bytes> conversion. This speeds things up quite a bit in practice,
-            // avoiding a bunch of memmove calls.
-            if src.len() < 4 {
-                return Ok(None);
-            }
-            let channel_id = src[1];
-            let len = 4 + usize::from(u16::from_be_bytes([src[2], src[3]]));
-            if src.len() < len {
-                src.reserve(len - src.len());
-                return Ok(None);
-            }
-            let mut msg = src.split_to(len);
-            msg.advance(4);
-            return Ok(Some((
-                len,
-                Message::Data(Data::new(channel_id, msg.freeze())),
-            )));
+        let this = &mut *self;
+        match std::pin::Pin::new(&mut this.stream).poll_shutdown(cx) {
+            std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(ErrorInt::WriteError {
+                conn_ctx: this.ctx,
+                source: e,
+            })),
+            std::task::Poll::Pending => std::task::Poll::Pending,
         }
-
-        let (msg, len): (Message<&[u8]>, _) = match Message::parse(src) {
-            Ok((m, l)) => (m, l),
-            Err(rtsp_types::ParseError::Error) => {
-                return Err(CodecError::ParseError {
-                    description: format!(
-                        "Invalid RTSP message; buffered:\n{:#?}",
-                        crate::hex::LimitedHex::new(&src[..], 128),
-                    ),
-                    pos: self.read_pos,
-                });
-            }
-            Err(rtsp_types::ParseError::Incomplete(_)) => return Ok(None),
-        };
-
-        // Map msg's body to a Bytes representation and advance `src`. Awkward:
-        // 1.  lifetime concerns require mapping twice: first so the message
-        //     doesn't depend on the BytesMut, which needs to be split/advanced;
-        //     then to get the proper Bytes body in place post-split.
-        // 2.  rtsp_types messages must be AsRef<[u8]>, so we can't use the
-        //     range as an intermediate body.
-        // 3.  within a match because the rtsp_types::Message enum itself
-        //     doesn't have body/replace_body/map_body methods.
-        let msg = match msg {
-            Message::Request(msg) => {
-                let body_range = crate::as_range(src, msg.body());
-                let msg = msg.replace_body(rtsp_types::Empty);
-                if let Some(r) = body_range {
-                    let mut raw_msg = src.split_to(len);
-                    raw_msg.advance(r.start);
-                    raw_msg.truncate(r.len());
-                    Message::Request(msg.replace_body(raw_msg.freeze()))
-                } else {
-                    src.advance(len);
-                    Message::Request(msg.replace_body(Bytes::new()))
-                }
-            }
-            Message::Response(msg) => {
-                let body_range = crate::as_range(src, msg.body());
-                let msg = msg.replace_body(rtsp_types::Empty);
-                if let Some(r) = body_range {
-                    let mut raw_msg = src.split_to(len);
-                    raw_msg.advance(r.start);
-                    raw_msg.truncate(r.len());
-                    Message::Response(msg.replace_body(raw_msg.freeze()))
-                } else {
-                    src.advance(len);
-                    Message::Response(msg.replace_body(Bytes::new()))
-                }
-            }
-            Message::Data(_) => unreachable!(),
-        };
-        Ok(Some((len, msg)))
-    }
-}
-
-impl tokio_util::codec::Decoder for Codec {
-    type Item = ReceivedMessage;
-    type Error = CodecError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let (len, msg) = match self.parse_msg(src) {
-            Err(e) => return Err(e),
-            Ok(None) => return Ok(None),
-            Ok(Some((len, msg))) => (len, msg),
-        };
-        let msg = ReceivedMessage {
-            msg,
-            ctx: RtspMessageContext {
-                pos: self.read_pos,
-                received_wall: WallTime::now(),
-                received: Instant::now(),
-            },
-        };
-        self.read_pos += crate::to_u64(len);
-        Ok(Some(msg))
-    }
-}
-
-impl tokio_util::codec::Encoder<rtsp_types::Message<Bytes>> for Codec {
-    type Error = CodecError;
-
-    fn encode(
-        &mut self,
-        item: rtsp_types::Message<Bytes>,
-        mut dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        item.write(&mut (&mut dst).writer())
-            .expect("BufMut Writer is infallible");
-        Ok(())
     }
 }
 
@@ -305,18 +369,41 @@ impl UdpPair {
 
 #[cfg(test)]
 mod tests {
-    use tokio_util::codec::Decoder;
-
     use super::*;
 
     #[test]
     fn crlf_data() {
-        let mut codec = Codec {
-            ctx: ConnectionContext::dummy(),
-            read_pos: 0,
-        };
-        let mut buf = BytesMut::from(&b"\r\n$\x00\x00\x04asdfrest"[..]);
-        codec.decode(&mut buf).unwrap();
-        assert_eq!(&buf[..], b"rest");
+        let mut read_buf = MarkBuf::new(64);
+        let data = b"\r\n$\x00\x00\x04asdfrest";
+        let (first, _) = read_buf.spare_capacity(data.len());
+        first[..data.len()].copy_from_slice(data);
+        read_buf.advance_end(data.len());
+
+        let mut parser = crate::rtsp::parse::Parser::default();
+        let msg = try_decode(&mut parser, &mut read_buf, false)
+            .unwrap()
+            .unwrap();
+        // Read body from ring buffer.
+        let (s1, s2) = read_buf.split(msg.body_pos, msg.body_len as usize).slices();
+        assert_eq!(s1, b"asdf");
+        assert!(s2.is_empty());
+        assert_eq!(read_buf.unparsed_len(), 4); // "rest" remains
+    }
+
+    #[test]
+    fn response_decode() {
+        let mut read_buf = MarkBuf::new(64);
+        let data = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n";
+        let (first, _) = read_buf.spare_capacity(data.len());
+        first[..data.len()].copy_from_slice(data);
+        read_buf.advance_end(data.len());
+
+        let mut parser = crate::rtsp::parse::Parser::default();
+        let msg = try_decode(&mut parser, &mut read_buf, false)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(msg.msg, crate::rtsp::msg::Message::Response(_)));
+        assert_eq!(msg.body_len, 0);
+        assert_eq!(read_buf.unparsed_len(), 0);
     }
 }

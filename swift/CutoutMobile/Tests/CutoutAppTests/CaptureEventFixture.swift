@@ -21,7 +21,7 @@ func deliverCaptureFixture(
     }
     let translated: CaptureEvent
     switch event {
-    case let .started(requested, url):
+    case .started(let requested, let url):
         let current = owner.captureLifecycleSnapshot().attempt
         let generation: MobileCaptureGenerationDto
         if requested.rawValue != 0, current?.generation.value == requested.rawValue {
@@ -37,7 +37,7 @@ func deliverCaptureFixture(
         }
         if requested.rawValue != 0 { XCTAssertEqual(generation.value, requested.rawValue) }
         translated = .started(generation: CaptureGeneration(rawValue: generation.value), fileURL: url)
-    case let .progress(generation, progress):
+    case .progress(let generation, let progress):
         let generation = resolve(generation)
         _ = owner.applyCaptureWriterStatus(
             generation: generation.dto,
@@ -48,9 +48,9 @@ func deliverCaptureFixture(
             )
         )
         translated = .progress(generation: generation, progress)
-    case let .notificationRecorded(generation):
+    case .notificationRecorded(let generation):
         translated = .notificationRecorded(generation: resolve(generation))
-    case let .finished(generation, url, artifactId):
+    case .finished(let generation, let url, let artifactId):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(
@@ -68,7 +68,7 @@ func deliverCaptureFixture(
             priorWriteOutcome: .accepted
         )
         translated = .finished(generation: generation, fileURL: url, artifactId: artifactId)
-    case let .databaseFinished(generation, outcome):
+    case .databaseFinished(let generation, let outcome):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(
@@ -77,7 +77,7 @@ func deliverCaptureFixture(
             priorWriteOutcome: .accepted
         )
         translated = .databaseFinished(generation: generation, outcome: outcome)
-    case let .failed(generation):
+    case .failed(let generation):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(
@@ -97,7 +97,8 @@ func deliverCaptureFixture(
 @MainActor
 extension CaptureFeatureModel {
     convenience init(
-        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
+        changeCaptureLabel:
+            @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
             [MobileCaptureLabelDto] = { _, _ in [] }
     ) {
         self.init(sessionState: CutoutSessionStateHandle(), changeCaptureLabel: changeCaptureLabel)

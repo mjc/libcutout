@@ -17,13 +17,15 @@ struct CutoutSessionNotificationEffects {
 
     init(
         applyActions: @escaping ([SessionAction]) -> [MobileCaptureWriteOutcomeDto],
-        observeRideMapConnection: @escaping (
-            ConnectionAttemptToken?, MonotonicMilliseconds, MobileRideMapSpeedObservationDto?
-        ) -> Void,
+        observeRideMapConnection:
+            @escaping (
+                ConnectionAttemptToken?, MonotonicMilliseconds, MobileRideMapSpeedObservationDto?
+            ) -> Void,
         persistBmsSamples: @escaping ([BmsRawVoltageObservation]) -> Void,
-        reduceDisplayState: @escaping (
-            RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds, RideDisplayUpdateKind
-        ) -> RideDisplayState
+        reduceDisplayState:
+            @escaping (
+                RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds, RideDisplayUpdateKind
+            ) -> RideDisplayState
     ) {
         self.applyActions = applyActions
         self.observeRideMapConnection = observeRideMapConnection

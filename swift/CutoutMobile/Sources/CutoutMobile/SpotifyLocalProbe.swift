@@ -7,8 +7,8 @@
     /// Only available through the --spotify-local-probe debug launch argument.
     // Spotify documents that SDK calls and delegate callbacks use the main thread.
     @MainActor @Observable
-    final class SpotifyLocalProbe: NSObject, @preconcurrency SPTAppRemoteDelegate, @preconcurrency
-        SPTAppRemotePlayerStateDelegate
+    final class SpotifyLocalProbe: NSObject, @preconcurrency SPTAppRemoteDelegate,
+        @preconcurrency SPTAppRemotePlayerStateDelegate
     {
         var status = "Ready"
         var title = ""

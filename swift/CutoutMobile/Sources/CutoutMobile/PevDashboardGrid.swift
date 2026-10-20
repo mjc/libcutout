@@ -51,12 +51,15 @@ public struct PevDashboardGrid<Content: View>: View {
 
     private var resolvedColumns: [GridItem] {
         switch layout {
-        case let .fixed(columns):
+        case .fixed(let columns):
             columns
-        case let .adaptive(
-            defaultMinimumColumnWidth,
-            accessibilityMinimumColumnWidth,
-            columnSpacing
+        case .adaptive(
+            let
+                defaultMinimumColumnWidth,
+            let
+                accessibilityMinimumColumnWidth,
+            let
+                columnSpacing
         ):
             [
                 GridItem(

@@ -11,8 +11,8 @@ struct CaptureWriterCompletion {
 
     var artifact: MobileSavedCaptureArtifactDto? {
         switch outcome {
-        case let .artifactAvailable(artifact): artifact
-        case let .databaseFinished(_, _, .available(artifact: artifact), _): artifact
+        case .artifactAvailable(let artifact): artifact
+        case .databaseFinished(_, _, .available(artifact: let artifact), _): artifact
         case .notStarted, .finalizing, .databaseFinished, .failed: nil
         }
     }
@@ -57,10 +57,12 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func publishStarted()
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
-    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+    func settingsObservationWriter() throws
+        -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
         MobileCaptureSettingsObservationDto
     func settingsObservations() throws -> [MobileCaptureSettingsObservationDto]
-    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+    func settingsReadbackBatchReader() throws
+        -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
         [MobileCaptureResearchReadbackDto]
     func flushWriter() -> MobileCaptureFlushOutcomeDto
     @discardableResult func publishProgress() -> CaptureProgress
@@ -94,13 +96,15 @@ protocol CutoutSessionCaptureRecording: AnyObject {
 }
 
 extension CutoutSessionCaptureRecording {
-    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+    func settingsObservationWriter() throws
+        -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
         MobileCaptureSettingsObservationDto
     {
         throw MobileCaptureResearchError.NotRecording
     }
     func settingsObservations() throws -> [MobileCaptureSettingsObservationDto] { [] }
-    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+    func settingsReadbackBatchReader() throws
+        -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
         [MobileCaptureResearchReadbackDto]
     {
         throw MobileCaptureResearchError.NotRecording
@@ -223,7 +227,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         return try builder.changeLabel(action: action)
     }
 
-    func settingsObservationWriter() throws -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
+    func settingsObservationWriter() throws
+        -> @Sendable (MobileCaptureSettingsDraftDto) throws ->
         MobileCaptureSettingsObservationDto
     {
         guard let builder else { throw MobileCaptureResearchError.NotRecording }
@@ -236,7 +241,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         return try builder.settingsObservations()
     }
 
-    func settingsReadbackBatchReader() throws -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
+    func settingsReadbackBatchReader() throws
+        -> @Sendable ([MobileCaptureResearchReadbackRequestDto]) throws ->
         [MobileCaptureResearchReadbackDto]
     {
         guard let builder else { throw MobileCaptureResearchError.NotRecording }

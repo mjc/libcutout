@@ -118,8 +118,8 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
             try Self.diagnose("finishLocationCallback[64]") { try state.finishLocationCallback(last) }
         }.value
         let points = outcomes.compactMap { outcome -> MobileRideMapPointDto? in
-            if case let .accepted(point) = outcome.decision { return point }
-            if case let .storageError(message) = outcome.decision { XCTFail(message) }
+            if case .accepted(let point) = outcome.decision { return point }
+            if case .storageError(let message) = outcome.decision { XCTFail(message) }
             return nil
         }
         XCTAssertEqual(points.count, 65)

@@ -480,7 +480,7 @@ import Foundation
                         withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
                 case .stopScan:
                     central.stopScan()
-                case let .restorePeripheral(identifier):
+                case .restorePeripheral(let identifier):
                     preferredPlatformIdentifier = identifier
                     if let uuid = UUID(uuidString: identifier),
                         let restored = central.retrievePeripherals(withIdentifiers: [uuid]).first
@@ -490,7 +490,7 @@ import Foundation
                         core.handle(event: .restoreUnavailable)
                         syncCore()
                     }
-                case let .connect(identifier):
+                case .connect(let identifier):
                     guard
                         let candidate = discoveredPeripherals[identifier]
                             ?? central.retrievePeripherals(withIdentifiers: [UUID(uuidString: identifier) ?? UUID()])
@@ -502,7 +502,7 @@ import Foundation
                     candidate.delegate = self
                     central.connect(candidate)
                     emitIdentity(rssi: nil)
-                case let .cancelConnect(identifier):
+                case .cancelConnect(let identifier):
                     if let activePeripheral = peripheral,
                         activePeripheral.identifier.uuidString == identifier
                     {
@@ -513,23 +513,23 @@ import Foundation
                     } else if let candidate = discoveredPeripherals[identifier] {
                         central.cancelPeripheralConnection(candidate)
                     }
-                case let .discoverServices(identifier, service):
+                case .discoverServices(let identifier, let service):
                     guard peripheral?.identifier.uuidString == identifier else { continue }
                     peripheral?.discoverServices([service.coreBluetoothUuid])
-                case let .discoverCharacteristics(identifier, service):
+                case .discoverCharacteristics(let identifier, let service):
                     guard peripheral?.identifier.uuidString == identifier,
                         let gattService = peripheral?.services?.first(where: { $0.uuid == service.coreBluetoothUuid })
                     else { continue }
                     peripheral?.discoverCharacteristics(nil, for: gattService)
-                case let .subscribe(identifier, characteristic):
+                case .subscribe(let identifier, let characteristic):
                     guard let target = melkCharacteristic(identifier, uuid: characteristic) else { continue }
                     peripheral?.setNotifyValue(true, for: target)
-                case let .write(identifier, write):
+                case .write(let identifier, let write):
                     guard let targetCharacteristic = melkCharacteristic(identifier, uuid: write.characteristic),
                         targetCharacteristic.properties.contains(.writeWithoutResponse)
                     else { continue }
                     peripheral?.writeValue(Data(write.payload), for: targetCharacteristic, type: .withoutResponse)
-                case let .armTimer(timer, delayMilliseconds):
+                case .armTimer(let timer, let delayMilliseconds):
                     arm(timer, delayMilliseconds: delayMilliseconds)
                 }
             }
@@ -603,12 +603,12 @@ import Foundation
             case .idle: .idle
             case .scanning: .scanning
             case .connecting: .connecting
-            case let .retrying(attempt, delayMilliseconds):
+            case .retrying(let attempt, let delayMilliseconds):
                 .retrying(attempt: Int(attempt), delayMilliseconds: delayMilliseconds)
             case .discovering: .discovering
             case .ready: .ready
             case .disconnected: .disconnected
-            case let .failed(reason): .failed(reason)
+            case .failed(let reason): .failed(reason)
             }
         }
 
