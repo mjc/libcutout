@@ -18,6 +18,7 @@ workspace = true
 
 [dependencies]
 jni.workspace = true
+cutout-application = { path = "../cutout-application", version = "0.1.0" }
 hex.workspace = true
 futures-util.workspace = true
 cutout-music = { path = "../cutout-music", version = "0.1.0" }

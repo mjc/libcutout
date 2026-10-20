@@ -2,6 +2,7 @@ use super::{
     MobileChargingError, MobileChargingSyncOutcome, MobileChargingSyncResult,
     MobileChargingSyncSummaryDto,
 };
+use cutout_application::charging::sync as application;
 
 /// Credential state observed by the native Keychain adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -14,6 +15,19 @@ pub enum MobileChargingSyncCredentialState {
     Deleted,
 }
 
+impl From<MobileChargingSyncCredentialState> for application::CredentialState {
+    fn from(state: MobileChargingSyncCredentialState) -> Self {
+        match state {
+            MobileChargingSyncCredentialState::Missing => Self::Missing,
+            MobileChargingSyncCredentialState::RegistrationStarted => Self::RegistrationStarted,
+            MobileChargingSyncCredentialState::Ready => Self::Ready,
+            MobileChargingSyncCredentialState::Unreadable => Self::Unreadable,
+            MobileChargingSyncCredentialState::DeletionPending => Self::DeletionPending,
+            MobileChargingSyncCredentialState::Deleted => Self::Deleted,
+        }
+    }
+}
+
 /// Native work selected for the observed credential state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileChargingRegistrationAdmission {
@@ -24,12 +38,36 @@ pub enum MobileChargingRegistrationAdmission {
     RequireExplicitRetry,
 }
 
+impl From<application::RegistrationAdmission> for MobileChargingRegistrationAdmission {
+    fn from(admission: application::RegistrationAdmission) -> Self {
+        match admission {
+            application::RegistrationAdmission::BeginRegistration => Self::BeginRegistration,
+            application::RegistrationAdmission::RegisterIdentity => Self::RegisterIdentity,
+            application::RegistrationAdmission::Synchronize => Self::Synchronize,
+            application::RegistrationAdmission::PublicRefresh => Self::PublicRefresh,
+            application::RegistrationAdmission::RequireExplicitRetry => Self::RequireExplicitRetry,
+        }
+    }
+}
+
 /// Action a native adapter executes for one typed sync decision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileChargingSyncAction {
     NextRound,
     Retry { after_seconds: u32 },
     Finished { result: MobileChargingSyncResult },
+}
+
+impl From<application::SyncAction> for MobileChargingSyncAction {
+    fn from(action: application::SyncAction) -> Self {
+        match action {
+            application::SyncAction::NextRound => Self::NextRound,
+            application::SyncAction::Retry { after_seconds } => Self::Retry { after_seconds },
+            application::SyncAction::Finished { result } => Self::Finished {
+                result: result.into(),
+            },
+        }
+    }
 }
 
 /// Progress retained across the bounded run, including request retries.
@@ -42,11 +80,120 @@ pub struct MobileChargingSyncRunState {
     pub uploaded: u32,
 }
 
+impl From<MobileChargingSyncRunState> for application::SyncRunState {
+    fn from(state: MobileChargingSyncRunState) -> Self {
+        Self {
+            round: state.round,
+            attempt: state.attempt,
+            pending_count: state.pending_count,
+            downloaded: state.downloaded,
+            uploaded: state.uploaded,
+        }
+    }
+}
+
+impl From<application::SyncRunState> for MobileChargingSyncRunState {
+    fn from(state: application::SyncRunState) -> Self {
+        Self {
+            round: state.round,
+            attempt: state.attempt,
+            pending_count: state.pending_count,
+            downloaded: state.downloaded,
+            uploaded: state.uploaded,
+        }
+    }
+}
+
 /// One policy result and the complete progress snapshot to publish.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileChargingSyncStep {
     pub state: MobileChargingSyncRunState,
     pub action: MobileChargingSyncAction,
+}
+
+impl From<application::SyncStep> for MobileChargingSyncStep {
+    fn from(step: application::SyncStep) -> Self {
+        Self {
+            state: step.state.into(),
+            action: step.action.into(),
+        }
+    }
+}
+
+impl From<MobileChargingSyncResult> for application::SyncResult {
+    fn from(result: MobileChargingSyncResult) -> Self {
+        match result {
+            MobileChargingSyncResult::Synced => Self::Synced,
+            MobileChargingSyncResult::Pending => Self::Pending,
+            MobileChargingSyncResult::Conflict => Self::Conflict,
+            MobileChargingSyncResult::Rejected => Self::Rejected,
+            MobileChargingSyncResult::AuthenticationRequired => Self::AuthenticationRequired,
+            MobileChargingSyncResult::Throttled => Self::Throttled,
+            MobileChargingSyncResult::Offline => Self::Offline,
+            MobileChargingSyncResult::StorageUnavailable => Self::StorageUnavailable,
+        }
+    }
+}
+
+impl From<application::SyncResult> for MobileChargingSyncResult {
+    fn from(result: application::SyncResult) -> Self {
+        match result {
+            application::SyncResult::Synced => Self::Synced,
+            application::SyncResult::Pending => Self::Pending,
+            application::SyncResult::Conflict => Self::Conflict,
+            application::SyncResult::Rejected => Self::Rejected,
+            application::SyncResult::AuthenticationRequired => Self::AuthenticationRequired,
+            application::SyncResult::Throttled => Self::Throttled,
+            application::SyncResult::Offline => Self::Offline,
+            application::SyncResult::StorageUnavailable => Self::StorageUnavailable,
+        }
+    }
+}
+
+impl From<MobileChargingSyncOutcome> for application::SyncOutcome {
+    fn from(outcome: MobileChargingSyncOutcome) -> Self {
+        match outcome {
+            MobileChargingSyncOutcome::MoreWork => Self::MoreWork,
+            MobileChargingSyncOutcome::Finished { result } => Self::Finished {
+                result: result.into(),
+            },
+        }
+    }
+}
+
+impl From<MobileChargingSyncSummaryDto> for application::SyncSummary {
+    fn from(summary: MobileChargingSyncSummaryDto) -> Self {
+        Self {
+            pending_count: summary.pending_count,
+            downloaded: summary.downloaded,
+            uploaded: summary.uploaded,
+            outcome: summary.outcome.into(),
+        }
+    }
+}
+
+impl From<MobileChargingError> for application::SyncError {
+    fn from(error: MobileChargingError) -> Self {
+        match error {
+            MobileChargingError::Unauthorized => Self::Unauthorized,
+            MobileChargingError::Conflict => Self::Conflict,
+            MobileChargingError::Rejected => Self::Rejected,
+            MobileChargingError::Throttled => Self::Throttled,
+            MobileChargingError::Network => Self::Network,
+            MobileChargingError::Unavailable => Self::Unavailable,
+            MobileChargingError::InvalidPin
+            | MobileChargingError::AccessNoteBlank
+            | MobileChargingError::AccessNoteTooLong
+            | MobileChargingError::AccessNoteControlCharacter
+            | MobileChargingError::InvalidMetadata
+            | MobileChargingError::InvalidIdentifier
+            | MobileChargingError::InvalidLimit
+            | MobileChargingError::NotOwned
+            | MobileChargingError::NotFound
+            | MobileChargingError::OutboxFull
+            | MobileChargingError::StorageFailure => Self::StorageFailure,
+        }
+    }
 }
 
 /// Selects whether native code may register, sync, or refresh public data.
@@ -56,58 +203,17 @@ pub fn mobile_charging_registration_admission(
     state: MobileChargingSyncCredentialState,
     explicit_retry: bool,
 ) -> MobileChargingRegistrationAdmission {
-    match state {
-        MobileChargingSyncCredentialState::Missing => {
-            MobileChargingRegistrationAdmission::BeginRegistration
-        }
-        MobileChargingSyncCredentialState::RegistrationStarted if explicit_retry => {
-            MobileChargingRegistrationAdmission::RegisterIdentity
-        }
-        MobileChargingSyncCredentialState::RegistrationStarted => {
-            MobileChargingRegistrationAdmission::RequireExplicitRetry
-        }
-        MobileChargingSyncCredentialState::Ready => {
-            MobileChargingRegistrationAdmission::Synchronize
-        }
-        MobileChargingSyncCredentialState::Unreadable
-        | MobileChargingSyncCredentialState::DeletionPending
-        | MobileChargingSyncCredentialState::Deleted => {
-            MobileChargingRegistrationAdmission::PublicRefresh
-        }
-    }
+    application::registration_admission(state.into(), explicit_retry).into()
 }
 
 /// Adds one Rust sync result and selects the next run action.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_charging_sync_observe_summary(
-    mut state: MobileChargingSyncRunState,
+    state: MobileChargingSyncRunState,
     summary: MobileChargingSyncSummaryDto,
 ) -> MobileChargingSyncStep {
-    state.pending_count = summary.pending_count;
-    state.downloaded = state.downloaded.saturating_add(summary.downloaded);
-    state.uploaded = state.uploaded.saturating_add(summary.uploaded);
-
-    match summary.outcome {
-        MobileChargingSyncOutcome::MoreWork if state.round < 2 => {
-            state.attempt = 0;
-            state.round += 1;
-            step(state, MobileChargingSyncAction::NextRound)
-        }
-        MobileChargingSyncOutcome::MoreWork => finish(state, MobileChargingSyncResult::Pending),
-        MobileChargingSyncOutcome::Finished {
-            result: MobileChargingSyncResult::Offline,
-        } => observe_failure(state, MobileChargingError::Network),
-        MobileChargingSyncOutcome::Finished { result } => finish(state, result),
-    }
-}
-
-fn finish(
-    mut state: MobileChargingSyncRunState,
-    result: MobileChargingSyncResult,
-) -> MobileChargingSyncStep {
-    state.attempt = 0;
-    step(state, MobileChargingSyncAction::Finished { result })
+    application::observe_summary(state.into(), summary.into()).into()
 }
 
 /// Selects a bounded retry or terminal result while retaining progress.
@@ -117,7 +223,7 @@ pub fn mobile_charging_sync_observe_error(
     state: MobileChargingSyncRunState,
     error: MobileChargingError,
 ) -> MobileChargingSyncStep {
-    observe_failure(state, error)
+    application::observe_error(state.into(), error.into()).into()
 }
 
 /// Maps a protocol error to its stable sync result.
@@ -127,292 +233,186 @@ pub fn mobile_charging_sync_result(error: MobileChargingError) -> MobileCharging
     result_for_error(error)
 }
 
-/// Converts an error into its terminal sync result.
-#[must_use]
 pub(super) fn result_for_error(error: MobileChargingError) -> MobileChargingSyncResult {
-    match error {
-        MobileChargingError::Unauthorized => MobileChargingSyncResult::AuthenticationRequired,
-        MobileChargingError::Conflict => MobileChargingSyncResult::Conflict,
-        MobileChargingError::Rejected => MobileChargingSyncResult::Rejected,
-        MobileChargingError::Throttled => MobileChargingSyncResult::Throttled,
-        MobileChargingError::Network | MobileChargingError::Unavailable => {
-            MobileChargingSyncResult::Offline
-        }
-        _ => MobileChargingSyncResult::StorageUnavailable,
-    }
-}
-
-fn observe_failure(
-    mut state: MobileChargingSyncRunState,
-    error: MobileChargingError,
-) -> MobileChargingSyncStep {
-    if error == MobileChargingError::Network && state.attempt < 2 {
-        let after_seconds = 1 << state.attempt;
-        state.attempt += 1;
-        return step(state, MobileChargingSyncAction::Retry { after_seconds });
-    }
-    step(
-        state,
-        MobileChargingSyncAction::Finished {
-            result: result_for_error(error),
-        },
-    )
-}
-
-fn step(
-    state: MobileChargingSyncRunState,
-    action: MobileChargingSyncAction,
-) -> MobileChargingSyncStep {
-    MobileChargingSyncStep { state, action }
+    application::result_for_error(error.into()).into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn summary(
-        pending_count: u32,
-        downloaded: u32,
-        uploaded: u32,
-        outcome: MobileChargingSyncOutcome,
-    ) -> MobileChargingSyncSummaryDto {
-        MobileChargingSyncSummaryDto {
-            pending_count,
-            downloaded,
-            uploaded,
-            outcome,
+    #[test]
+    fn registration_export_preserves_admission_for_each_credential_state() {
+        let cases = [
+            (
+                MobileChargingSyncCredentialState::Missing,
+                false,
+                MobileChargingRegistrationAdmission::BeginRegistration,
+            ),
+            (
+                MobileChargingSyncCredentialState::RegistrationStarted,
+                false,
+                MobileChargingRegistrationAdmission::RequireExplicitRetry,
+            ),
+            (
+                MobileChargingSyncCredentialState::RegistrationStarted,
+                true,
+                MobileChargingRegistrationAdmission::RegisterIdentity,
+            ),
+            (
+                MobileChargingSyncCredentialState::Ready,
+                true,
+                MobileChargingRegistrationAdmission::Synchronize,
+            ),
+            (
+                MobileChargingSyncCredentialState::Unreadable,
+                false,
+                MobileChargingRegistrationAdmission::PublicRefresh,
+            ),
+            (
+                MobileChargingSyncCredentialState::DeletionPending,
+                true,
+                MobileChargingRegistrationAdmission::PublicRefresh,
+            ),
+            (
+                MobileChargingSyncCredentialState::Deleted,
+                true,
+                MobileChargingRegistrationAdmission::PublicRefresh,
+            ),
+        ];
+
+        for (state, explicit_retry, expected) in cases {
+            assert_eq!(
+                mobile_charging_registration_admission(state, explicit_retry),
+                expected
+            );
         }
     }
 
     #[test]
-    fn registration_admission_requires_explicit_retry_for_uncertain_state() {
-        assert_eq!(
-            mobile_charging_registration_admission(
-                MobileChargingSyncCredentialState::RegistrationStarted,
-                false,
+    fn all_mobile_errors_keep_their_existing_sync_result_mapping() {
+        let cases = [
+            (
+                MobileChargingError::Unauthorized,
+                MobileChargingSyncResult::AuthenticationRequired,
             ),
-            MobileChargingRegistrationAdmission::RequireExplicitRetry
-        );
-        assert_eq!(
-            mobile_charging_registration_admission(
-                MobileChargingSyncCredentialState::RegistrationStarted,
-                true,
+            (
+                MobileChargingError::Conflict,
+                MobileChargingSyncResult::Conflict,
             ),
-            MobileChargingRegistrationAdmission::RegisterIdentity
-        );
-        assert_eq!(
-            mobile_charging_registration_admission(
-                MobileChargingSyncCredentialState::Missing,
-                false,
+            (
+                MobileChargingError::Rejected,
+                MobileChargingSyncResult::Rejected,
             ),
-            MobileChargingRegistrationAdmission::BeginRegistration
-        );
-        assert_eq!(
-            mobile_charging_registration_admission(MobileChargingSyncCredentialState::Ready, false,),
-            MobileChargingRegistrationAdmission::Synchronize
-        );
-        assert_eq!(
-            mobile_charging_registration_admission(
-                MobileChargingSyncCredentialState::Unreadable,
-                true,
+            (
+                MobileChargingError::Throttled,
+                MobileChargingSyncResult::Throttled,
             ),
-            MobileChargingRegistrationAdmission::PublicRefresh
-        );
+            (
+                MobileChargingError::Network,
+                MobileChargingSyncResult::Offline,
+            ),
+            (
+                MobileChargingError::Unavailable,
+                MobileChargingSyncResult::Offline,
+            ),
+            (
+                MobileChargingError::InvalidPin,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::AccessNoteBlank,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::AccessNoteTooLong,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::AccessNoteControlCharacter,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::InvalidMetadata,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::InvalidIdentifier,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::InvalidLimit,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::NotOwned,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::NotFound,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::OutboxFull,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+            (
+                MobileChargingError::StorageFailure,
+                MobileChargingSyncResult::StorageUnavailable,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(mobile_charging_sync_result(error), expected, "{error:?}");
+        }
     }
 
     #[test]
-    fn retries_only_network_errors_with_bounded_delays_and_keeps_progress() {
-        let state = MobileChargingSyncRunState {
-            pending_count: 2,
-            downloaded: 3,
-            uploaded: 4,
-            ..Default::default()
-        };
-        let first = mobile_charging_sync_observe_error(state, MobileChargingError::Network);
-        assert_eq!(
-            first.action,
-            MobileChargingSyncAction::Retry { after_seconds: 1 }
+    fn summary_export_preserves_progress_and_action() {
+        let step = mobile_charging_sync_observe_summary(
+            MobileChargingSyncRunState {
+                round: 1,
+                attempt: 1,
+                pending_count: 8,
+                downloaded: 4,
+                uploaded: 3,
+            },
+            MobileChargingSyncSummaryDto {
+                pending_count: 2,
+                downloaded: 2,
+                uploaded: 5,
+                outcome: MobileChargingSyncOutcome::MoreWork,
+            },
         );
-        assert_eq!(first.state.downloaded, 3);
-        assert_eq!(first.state.uploaded, 4);
-        let second = mobile_charging_sync_observe_error(first.state, MobileChargingError::Network);
-        assert_eq!(
-            second.action,
-            MobileChargingSyncAction::Retry { after_seconds: 2 }
-        );
-        let last = mobile_charging_sync_observe_error(second.state, MobileChargingError::Network);
-        assert_eq!(
-            last.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Offline
-            }
-        );
-        assert_eq!(last.state.pending_count, 2);
-        assert_eq!(last.state.attempt, 2);
+
+        assert_eq!(step.state.round, 2);
+        assert_eq!(step.state.attempt, 0);
+        assert_eq!(step.state.pending_count, 2);
+        assert_eq!(step.state.downloaded, 6);
+        assert_eq!(step.state.uploaded, 8);
+        assert_eq!(step.action, MobileChargingSyncAction::NextRound);
     }
 
     #[test]
-    fn offline_summary_uses_the_same_bounded_retry_budget_as_an_error() {
-        let first = mobile_charging_sync_observe_summary(
-            MobileChargingSyncRunState::default(),
-            summary(2, 1, 3, offline()),
-        );
-        assert_eq!(
-            first.action,
-            MobileChargingSyncAction::Retry { after_seconds: 1 }
-        );
-        let second = mobile_charging_sync_observe_summary(first.state, summary(2, 0, 0, offline()));
-        assert_eq!(
-            second.action,
-            MobileChargingSyncAction::Retry { after_seconds: 2 }
-        );
-        let terminal =
-            mobile_charging_sync_observe_summary(second.state, summary(2, 0, 0, offline()));
-        assert_eq!(
-            terminal.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Offline
-            }
-        );
-        assert_eq!(terminal.state.downloaded, 1);
-        assert_eq!(terminal.state.uploaded, 3);
-        assert_eq!(terminal.state.attempt, 2);
-    }
-
-    #[test]
-    fn summary_decisions_accumulate_progress_and_bound_rounds() {
-        let first = mobile_charging_sync_observe_summary(
-            MobileChargingSyncRunState::default(),
-            summary(2, 3, 1, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(first.action, MobileChargingSyncAction::NextRound);
-        let second = mobile_charging_sync_observe_summary(
-            first.state,
-            summary(1, 2, 3, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(second.action, MobileChargingSyncAction::NextRound);
-        assert_eq!(second.state.downloaded, 5);
-        assert_eq!(second.state.uploaded, 4);
-        let final_step = mobile_charging_sync_observe_summary(
-            second.state,
-            summary(1, 4, 2, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(
-            final_step.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Pending
-            }
-        );
-        assert_eq!(final_step.state.round, 2);
-        assert_eq!(final_step.state.downloaded, 9);
-        assert_eq!(final_step.state.uploaded, 6);
-    }
-
-    #[test]
-    fn pending_outbox_work_continues_until_the_round_limit() {
-        let first = mobile_charging_sync_observe_summary(
-            MobileChargingSyncRunState::default(),
-            summary(9, 0, 8, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(first.action, MobileChargingSyncAction::NextRound);
-        let second = mobile_charging_sync_observe_summary(
-            first.state,
-            summary(1, 0, 8, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(second.action, MobileChargingSyncAction::NextRound);
-        let final_step = mobile_charging_sync_observe_summary(
-            second.state,
-            summary(1, 0, 8, MobileChargingSyncOutcome::MoreWork),
-        );
-        assert_eq!(
-            final_step.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Pending
-            }
-        );
-        assert_eq!(final_step.state.uploaded, 24);
-    }
-
-    #[test]
-    fn terminal_conflict_and_rejection_keep_the_current_round_progress() {
-        let progress = MobileChargingSyncRunState {
-            downloaded: 3,
-            uploaded: 1,
-            ..Default::default()
-        };
-        let conflict = mobile_charging_sync_observe_summary(
-            progress,
-            summary(2, 4, 5, finished(MobileChargingSyncResult::Conflict)),
-        );
-        assert_eq!(
-            conflict.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Conflict
-            }
-        );
-        assert_eq!(conflict.state.pending_count, 2);
-        assert_eq!(conflict.state.downloaded, 7);
-        assert_eq!(conflict.state.uploaded, 6);
-        let rejected = mobile_charging_sync_observe_summary(
-            progress,
-            summary(1, 2, 3, finished(MobileChargingSyncResult::Rejected)),
-        );
-        assert_eq!(
-            rejected.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Rejected
-            }
-        );
-        assert_eq!(rejected.state.downloaded, 5);
-        assert_eq!(rejected.state.uploaded, 4);
-    }
-
-    fn finished(result: MobileChargingSyncResult) -> MobileChargingSyncOutcome {
-        MobileChargingSyncOutcome::Finished { result }
-    }
-
-    fn offline() -> MobileChargingSyncOutcome {
-        finished(MobileChargingSyncResult::Offline)
-    }
-
-    #[test]
-    fn unavailable_errors_are_offline_without_being_retried() {
+    fn network_error_export_preserves_bounded_retry_and_existing_native_shape() {
         let step = mobile_charging_sync_observe_error(
             MobileChargingSyncRunState {
                 attempt: 1,
+                pending_count: 3,
+                downloaded: 4,
+                uploaded: 5,
                 ..Default::default()
             },
-            MobileChargingError::Unavailable,
+            MobileChargingError::Network,
         );
+
         assert_eq!(
             step.action,
-            MobileChargingSyncAction::Finished {
-                result: MobileChargingSyncResult::Offline
-            }
+            MobileChargingSyncAction::Retry { after_seconds: 2 }
         );
-        assert_eq!(step.state.attempt, 1);
-        assert_eq!(
-            mobile_charging_sync_result(MobileChargingError::Unavailable),
-            MobileChargingSyncResult::Offline
-        );
-    }
-}
-
-#[cfg(test)]
-mod account_deletion_tests {
-    use super::*;
-    #[test]
-    fn deleted_credentials_never_admit_registration_or_authenticated_sync() {
-        for state in [
-            MobileChargingSyncCredentialState::DeletionPending,
-            MobileChargingSyncCredentialState::Deleted,
-        ] {
-            for explicit_retry in [false, true] {
-                assert_eq!(
-                    mobile_charging_registration_admission(state, explicit_retry),
-                    MobileChargingRegistrationAdmission::PublicRefresh
-                );
-            }
-        }
+        assert_eq!(step.state.attempt, 2);
+        assert_eq!(step.state.pending_count, 3);
+        assert_eq!(step.state.downloaded, 4);
+        assert_eq!(step.state.uploaded, 5);
     }
 }

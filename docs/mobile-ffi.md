@@ -4,6 +4,25 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
+## Shared application services
+
+`cutout-application` provides portable application operations for direct Rust
+clients and the native binding adapter. It has no dependency on UniFFI or a UI
+toolkit. Its charging services own nearby discovery, synchronization admission
+and retry decisions, and revision-aware map reconciliation. The corresponding
+`cutout-mobile-ffi` exports convert inputs and results and delegate to those
+services; their existing Swift and Kotlin API remains the binding contract.
+
+Discovery retains the caller's filter value without interpreting it. Reconciliation
+uses the caller's row through `ChargingObservation`, preserving its payload while
+applying shared revision, visibility, and withdrawal rules. This lets Rust callers
+use ordinary application/domain values while bindings retain their native records.
+
+Other application workflows are still hosted in the mobile binding crate and
+are being extracted separately. Native adapters continue to own platform handles
+and effects. Link the application library through the final process composition
+so consumers share the same session and database owners.
+
 ## Native shell ownership
 
 Swift supplies Apple API observations and executes native effects. Portable
