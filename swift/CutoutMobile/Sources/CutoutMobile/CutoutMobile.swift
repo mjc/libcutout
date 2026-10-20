@@ -3878,17 +3878,8 @@ public enum EucRideLiveValidationField: String, Equatable, Hashable, Sendable {
     case thermal
 }
 
-public enum ControllerOnlyEstimateConfidence: Equatable, Hashable, Sendable {
-    case medium
-    case low
-    case unknown
-}
-
-public enum ControllerOnlyEstimateDetail: Equatable, Hashable, Sendable {
-    case recentSag
-    case voltageCurve
-    case unavailable
-}
+public typealias ControllerOnlyEstimateConfidence = MobileControllerBatteryConfidenceDto
+public typealias ControllerOnlyEstimateDetail = MobileControllerBatteryEstimateDetailDto
 
 public struct BmsNoDataPresentation: Equatable, Hashable, Sendable {
     public let controllerEstimateMetricValue: PevDashboardMetricValue
@@ -3899,28 +3890,22 @@ public struct BmsNoDataPresentation: Equatable, Hashable, Sendable {
     public let loadMetricValue: PevDashboardMetricValue
 
     public init(snapshot: BmsSnapshot, rideState: EucRideScreenState?) {
-        let fallbackEstimateDetail: ControllerOnlyEstimateDetail
-        let fallbackConfidence: ControllerOnlyEstimateConfidence
-        if snapshot.voltage != nil, snapshot.current != nil {
-            fallbackEstimateDetail = .recentSag
-            fallbackConfidence = .medium
-        } else if snapshot.voltage != nil {
-            fallbackEstimateDetail = .voltageCurve
-            fallbackConfidence = .low
-        } else {
-            fallbackEstimateDetail = .unavailable
-            fallbackConfidence = snapshot.energyPercent == nil ? .unknown : .low
+        let fallback = MobileControllerBatteryReadingsDto(
+            reportedLevel: snapshot.energyPercent, estimatedLevel: nil,
+            voltage: snapshot.voltage, current: snapshot.current, voltageSag: nil)
+        let input: MobileControllerBatteryInputDto =
+            rideState.map {
+                .live(telemetry: $0.controllerBatteryReadings, snapshot: fallback)
+            } ?? .snapshot(readings: fallback)
+        let projection = mobileControllerBatteryProjection(input: input)
+        controllerEstimateMetricValue = bmsMetricValue(projection.level) {
+            RideUnits.decimalString(Double($0.value), fractionDigits: 0)
         }
-
-        let telemetry = rideState?.telemetry
-        controllerEstimateMetricValue = snapshot.noDataPackEstimateMetricValue(
-            controllerEstimatePercent: rideState?.controllerOnlyEstimatePercent
-        )
-        controllerEstimateDetail = rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
-        controllerConfidence = rideState?.controllerOnlyConfidence ?? fallbackConfidence
-        packVoltageMetricValue = bmsPackVoltageMetricValue(telemetry?.voltage ?? snapshot.voltage)
-        rideSagMetricValue = bmsVoltageSagMetricValue(rideState?.voltageSag)
-        loadMetricValue = bmsBatteryCurrentMetricValue(telemetry?.batteryCurrent ?? snapshot.current)
+        controllerEstimateDetail = projection.detail
+        controllerConfidence = projection.confidence
+        packVoltageMetricValue = bmsPackVoltageMetricValue(projection.voltage)
+        rideSagMetricValue = bmsVoltageSagMetricValue(projection.voltageSag)
+        loadMetricValue = bmsBatteryCurrentMetricValue(projection.current)
     }
 }
 
@@ -4021,28 +4006,32 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         return .available(display: text, accessibility: text)
     }
 
+    fileprivate var controllerBatteryReadings: MobileControllerBatteryReadingsDto {
+        MobileControllerBatteryReadingsDto(
+            reportedLevel: telemetry?.batteryLevelReported,
+            estimatedLevel: telemetry?.batteryLevelEstimated,
+            voltage: telemetry?.voltage, current: telemetry?.batteryCurrent,
+            voltageSag: telemetry?.voltageSag)
+    }
+
+    private var controllerBatteryProjection: MobileControllerBatteryProjectionDto {
+        mobileControllerBatteryProjection(
+            input: .live(
+                telemetry: controllerBatteryReadings,
+                snapshot: MobileControllerBatteryReadingsDto(
+                    reportedLevel: nil, estimatedLevel: nil, voltage: nil, current: nil, voltageSag: nil)))
+    }
+
     public var controllerOnlyEstimatePercent: BatteryLevel? {
-        telemetry?.batteryLevelReported ?? telemetry?.batteryLevelEstimated
+        controllerBatteryProjection.level
     }
 
     public var controllerOnlyEstimateDetail: ControllerOnlyEstimateDetail {
-        if telemetry?.voltage != nil, voltageSag != nil {
-            return .recentSag
-        }
-        if telemetry?.voltage != nil {
-            return .voltageCurve
-        }
-        return .unavailable
+        controllerBatteryProjection.detail
     }
 
     public var controllerOnlyConfidence: ControllerOnlyEstimateConfidence {
-        if controllerOnlyEstimatePercent != nil, voltageSag != nil {
-            return .medium
-        }
-        if controllerOnlyEstimatePercent != nil || telemetry?.voltage != nil {
-            return .low
-        }
-        return .unknown
+        controllerBatteryProjection.confidence
     }
 
     public func updateAge(

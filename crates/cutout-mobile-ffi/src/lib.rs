@@ -18,6 +18,8 @@ mod raw_settings;
 pub use raw_settings::*;
 mod phone_alarm;
 pub use phone_alarm::*;
+mod controller_battery;
+pub use controller_battery::*;
 mod capture_labels;
 pub use capture_labels::*;
 mod capture_research;
