@@ -190,6 +190,9 @@ impl VescCaptureReplaySession {
         context: &CapturedVescDrivetrainContext,
     ) -> Option<VescReplayRejection> {
         let previous = self.scope.as_ref()?;
+        if previous.attempt().platform_identifier() != context.attempt().platform_identifier() {
+            return Some(VescReplayRejection::UnsupportedTarget);
+        }
         if previous.attempt() != context.attempt() {
             return (context.attempt().generation() <= previous.attempt().generation())
                 .then_some(VescReplayRejection::RetiredAttempt);
@@ -343,6 +346,17 @@ mod tests {
         generation: u64,
         at: u64,
     ) -> PevcapRecord {
+        record_on_platform("board-a", diameter, circumference, revision, generation, at)
+    }
+
+    fn record_on_platform(
+        platform: &str,
+        diameter: u32,
+        circumference: u64,
+        revision: u64,
+        generation: u64,
+        at: u64,
+    ) -> PevcapRecord {
         PevcapRecord::inbound_notification(
             MonotonicTimestamp::new(at),
             crate::VESC_NOTIFY_CHANNEL,
@@ -358,7 +372,7 @@ mod tests {
             library_version: "original-library".to_owned(),
             snapshot_json: serde_json::json!({
                 "vesc_drivetrain_context": {
-                    "connection_attempt": {"generation":generation,"platform_identifier":"board-a"},
+                    "connection_attempt": {"generation":generation,"platform_identifier":platform},
                     "revision":revision,"source":"user_configured",
                     "wheel_diameter_micrometres":diameter,"wheel_circumference_mm":circumference,
                     "motor_pole_pairs":7,"motor_to_wheel_ratio_milli":2500
@@ -520,6 +534,106 @@ mod tests {
                 current.telemetry.speed_observed_at_ms
             );
             assert_eq!(replayed.telemetry.speed, current.telemetry.speed);
+        }
+    }
+
+    #[test]
+    fn captured_geometry_replay_rejects_foreign_platform_without_retiring_local_frame() {
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            for generation in [3, 2, 1] {
+                let mut host = host(policy);
+                ingest(&mut host, &record(90_000, 283, 1, 2, 100));
+                let mut start = record(90_000, 283, 1, 2, 110);
+                let rest = start.bytes.slice(7..);
+                start.bytes = start.bytes.slice(..7);
+                let before = ingest(&mut host, &start);
+                let scope = host.protocol_session().scope.clone();
+                let foreign = record_on_platform("board-b", 100_000, 314, 2, generation, 200);
+                let original = foreign.clone();
+
+                let ignored = ingest(&mut host, &foreign);
+                assert_eq!(
+                    ignored.disposition,
+                    VescReplayRecordDisposition::Ignored(VescReplayRejection::UnsupportedTarget)
+                );
+                assert_eq!(ignored.telemetry, before.telemetry);
+                assert_eq!(ignored.geometry, before.geometry);
+                assert_eq!(
+                    ignored.captured_geometry,
+                    foreign.captured_vesc_drivetrain()
+                );
+                assert_eq!(ignored.original, foreign.semantic_telemetry);
+                assert_eq!(foreign, original);
+                assert_eq!(host.protocol_session().scope, scope);
+                assert_eq!(
+                    host.protocol_session().last_receipt,
+                    Some(start.monotonic_ms)
+                );
+
+                let mut end = record(90_000, 283, 1, 2, 120);
+                end.bytes = rest;
+                let completed = ingest(&mut host, &end);
+                assert_eq!(completed.disposition, VescReplayRecordDisposition::Accepted);
+                assert_eq!(completed.telemetry.speed, before.telemetry.speed);
+                assert_eq!(
+                    completed.telemetry.speed_observed_at_ms,
+                    Some(end.monotonic_ms)
+                );
+                let mut outputs = Vec::new();
+                host.drain_outputs_into(&mut outputs);
+                assert!(
+                    !outputs
+                        .iter()
+                        .any(|output| matches!(output, SessionOutput::Transport(_)))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn captured_geometry_replay_accepts_same_platform_advance_and_new_link_platform() {
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            let mut host = host(policy);
+            ingest(&mut host, &record(90_000, 283, 2, 1, 100));
+            let next = record(100_000, 314, 1, 2, 200);
+            let advanced = ingest(&mut host, &next);
+            assert_eq!(advanced.disposition, VescReplayRecordDisposition::Accepted);
+            assert_eq!(
+                advanced.telemetry.speed_observed_at_ms,
+                Some(next.monotonic_ms)
+            );
+            assert_eq!(advanced.captured_geometry, next.captured_vesc_drivetrain());
+
+            let link = PevcapRecord::link_up(MonotonicTimestamp::new(300), None);
+            VescCaptureReplaySession::observe_record(PevcapReplayRecord::Before(&link), &mut host);
+            host.ingest_link_up(LinkInfo {
+                monotonic_ms: link.monotonic_ms,
+                max_write_len: None,
+            });
+            let new_platform = record_on_platform("board-b", 90_000, 283, 1, 1, 310);
+            let accepted = ingest(&mut host, &new_platform);
+            assert_eq!(accepted.disposition, VescReplayRecordDisposition::Accepted);
+            assert_eq!(
+                accepted.captured_geometry,
+                new_platform.captured_vesc_drivetrain()
+            );
+            assert_eq!(
+                accepted.telemetry.speed_observed_at_ms,
+                Some(new_platform.monotonic_ms)
+            );
+            let mut outputs = Vec::new();
+            host.drain_outputs_into(&mut outputs);
+            assert!(
+                !outputs
+                    .iter()
+                    .any(|output| matches!(output, SessionOutput::Transport(_)))
+            );
         }
     }
 
