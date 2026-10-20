@@ -415,6 +415,39 @@
     "ride_map.history_search" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Search rides" } } }
     },
+    "setup.saved_device.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved device" } } }
+    },
+    "setup.saved_device.status" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cutout reconnects to your saved device when it is available." } } }
+    },
+    "setup.saved_device.forget" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget saved device" } } }
+    },
+    "setup.saved_device.retry" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry forgetting device" } } }
+    },
+    "setup.saved_device.confirm_title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget saved device?" } } }
+    },
+    "setup.saved_device.confirm_message" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect this device and stop reconnecting to it automatically. You can connect again from Devices." } } }
+    },
+    "setup.saved_device.success" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved device forgotten." } } }
+    },
+    "setup.saved_device.failure" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t forget the saved device. Try again." } } }
+    },
+    "setup.saved_device.loading" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading saved device…" } } }
+    },
+    "setup.saved_device.forgetting" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forgetting device…" } } }
+    },
+    "setup.saved_device.load_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t load the saved device. Try again." } } }
+    },
     "setup.ride_autostart" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride autostart" } } }
     },
@@ -444,6 +477,24 @@
     },
     "captures.labels_failed" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't record this label. Try again or stop and save the capture." } } }
+    },
+    "captures.events" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Events" } } }
+    },
+    "captures.stored_bytes" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stored bytes" } } }
+    },
+    "captures.model" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Model" } } }
+    },
+    "captures.export_recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export recording" } } }
+    },
+    "captures.detail.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "captures.retry" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
     },
     "captures.title" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth Captures" } } }
