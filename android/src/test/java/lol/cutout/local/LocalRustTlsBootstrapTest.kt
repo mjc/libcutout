@@ -14,7 +14,7 @@ abstract class RustTlsBootstrapContract {
     @Test
     fun applicationStartupAndRepeatedCallsResolveTheNativeBootstrap() {
         // Robolectric already called the production Application.onCreate hook.
-        val application = RuntimeEnvironment.getApplication<CutoutApplication>()
+        val application = RuntimeEnvironment.getApplication()
         RustTlsPlatformVerifier.initialize(application.applicationContext)
     }
 }

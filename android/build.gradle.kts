@@ -63,19 +63,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets["main"].apply {
-        java.srcDir(repository.resolve("target/uniffi-smoke/kotlin"))
-        jniLibs.srcDir(repository.resolve("target/android-tests/jniLibs"))
-        res.srcDir(repository.resolve("target/android-tests/resources"))
+        kotlin.directories += repository.resolve("target/uniffi-smoke/kotlin").path
+        jniLibs.directories += repository.resolve("target/android-tests/jniLibs").path
+        res.directories += repository.resolve("target/android-tests/resources").path
     }
     sourceSets["androidTest"].apply {
-        java.srcDirs(repository.resolve("tests/mobile-ffi/shared"),
-            repository.resolve("target/uniffi-smoke/replay"))
+        kotlin.directories += listOf(
+            repository.resolve("tests/mobile-ffi/shared").path,
+            repository.resolve("target/uniffi-smoke/replay").path,
+        )
     }
     sourceSets["test"].apply {
         // Compile the same behavioral tests for instrumentation and Robolectric.
-        java.srcDirs(repository.resolve("android/src/androidTest/java"),
-            repository.resolve("tests/mobile-ffi/shared"),
-            repository.resolve("target/uniffi-smoke/replay"))
+        kotlin.directories += listOf(
+            repository.resolve("android/src/androidTest/java").path,
+            repository.resolve("tests/mobile-ffi/shared").path,
+            repository.resolve("target/uniffi-smoke/replay").path,
+        )
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
