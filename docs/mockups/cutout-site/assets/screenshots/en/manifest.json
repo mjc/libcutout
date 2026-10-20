@@ -5,25 +5,22 @@
     {
       "scene": "euc-main",
       "file": "euc-main.png",
-      "caption": "EUC main with music",
-      "method": "native-ios-simulator-xctest",
-      "label": "Native capture · synthetic data",
+      "caption": "Parked Ride with music",
+      "method": "native-ios-device-screenshot",
+      "label": "iPhone screenshot",
       "dimensionsPixels": {
         "width": 1290,
         "height": 2796
       },
-      "sha256": "3d40c69d912a6f7312779ee87db671d41e25647e08ecf89cfa7c4748bcb2584b",
-      "syntheticData": "Synthetic EUC telemetry and fictional music metadata.",
+      "sha256": "2d1632fa78b7d1ea3293e4b524f3f1a959abb2275f8a7305f898d24da5571c03",
       "provenance": {
-        "testSourceRevision": "89dfa2e5f61ff4e4a9e159f5ee8c43b09b86f3f2",
-        "appBuildRevision": "f2d0bb1e0550eafcd3833d58de38b1be29075e99",
-        "testIdentifier": "CutoutWebsiteScreenshotTests/testEucMain()",
-        "testCaseOutcome": "passed",
-        "batchOutcome": "failed",
-        "batchSummary": "Three cases passed and one failed; this screenshot case passed.",
+        "appBuildRevision": "4483781480bea7be0505b9ca315a9601c0d3061e",
+        "appVersion": "1.0 (2026.10.1902)",
+        "capturedAt": "2026-10-19T21:34:00-06:00",
         "device": "iPhone 15 Pro Max",
-        "runtime": "iOS 27.0"
-      }
+        "capture": "Device screenshot of the iPhone Mirroring display; cropped to the original 1290 × 2796 phone viewport, without resizing or changing its pixels."
+      },
+      "visibleState": "Parked Aero; 0.0 mph, 100% PWM headroom, 93% battery, 123.2 V, 0.00 kW and 32 °C; Spotify player visible."
     },
     {
       "scene": "rgb",
