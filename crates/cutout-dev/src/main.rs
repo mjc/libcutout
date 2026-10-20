@@ -370,35 +370,8 @@ fn regenerate_swift_ffi(
         fs::remove_dir_all(&cargo_package)?;
     }
     run(
-        command("cargo")
-            // The child retains the same kernel lock if this coordinator is killed.
-            .stdin(lock.try_clone()?)
-            .current_dir(snapshot.path.join("crates/cutout-mobile-ffi"))
-            .env(
-                "CARGO_TARGET_DIR",
-                root.join("target/swift-ffi/rust-target"),
-            )
-            .args([
-                "swift",
-                "package",
-                "--platforms",
-                "ios@18",
-                "macos@15",
-                "--release",
-                "--name",
-                "CutoutMobileFFI",
-                "--lib-type",
-                "static",
-                "--exclude-arch",
-                "x86_64-apple-ios",
-                "--exclude-arch",
-                "x86_64-apple-darwin",
-                "--skip-toolchains-check",
-                "--accept-all",
-                "--swift-tools-version",
-                "6.0",
-                "--silent",
-            ]),
+        // The child retains the same kernel lock if this coordinator is killed.
+        swift_ffi_package_command(root, &snapshot.path).stdin(lock.try_clone()?),
         "generate Swift FFI package",
     )?;
     regenerate_swift_bindings(root, &snapshot.path, &cargo_package, lock)?;
@@ -416,6 +389,42 @@ fn regenerate_swift_ffi(
     seal_swift_ffi(root, &cargo_package, expected, checker)?;
     publish_swift_ffi(root, &cargo_package, expected, lock)?;
     Ok(())
+}
+
+fn swift_ffi_package_command(root: &Path, snapshot: &Path) -> Command {
+    let mut command = command("cargo");
+    command
+        .current_dir(snapshot.join("crates/cutout-mobile-ffi"))
+        .env(
+            "CARGO_TARGET_DIR",
+            root.join("target/swift-ffi/rust-target"),
+        )
+        // Match the native products for both rustc and C build scripts; their
+        // defaults differ, and Cargo Swift's platforms only set package metadata.
+        .env("IPHONEOS_DEPLOYMENT_TARGET", "27.0")
+        .env("MACOSX_DEPLOYMENT_TARGET", "27.0")
+        .args([
+            "swift",
+            "package",
+            "--platforms",
+            "ios@27",
+            "macos@27",
+            "--release",
+            "--name",
+            "CutoutMobileFFI",
+            "--lib-type",
+            "static",
+            "--exclude-arch",
+            "x86_64-apple-ios",
+            "--exclude-arch",
+            "x86_64-apple-darwin",
+            "--skip-toolchains-check",
+            "--accept-all",
+            "--swift-tools-version",
+            "6.4",
+            "--silent",
+        ]);
+    command
 }
 
 /// Cargo Swift owns native compilation and bundling; the workspace-pinned
@@ -1520,6 +1529,45 @@ mod tests {
     fn workspace_context_rejects_an_unrelated_directory() {
         let outside = tempfile::tempdir().unwrap();
         assert_eq!(workspace_root_from_context(None, outside.path()), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swift_ffi_generator_propagates_product_minimum_to_native_compilers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = tempfile::tempdir().unwrap();
+        fs::create_dir_all(snapshot.path().join("crates/cutout-mobile-ffi")).unwrap();
+        let probe = root.path().join("cargo");
+        fs::write(
+            &probe,
+            "#!/bin/sh\nprintf '%s\\n' \"${IPHONEOS_DEPLOYMENT_TARGET-unset}\" \"${MACOSX_DEPLOYMENT_TARGET-unset}\" \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Execute the production generator boundary without compiling Rust or C.
+        // Both compiler families inherit these variables through Cargo Swift.
+        let output = swift_ffi_package_command(root.path(), snapshot.path())
+            .env("PATH", root.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let output = String::from_utf8(output.stdout).unwrap();
+        let lines: Vec<_> = output.lines().collect();
+        assert_eq!(lines[..2], ["27.0", "27.0"]);
+        let platforms = lines
+            .iter()
+            .position(|line| *line == "--platforms")
+            .unwrap();
+        assert_eq!(lines[platforms + 1..platforms + 3], ["ios@27", "macos@27"]);
+        // Cargo Swift emits .v27, which requires PackageDescription 6.4.
+        let tools = lines
+            .iter()
+            .position(|line| *line == "--swift-tools-version")
+            .unwrap();
+        assert_eq!(lines[tools + 1], "6.4");
     }
 
     #[test]
