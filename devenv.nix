@@ -43,6 +43,7 @@ let
   androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
   androidNdkHost = if pkgs.stdenv.isDarwin then "darwin-x86_64" else "linux-x86_64";
   androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android21-clang";
+  androidLlvmAr = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/llvm-ar";
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
@@ -86,8 +87,10 @@ in
   env.CUTOUT_ANDROID_BUILD_TOOLS = androidBuildTools;
   env.CUTOUT_JNA_VERSION = pkgs.jna.version;
   env.CC_aarch64_linux_android = androidArm64Clang;
+  env.AR_aarch64_linux_android = androidLlvmAr;
   env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidArm64Clang;
   env.CC_x86_64_linux_android = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
+  env.AR_x86_64_linux_android = androidLlvmAr;
   env.CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/x86_64-linux-android21-clang";
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
