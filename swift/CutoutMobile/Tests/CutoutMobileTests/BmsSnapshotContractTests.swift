@@ -27,6 +27,22 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.powerPresentation, .unavailable)
     }
 
+    func testCurrentThatDisplaysZeroOmitsDirectionWithoutChangingTheReading() {
+        for milliamps in [UInt32(0), 1, 49] {
+            for current in [
+                BatteryCurrent.unknown(milliamps: milliamps),
+                .currentIn(milliamps: milliamps),
+                .currentOut(milliamps: milliamps),
+            ] {
+                XCTAssertEqual(current.displayText, "0.0 A")
+                XCTAssertEqual(current.magnitudeMilliamps, milliamps)
+            }
+        }
+        XCTAssertEqual(BatteryCurrent.unknown(milliamps: 51).displayText, "0.1 A · direction unknown")
+        XCTAssertEqual(BatteryCurrent.currentIn(milliamps: 51).displayText, "0.1 A in")
+        XCTAssertEqual(BatteryCurrent.currentOut(milliamps: 51).displayText, "0.1 A out")
+    }
+
     func testBmsCellMapPresentationResolvesFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("bms.cell_map.groups_visible", Int64(4)), "4 groups visible")
         XCTAssertEqual(pevLocalizedText("bms.cell_map.flagged", "17, 18"), "groups 17, 18 flagged")

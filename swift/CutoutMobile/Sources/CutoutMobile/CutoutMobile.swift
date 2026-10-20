@@ -14,6 +14,9 @@ extension BatteryCurrent {
 
     public var displayText: String {
         let magnitude = RideUnits.currentText(milliamps: magnitudeMilliamps)
+        if magnitude == RideUnits.currentText(milliamps: 0) {
+            return pevLocalizedText("battery.current.zero", magnitude)
+        }
         return switch self {
         case .zero: pevLocalizedText("battery.current.zero", magnitude)
         case .currentIn: pevLocalizedText("battery.current.in", magnitude)
