@@ -1,10 +1,16 @@
 //! Atomic identity evidence admission for native recording adapters.
 
+use std::sync::Arc;
+
+use cutout_application::capture_writer::{
+    CaptureAnnotationError, CaptureIdentityChange, CaptureIdentityWrite,
+};
+use cutout_core::ConnectionAttemptToken;
+
 use crate::{
-    CaptureWriteOutcome, CaptureWriterSlot, CutoutSessionStateHandle,
-    DiscoveryElectricUnicycleModel, MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder,
-    MobileProtocolFamilyDto, MobileResolvedIdentityDto, MobileVerificationStatusDto,
-    MobileVerifiedStringDto, format_pevcap_annotation,
+    CutoutSessionStateHandle, DiscoveryElectricUnicycleModel, MobileCaptureWriteOutcomeDto,
+    MobilePevcapCaptureBuilder, MobileProtocolFamilyDto, MobileResolvedIdentityDto,
+    MobileVerificationStatusDto, MobileVerifiedStringDto,
 };
 
 /// Capture identity from a protocol-confirmed model, never a provisional picker selection.
@@ -31,46 +37,50 @@ pub fn capture_resolved_identity(
         firmware: None,
     })
 }
+
+fn map_identity_write(
+    write: Result<CaptureIdentityWrite, CaptureAnnotationError>,
+) -> MobileCaptureWriteOutcomeDto {
+    match write {
+        Ok(CaptureIdentityWrite::Unchanged | CaptureIdentityWrite::Accepted) => {
+            MobileCaptureWriteOutcomeDto::Accepted
+        }
+        Err(CaptureAnnotationError::CapacityReached) => MobileCaptureWriteOutcomeDto::Rejected,
+        Err(CaptureAnnotationError::AdmissionLost { dropped_messages }) => {
+            MobileCaptureWriteOutcomeDto::AdmissionLost { dropped_messages }
+        }
+        Err(CaptureAnnotationError::NotRecording | CaptureAnnotationError::WriterFailed) => {
+            MobileCaptureWriteOutcomeDto::Failed
+        }
+    }
+}
+
 #[uniffi::export]
 impl CutoutSessionStateHandle {
     /// Reconciles protocol proof for the capture's original connection attempt.
     /// Pending attempts bind ownership without publishing identity; conflicts revoke proof.
-    #[allow(clippy::needless_pass_by_value)] // UniFFI receives an owned object handle.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn update_capture_identity(
         &self,
         token: crate::MobileConnectionAttemptTokenDto,
-        builder: std::sync::Arc<MobilePevcapCaptureBuilder>,
+        builder: Arc<MobilePevcapCaptureBuilder>,
     ) -> Option<MobileCaptureWriteOutcomeDto> {
+        let owner_id = self.capture_identity_owner_id;
         let owner = self.lock_inner();
-        let token: cutout_core::ConnectionAttemptToken = token.into();
-        if builder.platform_id != token.platform_identifier() {
+        let token: ConnectionAttemptToken = token.into();
+        if builder.writer.platform_id() != token.platform_identifier() {
             return None;
         }
-        let update = owner.capture_identity(&token)?;
-        let mut admission = builder
-            .capture_identity_admission
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let expected = crate::CaptureIdentityAdmission {
-            owner_id: self.capture_identity_owner_id,
-            token: token.clone(),
-        };
-        match admission.as_ref() {
-            Some(bound) if bound != &expected => return None,
-            Some(_) => {}
-            None => {
-                match &update {
-                    cutout_protocols::CaptureIdentityUpdate::Invalidated => return None,
-                    cutout_protocols::CaptureIdentityUpdate::Unresolved
-                    | cutout_protocols::CaptureIdentityUpdate::Resolved(_) => {}
-                }
-                *admission = Some(expected);
+        let update = owner.capture_identity_update(&token)?;
+        let (change, evidence, detail) = match update {
+            cutout_protocols::CaptureIdentityUpdate::Unresolved => {
+                (CaptureIdentityChange::Unresolved, None, None)
             }
-        }
-        let (identity, evidence, detail) = match update {
-            cutout_protocols::CaptureIdentityUpdate::Unresolved => return None,
+            cutout_protocols::CaptureIdentityUpdate::Invalidated => {
+                (CaptureIdentityChange::Invalidated, None, None)
+            }
             cutout_protocols::CaptureIdentityUpdate::Resolved(identity) => {
-                let resolution = owner.detector().resolution(owner.session_state());
+                let resolution = owner.detector_resolution();
                 let display_name = resolution
                     .advertised_name
                     .as_ref()
@@ -82,41 +92,42 @@ impl CutoutSessionStateHandle {
                     display_name,
                     resolution.into(),
                 );
-                (identity, Some(candidate.evidence), Some(candidate.detail))
+                (
+                    CaptureIdentityChange::Resolved(identity),
+                    Some(candidate.evidence),
+                    Some(candidate.detail),
+                )
             }
-            cutout_protocols::CaptureIdentityUpdate::Invalidated => (
-                cutout_core::PevcapResolvedIdentity {
-                    protocol_family: None,
-                    model: None,
-                    firmware: None,
-                },
-                None,
-                None,
-            ),
         };
-        // Keep both ownership locks through admission. Invalidating protocol proof
-        // consumes no annotation capacity and preserves historical provenance.
-        builder.update_capture_identity_metadata(identity, evidence, detail)
+        let write = builder
+            .writer
+            .reconcile_capture_identity(owner_id, token, change, evidence, detail)?;
+        match write {
+            Ok(CaptureIdentityWrite::Unchanged) => None,
+            other => Some(map_identity_write(other)),
+        }
     }
 }
-
-use std::sync::PoisonError;
 
 #[uniffi::export]
 impl MobilePevcapCaptureBuilder {
     /// Admits identity and its evidence in one metadata update. Rejection preserves
     /// the last admitted identity and annotations, including label-closure capacity.
+    #[must_use]
     pub fn update_resolved_identity(
         &self,
         identity: MobileResolvedIdentityDto,
         evidence: Option<String>,
         detail: Option<String>,
     ) -> MobileCaptureWriteOutcomeDto {
-        self.update_capture_identity_metadata(identity.into(), evidence, detail)
-            .unwrap_or(MobileCaptureWriteOutcomeDto::Accepted)
+        map_identity_write(
+            self.writer
+                .update_resolved_identity(identity.into(), evidence, detail),
+        )
     }
 }
 
+#[cfg(test)]
 impl MobilePevcapCaptureBuilder {
     fn update_capture_identity_metadata(
         &self,
@@ -124,50 +135,13 @@ impl MobilePevcapCaptureBuilder {
         evidence: Option<String>,
         detail: Option<String>,
     ) -> Option<MobileCaptureWriteOutcomeDto> {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Ready | CaptureWriterSlot::Recording(_) => {}
-            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => {
-                return Some(MobileCaptureWriteOutcomeDto::Failed);
-            }
+        match self
+            .writer
+            .update_resolved_identity(identity, evidence, detail)
+        {
+            Ok(CaptureIdentityWrite::Unchanged) => None,
+            other => Some(map_identity_write(other)),
         }
-        let mut metadata = self.metadata();
-        let mut annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut candidate = annotations.clone();
-        let additions = [
-            evidence.map(|value| format_pevcap_annotation("resolved_evidence".into(), value)),
-            detail.map(|value| format_pevcap_annotation("resolved_detail".into(), value)),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|entry| !annotations.entries().contains(entry));
-        if candidate.try_append(additions).is_err() {
-            return Some(MobileCaptureWriteOutcomeDto::Rejected);
-        }
-        let identity = Some(identity);
-        if metadata.resolved_identity == identity && candidate.entries() == annotations.entries() {
-            return None;
-        }
-        metadata.resolved_identity.clone_from(&identity);
-        metadata.annotations = candidate.entries().to_vec();
-        if let Some(writer) = writer.as_ref() {
-            match writer.update_metadata(metadata) {
-                CaptureWriteOutcome::Accepted => {}
-                outcome @ (CaptureWriteOutcome::AdmissionLost { .. }
-                | CaptureWriteOutcome::Failed) => {
-                    return Some(outcome.into());
-                }
-            }
-        }
-        *self
-            .resolved_identity
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = identity;
-        *annotations = candidate;
-        Some(MobileCaptureWriteOutcomeDto::Accepted)
     }
 }
 
@@ -334,7 +308,10 @@ mod tests {
             handle.update_capture_identity(token.clone(), builder.clone()),
             Some(MobileCaptureWriteOutcomeDto::Accepted)
         );
-        builder.add_annotation("protocol_detection_resolved=vesc".into());
+        assert_eq!(
+            builder.add_annotation("protocol_detection_resolved=vesc".into()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         while builder.metadata().annotations.len() < cutout_core::PEVCAP_MAX_ANNOTATIONS {
             let index = builder.metadata().annotations.len();
             assert_eq!(
@@ -457,7 +434,7 @@ mod tests {
             old_metadata.resolved_identity
         );
         let before = fresh_builder.metadata();
-        *fresh_builder.writer.lock().unwrap() = crate::CaptureWriterSlot::Finalizing;
+        fresh_builder.writer.retire_metadata_admission();
         assert_eq!(
             handle.update_capture_identity(fresh, fresh_builder.clone()),
             Some(MobileCaptureWriteOutcomeDto::Failed)
@@ -561,7 +538,10 @@ mod tests {
         assert_eq!(builder.metadata().annotations, annotations);
         let full = self::builder();
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS - 1 {
-            full.add_annotation(format!("note={index}"));
+            assert_eq!(
+                full.add_annotation(format!("note={index}")),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         assert_eq!(
             handle.update_capture_identity(token, full.clone()),

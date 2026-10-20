@@ -1,11 +1,10 @@
 use super::{
     MobileChargingConnectorDto, MobileChargingError, MobileChargingFieldIssueDto as FieldIssue,
     MobileChargingFilterDto, MobileChargingInputDto, MobileChargingPriceDto, MobileChargingSpotDto,
-    MobileChargingSupplyDto, MobileChargingTermsDto, MobileChargingValidationFieldDto as Field,
-    MobileChargingValidationReasonDto as Reason, MobileChargingVenueDto,
-    MobileChargingWriteReceiptDto,
+    MobileChargingSupplyDto, MobileChargingValidationFieldDto as Field,
+    MobileChargingValidationReasonDto as Reason, MobileChargingWriteReceiptDto,
 };
-use crate::{mobile_map_coordinate, mobile_map_coordinate_dto, persistence, ride_maps};
+use crate::{mobile_map_coordinate_dto, persistence, ride_maps};
 use uuid::Uuid;
 
 #[allow(
@@ -47,10 +46,6 @@ pub(super) fn supply(
 pub(super) fn supply_checked(
     value: MobileChargingSupplyDto,
 ) -> Result<ride_maps::ChargingSupply, ride_maps::ChargingInputError> {
-    let voltage = value
-        .voltage_volts
-        .map(ride_maps::SupplyVoltage::new)
-        .transpose()?;
     let connectors = value
         .connectors
         .into_iter()
@@ -63,7 +58,11 @@ pub(super) fn supply_checked(
                 .map_err(|_| ride_maps::ChargingInputError::Text),
         })
         .collect::<Result<_, _>>()?;
-    ride_maps::ChargingSupply::new(voltage, connectors)?.with_outlet_count(value.outlet_count)
+    cutout_application::charging::validation::charging_supply_checked(
+        value.voltage_volts,
+        connectors,
+        value.outlet_count,
+    )
 }
 pub(super) fn input(
     value: MobileChargingInputDto,
@@ -80,138 +79,66 @@ pub(super) fn input(
 pub(super) fn input_checked(
     value: MobileChargingInputDto,
 ) -> Result<ride_maps::NewChargingSpot, FieldIssue> {
-    let coordinate = mobile_map_coordinate(value.coordinate)
-        .map_err(|_| field_issue(Field::Coordinate, Reason::Invalid))?;
-    let minimum = checked_minimum(coordinate, &value.access_note, value.cost.into())?;
-    let price = charging_price_checked(value.price)
-        .map_err(|_| field_issue(Field::Payment, Reason::Invalid))?;
-    let supplies = checked_supplies(value.supplies)?;
-    let details = checked_details(
-        value.name.as_deref(),
-        value.venue,
-        value.hours.as_deref(),
-        value.terms,
-        price,
-        supplies,
-    )?;
-    minimum.with_details(details).map_err(|error| {
-        let reason = match error {
-            ride_maps::ChargingInputError::PaidDetailsForFree => Reason::PaymentForFree,
-            _ => Reason::Invalid,
-        };
-        field_issue(Field::Payment, reason)
-    })
-}
-
-fn checked_minimum(
-    coordinate: ride_maps::Coordinate,
-    access_note: &str,
-    cost: ride_maps::ChargingCost,
-) -> Result<ride_maps::NewChargingSpot, FieldIssue> {
-    ride_maps::NewChargingSpot::new(coordinate, access_note, cost).map_err(|error| {
-        let reason = match error {
-            ride_maps::AccessNoteError::Blank => Reason::Required,
-            ride_maps::AccessNoteError::TooLong => Reason::TooLong,
-            ride_maps::AccessNoteError::ControlCharacter => Reason::ControlCharacter,
-        };
-        field_issue(Field::AccessNote, reason)
-    })
-}
-
-fn checked_supplies(
-    supplies: Vec<MobileChargingSupplyDto>,
-) -> Result<Vec<ride_maps::ChargingSupply>, FieldIssue> {
-    supplies
-        .into_iter()
-        .enumerate()
-        .map(|(index, supply)| {
-            let supply_index =
-                u32::try_from(index).map_err(|_| field_issue(Field::Supply, Reason::TooMany))?;
-            supply_checked(supply).map_err(|error| FieldIssue {
-                field: Field::Supply,
-                reason: supply_reason(error),
-                supply_index: Some(supply_index),
+    use cutout_application::charging::validation as app;
+    let input = app::ChargingEditorInput {
+        latitude_degrees: value.coordinate.latitude_degrees,
+        longitude_degrees: value.coordinate.longitude_degrees,
+        access_note: value.access_note,
+        cost: value.cost.into(),
+        name: value.name,
+        venue: value.venue.map(Into::into),
+        hours: value.hours,
+        terms: value.terms.map(Into::into),
+        price: value.price.map(|price| app::ChargingEditorPrice {
+            amount_minor: price.amount_minor,
+            currency: price.currency,
+            minor_unit_exponent: price.minor_unit_exponent,
+            basis: price.basis.into(),
+        }),
+        supplies: value
+            .supplies
+            .into_iter()
+            .map(|supply| app::ChargingEditorSupply {
+                voltage_volts: supply.voltage_volts,
+                connectors: supply
+                    .connectors
+                    .into_iter()
+                    .map(|connector| match connector {
+                        MobileChargingConnectorDto::Other { label } => {
+                            app::ChargingEditorConnector::Other(label)
+                        }
+                        connector => match connector.try_into() {
+                            Ok(connector) => app::ChargingEditorConnector::Known(connector),
+                            Err(_) => app::ChargingEditorConnector::Other(String::new()),
+                        },
+                    })
+                    .collect(),
+                outlet_count: supply.outlet_count,
             })
-        })
-        .collect()
-}
-
-fn checked_details(
-    name: Option<&str>,
-    venue: Option<MobileChargingVenueDto>,
-    hours: Option<&str>,
-    terms: Option<MobileChargingTermsDto>,
-    price: Option<ride_maps::ChargingPrice>,
-    supplies: Vec<ride_maps::ChargingSupply>,
-) -> Result<ride_maps::ChargingDetails, FieldIssue> {
-    validate_detail_text(name, hours)?;
-    charging_details_checked(name, venue, hours, terms, price, supplies).map_err(
-        |error| match error {
-            ride_maps::ChargingInputError::TooManySupplies => {
-                field_issue(Field::Supply, Reason::TooMany)
-            }
-            _ => field_issue(Field::Payment, Reason::Invalid),
+            .collect(),
+    };
+    app::validate_charging_editor(input).map_err(|issue| FieldIssue {
+        field: match issue.field {
+            app::ChargingEditorField::Coordinate => Field::Coordinate,
+            app::ChargingEditorField::AccessNote => Field::AccessNote,
+            app::ChargingEditorField::Name => Field::Name,
+            app::ChargingEditorField::Hours => Field::Hours,
+            app::ChargingEditorField::Payment => Field::Payment,
+            app::ChargingEditorField::Supply => Field::Supply,
         },
-    )
-}
-
-fn validate_detail_text(name: Option<&str>, hours: Option<&str>) -> Result<(), FieldIssue> {
-    charging_details_checked(name, None, None, None, None, Vec::new())
-        .map_err(|_| field_issue(Field::Name, Reason::Invalid))?;
-    charging_details_checked(None, None, hours, None, None, Vec::new())
-        .map(|_| ())
-        .map_err(|_| field_issue(Field::Hours, Reason::Invalid))
-}
-
-fn field_issue(field: Field, reason: Reason) -> FieldIssue {
-    FieldIssue {
-        field,
-        reason,
-        supply_index: None,
-    }
-}
-
-fn charging_price_checked(
-    price: Option<MobileChargingPriceDto>,
-) -> Result<Option<ride_maps::ChargingPrice>, ride_maps::ChargingInputError> {
-    price
-        .map(|price| {
-            ride_maps::ChargingPrice::new(
-                price.amount_minor,
-                &price.currency,
-                price.minor_unit_exponent,
-                price.basis.into(),
-            )
-        })
-        .transpose()
-}
-
-fn supply_reason(error: ride_maps::ChargingInputError) -> super::MobileChargingValidationReasonDto {
-    use super::MobileChargingValidationReasonDto as Reason;
-    match error {
-        ride_maps::ChargingInputError::TooManyConnectors => Reason::TooMany,
-        ride_maps::ChargingInputError::DuplicateConnector => Reason::Duplicate,
-        ride_maps::ChargingInputError::UnknownConnectorCombined => Reason::UnknownCombined,
-        _ => Reason::Invalid,
-    }
-}
-
-fn charging_details_checked(
-    name: Option<&str>,
-    venue: Option<MobileChargingVenueDto>,
-    hours: Option<&str>,
-    terms: Option<MobileChargingTermsDto>,
-    price: Option<ride_maps::ChargingPrice>,
-    supplies: Vec<ride_maps::ChargingSupply>,
-) -> Result<ride_maps::ChargingDetails, ride_maps::ChargingInputError> {
-    ride_maps::ChargingDetails::new(
-        name,
-        venue.map(Into::into),
-        hours,
-        terms.map(Into::into),
-        price,
-        supplies,
-    )
+        reason: match issue.reason {
+            app::ChargingEditorReason::Invalid => Reason::Invalid,
+            app::ChargingEditorReason::Required => Reason::Required,
+            app::ChargingEditorReason::TooLong => Reason::TooLong,
+            app::ChargingEditorReason::ControlCharacter => Reason::ControlCharacter,
+            app::ChargingEditorReason::TooMany => Reason::TooMany,
+            app::ChargingEditorReason::Duplicate => Reason::Duplicate,
+            app::ChargingEditorReason::UnknownCombined => Reason::UnknownCombined,
+            app::ChargingEditorReason::PaymentForFree => Reason::PaymentForFree,
+            app::ChargingEditorReason::Incomplete => Reason::Incomplete,
+        },
+        supply_index: issue.supply_index,
+    })
 }
 
 fn invalid_metadata(_: impl std::fmt::Debug) -> MobileChargingError {
@@ -382,6 +309,7 @@ fn charging_voltage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::charging::dto::{MobileChargingTermsDto, MobileChargingVenueDto};
 
     #[test]
     fn connector_catalogue_normalizes_location_and_preserves_invalid_location_fallback() {

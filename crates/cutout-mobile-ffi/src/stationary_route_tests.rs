@@ -25,8 +25,6 @@ fn connect_core(
     assert!(
         session
             .lock_inner()
-            .session_state_mut()
-            .connection
             .finish_detection(&token.clone().into(), true)
     );
     let admission = session

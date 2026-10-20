@@ -297,16 +297,12 @@ impl MobileRideMapConnectionAdmission {
 impl RideDatabaseHandle {
     /// Waits for queued BMS receipts on a background executor; no idle poll is required.
     pub fn finish_bms_voltage_writes(&self) -> Vec<MobileBmsVoltageWriteOutcomeDto> {
-        let mut pending = self
-            .pending_bms_writes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        pending
-            .writes
-            .drain(..)
-            .map(|item| MobileBmsVoltageWriteOutcomeDto {
-                request_id: item.request_id,
-                error: item.write.wait_result().err().map(map_ride_database_error),
+        self.application
+            .finish_bms_voltage_writes()
+            .into_iter()
+            .map(|outcome| MobileBmsVoltageWriteOutcomeDto {
+                request_id: outcome.request_id,
+                error: outcome.result.err().map(map_ride_database_error),
             })
             .collect()
     }

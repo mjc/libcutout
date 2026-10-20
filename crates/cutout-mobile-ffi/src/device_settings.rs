@@ -721,10 +721,6 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileDeviceSessionStepDto, MobileDeviceSettingRequestError> {
         let mut inner = self.lock_inner();
         inner
-            .session_state_mut()
-            .settings
-            .require_managed_transport();
-        inner
             .submit_setting(
                 &token.into(),
                 id.into(),
@@ -1320,7 +1316,7 @@ mod tests {
             .token
             .unwrap();
         handle.connection_link_established(token.clone());
-        handle.lock_inner().session_state_mut().settings.submission(
+        handle.lock_inner().record_setting_submission(
             SettingId::HighBeam,
             DeviceSettingValue::Boolean(true),
             cutout_core::SettingSubmissionOutcome::Accepted,
@@ -1640,7 +1636,7 @@ mod tests {
             .token
             .unwrap();
         let mut inner = handle.lock_inner();
-        inner.session_state_mut().settings.observe_measured(
+        inner.observe_setting_measured(
             SettingId::PwmTiltback,
             cutout_core::Measured {
                 value: DeviceSettingValue::Disabled,

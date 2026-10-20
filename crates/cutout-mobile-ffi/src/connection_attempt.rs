@@ -165,8 +165,6 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionRetryDecisionDto {
         let mut inner = self.lock_inner();
         inner
-            .session_state_mut()
-            .connection
             .request_retry(
                 &token.into(),
                 MonotonicTimestamp::new(now_ms),
@@ -192,8 +190,6 @@ impl CutoutSessionStateHandle {
     /// Cancels only the matching timer and clears its consecutive retry budget.
     pub fn cancel_connection_retry(&self, token: u64) -> bool {
         self.lock_inner()
-            .session_state_mut()
-            .connection
             .cancel_retry(cutout_core::ConnectionRetryToken::new(token))
     }
 
@@ -201,8 +197,6 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn connection_retry_deadline(&self, token: u64) -> Option<u64> {
         self.lock_inner()
-            .session_state()
-            .connection
             .retry_deadline(cutout_core::ConnectionRetryToken::new(token))
             .map(MonotonicTimestamp::get)
     }
@@ -213,10 +207,7 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner
-            .session_state_mut()
-            .connection
-            .connected(&token.into());
+        inner.connected(&token.into());
         inner.session_state().connection.snapshot().into()
     }
 
@@ -355,10 +346,7 @@ impl CutoutSessionStateHandle {
         now_ms: u64,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner
-            .session_state_mut()
-            .connection
-            .expire(&token.into(), MonotonicTimestamp::new(now_ms));
+        inner.expire_attempt(&token.into(), MonotonicTimestamp::new(now_ms));
         inner.session_state().connection.snapshot().into()
     }
 
@@ -429,8 +417,6 @@ mod tests {
         assert!(
             handle
                 .lock_inner()
-                .session_state_mut()
-                .connection
                 .finish_detection(&token.clone().into(), true)
         );
         let admission = handle
@@ -456,12 +442,7 @@ mod tests {
         assert!(!handle.verified_connection_attempt_is_current(token.clone()));
         {
             let mut inner = handle.lock_inner();
-            assert!(
-                inner
-                    .session_state_mut()
-                    .connection
-                    .finish_detection(&token.clone().into(), true)
-            );
+            assert!(inner.finish_detection(&token.clone().into(), true));
         }
         assert!(handle.verified_connection_attempt_is_current(token.clone()));
         handle.begin_connection_attempt("A".into(), 20);
@@ -477,12 +458,7 @@ mod tests {
         handle.connection_link_established(token.clone());
         {
             let mut inner = handle.lock_inner();
-            assert!(
-                inner
-                    .session_state_mut()
-                    .connection
-                    .finish_detection(&token.clone().into(), true)
-            );
+            assert!(inner.finish_detection(&token.clone().into(), true));
         }
 
         let MobileConnectionRetryDecisionDto::Scheduled { retry } =
@@ -688,8 +664,6 @@ mod tests {
         assert!(
             handle
                 .lock_inner()
-                .session_state_mut()
-                .connection
                 .finish_detection(&token.clone().into(), true)
         );
         let admission = handle
@@ -775,12 +749,7 @@ mod tests {
         handle.connection_link_established(token.clone());
         {
             let mut inner = handle.lock_inner();
-            assert!(
-                inner
-                    .session_state_mut()
-                    .connection
-                    .finish_detection(&token.clone().into(), true)
-            );
+            assert!(inner.finish_detection(&token.clone().into(), true));
         }
         assert!(handle.verified_connection_attempt_is_current(token.clone()));
 

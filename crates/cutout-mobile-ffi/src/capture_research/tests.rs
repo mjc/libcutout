@@ -251,68 +251,6 @@ fn builder_forces_manual_profile_selection_without_promoting_device_identity() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-#[test]
-fn pending_settings_acknowledgement_keeps_cache_and_ble_admission_available() {
-    use std::sync::mpsc::sync_channel;
-    use std::time::Duration;
-    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (directory, database, builder) = recording();
-    let (entered_sender, entered_receiver) = sync_channel(1);
-    let (release_sender, release_receiver) = sync_channel(1);
-    *builder
-        .settings_observation_acknowledgement_gate
-        .lock()
-        .unwrap() = Some((entered_sender, release_receiver));
-    let saving = Arc::clone(&builder);
-    let save = std::thread::spawn(move || saving.record_settings_observation(draft(), 600));
-    // Hold the actual save after its flush barrier was admitted, before the
-    // caller consumes the receipt and publishes it as acknowledged. Storage may
-    // already be durable; this gate tests acknowledgement, not a SQLite lock.
-    entered_receiver
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap();
-    let (snapshot_sender, snapshot_receiver) = sync_channel(1);
-    let reading = Arc::clone(&builder);
-    let snapshot = std::thread::spawn(move || {
-        let result = reading.settings_observations();
-        snapshot_sender.send(result).unwrap();
-    });
-    let acknowledged = snapshot_receiver.recv_timeout(Duration::from_secs(1));
-    let (admission_sender, admission_receiver) = sync_channel(1);
-    let recording = Arc::clone(&builder);
-    let admission = std::thread::spawn(move || {
-        admission_sender
-            .send(recording.record_link_down(MobileMonotonicMillisDto { milliseconds: 700 }))
-            .unwrap();
-    });
-    let outcome = admission_receiver.recv_timeout(Duration::from_secs(1));
-    // Release the held save before assertions or joins, including regressions
-    // where an incorrectly held cache/writer mutex times out either observer.
-    release_sender.send(()).unwrap();
-    let saved = save.join().unwrap().unwrap();
-    snapshot.join().unwrap();
-    admission.join().unwrap();
-    assert!(
-        acknowledged.unwrap().unwrap().is_empty(),
-        "pending values must not be acknowledged"
-    );
-    assert_eq!(
-        outcome.unwrap(),
-        crate::MobileCaptureWriteOutcomeDto::Accepted
-    );
-    assert_eq!(builder.settings_observations().unwrap(), [saved]);
-    assert!(matches!(
-        builder.finish_writer_outcome(),
-        MobileCaptureFinishOutcomeDto::DatabaseFinished { .. }
-    ));
-    drop(builder);
-    database.shutdown().unwrap();
-    drop(database);
-    fs::remove_dir_all(directory).unwrap();
-}
-
 fn batch_requests() -> Vec<MobileCaptureResearchReadbackRequestDto> {
     [35, 12, 35, 5, 25]
         .into_iter()

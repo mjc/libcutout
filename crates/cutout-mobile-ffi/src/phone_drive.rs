@@ -331,7 +331,9 @@ pub struct MobilePhoneDriveSnapshotDto {
     pub limits: MobilePhoneDriveLimitsDto,
 }
 
-fn snapshot(owner: &cutout_protocols::DeviceConnectionSession) -> MobilePhoneDriveSnapshotDto {
+fn snapshot(
+    owner: &cutout_application::session::ApplicationDeviceSession,
+) -> MobilePhoneDriveSnapshotDto {
     let input = owner.phone_drive_input_snapshot();
     let current_token = owner.snapshot().connection.token;
     MobilePhoneDriveSnapshotDto {
@@ -449,7 +451,7 @@ impl From<cutout_protocols::PhoneDriveActivationError> for MobilePhoneDriveActiv
 }
 
 fn validate_phone_drive_target(
-    owner: &cutout_protocols::DeviceConnectionSession,
+    owner: &cutout_application::session::ApplicationDeviceSession,
     token: &MobileConnectionAttemptTokenDto,
     attempt: &core::ConnectionAttemptToken,
 ) -> Result<(), MobilePhoneControlError> {

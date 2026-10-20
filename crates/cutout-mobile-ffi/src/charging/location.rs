@@ -23,7 +23,12 @@ pub fn mobile_charging_location_candidate_is_accepted(
         return false;
     };
     let current = current.and_then(domain_fix);
-    cutout_ride_maps::select_charging_location_fix(current, candidate, now_unix_seconds).is_some()
+    cutout_application::charging::location::select_charging_location_candidate(
+        current,
+        candidate,
+        now_unix_seconds,
+    )
+    .is_some()
 }
 
 /// Whether a charging-map fix remains within the freshness window.
@@ -36,7 +41,7 @@ pub fn mobile_charging_location_fix_is_fresh(
     let Some(fix) = domain_fix(fix) else {
         return false;
     };
-    cutout_ride_maps::select_charging_location_fix(None, fix, now_unix_seconds).is_some()
+    cutout_application::charging::location::charging_location_fix_is_fresh(fix, now_unix_seconds)
 }
 
 fn domain_fix(

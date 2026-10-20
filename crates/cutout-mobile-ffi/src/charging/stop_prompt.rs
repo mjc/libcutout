@@ -92,23 +92,27 @@ struct PromptHistory {
 }
 
 impl PromptHistory {
-    fn restore(self) -> Option<ride_maps::ChargingStopPrompts> {
+    fn restore(
+        self,
+    ) -> Option<cutout_application::charging::stop_prompt::ChargingStopPromptService> {
         let locations = self
             .locations
             .into_iter()
             .map(|(lat, lon)| ride_maps::Coordinate::from_fixed_parts(lat, lon).ok())
             .collect::<Option<Vec<_>>>()?;
-        Some(ride_maps::ChargingStopPrompts::restored(
-            self.ride_id,
-            locations,
-        ))
+        Some(
+            cutout_application::charging::stop_prompt::ChargingStopPromptService::restored(
+                self.ride_id,
+                locations,
+            ),
+        )
     }
 }
 
 /// Rust-owned per-ride, per-location charging-stop admission and suppression history.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileChargingStopPrompts {
-    state: Mutex<ride_maps::ChargingStopPrompts>,
+    state: Mutex<cutout_application::charging::stop_prompt::ChargingStopPromptService>,
 }
 
 #[uniffi::export]
