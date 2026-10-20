@@ -58,7 +58,7 @@ function readLocation() {
   return { page: pages.has(query.get('page')) ? query.get('page') : 'home', language: copy[query.get('lang')] ? query.get('lang') : 'en' };
 }
 function screenshot(file, alt, className = '', loading = 'lazy') {
-  return `<figure class="screen-shot ${className}"><img src="/assets/screenshots/en/${file}" alt="${escape(alt)}" loading="${loading}" decoding="async"></figure>`;
+  return `<figure class="screen-shot ${className}"><img src="/assets/screenshots/en/${file}${assetVersion}" alt="${escape(alt)}" loading="${loading}" decoding="async"></figure>`;
 }
 function featureScreenshot(index, t) {
   const screenshots = [
