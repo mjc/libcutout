@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.2.21"
 }
 
+val nativeAbi = providers.gradleProperty("cutout.android.abi").orElse("arm64-v8a").get()
+require(nativeAbi in setOf("arm64-v8a", "x86_64")) { "Unsupported Cutout JNI ABI: $nativeAbi" }
+
 val repository = rootDir.parentFile
 layout.buildDirectory.set(repository.resolve("target/android-tests/build"))
 
@@ -19,7 +22,7 @@ android {
         targetSdk = compileSdk
         versionCode = 1
         versionName = "1.0"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk { abiFilters += nativeAbi }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets["main"].apply {

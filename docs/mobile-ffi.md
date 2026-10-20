@@ -339,7 +339,7 @@ permissions, GATT queues and transport receipt delivery for LIBCU-34.
 ### Android app and physical tests
 
 The production Gradle project is `android/`, application ID `lol.cutout`, for
-ARM64 Android 13/API33 or newer. It reuses the original test project's SDK,
+Android 13/API33 or newer (physical ARM64, headless x86_64 emulator). It reuses the original test project's SDK,
 generator, native staging and Gradle cache. Its native launcher provides Devices,
 Ride and descriptor-driven Configuration. `PevSession` consumes the shared Rust
 owner; `AndroidBleClient` supplies permission-aware scanning, GATT inventory,
@@ -354,7 +354,7 @@ Android presentation strings live in `android/src/main/res/values/strings.xml`.
 The host JVM and Android instrumentation use the same assertions in
 `tests/mobile-ffi/shared/MobileFfiSmoke.kt`. The Android wrapper supplies an
 isolated app-private temporary directory. It exercises generated Kotlin/JNA
-calls into the actual ARM64 Rust library: session identity, settings snapshots,
+calls into the actual selected-ABI Rust library: session identity, settings snapshots,
 owned frame buffers, camera command outcomes, typed refusals, SQLite writes and
 reopen, and explicit handle shutdown. Inputs include synthetic cases and the
 public EUC capture replay; no wheel or camera connection is made.
@@ -421,8 +421,9 @@ SDK licenses for this composition. Its `CUTOUT_ANDROID_API`,
 `CUTOUT_ANDROID_BUILD_TOOLS` and `CUTOUT_JNA_VERSION` feed the Gradle build;
 `devenv.lock` owns the JDK, Gradle, Kotlin host compiler and SDK package pin.
 Android Gradle and Kotlin plugins are pinned in the Android build file. The
-JNA Android AAR supplies its native dispatcher; ABI filtering packages only
-`arm64-v8a`. No emulator or system image is provisioned.
+JNA Android AAR supplies its native dispatcher. Default builds package only
+`arm64-v8a`; explicit emulator builds package only `x86_64`. Linux x86_64 devenv
+also provisions the API 35 Google APIs emulator image and emulator binary.
 
 The runner serializes its own invocations, uses one Cargo compiler job and at
 most two Gradle workers, runs Kotlin compilation within the capped Gradle JVM,
@@ -679,3 +680,57 @@ workflow without deleting existing app products or archives.
 Xcode beta may still emit App Intents metadata warnings even though the app has
 no App Intents dependency. Those warnings come from Xcode's build pipeline and
 must not be hidden by filtering stderr.
+
+### Headless Linux Android acceptance
+
+On an x86_64 Linux host with readable/writable `/dev/kvm`, run the production
+app and JNI instrumentation in a project-owned API 35 Google APIs emulator:
+
+```console
+devenv tasks run test:mobile-ffi-runner
+devenv tasks run test:android-emulator
+```
+
+The Linux devenv provisions the emulator and system image. The runner builds
+`x86_64-linux-android`, packages only the matching `x86_64` JNI libraries, and
+creates its AVD under ignored `target/android-tests/avd`. It uses KVM, two guest
+cores, 2 GiB RAM, software rendering, no window/audio/cameras and no snapshots.
+It does not use the desktop display or gaming session. It owns the emulator
+process handle, validates its explicit adb serial, AVD name, API and ABI before
+installation, and stops that process in a `finally` block, including on failure.
+The physical-device modes retain their ARM64/non-emulator guards.
+
+The default emulator selection runs `MobileFfiTest` and `ProductionAppTest`:
+real Kotlin/JNA/Rust calls, public capture replay, stale callbacks, SQLite
+reopen, production launch/navigation and Ride rendering. It then launches the
+production activity and retains its rendered screenshot. This establishes
+emulator/JNI acceptance, not physical Bluetooth, camera or whole-app parity.
+`test:android-ui` remains the separate ARM64 macOS Robolectric entrypoint.
+
+For an already-built artifact, use the shared runner directly within devenv:
+
+```console
+devenv shell -- python3 scripts/test-mobile-ffi.py build --abi x86_64
+devenv shell -- python3 scripts/test-mobile-ffi.py emulator --artifacts target/test-logs/mobile-ffi-build-TIMESTAMP/receipt.json
+```
+
+Reuse checks the source-content identity, requested ABI and both APK hashes.
+The receipt paths are relative to the checkout so verified artifacts can be
+transferred together with their receipt to matching source without rebuilding.
+Physical `device`/`app` modes also accept `--artifacts`, but require ARM64 proof.
+The default `build` mode still produces the physical ARM64 APKs. An emulator
+build does not replace or validate those artifacts. A later build can overwrite
+the APK output paths; changed artifacts fail receipt validation.
+
+Unset physical target selectors when using emulator mode. `--test-class` can
+select a specific instrumentation class or comma-separated list; the receipt
+records the exact selection. Each run retains source identity, ABI, APK/library
+hashes, emulator image/command/target, strict instrumentation results, raw logs,
+JUnit and a screenshot when capture is available. A crash, incomplete run,
+skipped result or zero-test run fails. Inspect the retained log before retrying.
+
+The emulator command follows the pinned tool help and the Android
+[command-line](https://developer.android.com/studio/run/emulator-commandline)
+and [acceleration](https://developer.android.com/studio/run/emulator-acceleration)
+contracts. Newer tooling may expose other launch interfaces; the runner uses
+the executable declared by this checkout.

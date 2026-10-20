@@ -18,7 +18,9 @@ import java.util.UUID
 import uniffi.cutout_mobile_ffi.MobileActivityProjectionStateDto
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
 import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
-import uniffi.cutout_mobile_ffi.MobileDeviceIdentityDto
+import uniffi.cutout_mobile_ffi.MobileVehicleClassificationProvenanceDto
+import uniffi.cutout_mobile_ffi.MobileVehicleClassificationRequirementDto
+import uniffi.cutout_mobile_ffi.MobileVescApplicationDiscoveryDto
 import uniffi.cutout_mobile_ffi.MobileRideSessionEndReasonDto
 import uniffi.cutout_mobile_ffi.MobileRideSessionAppPresenceDto
 import uniffi.cutout_mobile_ffi.MobileRideSessionPhaseDto
@@ -157,9 +159,13 @@ open class ProductionAppTest {
             )),
             session = session.copy(
                 connection = session.connection.copy(readiness = MobileConnectionReadinessDto.VERIFIED),
-                identity = MobileDeviceIdentityDto(
+                identity = checkNotNull(session.identity).copy(
                     protocol = MobileProtocolFamilyDto.VESC,
-                    vehicleKind = MobileVehicleKindDto.BOARD,
+                    vehicleKind = MobileVehicleKindDto.UNKNOWN,
+                    classificationProvenance = MobileVehicleClassificationProvenanceDto.UNKNOWN,
+                    classificationRequirement = MobileVehicleClassificationRequirementDto.PENDING,
+                    vescApplication = MobileVescApplicationDiscoveryDto.PENDING,
+                    vescApplicationQuery = null,
                     model = null,
                 ),
             ),

@@ -443,6 +443,7 @@ class AndroidBleClient(
         }
         val next = Connection(token, device, recordOnly)
         connection = next
+        if (!recordOnly) restoreStoredVehicleKind(token)
         try {
             next.gatt = device.connectGatt(context, false, next.callback, BluetoothDevice.TRANSPORT_LE)
             if (next.gatt == null) next.fail("Android refused the connection")
@@ -672,6 +673,61 @@ class AndroidBleClient(
         }
     }
 
+    /** All portable decisions and persistence are committed by the shared Rust owner. */
+    fun selectVehicleKind(token: MobileConnectionAttemptTokenDto, kind: MobileVehicleKindDto,
+        completed: (Result<MobileDeviceSessionSnapshotDto>) -> Unit) = withSessionStorage(token, {
+        it.selectConnectionVehicleKind(token, kind, System.currentTimeMillis().toULong())
+    }, completed)
+
+    fun loadVescDrivetrain(token: MobileConnectionAttemptTokenDto,
+        completed: (Result<MobileVescDrivetrainDraft?>) -> Unit) = withSessionStorage(token, {
+        it.restoreConnectionVescDrivetrain(token)
+    }, completed)
+
+    fun saveVescDrivetrain(token: MobileConnectionAttemptTokenDto, draft: MobileVescDrivetrainDraft,
+        completed: (Result<MobileVescDrivetrainDraft>) -> Unit) = withSessionStorage(token, {
+        it.saveConnectionVescDrivetrain(token, draft, System.currentTimeMillis().toULong())
+    }, completed)
+
+    /** Storage runs on the existing database worker; GATT keeps its serialized callback owner. */
+    private fun <T> withSessionStorage(token: MobileConnectionAttemptTokenDto,
+        work: (CutoutSessionStateHandle) -> T, completed: (Result<T>) -> Unit) {
+        postOnOwner {
+            val sessionState = state
+            (context.applicationContext as CutoutApplication).rides.withDatabase({ runCatching { work(sessionState) } }) { storage ->
+                val result = storage.fold(onSuccess = { it }, onFailure = { Result.failure(it) })
+                owner.post {
+                    refreshAfterStorage(token)
+                    main.post { completed(result) }
+                }
+            }
+        }
+    }
+
+    private fun refreshAfterStorage(token: MobileConnectionAttemptTokenDto) {
+        if (!state.connectionAttemptIsCurrent(token)) return
+        view = view.copy(session = state.deviceSessionSnapshot(),
+            telemetry = state.connectionTelemetrySnapshot(token), settings = state.settings())
+        publish()
+    }
+
+    private fun restoreStoredVehicleKind(token: MobileConnectionAttemptTokenDto) {
+        val sessionState = state
+        (context.applicationContext as CutoutApplication).rides.withDatabase({ database ->
+            database.userVehicleKind(token.platformIdentifier)?.let {
+                sessionState.restoreConnectionVehicleKind(token, it)
+            }
+        }) { result ->
+            owner.post {
+                if (result.isFailure && state.connectionAttemptIsCurrent(token)) {
+                    Log.w("CutoutBle", "Saved vehicle type could not be loaded", result.exceptionOrNull())
+                    view = view.copy(problem = true)
+                }
+                refreshAfterStorage(token)
+            }
+        }
+    }
+
     private fun now(): ULong = SystemClock.elapsedRealtime().toULong()
 
     private fun stopScanOnOwner(outcome: String = "stopped") {
@@ -792,6 +848,7 @@ class AndroidBleClient(
         private var nativeNotificationCount = 0UL
         private var captureWriteId = 0UL
         private var captureLinkUp = false
+        private var drivetrainRestoreStarted = false
         private var retired = false
         private var ending = false
         private var draining = false
@@ -819,6 +876,7 @@ class AndroidBleClient(
                 if (snapshot.connection.deadlineMs == null) {
                     cancelDeadline?.invoke(); cancelDeadline = null
                 }
+                diagnostics.updateIdentity(token)
                 val connectionCandidate = if (snapshot.connection.readiness == MobileConnectionReadinessDto.VERIFIED) {
                     val displayName = view.devices.firstOrNull { it.id == token.platformIdentifier }
                         ?.candidate?.displayName ?: snapshot.identity?.model ?: "Connected device"
@@ -826,6 +884,14 @@ class AndroidBleClient(
                 } else null
                 view = view.copy(session = snapshot, telemetry = telemetry, settings = settings,
                     connectionCandidate = connectionCandidate)
+                val identity = snapshot.identity
+                if (!drivetrainRestoreStarted && identity?.protocol == MobileProtocolFamilyDto.VESC &&
+                    identity.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT) {
+                    drivetrainRestoreStarted = true
+                    loadVescDrivetrain(token) { result ->
+                        if (result.isFailure) Log.w("CutoutBle", "Saved drivetrain could not be loaded", result.exceptionOrNull())
+                    }
+                }
                 publish()
             }
         }
@@ -982,25 +1048,27 @@ class AndroidBleClient(
             output.bmsSnapshot?.let { view = view.copy(bms = it) }
             when (output.kind) {
                 MobileSessionOutputKindDto.SUBSCRIBE -> subscribe(output.channel)
-                MobileSessionOutputKindDto.WRITE -> write(output.channel, output.bytes, output.operationId)
+                MobileSessionOutputKindDto.WRITE -> write(output)
                 MobileSessionOutputKindDto.DISCONNECT -> fail("Device requested disconnect")
                 else -> Unit // Semantic outputs are already projected by Rust into the paired snapshot.
             }
         }
 
-        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null) {
+        private fun write(output: MobileSessionOutputDto) =
+            write(output.channel, output.bytes, output.operationId, output = output)
+
+        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null, output: MobileSessionOutputDto? = null) {
             val characteristic = characteristic(channel)
             if (characteristic == null || bytes.isEmpty()) {
-                session.writeReceipt(operationId, NativeReceipt.REJECTED)
+                if (output != null) session.writeReceipt(output, NativeReceipt.REJECTED)
+                else session.writeReceipt(operationId, NativeReceipt.REJECTED)
                 fail("Missing or ambiguous Bluetooth write channel"); return
             }
-            val chunks = attChunks(bytes, session.writeLimit.toInt())
             val writeType = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
                 BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            val isWithoutResponse = writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            val captureId = if (isWithoutResponse && diagnostics.hasWriter(token)) ++captureWriteId else null
-            val receipt = NativeWriteReceipt(chunks.size) { result ->
-                session.writeReceipt(operationId, result)
+            val captureId = if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE && diagnostics.hasWriter(token))
+                ++captureWriteId else null
+            val captureReceipt: (NativeReceipt) -> Unit = { result ->
                 if (captureId != null) {
                     val disposition = when (result) {
                         NativeReceipt.QUEUED -> MobilePevcapWriteDispositionDto.QUEUED
@@ -1011,19 +1079,17 @@ class AndroidBleClient(
                     diagnostics.writeReceipt(token, channel, bytes, captureId, disposition, now())
                 }
             }
-            chunks.forEachIndexed { index, chunk ->
-                queue.enqueue(GattOperationQueue.Operation(key("write", characteristic), {
-                    if (!session.writeIsCurrent(operationId)) NativeStart.REJECTED else {
-                        val type = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
-                            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        val required = if (type == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE else BluetoothGattCharacteristic.PROPERTY_WRITE
-                        if (characteristic.properties and required == 0) NativeStart.REJECTED
-                        else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, type) == BluetoothStatusCodes.SUCCESS)
-                            NativeStart.PENDING else NativeStart.REJECTED
-                    }
-                }, { receipt.observe(index, it) }))
+            val submit: (ByteArray) -> NativeStart = { chunk ->
+                val required = if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE else BluetoothGattCharacteristic.PROPERTY_WRITE
+                if (characteristic.properties and required == 0) NativeStart.REJECTED
+                else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, writeType) == BluetoothStatusCodes.SUCCESS)
+                    NativeStart.PENDING else NativeStart.REJECTED
             }
+            if (output != null) session.enqueueWrite(output, queue, key("write", characteristic),
+                onReceipt = captureReceipt, submit = submit)
+            else session.enqueueWrite(bytes, operationId, queue, key("write", characteristic),
+                onReceipt = captureReceipt, submit = submit)
         }
 
         private fun probe() {

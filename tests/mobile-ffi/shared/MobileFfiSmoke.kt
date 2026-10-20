@@ -1,6 +1,17 @@
 package lol.cutout.smoke
 
 import java.io.File
+import lol.cutout.NativeReceipt
+import lol.cutout.PevSession
+import lol.cutout.wireBytes
+import uniffi.cutout_mobile_ffi.MobileConnectionAttemptTokenDto
+import uniffi.cutout_mobile_ffi.MobileSessionOutputDto
+import uniffi.cutout_mobile_ffi.MobileVehicleKindDto
+import uniffi.cutout_mobile_ffi.MobileVescApplicationDiscoveryDto
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainDraft
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainException
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainSourceDto
+import uniffi.cutout_mobile_ffi.MobileVescDrivetrainTargetDto
 import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
 import uniffi.cutout_mobile_ffi.MobileCameraClockUncertaintyDto
 import uniffi.cutout_mobile_ffi.MobileCameraMediaProvenanceInput
@@ -278,4 +289,98 @@ fun checkCaptureHistoryBoundary(storageRoot: File) {
     } finally {
         check(directory.toFile().deleteRecursively())
     }
+}
+
+/** Generated Kotlin/Rust contract for controller-scoped configuration; no hardware effects. */
+fun checkControllerGeometryBoundary(storageRoot: File) {
+    val directory = Files.createTempDirectory(storageRoot.toPath(), "controller-geometry-")
+    val path = directory.resolve("ride.sqlite").toString()
+    val local = MobileVescDrivetrainDraft("250", "15", "1")
+    val secondary = MobileVescDrivetrainDraft("200", "7", "2.5")
+    val changed = MobileVescDrivetrainDraft("210", "7", "2.5")
+    val can = MobileVescDrivetrainTargetDto.Can(7U, ByteArray(12) { 1 })
+    val replacement = MobileVescDrivetrainTargetDto.Can(7U, ByteArray(12) { 2 })
+    try {
+        openRideDatabase(path).use { database ->
+            try {
+                CutoutSessionStateHandle.withDatabase(database).use { state ->
+                    val token = connectGeometryScooter(state)
+                    check(state.saveConnectionVescDrivetrain(token, local, 1UL) == local)
+                    val measured = checkNotNull(state.ingestDeviceSession(token, MobileSessionInputDto(
+                        MobileSessionInputKindDto.NOTIFICATION, MobileMonotonicMillisDto(3_001UL), null,
+                        java.util.UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e").wireBytes(),
+                        byteArrayOf(2, 9, 50, 0, 0, 0, 128.toByte(), 0, 0, 23, 112, 244.toByte(), 198.toByte(), 3),
+                    )))
+                    checkNotNull(measured.telemetry.speed)
+                    check(state.saveConnectionVescControllerDrivetrain(token, can, secondary, 2UL) == secondary)
+                    val before = checkNotNull(state.connectionTelemetrySnapshot(token))
+                    check(before.vescDrivetrainContext == measured.telemetry.vescDrivetrainContext)
+                    check(before.speed == measured.telemetry.speed)
+                    check(before.speedObservedAtMs == measured.telemetry.speedObservedAtMs)
+                    check(before.configuredVescDrivetrains.size == 2)
+                    val configured = before.configuredVescDrivetrains[1]
+                    val target = configured.target
+                    check(target is MobileVescDrivetrainTargetDto.Can)
+                    check(target.controllerId == 7U.toUByte() && target.controllerUuid.contentEquals(ByteArray(12) { 1 }))
+                    check(configured.revision == 1UL && configured.motorToWheelRatioMilli == 2_500U)
+                    check(configured.source == MobileVescDrivetrainSourceDto.USER_CONFIGURED)
+                    state.saveConnectionVescControllerDrivetrain(token, can, secondary, 3UL)
+                    check(checkNotNull(state.connectionTelemetrySnapshot(token)).configuredVescDrivetrains[1].revision == 1UL)
+                    state.saveConnectionVescControllerDrivetrain(token, can, changed, 4UL)
+                    val after = checkNotNull(state.connectionTelemetrySnapshot(token))
+                    check(after.configuredVescDrivetrains[1].revision == 2UL)
+                    check(after.vescDrivetrainContext == before.vescDrivetrainContext)
+                    check(after.speed == before.speed && after.speedObservedAtMs == before.speedObservedAtMs)
+                    check(configured.revision == 1UL && configured.wheelDiameterMicrometres == 200_000U)
+                    for (invalid in listOf(
+                        MobileVescDrivetrainTargetDto.Can(255U, ByteArray(12) { 1 }),
+                        MobileVescDrivetrainTargetDto.Can(7U, ByteArray(12)),
+                        MobileVescDrivetrainTargetDto.Can(7U, ByteArray(11) { 1 }),
+                    )) {
+                        try {
+                            state.saveConnectionVescControllerDrivetrain(token, invalid, secondary, 5UL)
+                            error("An invalid controller association was accepted")
+                        } catch (_: MobileVescDrivetrainException.InvalidControllerTarget) {
+                            // Generated bindings preserve the Rust boundary refusal.
+                        }
+                    }
+                    state.disconnectConnectionAttempt()
+                }
+            } finally {
+                database.shutdown()
+            }
+        }
+        openRideDatabase(path).use { database ->
+            try {
+                CutoutSessionStateHandle.withDatabase(database).use { state ->
+                    val token = checkNotNull(state.beginConnectionAttempt("kotlin-controller-geometry", 0UL).token)
+                    check(state.restoreConnectionVescControllerDrivetrain(token, replacement) == null)
+                    check(state.restoreConnectionVescControllerDrivetrain(token, can) == changed)
+                    check(state.restoreConnectionVescDrivetrain(token) == local)
+                    state.disconnectConnectionAttempt()
+                }
+            } finally {
+                database.shutdown()
+            }
+        }
+    } finally {
+        check(directory.toFile().deleteRecursively())
+    }
+}
+
+private fun connectGeometryScooter(state: CutoutSessionStateHandle): MobileConnectionAttemptTokenDto {
+    var clock = 1UL
+    val token = checkNotNull(state.beginConnectionAttempt("kotlin-controller-geometry", 0UL).token)
+    state.connectionLinkEstablished(token)
+    val outputs = mutableListOf<MobileSessionOutputDto>()
+    val session = PevSession(state, token, { clock }, { outputs += it }) { _, _, _ -> }
+    session.notification(byteArrayOf(), byteArrayOf(2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0,
+        117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208.toByte(), 3))
+    val query = outputs.first { it.applicationQuery != null }
+    session.writeReceipt(query, NativeReceipt.SUBMITTED)
+    clock = 3_000UL
+    session.tick()
+    check(state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)
+    state.selectConnectionVehicleKind(token, MobileVehicleKindDto.SCOOTER, 1UL)
+    return token
 }

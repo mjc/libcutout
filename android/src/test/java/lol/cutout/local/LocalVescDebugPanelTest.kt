@@ -29,8 +29,10 @@ class LocalVescDebugPanelTest {
         try {
             val replay = productionReplayPresentation()
             val connection = checkNotNull(replay.session).connection
-            val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection,
-                MobileDeviceIdentityDto(MobileProtocolFamilyDto.VESC, MobileVehicleKindDto.BOARD, "VESC test fixture")))
+            val identity = checkNotNull(replay.session?.identity).copy(
+                protocol = MobileProtocolFamilyDto.VESC, vehicleKind = MobileVehicleKindDto.ONEWHEEL,
+                vescApplication = MobileVescApplicationDiscoveryDto.REFLOAT, model = "VESC test fixture")
+            val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection, identity))
             val panel = VescDebugPanel(activity)
             activity.setContentView(panel)
             panel.render(fixture)
@@ -55,8 +57,10 @@ class LocalVescDebugPanelTest {
         try {
             val replay = productionReplayPresentation()
             val connection = checkNotNull(replay.session).connection
-            val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection,
-                MobileDeviceIdentityDto(MobileProtocolFamilyDto.VESC, MobileVehicleKindDto.BOARD, "VESC test fixture")))
+            val identity = checkNotNull(replay.session?.identity).copy(
+                protocol = MobileProtocolFamilyDto.VESC, vehicleKind = MobileVehicleKindDto.ONEWHEEL,
+                vescApplication = MobileVescApplicationDiscoveryDto.REFLOAT, model = "VESC test fixture")
+            val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection, identity))
             val panel = VescDebugPanel(activity)
             activity.setContentView(panel)
             val labels = CutoutUi(activity)

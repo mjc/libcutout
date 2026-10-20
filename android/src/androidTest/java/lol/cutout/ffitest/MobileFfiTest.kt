@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.nio.file.Files
 import lol.cutout.smoke.checkCaptureHistoryBoundary
+import lol.cutout.smoke.checkControllerGeometryBoundary
 import lol.cutout.smoke.checkSessionAndCameraBoundary
 import lol.cutout.smoke.checkEucCaptureReplay
 import lol.cutout.smoke.checkNativeGattQueue
@@ -26,6 +27,9 @@ class MobileFfiTest {
 
     @Test
     fun persistenceReopenAndTypedFailures() = withStorage(::checkCaptureHistoryBoundary)
+
+    @Test
+    fun controllerGeometryIsolationAndReopen() = withStorage(::checkControllerGeometryBoundary)
 
     @Test
     fun eucCaptureReplayAndConnectionReplacement() = checkEucCaptureReplay()
