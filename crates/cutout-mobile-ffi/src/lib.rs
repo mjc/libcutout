@@ -26410,6 +26410,15 @@ mod tests {
                 MobileCaptureWriteOutcomeDto::Accepted
             );
         }
+        // Start the metadata burst with an empty queue so admission does not
+        // depend on the worker draining earlier notifications concurrently.
+        assert_eq!(
+            builder.flush_writer_outcome(),
+            MobileCaptureFlushOutcomeDto::Flushed
+        );
+        let before_metadata = builder.writer_status();
+        assert_eq!(before_metadata.queued_messages, 0);
+        const { assert!(cutout_core::PEVCAP_MAX_ANNOTATIONS <= CaptureWriter::QUEUE_CAPACITY) };
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS {
             assert_eq!(
                 builder.add_annotation(format!("synthetic=late-{index}")),
@@ -26418,6 +26427,8 @@ mod tests {
         }
         assert!(builder.finish_writer());
         let status = builder.writer_status();
+        assert_eq!(status.queued_messages, 0);
+        assert_eq!(status.dropped_messages, 0);
         assert!(
             status.physical_bytes_written < status.bytes_written * 3,
             "late metadata physically wrote {} bytes for {} record bytes",
@@ -26425,17 +26436,27 @@ mod tests {
             status.bytes_written,
         );
 
-        let capture = PevcapCapture::decode(
-            &fs::read(&path).expect("capture is readable"),
-            PevcapEncoding::Jsonl,
-        )
-        .expect("capture is valid PEVCAP");
-        assert!(
-            capture
-                .header
-                .annotations
-                .iter()
-                .any(|annotation| annotation == "synthetic=late-7")
+        let bytes = fs::read(&path).expect("capture is readable");
+        assert_eq!(
+            status.physical_bytes_written - before_metadata.physical_bytes_written,
+            bytes.len() as u64,
+            "late metadata must write exactly one replacement artifact"
+        );
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("capture is valid PEVCAP");
+        assert_eq!(capture.records.len(), 1_024);
+        for (index, record) in capture.records.iter().enumerate() {
+            assert_eq!(record.monotonic_ms.get(), index as u64);
+            assert_eq!(record.characteristic, GattChannel::from_bytes([0xe1; 16]));
+            assert_eq!(record.service, Some(GattChannel::from_bytes([0xe0; 16])));
+            assert_eq!(record.bytes.as_ref(), &[0xaa; 160]);
+        }
+        let expected_annotations: Vec<_> = (0..cutout_core::PEVCAP_MAX_ANNOTATIONS)
+            .map(|index| format!("synthetic=late-{index}"))
+            .collect();
+        assert_eq!(
+            capture.header.annotations.as_slice(),
+            expected_annotations.as_slice()
         );
         let _ = fs::remove_file(path);
     }
