@@ -3,8 +3,11 @@ import SwiftUI
 
 /// Presentation only: values and PWM applicability come from the existing ride projection.
 struct EucRideInstruments: View {
-    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var showsReadings = false
+
+    private let portraitSpeedPointSize: CGFloat = 100
+    private let portraitGaugeWidth: CGFloat = 180
 
     let title: String
     let subtitle: String
@@ -20,16 +23,20 @@ struct EucRideInstruments: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let frame = geometry.frame(in: .global)
-            let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
-            let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
-            let height = max(0, bottom - frame.minY)
-            let landscape = geometry.size.width > height
-            VStack(spacing: 12) {
+            let landscape = verticalSizeClass == .compact
+                || (verticalSizeClass == nil && geometry.size.width > geometry.size.height)
+            let constrainedScale = geometry.size.height < 535
+                ? max(0.72, min(1, (geometry.size.height - 265) / 269)) : 1
+            let speedPointSize = portraitSpeedPointSize * constrainedScale
+            let gaugeWidth = min(portraitGaugeWidth, max(0, geometry.size.width - 48)) * constrainedScale
+            VStack(spacing: 8) {
                 header
                 if landscape {
                     HStack(spacing: 24) {
-                        primaryInstruments(landscape: true)
+                        primaryInstruments(
+                            landscape: true, speedPointSize: min(132, geometry.size.width * 0.2),
+                            gaugeWidth: min(220, max(0, geometry.size.width * 0.34))
+                        )
                         VStack(spacing: 12) {
                             energyReadings
                             secondaryReadings
@@ -37,16 +44,18 @@ struct EucRideInstruments: View {
                         .frame(width: min(320, geometry.size.width * 0.4))
                     }
                 } else {
-                    primaryInstruments(landscape: false)
-                        .frame(maxHeight: .infinity)
+                    primaryInstruments(
+                        landscape: false, speedPointSize: speedPointSize, gaugeWidth: gaugeWidth
+                    )
                     energyReadings
                     secondaryReadings
                 }
             }
             .padding(.horizontal, 24)
             .padding(.top, landscape ? 8 : 0)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.bottom, 28)
-            .frame(width: geometry.size.width, height: height, alignment: .top)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .foregroundStyle(PevColors.primaryText)
         }
         .background(PevColors.pageBackground)
@@ -77,17 +86,15 @@ struct EucRideInstruments: View {
         .accessibilityIdentifier("dashboard.top.navigation")
     }
 
-    private func primaryInstruments(landscape: Bool) -> some View {
-        GeometryReader { geometry in
-            let speedHeight = geometry.size.height * (landscape ? 1 : 0.42)
-            let speedWidth = geometry.size.width * (landscape ? 0.22 : 0.44)
-            let layout = landscape ? AnyLayout(HStackLayout(spacing: 24)) : AnyLayout(VStackLayout(spacing: 4))
-            layout {
-                speedReading(pointSize: min(170, speedWidth, speedHeight * 0.88))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(height: landscape ? nil : speedHeight)
-                EucHeadroomGauge(headroom: headroom, percentage: headroomNumber)
-            }
+    private func primaryInstruments(landscape: Bool, speedPointSize: CGFloat, gaugeWidth: CGFloat) -> some View {
+        let gaugeHeight = gaugeWidth / 2 + 60
+        let layout = landscape ? AnyLayout(HStackLayout(spacing: 24)) : AnyLayout(VStackLayout(spacing: 4))
+        return layout {
+            speedReading(pointSize: speedPointSize)
+                .frame(maxWidth: .infinity)
+                .frame(height: speedPointSize * 1.15)
+            EucHeadroomGauge(headroom: headroom, percentage: headroomNumber)
+                .frame(width: gaugeWidth, height: gaugeHeight)
         }
     }
 
