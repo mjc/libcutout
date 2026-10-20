@@ -61,9 +61,12 @@ class PevSession(
     /** Compatibility for session-only fixtures without native service metadata. */
     fun notification(channel: ByteArray, bytes: ByteArray) = notification(channel, byteArrayOf(), bytes)
 
-    fun tick() {
+    fun tick(canPoll: Boolean = true) {
         if (!isCurrent) return
-        if (protocolLinked) input(MobileSessionInputKindDto.TICK) else identify()
+        if (protocolLinked) {
+            state.tickApplicationQueryTransport(token, now())
+            if (canPoll) input(MobileSessionInputKindDto.TICK) else publish()
+        } else identify()
     }
 
     fun submit(id: MobileSettingIdDto, value: MobileSettingValueDto) {
@@ -95,6 +98,48 @@ class PevSession(
         if (setting != null) state.markSettingTransport(token, setting.id, operationId, status, now())
         else state.markSettingReadTransport(token, operationId, status, now())
         publish()
+    }
+
+    fun applicationQueryReceipt(query: MobileApplicationQueryWriteDto, index: UShort,
+        count: UShort, receipt: NativeReceipt) {
+        val status = when (receipt) {
+            NativeReceipt.QUEUED -> MobileApplicationQueryTransportStatusDto.QUEUED
+            NativeReceipt.SUBMITTED -> MobileApplicationQueryTransportStatusDto.SUBMITTED
+            NativeReceipt.REJECTED -> MobileApplicationQueryTransportStatusDto.REJECTED
+            NativeReceipt.CANCELLED -> MobileApplicationQueryTransportStatusDto.CANCELLED
+        }
+        state.markApplicationQueryTransport(token, query.queryId, index, count, status, now())
+        publish()
+    }
+
+    /** Execute native ATT fragments; Rust owns query admission and delivery evidence. */
+    fun enqueueWrite(
+        queue: GattOperationQueue,
+        key: String,
+        chunks: List<ByteArray>,
+        operationId: ULong?,
+        applicationQuery: MobileApplicationQueryWriteDto?,
+        start: (ByteArray) -> NativeStart,
+        receipt: (NativeReceipt) -> Unit = {},
+    ) {
+        require(chunks.size in 1..UShort.MAX_VALUE.toInt())
+        val aggregate = NativeWriteReceipt(chunks.size) { result ->
+            writeReceipt(operationId, result)
+            receipt(result)
+        }
+        chunks.forEachIndexed { index, chunk ->
+            queue.enqueue(GattOperationQueue.Operation(key, {
+                if (!writeIsCurrent(operationId)) NativeStart.REJECTED
+                else if (applicationQuery != null && !state.applicationQueryTransportIsCurrent(
+                        token, applicationQuery.queryId, now())) NativeStart.CANCELLED
+                else start(chunk)
+            }, { result ->
+                if (applicationQuery != null) {
+                    applicationQueryReceipt(applicationQuery, index.toUShort(), chunks.size.toUShort(), result)
+                }
+                aggregate.observe(index, result)
+            }))
+        }
     }
 
     fun nextWakeup(canPoll: Boolean): ULong? =

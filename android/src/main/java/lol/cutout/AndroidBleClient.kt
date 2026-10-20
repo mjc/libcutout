@@ -706,15 +706,18 @@ class AndroidBleClient(
             output.bmsSnapshot?.let { view = view.copy(bms = it) }
             when (output.kind) {
                 MobileSessionOutputKindDto.SUBSCRIBE -> subscribe(output.channel)
-                MobileSessionOutputKindDto.WRITE -> write(output.channel, output.bytes, output.operationId)
+                MobileSessionOutputKindDto.WRITE -> write(output.channel, output.bytes,
+                    output.operationId, applicationQuery = output.applicationQuery)
                 MobileSessionOutputKindDto.DISCONNECT -> fail("Device requested disconnect")
                 else -> Unit // Semantic outputs are already projected by Rust into the paired snapshot.
             }
         }
 
-        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null) {
+        private fun write(channel: ByteArray, bytes: ByteArray, operationId: ULong?, mode: Int? = null,
+            applicationQuery: MobileApplicationQueryWriteDto? = null) {
             val characteristic = characteristic(channel)
             if (characteristic == null || bytes.isEmpty()) {
+                applicationQuery?.let { session.applicationQueryReceipt(it, 0U, 0U, NativeReceipt.REJECTED) }
                 session.writeReceipt(operationId, NativeReceipt.REJECTED)
                 fail("Missing or ambiguous Bluetooth write channel"); return
             }
@@ -723,8 +726,14 @@ class AndroidBleClient(
                 BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             val isWithoutResponse = writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             val captureId = if (isWithoutResponse && diagnostics.hasWriter(token)) ++captureWriteId else null
-            val receipt = NativeWriteReceipt(chunks.size) { result ->
-                session.writeReceipt(operationId, result)
+            session.enqueueWrite(queue, key("write", characteristic), chunks, operationId, applicationQuery,
+                start = { chunk ->
+                    val required = if (isWithoutResponse) BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+                        else BluetoothGattCharacteristic.PROPERTY_WRITE
+                    if (characteristic.properties and required == 0) NativeStart.REJECTED
+                    else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, writeType) == BluetoothStatusCodes.SUCCESS)
+                        NativeStart.PENDING else NativeStart.REJECTED
+                }, receipt = { result ->
                 if (captureId != null) {
                     val disposition = when (result) {
                         NativeReceipt.QUEUED -> MobilePevcapWriteDispositionDto.QUEUED
@@ -734,20 +743,7 @@ class AndroidBleClient(
                     }
                     diagnostics.writeReceipt(token, channel, bytes, captureId, disposition, now())
                 }
-            }
-            chunks.forEachIndexed { index, chunk ->
-                queue.enqueue(GattOperationQueue.Operation(key("write", characteristic), {
-                    if (!session.writeIsCurrent(operationId)) NativeStart.REJECTED else {
-                        val type = mode ?: if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
-                            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        val required = if (type == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE else BluetoothGattCharacteristic.PROPERTY_WRITE
-                        if (characteristic.properties and required == 0) NativeStart.REJECTED
-                        else if (checkNotNull(gatt).writeCharacteristic(characteristic, chunk, type) == BluetoothStatusCodes.SUCCESS)
-                            NativeStart.PENDING else NativeStart.REJECTED
-                    }
-                }, { receipt.observe(index, it) }))
-            }
+            })
         }
 
         private fun probe() {
@@ -783,7 +779,7 @@ class AndroidBleClient(
             if (!current()) return
             session.nextWakeup(queue.isIdle)?.let { deadline ->
                 cancelWakeup = timers.after((deadline - minOf(deadline, now())).toLong()) {
-                    if (current()) { session.tick(); reschedule() }
+                    if (current()) { session.tick(queue.isIdle); reschedule() }
                 }
             }
         }

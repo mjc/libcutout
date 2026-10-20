@@ -101,6 +101,7 @@ fun checkNativeGattQueue() {
 }
 
 fun checkProductionSessionReplay() {
+    checkApplicationQueryReceipts()
     CutoutSessionStateHandle().use { state ->
         var clock = 0UL
         val token = checkNotNull(state.beginConnectionAttempt("production-adapter", clock).token)
@@ -132,5 +133,116 @@ fun checkProductionSessionReplay() {
         check(!session.writeIsCurrent(null))
         check(state.deviceSessionSnapshot().identity == null)
         state.disconnectConnectionAttempt()
+    }
+}
+
+private class ApplicationQueryFixture : AutoCloseable {
+    val state = CutoutSessionStateHandle()
+    var clock = 1UL
+    val token = checkNotNull(state.beginConnectionAttempt("vesc-query", 0UL).token)
+    val outputs = mutableListOf<MobileSessionOutputDto>()
+    val publications = mutableListOf<MobileDeviceSessionSnapshotDto>()
+    val session = PevSession(state, token, { clock }, { outputs += it }) { snapshot, _, _ ->
+        publications += snapshot
+    }
+    val query: MobileSessionOutputDto
+
+    init {
+        state.connectionLinkEstablished(token)
+        state.observeConnectionNotification(token, byteArrayOf(
+            2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117,
+            115, 101, 114, 104, 97, 115, 104, 0, 38, 208.toByte(), 3,
+        ))
+        session.identify()
+        query = outputs.single { it.applicationQuery != null }
+    }
+
+    fun queryState() = state.deviceSessionSnapshot().identity?.vescApplicationQuery
+    override fun close() = state.close()
+}
+
+private fun checkApplicationQueryReceipts() {
+    ApplicationQueryFixture().use { fixture ->
+        val queue = GattOperationQueue({ fixture.session.isCurrent }, ManualTimer(), { error(it) })
+        var submitted = 0
+        val receipts = mutableListOf<NativeReceipt>()
+        val query = fixture.query
+        fixture.session.enqueueWrite(queue, "query", attChunks(query.bytes, 20), query.operationId,
+            query.applicationQuery, { submitted++; NativeStart.PENDING }, { receipts += it })
+        check(submitted == 1 && receipts.last() == NativeReceipt.SUBMITTED)
+        val awaiting = fixture.queryState()
+        check(awaiting is MobileVescApplicationQueryStateDto.AwaitingResponse) {
+            "A submitted Android application query must start its response interval"
+        }
+        val outputs = fixture.outputs.size
+        fixture.clock = awaiting.responseDeadlineMs
+        fixture.session.tick(canPoll = false)
+        check(fixture.state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)
+        check(fixture.publications.last().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)
+        check(fixture.outputs.size == outputs && submitted == 1)
+        check(fixture.queryState() is MobileVescApplicationQueryStateDto.ResponseExpired)
+        queue.close()
+    }
+
+    ApplicationQueryFixture().use { fixture ->
+        var failures = 0
+        val queue = GattOperationQueue({ fixture.session.isCurrent }, ManualTimer(), { failures++ })
+        queue.enqueue(GattOperationQueue.Operation("blocked", { NativeStart.PENDING }))
+        val query = fixture.query
+        var submitted = 0
+        val receipts = mutableListOf<NativeReceipt>()
+        fixture.session.enqueueWrite(queue, "query", attChunks(query.bytes, 20), query.operationId,
+            query.applicationQuery, { submitted++; NativeStart.PENDING }, { receipts += it })
+        fixture.clock = checkNotNull(query.applicationQuery).submitBeforeMs
+        fixture.session.tick(canPoll = false)
+        check(fixture.queryState() is MobileVescApplicationQueryStateDto.KnownUnsent)
+        check(fixture.publications.last().identity?.vescApplicationQuery is
+            MobileVescApplicationQueryStateDto.KnownUnsent)
+        check(queue.complete("blocked", true))
+        check(submitted == 0 && receipts.last() == NativeReceipt.CANCELLED)
+        check(queue.isIdle && failures == 0)
+        var healthyStarted = false
+        check(queue.enqueue(GattOperationQueue.Operation("healthy", {
+            healthyStarted = true; NativeStart.COMPLETE
+        })))
+        check(healthyStarted && queue.isIdle && failures == 0)
+        queue.close()
+    }
+
+    for (cancel in listOf(false, true)) ApplicationQueryFixture().use { fixture ->
+        val queue = GattOperationQueue({ fixture.session.isCurrent }, ManualTimer(), { error(it) })
+        val query = fixture.query
+        val fragments = listOf(query.bytes.copyOfRange(0, 6), query.bytes.copyOfRange(6, query.bytes.size))
+        var submitted = 0
+        val receipts = mutableListOf<NativeReceipt>()
+        fixture.session.enqueueWrite(queue, "query", fragments, query.operationId, query.applicationQuery,
+            { submitted++; NativeStart.PENDING }, { receipts += it })
+        check(submitted == 1 && receipts.last() == NativeReceipt.QUEUED)
+        if (cancel) queue.close() else {
+            fixture.clock = checkNotNull(query.applicationQuery).submitBeforeMs
+            fixture.session.tick(canPoll = false)
+            check(queue.complete("query", true))
+        }
+        check(submitted == 1 && receipts.last() == NativeReceipt.REJECTED)
+        check(fixture.queryState() is MobileVescApplicationQueryStateDto.PartialUncertain)
+        check(fixture.state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.PENDING)
+        queue.close()
+    }
+
+    ApplicationQueryFixture().use { fixture ->
+        val queue = GattOperationQueue({ fixture.session.isCurrent }, ManualTimer(), { error(it) })
+        queue.enqueue(GattOperationQueue.Operation("blocked", { NativeStart.PENDING }))
+        val query = fixture.query
+        var submitted = 0
+        fixture.session.enqueueWrite(queue, "query", attChunks(query.bytes, 20), query.operationId,
+            query.applicationQuery, { submitted++; NativeStart.PENDING })
+        fixture.state.beginConnectionAttempt("replacement", 2UL)
+        val publications = fixture.publications.size
+        queue.close()
+        fixture.session.applicationQueryReceipt(checkNotNull(query.applicationQuery), 0U, 1U, NativeReceipt.SUBMITTED)
+        check(submitted == 0 && fixture.state.deviceSessionSnapshot().identity == null)
+        check(fixture.publications.size == publications)
+        check(!fixture.state.applicationQueryTransportIsCurrent(fixture.token,
+            checkNotNull(query.applicationQuery).queryId, 2UL))
     }
 }
