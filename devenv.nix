@@ -7,6 +7,7 @@
 
 let
   cutoutSwiftFormat = import ./nix/swift-format { inherit pkgs; };
+  cutoutCargoSwift = import ./nix/cargo-swift { inherit pkgs; };
   swiftToolchainCheck = ''
     expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
     if [[ "''${DEVELOPER_DIR:-}" != "$expected_developer_dir" || -n "''${SDKROOT:-}" ]]; then
@@ -138,7 +139,7 @@ in
     pkgs.secretspec
   ]
   ++ lib.optionals pkgs.stdenv.isDarwin [
-    pkgs.cargo-swift
+    cutoutCargoSwift
   ]
   ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.dbus

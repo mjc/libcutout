@@ -428,8 +428,9 @@ fn swift_ffi_package_command(root: &Path, snapshot: &Path) -> Command {
 }
 
 /// Cargo Swift owns native compilation and bundling; the workspace-pinned
-/// `UniFFI` generator owns bindings, as it already does for Kotlin. Cargo Swift
-/// 0.11.1 embeds `UniFFI` 0.31.1, whose callback pointer fails Swift 6 checking.
+/// `UniFFI` generator owns bindings, as it already does for Kotlin. The Cargo
+/// Swift tool in `nix/cargo-swift` uses the same metadata version for its
+/// preliminary extraction before these final workspace bindings replace it.
 fn regenerate_swift_bindings(
     root: &Path,
     snapshot: &Path,
