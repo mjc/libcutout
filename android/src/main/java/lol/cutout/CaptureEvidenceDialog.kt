@@ -22,6 +22,7 @@ internal class CaptureEvidenceDialog(
     private val content = ui.column()
     private val note = EditText(context).apply {
         hint = "Add a note"; minLines = 3; maxLines = 6
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         tag = "captures.evidence.note"
     }
     private val count = ui.text("0 / 1024 bytes", 13f, color = ui.muted)
@@ -38,11 +39,19 @@ internal class CaptureEvidenceDialog(
     private val add = ui.action("Add screenshots") { pickImages?.invoke(::importImages) }
     private val save = ui.action("Save note and screenshots") { save() }
     private val send = ui.action("Review private Send", primary = true) { review() }
+    private val remove = ui.action("Cancel Send") {
+        val next = status
+        if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT || next?.phase == MobileCaptureSubmissionPhaseDto.DELETING) {
+            AlertDialog.Builder(context).setTitle("Delete the sent copy?")
+                .setMessage("Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain.")
+                .setNegativeButton("Keep sent copy", null).setPositiveButton("Delete sent copy") { _, _ -> removeSent(true) }.show()
+        } else removeSent(false)
+    }
 
     fun show() {
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(20))
         content.addView(note); content.addView(count); content.addView(images)
-        content.addView(add); content.addView(save); content.addView(send); content.addView(message)
+        content.addView(add); content.addView(save); content.addView(send); content.addView(remove); content.addView(message)
         val dialog = AlertDialog.Builder(context).setTitle("Recording notes")
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).create()
@@ -72,7 +81,12 @@ internal class CaptureEvidenceDialog(
         add.text = "Add screenshots (${screenshots.size}/$screenshotLimit)"
         add.isEnabled = loaded && !working && editable() && screenshots.size < screenshotLimit && pickImages != null
         save.isEnabled = loaded && !working && editable() && dirty && bytes <= noteLimit
-        send.isEnabled = loaded && !working && !dirty && status?.phase != MobileCaptureSubmissionPhaseDto.SENT
+        send.isEnabled = loaded && !working && !dirty && status?.phase !in setOf(
+            MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
+            MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)
+        remove.visibility = if (status == null || status?.phase in setOf(MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)) android.view.View.GONE else android.view.View.VISIBLE
+        remove.text = if (status?.phase in setOf(MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING)) "Delete sent copy" else "Cancel Send"
+        remove.isEnabled = !working
     }
 
     private fun renderImages() {
@@ -147,7 +161,27 @@ internal class CaptureEvidenceDialog(
             }.show()
     }
 
+    private fun removeSent(deleting: Boolean) {
+        val operation = status?.operationId ?: return
+        run({ database ->
+            val credential = charging.existingCaptureCredential()
+            CaptureSubmissionClientHandle(database).use { client ->
+                if (deleting) {
+                    check(credential != null) { "The existing account is required to delete this sent copy." }
+                    client.delete(operation, credential.identityId, credential.token)
+                } else client.cancel(operation, credential?.identityId, credential?.token)
+            }
+        }) { next ->
+            status = next
+            message.text = if (next.phase == MobileCaptureSubmissionPhaseDto.DELETED) "Sent copy deleted" else if (next.phase == MobileCaptureSubmissionPhaseDto.CANCELLED) "Send cancelled" else "Removal is pending. Retry to confirm it."
+        }
+    }
+
     private fun importImages(uris: List<Uri>) {
+        if (uris.size > screenshotLimit - screenshots.size) {
+            message.text = "Choose up to four screenshots."
+            return
+        }
         run({ _ -> uris.map { uri ->
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }

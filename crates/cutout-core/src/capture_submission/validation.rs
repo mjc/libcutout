@@ -71,17 +71,16 @@ impl CaptureSubmissionMetadata {
         {
             return Err(InvalidMetadata);
         }
-        if let Some(evidence) = &self.evidence {
-            if !digest_is_valid(&evidence.capture_sha256)
+        if let Some(evidence) = &self.evidence
+            && (!digest_is_valid(&evidence.capture_sha256)
                 || evidence.capture_bytes == 0
                 || evidence.capture_bytes >= self.bytes
                 || self.bytes - evidence.capture_bytes > crate::MAX_CAPTURE_EVIDENCE_BYTES as u64
-                || evidence.note_bytes > crate::MAX_CAPTURE_NOTE_BYTES as u32
-                || evidence.screenshots > crate::MAX_CAPTURE_SCREENSHOTS as u32
-                || (evidence.note_bytes == 0 && evidence.screenshots == 0)
-            {
-                return Err(InvalidMetadata);
-            }
+                || u64::from(evidence.note_bytes) > crate::MAX_CAPTURE_NOTE_BYTES as u64
+                || u64::from(evidence.screenshots) > crate::MAX_CAPTURE_SCREENSHOTS as u64
+                || (evidence.note_bytes == 0 && evidence.screenshots == 0))
+        {
+            return Err(InvalidMetadata);
         }
         let source = self.provenance.source_sha256.as_deref();
         let valid = match self.provenance.transformation {

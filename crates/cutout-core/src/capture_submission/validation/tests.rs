@@ -644,7 +644,7 @@ fn capture_submission_validates_complete_note_and_screenshot_envelope() {
     let summary = validate_capture_submission_payload(bytes.as_slice(), &metadata).unwrap();
     assert_eq!(summary.bytes, metadata.bytes);
     assert_eq!(summary.sha256, metadata.sha256);
-    assert_eq!(summary.categories.notes, true);
+    assert!(summary.categories.notes);
     assert_eq!(summary.annotation_count, 2);
     let tail: crate::CaptureAttachments = serde_json::from_slice(&bytes[raw.len()..]).unwrap();
     assert_eq!(tail, evidence);

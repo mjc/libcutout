@@ -491,7 +491,7 @@ impl RideDatabase {
             use sha2::Digest;
             let mut digest = sha2::Sha256::new();
             let mut raw = std::fs::File::open(&snapshot).map_err(StorageError::from)?;
-            let mut buffer = [0; 64 * 1024];
+            let mut buffer = vec![0; 64 * 1024];
             loop {
                 let count = raw.read(&mut buffer).map_err(StorageError::from)?;
                 if count == 0 {

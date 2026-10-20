@@ -1042,7 +1042,7 @@ fn capture_notes_screenshots_survive_save_reopen_and_exact_send() {
     let bytes = &uploaded[0].1;
     let summary = validate_capture_submission_payload(bytes.as_slice(), &sent.metadata).unwrap();
     assert_eq!(summary.sha256, sent.receipt.unwrap().sha256);
-    let raw_length = sent.metadata.capture_bytes() as usize;
+    let raw_length = usize::try_from(sent.metadata.capture_bytes()).unwrap();
     assert_eq!(
         cutout_core::capture_evidence_digest(&bytes[..raw_length]),
         sent.metadata.capture_sha256()
@@ -1076,7 +1076,7 @@ fn capture_evidence_v49_migration_preserves_existing_receipt_and_raw_capture() {
     assert_eq!(reopened.capture_submission(source).unwrap().unwrap(), sent);
     assert_eq!(
         reopened.capture_evidence(source).unwrap(),
-        cutout_core::CaptureAttachments::default()
+        CaptureAttachments::default()
     );
     let raw = directory.path().join("original.jsonl");
     reopened

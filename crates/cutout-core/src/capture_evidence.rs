@@ -151,8 +151,10 @@ impl CaptureEvidenceManifest {
         Ok(Self {
             capture_sha256,
             capture_bytes,
-            note_bytes: evidence.note.len() as u32,
-            screenshots: evidence.screenshots.len() as u32,
+            note_bytes: u32::try_from(evidence.note.len())
+                .map_err(|_| CaptureEvidenceError::NoteTooLong)?,
+            screenshots: u32::try_from(evidence.screenshots.len())
+                .map_err(|_| CaptureEvidenceError::TooManyScreenshots)?,
         })
     }
 }
@@ -167,10 +169,12 @@ mod jpeg_base64 {
     use super::STANDARD;
     use base64::Engine as _;
     use serde::{Deserialize, Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&STANDARD.encode(bytes))
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
         let encoded = String::deserialize(deserializer)?;
         if encoded.len() > super::MAX_CAPTURE_SCREENSHOT_BYTES.div_ceil(3) * 4 {
             return Err(serde::de::Error::custom("screenshot exceeds size limit"));
