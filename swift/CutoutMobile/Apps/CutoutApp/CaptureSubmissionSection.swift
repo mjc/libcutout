@@ -330,13 +330,15 @@ private struct CaptureEvidenceSection: View {
                 }
             }
             if editable {
+                let screenshotCount = model.screenshots.count
+                let screenshotLimit = model.screenshotLimit
                 PhotosPicker(
                     selection: $selectedItems,
                     maxSelectionCount: max(1, model.screenshotLimit - model.screenshots.count),
                     matching: .images, preferredItemEncoding: .compatible
                 ) {
                     Label(
-                        "Add screenshots (\(model.screenshots.count)/\(model.screenshotLimit))",
+                        "Add screenshots (\(screenshotCount)/\(screenshotLimit))",
                         systemImage: "photo.badge.plus")
                 }
                 .disabled(!model.isLoaded || model.isWorking || model.screenshots.count >= model.screenshotLimit)
