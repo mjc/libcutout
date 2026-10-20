@@ -1,6 +1,16 @@
 import CutoutMobileFFI
 import Foundation
 
+/// Failure to attach a durable physical-type choice to the intended device.
+public enum DeviceVehicleSelectionError: Error, Equatable {
+    /// The connection attempt or requested type was not admitted by Rust.
+    case connectionUnavailable
+    /// The existing Rust device database is unavailable.
+    case persistenceUnavailable
+    /// The wall clock cannot supply a valid persistence timestamp.
+    case invalidTimestamp
+}
+
 public struct DevicePickerSelectionSnapshot: Equatable, Sendable {
     public let platformIdentifier: String?
     public let displayName: String?
@@ -17,15 +27,24 @@ public struct DevicePickerSelectionStore: @unchecked Sendable {
     private static let deviceNameKeyPrefix = "io.cutout.devicePicker.deviceName."
     private let defaults: UserDefaults
     private let database: RideDatabaseHandle?
+    private let injectedUserVehicleKindLoader: (@Sendable (String) throws -> MobileVehicleKindDto?)?
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.database = defaults === UserDefaults.standard ? RustPersistenceStore.shared : nil
+        self.injectedUserVehicleKindLoader = nil
     }
 
     init(database: RideDatabaseHandle, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.database = database
+        self.injectedUserVehicleKindLoader = nil
+    }
+
+    init(defaults: UserDefaults, userVehicleKindLoader: @escaping @Sendable (String) throws -> MobileVehicleKindDto?) {
+        self.defaults = defaults
+        self.database = nil
+        self.injectedUserVehicleKindLoader = userVehicleKindLoader
     }
 
     public var requiresDatabaseLoad: Bool { database != nil }
@@ -55,6 +74,20 @@ public struct DevicePickerSelectionStore: @unchecked Sendable {
     public func immediateDisplayName(for identifier: String) -> String? {
         guard database == nil else { return nil }
         return displayName(for: identifier)
+    }
+
+    /// Loads the user's type for one device through the existing Rust database owner.
+    func userVehicleKind(for identifier: String) throws -> MobileVehicleKindDto? {
+        if let injectedUserVehicleKindLoader { return try injectedUserVehicleKindLoader(identifier) }
+        guard let database else { throw DeviceVehicleSelectionError.persistenceUnavailable }
+        return try database.userVehicleKind(platformIdentifier: identifier)
+    }
+
+    /// Performs the existing Rust database read away from Main and the BLE effect owner.
+    public func loadUserVehicleKind(for identifier: String) async throws -> MobileVehicleKindDto? {
+        try await Task.detached(priority: .utility) { [self] in
+            try userVehicleKind(for: identifier)
+        }.value
     }
 
     /// Protocol naming must not change the user's saved device selection.

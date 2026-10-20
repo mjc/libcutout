@@ -23,6 +23,10 @@ use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
+#[cfg(feature = "serde")]
+mod pevcap_vesc_context;
+#[cfg(feature = "serde")]
+pub use pevcap_vesc_context::*;
 mod capture_research;
 pub use capture_research::*;
 mod capture_annotations;
@@ -45,6 +49,10 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod vesc_drivetrain;
+pub use vesc_drivetrain::*;
+mod vehicle;
+pub use vehicle::*;
 mod connection_lifecycle;
 pub use connection_lifecycle::*;
 mod capture_lifecycle;
@@ -7537,6 +7545,18 @@ pub struct TelemetrySnapshot {
 }
 
 impl TelemetrySnapshot {
+    /// Discards speed calculated from a configuration that no longer applies.
+    /// Other values and their observation timestamps remain unchanged.
+    pub fn invalidate_calculated_speed(&mut self) {
+        if self
+            .speed
+            .is_some_and(|speed| speed.source == ValueSource::Calculated)
+        {
+            self.speed = None;
+            self.speed_observed_at_ms = None;
+        }
+    }
+
     /// Applies a partial telemetry update, preserving fields absent from it.
     pub const fn apply_delta(&mut self, delta: TelemetryDelta) {
         self.at_ms = Some(delta.at_ms);
@@ -7646,11 +7666,61 @@ pub enum SessionInput<'a> {
     Command(DeviceCommand),
 }
 
+/// Identity of one read-only application-discovery query within a connection attempt.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ApplicationQueryId(u64);
+
+impl ApplicationQueryId {
+    /// Creates a query identity allocated by its protocol owner.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+    /// Raw identity for the native receipt boundary.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Native submission admission attached to every fragment of an application query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplicationQueryWrite {
+    /// Attempt-local query identity; the connection token is carried by the transport owner.
+    pub id: ApplicationQueryId,
+    /// Exclusive monotonic deadline for actual native submission.
+    pub submit_before: MonotonicTimestamp,
+}
+
+/// Native evidence for one indexed fragment of an application query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationQueryTransportStatus {
+    /// Retained by the native transport without submitting bytes.
+    Queued,
+    /// This fragment was submitted to the native peripheral API.
+    Submitted,
+    /// This fragment was rejected before submission.
+    Rejected,
+    /// This fragment was cancelled before submission.
+    Cancelled,
+    /// The native write was invoked but its submission outcome cannot be established.
+    SubmissionUnknown,
+}
+
 /// Bounded transport write payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WritePayload {
     storage: WritePayloadStorage,
-    operation_id: Option<TransportOperationId>,
+    correlation: WritePayloadCorrelation,
+}
+
+// Most writes are untracked or carry a small settings ID. Only the rare discovery
+// query allocates its admission metadata, preserving the ordinary inline payload size.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WritePayloadCorrelation {
+    Untracked,
+    Operation(TransportOperationId),
+    ApplicationQuery(Box<ApplicationQueryWrite>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7684,7 +7754,7 @@ impl WritePayload {
                         },
                     )?,
                 ),
-                operation_id: None,
+                correlation: WritePayloadCorrelation::Untracked,
             });
         }
 
@@ -7697,7 +7767,7 @@ impl WritePayload {
                     }
                 })?,
             )),
-            operation_id: None,
+            correlation: WritePayloadCorrelation::Untracked,
         })
     }
 
@@ -7734,12 +7804,31 @@ impl WritePayload {
     /// Returns the host correlation identity assigned to this write, if any.
     #[must_use]
     pub const fn operation_id(&self) -> Option<TransportOperationId> {
-        self.operation_id
+        match self.correlation {
+            WritePayloadCorrelation::Operation(id) => Some(id),
+            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::ApplicationQuery(_) => {
+                None
+            }
+        }
+    }
+
+    /// Returns typed application-query submission admission, independent of settings writes.
+    #[must_use]
+    pub fn application_query(&self) -> Option<ApplicationQueryWrite> {
+        match &self.correlation {
+            WritePayloadCorrelation::ApplicationQuery(query) => Some(**query),
+            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::Operation(_) => None,
+        }
+    }
+
+    /// Attaches protocol-owned application-query correlation to this payload.
+    pub fn set_application_query(&mut self, query: ApplicationQueryWrite) {
+        self.correlation = WritePayloadCorrelation::ApplicationQuery(Box::new(query));
     }
 
     /// Associates this payload with one host transport operation.
     pub fn set_operation_id(&mut self, operation_id: TransportOperationId) {
-        self.operation_id = Some(operation_id);
+        self.correlation = WritePayloadCorrelation::Operation(operation_id);
     }
 }
 
@@ -7878,6 +7967,30 @@ pub enum SessionOutputError {
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
+
+    /// Supplies current host time before an untimestamped command, without issuing periodic work.
+    fn observe_host_time(&mut self, _at: MonotonicTimestamp) {}
+
+    /// Checks application-query admission immediately before a native fragment write.
+    fn application_query_is_current(
+        &self,
+        _id: ApplicationQueryId,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
+
+    /// Records native fragment evidence without treating host acceptance as a device ACK.
+    fn record_application_query_transport(
+        &mut self,
+        _id: ApplicationQueryId,
+        _index: u16,
+        _count: u16,
+        _status: ApplicationQueryTransportStatus,
+        _at: MonotonicTimestamp,
+    ) -> bool {
+        false
+    }
 }
 
 /// Host-facing synchronous session facade.
@@ -7979,6 +8092,11 @@ where
             })
     }
 
+    /// Clears calculated speed after its local conversion basis changes, without a sample.
+    pub fn invalidate_calculated_speed(&mut self) {
+        self.state.telemetry.current.invalidate_calculated_speed();
+    }
+
     /// Returns the latest telemetry snapshot.
     #[must_use]
     pub fn current_snapshot(&self) -> TelemetrySnapshot {
@@ -8001,6 +8119,11 @@ where
     #[must_use]
     pub const fn protocol_session(&self) -> &S {
         &self.session
+    }
+
+    /// Returns the protocol owner for correlated native transport receipts.
+    pub fn protocol_session_mut(&mut self) -> &mut S {
+        &mut self.session
     }
 
     fn handle(&mut self, input: SessionInput<'_>) {

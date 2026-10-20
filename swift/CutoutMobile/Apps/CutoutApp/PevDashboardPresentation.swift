@@ -141,7 +141,7 @@ func vescDebugRows(_ snapshot: VescRideSnapshot?, phase: SessionConnectionPhase,
         ]
     }
     let phaseText = phase.displayText
-    let protocolText = vescDebugProtocolText(snapshot.subProtocol)
+    let protocolText = vescDebugProtocolText(snapshot.application)
     let stateText = vescOperatingStateText(snapshot)
     let notificationText = notificationCount.formatted()
     return [
@@ -183,12 +183,11 @@ private func vescDebugMetricValue(_ metricValue: PevDashboardMetricValue, format
     }
 }
 
-func vescDebugProtocolText(_ subProtocol: VescSubProtocol) -> String {
-    switch subProtocol {
+func vescDebugProtocolText(_ application: VescApplication) -> String {
+    switch application {
     case .refloat: localizedAppText("vesc.debug.protocol.refloat")
-    case .bike: localizedAppText("vesc.debug.protocol.bike")
-    case .eskate: localizedAppText("vesc.debug.protocol.eskate")
-    case .generic: localizedAppText("vesc.debug.protocol.generic")
+    case .pending: localizedAppText("device.type.discovery_pending")
+    case .absent: localizedAppText("vesc.debug.protocol.generic")
     }
 }
 
@@ -202,12 +201,14 @@ func vescOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
     }
 }
 
-func vescVehicleKindText(_ vehicleKind: VescVehicleKind) -> String {
+func vescVehicleKindText(_ vehicleKind: VehicleKind) -> String {
     switch vehicleKind {
-    case .float: localizedAppText("vesc.vehicle.float")
-    case .bike: localizedAppText("vesc.vehicle.bike")
-    case .skateboard: localizedAppText("vesc.vehicle.skateboard")
+    case .onewheel: localizedAppText("vesc.vehicle.float")
+    case .ebike: localizedAppText("vesc.vehicle.bike")
+    case .eskate: localizedAppText("vesc.vehicle.skateboard")
     case .electricUnicycle: localizedAppText("vesc.vehicle.electric_unicycle")
+    case .scooter: localizedAppText("device.type.scooter")
+    case .emoto: localizedAppText("device.type.emoto")
     case .unknown: localizedAppText("vesc.vehicle.unknown")
     }
 }

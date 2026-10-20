@@ -76,6 +76,25 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
     case electricUnicycle
     case floatwheelAtom
+    case onewheel
+    case scooter
+    case eskate
+    case ebike
+    case emoto
+    case unknown
+
+    public init(vehicleKind: VehicleKind) {
+        self =
+            switch vehicleKind {
+            case .electricUnicycle: .electricUnicycle
+            case .onewheel: .onewheel
+            case .scooter: .scooter
+            case .eskate: .eskate
+            case .ebike: .ebike
+            case .emoto: .emoto
+            case .unknown: .unknown
+            }
+    }
 }
 
 public enum LiveActivityRideValueState: String, Codable, Equatable, Hashable, Sendable {
@@ -914,8 +933,6 @@ extension LiveActivityRideSnapshot {
     }
 
     static func durationString(from duration: MonotonicMilliseconds) -> String {
-        let seconds = duration.rawValue / 1_000
-        let minutes = seconds / 60
-        return String(format: "%llu:%02llu", minutes, seconds % 60)
+        RideUnits.durationText(milliseconds: duration.rawValue)
     }
 }

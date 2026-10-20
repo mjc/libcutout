@@ -3109,6 +3109,9 @@ pub enum TransportActionDto {
 
         /// Rust-owned operation identity for native submission correlation.
         operation_id: Option<u64>,
+
+        /// Typed application-query native admission, separate from settings operations.
+        application_query: Option<crate::ApplicationQueryWrite>,
     },
 
     /// Disconnect the underlying transport.
@@ -3130,6 +3133,7 @@ impl From<TransportAction> for TransportActionDto {
                 bytes: bytes.as_slice().to_vec(),
                 mode: mode.into(),
                 operation_id: bytes.operation_id().map(TransportOperationId::get),
+                application_query: bytes.application_query(),
             },
             TransportAction::Disconnect => Self::Disconnect,
         }
@@ -4023,6 +4027,7 @@ mod tests {
                 bytes: vec![1, 2, 3],
                 mode: WriteModeDto::WithoutResponse,
                 operation_id: None,
+                application_query: None,
             })
         );
         assert_eq!(

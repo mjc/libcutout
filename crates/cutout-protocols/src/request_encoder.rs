@@ -17,8 +17,7 @@ use crate::settings_wire::{
     VeteranWheelUnits,
 };
 use crate::{
-    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
-    VescReadOnlyRequest,
+    AeroProbe, FalconProbe, VescCanReadOnlyRequest, VescReadOnlyCodec, VescReadOnlyRequest,
 };
 
 /// Bounded encoded request payload plus correlation metadata.
@@ -649,26 +648,7 @@ impl VescRequestEncoder {
     pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<VescReadOnlyRequest>> {
         let request = match kind {
             CommandKind::RequestFirmwareInfo => VescReadOnlyRequest::FirmwareInfo,
-            CommandKind::RequestTelemetry => {
-                let mut requests = ArrayVec::new();
-                for request in [
-                    VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
-                    VescReadOnlyRequest::MotorConfig,
-                    VescReadOnlyRequest::Values,
-                ] {
-                    let mut encoded = ArrayVec::new();
-                    VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
-                    requests
-                        .try_push(EncodedRequest {
-                            probe: request,
-                            command: kind,
-                            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
-                            mode: WriteMode::WithoutResponse,
-                        })
-                        .ok()?;
-                }
-                return Some(RequestDisposition::Writes(requests));
-            }
+            CommandKind::RequestTelemetry => VescReadOnlyRequest::Values,
             CommandKind::RequestDiagnostics => VescReadOnlyRequest::Stats(
                 crate::VescStatsMask::SPEED_AVG
                     | crate::VescStatsMask::POWER_AVG
@@ -1619,33 +1599,15 @@ mod tests {
     }
 
     #[test]
-    fn vesc_telemetry_request_discovers_refloat_fields_and_motor_config_before_values() {
+    fn vesc_telemetry_request_is_standard_values_without_application_assumptions() {
         let request = VescRequestEncoder::encode_command(CommandKind::RequestTelemetry)
-            .expect("telemetry is supported");
-
-        let RequestDisposition::Writes(requests) = request else {
-            panic!("VESC telemetry should issue the Refloat realtime sequence");
+            .expect("standard telemetry is supported");
+        let RequestDisposition::Write(request) = request else {
+            panic!("one standard values read is required");
         };
-        assert_eq!(requests.len(), 3);
-        assert_eq!(
-            requests
-                .iter()
-                .map(|request| request.probe)
-                .collect::<ArrayVec<_, 3>>()
-                .as_slice(),
-            &[
-                VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
-                VescReadOnlyRequest::MotorConfig,
-                VescReadOnlyRequest::Values,
-            ]
-        );
-        assert!(
-            requests
-                .iter()
-                .all(|request| request.command == CommandKind::RequestTelemetry
-                    && request.mode == WriteMode::WithoutResponse
-                    && !request.payload.is_empty())
-        );
+        assert_eq!(request.probe, VescReadOnlyRequest::Values);
+        assert_eq!(request.mode, WriteMode::WithoutResponse);
+        assert_eq!(request.payload.as_slice(), &[2, 1, 4, 64, 132, 3]);
     }
 
     #[test]

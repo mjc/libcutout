@@ -109,6 +109,19 @@ final class DevicePresentationModel {
         await nameRestoreTask?.value
     }
 
+    var deviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
+
+    /// Only a resolved user association has a vehicle-type edit control in Tune.
+    var editableVehicleKindToken: ConnectionAttemptToken? {
+        guard phase == .live, let snapshot = deviceSessionSnapshot,
+            let identity = snapshot.identity,
+            identity.protocol == .vesc, identity.vescApplication == .absent,
+            identity.classificationRequirement == .resolved,
+            identity.classificationProvenance == .userProvided
+        else { return nil }
+        return snapshot.connection.token
+    }
+
     var displayState = RideDisplayState()
     var phase = SessionConnectionPhase.starting
     var scanState: DevicePickerScanState?
@@ -238,6 +251,7 @@ final class DevicePresentationModel {
         )
         settings = nil
         protocolIdentityCandidate = nil
+        deviceSessionSnapshot = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         phase = .discoveringServices
 
@@ -295,7 +309,8 @@ final class DevicePresentationModel {
         return rideState
     }
     var vescRideSnapshot: VescRideSnapshot? {
-        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+        VescRideSnapshot(
+            displayState: displayState, title: selectedRideTitle, identity: deviceSessionSnapshot?.identity)
     }
     var connectionStatusText: String { connectionState.statusText ?? phase.displayText }
 

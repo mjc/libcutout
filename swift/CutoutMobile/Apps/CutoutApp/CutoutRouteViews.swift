@@ -355,6 +355,14 @@ struct DeviceTuneRouteView: View {
     let model: CutoutAppModel
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
+    @State private var drivetrainEditor: VescDrivetrainEditor?
+    @State private var vehicleKindChoice: VehicleKindChoice?
+
+    private struct VehicleKindChoice: Identifiable {
+        let token: ConnectionAttemptToken
+        let kind: VehicleKind
+        var id: UInt64 { token.generation }
+    }
 
     var body: some View {
         Group {
@@ -363,14 +371,14 @@ struct DeviceTuneRouteView: View {
                     snapshot: snapshot,
                     submitSetting: submitSetting,
                     submitAction: submitAction
-                ) { alarmsSection }
+                ) { additionalControls }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
                         ContentUnavailableView(
                             localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
-                        alarmsSection
+                        additionalControls
                     }
                     .padding(24)
                 }
@@ -380,6 +388,55 @@ struct DeviceTuneRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .tint(PevColors.yellow)
         .accessibilityIdentifier("settings.screen.tune")
+        .sheet(item: $drivetrainEditor) { editor in
+            VescDrivetrainEditorView(editor: editor)
+        }
+        .sheet(item: $vehicleKindChoice) { choice in
+            DeviceVehicleKindChoiceView(token: choice.token, currentKind: choice.kind) { kind, token in
+                try await model.selectVehicleKind(kind, token: token)
+                vehicleKindChoice = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var additionalControls: some View {
+        if let token = model.device.editableVehicleKindToken,
+            let kind = model.device.deviceSessionSnapshot?.identity?.vehicleKind
+        {
+            Button {
+                vehicleKindChoice = VehicleKindChoice(token: token, kind: kind)
+            } label: {
+                HStack {
+                    Label(localizedAppText("device.type.edit"), systemImage: "tag")
+                    Spacer()
+                    Text(vescVehicleKindText(kind)).foregroundStyle(PevColors.muted)
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(PevColors.muted)
+                }
+                .padding(16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("device.type.edit")
+        }
+        if model.phase == .live, let editor = model.makeVescDrivetrainEditor() {
+            Button {
+                drivetrainEditor = editor
+            } label: {
+                HStack {
+                    Label(localizedAppText("vesc.drivetrain.title"), systemImage: "gearshape")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(PevColors.muted)
+                }
+                .padding(16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("vesc.drivetrain.open")
+        }
+        alarmsSection
     }
 
     private var alarmsSection: some View {
@@ -406,27 +463,119 @@ struct DeviceTuneRouteView: View {
 
 struct VescRideRouteView: View {
     let model: CutoutAppModel
+    var disconnect: (() -> Void)? = nil
 
     private func rideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
         #if DEBUG && targetEnvironment(simulator)
             if let fixture = CutoutUITestSecondaryRideFixture.vescRideSnapshot(at: now) { return fixture }
         #endif
-        return model.device.vescRideSnapshot
+        return model.vescRideSnapshot
+    }
+
+    private var applicationDiscoveryStatus: some View {
+        VStack(spacing: 16) {
+            switch model.device.deviceSessionSnapshot?.identity?.vescApplicationQuery {
+            case .knownUnsent?, .partialUncertain?:
+                Image(systemName: "exclamationmark.circle").font(.title)
+                Text(localizedAppText("device.type.discovery_failed"))
+                    .multilineTextAlignment(.center)
+                if let disconnect {
+                    Button(localizedAppText("device.type.back_to_connect"), action: disconnect)
+                        .frame(minHeight: 44)
+                }
+            default:
+                ProgressView()
+                Text(localizedAppText("device.type.discovery_pending"))
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(PevColors.primaryText)
+        .background(PevColors.pageBackground)
+        .accessibilityIdentifier("device.type.application-check")
     }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            VescRideScreenView(
-                liveSnapshot: rideSnapshot(at: model.currentMonotonicTime),
-                phase: model.device.phase,
-                now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
-                connectionStatusText: model.device.connectionStatusText
-            )
+            Group {
+                switch model.device.deviceSessionSnapshot?.identity?.classificationRequirement {
+                case .pending?:
+                    applicationDiscoveryStatus
+                case .userSelectionRequired?:
+                    if let token = model.device.deviceSessionSnapshot?.connection.token {
+                        DeviceVehicleKindChoiceView(token: token, select: model.selectVehicleKind)
+                            .id(token.generation)
+                    }
+                case .resolved?, nil:
+                    VescRideScreenView(
+                        liveSnapshot: rideSnapshot(at: model.currentMonotonicTime),
+                        phase: model.device.phase,
+                        now: model.currentMonotonicTime,
+                        captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
+                        connectionStatusText: model.device.connectionStatusText,
+                        disconnect: disconnect,
+                        makeDrivetrainEditor: model.makeVescDrivetrainEditor
+                    )
+                }
+            }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
             .rideUITestEnvironmentReadback()
         }
+    }
+}
+
+/// A device association only; Rust keeps protocol and command capabilities independent.
+private struct DeviceVehicleKindChoiceView: View {
+    let token: ConnectionAttemptToken
+    var currentKind: VehicleKind? = nil
+    let select: (VehicleKind, ConnectionAttemptToken) async throws -> Void
+    @State private var isSaving = false
+    @State private var saveFailed = false
+
+    var body: some View {
+        PevDashboardScaffold(
+            sectionTitle: localizedAppText("picker.section.setup"), bottomPadding: 24,
+            allowsVerticalScroll: true, contentSpacing: 20, horizontalPadding: 24, showsHeader: false
+        ) {
+            PevScreenTitleBlock(
+                title: localizedAppText("device.type.choose"),
+                subtitle: localizedAppText("device.type.choose.explanation")
+            )
+            ForEach(userSelectableVehicleKinds(), id: \.self) { kind in
+                Button {
+                    isSaving = true
+                    saveFailed = false
+                    Task {
+                        defer { isSaving = false }
+                        do { try await select(kind, token) } catch { saveFailed = true }
+                    }
+                } label: {
+                    HStack {
+                        Text(vescVehicleKindText(kind))
+                        Spacer()
+                        Image(systemName: currentKind == kind ? "checkmark" : "chevron.right")
+                            .accessibilityHidden(true)
+                    }
+                    .padding(16)
+                    .frame(minHeight: 52)
+                    .background(PevDashboardCardBackground(cornerRadius: 22))
+                    .contentShape(Rectangle())
+                }
+                .disabled(isSaving)
+                .accessibilityAddTraits(currentKind == kind ? .isSelected : [])
+                .accessibilityIdentifier("device.type.choice.\(kind)")
+            }
+            if isSaving { ProgressView() }
+            if saveFailed {
+                Text(localizedAppText("device.type.save_failed"))
+                    .foregroundStyle(PevColors.muted)
+                    .accessibilityIdentifier("device.type.save-failed")
+            }
+        }
+        .foregroundStyle(PevColors.primaryText)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("device.type.selection")
     }
 }
 
@@ -1169,7 +1318,7 @@ extension MelkLightingPeripheralState {
             guard try core.setBrightness(percentage: percentage) else { return false }
             core.flushWrites(canSend: true)
             for action in core.drainActions() {
-                guard case let .write(identifier, write) = action, identifier == Self.identifier else { continue }
+                guard case .write(let identifier, let write) = action, identifier == Self.identifier else { continue }
                 writtenBrightness = percentage
                 lastBrightnessWrite = write
                 brightnessWriteCount += 1

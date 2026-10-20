@@ -522,6 +522,8 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let bytes: Data
     /// Rust-owned transport operation identity for native receipt correlation.
     public let operationID: UInt64?
+    /// Typed admission for application discovery, independent from the settings lane.
+    public let applicationQuery: MobileApplicationQueryWriteDto?
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
     public let rawTelemetry: RawTelemetryReadback?
@@ -534,6 +536,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         channel: Data,
         bytes: Data,
         operationID: UInt64? = nil,
+        applicationQuery: MobileApplicationQueryWriteDto? = nil,
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
         rawTelemetry: RawTelemetryReadback? = nil,
@@ -544,6 +547,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.channel = channel
         self.bytes = bytes
         self.operationID = operationID
+        self.applicationQuery = applicationQuery
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
         self.rawTelemetry = rawTelemetry
@@ -603,6 +607,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.channel = dto.channel
         self.bytes = dto.bytes
         self.operationID = dto.operationId
+        self.applicationQuery = dto.applicationQuery
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
         self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)
@@ -1837,48 +1842,10 @@ public enum VescRideStopReason: Equatable, Hashable, Sendable {
     }
 }
 
-public enum VescVehicleKind: Equatable, Hashable, Sendable {
-    case float
-    case bike
-    case skateboard
-    case electricUnicycle
-    case unknown
-
-    fileprivate init(_ dto: MobileVescVehicleKindDto) {
-        switch dto {
-        case .float:
-            self = .float
-        case .bike:
-            self = .bike
-        case .skateboard:
-            self = .skateboard
-        case .electricUnicycle:
-            self = .electricUnicycle
-        case .unknown:
-            self = .unknown
-        }
-    }
-}
-
-public enum VescSubProtocol: Equatable, Hashable, Sendable {
-    case refloat
-    case bike
-    case eskate
-    case generic
-
-    fileprivate init(_ dto: MobileVescSubProtocolDto) {
-        switch dto {
-        case .refloat:
-            self = .refloat
-        case .bike:
-            self = .bike
-        case .eskate:
-            self = .eskate
-        case .generic:
-            self = .generic
-        }
-    }
-}
+/// Canonical physical type projected by the shared Rust device owner.
+public typealias VehicleKind = MobileVehicleKindDto
+/// Installed VESC application evidence, independent from the physical type.
+public typealias VescApplication = MobileVescApplicationDiscoveryDto
 
 public enum VescBatteryDetail: Equatable, Hashable, Sendable {
     case reported(level: BatteryLevel, current: BatteryCurrent?)
@@ -1934,14 +1901,18 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public static let defaultTitle = "VESC"
 
     public let title: String
-    public let vehicleKind: VescVehicleKind
-    public let subProtocol: VescSubProtocol
+    public let vehicleKind: VehicleKind
+    public let application: VescApplication
     public let controllerState: VescControllerState
     public let operatingState: RideOperatingState
     public let operatingMode: VescRideOperatingMode
     public let warning: VescRideWarning
     public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
+    /// Current logical ride route distance, not the controller odometer.
+    public let tripDistance: Distance?
+    /// Rust-owned recording duration, excluding pauses and interruptions.
+    public let rideDuration: MonotonicMilliseconds?
     public let dutyCycle: DutyCycle?
     public let dutyHeadroom: BatteryLevel?
     public let dutyHeadroomApplicability: EucRideMetricApplicability
@@ -1960,14 +1931,16 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public init(
         title: String,
-        vehicleKind: VescVehicleKind,
-        subProtocol: VescSubProtocol,
+        vehicleKind: VehicleKind,
+        application: VescApplication,
         controllerState: VescControllerState,
         operatingState: RideOperatingState = .unknown,
         operatingMode: VescRideOperatingMode = .unknown,
         warning: VescRideWarning = .unknown,
         stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
+        tripDistance: Distance? = nil,
+        rideDuration: MonotonicMilliseconds? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
         dutyHeadroomApplicability: EucRideMetricApplicability = .unavailable,
@@ -1986,13 +1959,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     ) {
         self.title = title
         self.vehicleKind = vehicleKind
-        self.subProtocol = subProtocol
+        self.application = application
         self.controllerState = controllerState
         self.operatingState = operatingState
         self.operatingMode = operatingMode
         self.warning = warning
         self.stopReason = stopReason
         self.boardSpeed = boardSpeed
+        self.tripDistance = tripDistance
+        self.rideDuration = rideDuration
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
         self.dutyHeadroomApplicability = dutyHeadroom == nil ? dutyHeadroomApplicability : .available
@@ -2010,20 +1985,25 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.lastUpdate = lastUpdate
     }
 
-    public init?(displayState: RideDisplayState, title: String?) {
-        guard let telemetry = displayState.telemetry, telemetry.hasVisibleRideValues else {
-            return nil
-        }
+    public init?(displayState: RideDisplayState, title: String?, identity: MobileDeviceIdentityDto? = nil) {
+        let telemetry = displayState.telemetry ?? TelemetrySnapshot()
+        guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
+        let recording = displayState.logicalRide
+        let statistics = recording?.liveActivityStatistics
         self.init(
             title: title ?? Self.defaultTitle,
-            vehicleKind: .float,
-            subProtocol: .generic,
+            vehicleKind: identity?.vehicleKind ?? .unknown,
+            application: identity?.vescApplication ?? .pending,
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
             operatingMode: telemetry.vescOperatingMode ?? .unknown,
             warning: telemetry.vescWarning ?? .unknown,
             stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,
+            // A recording without route points has no observed trip-distance source.
+            tripDistance: (recording?.summary.pointCount ?? 0) > 0
+                ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil,
+            rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
             dutyHeadroomApplicability: telemetry.pwmHeadroomApplicability,
@@ -4622,7 +4602,7 @@ struct VoltageSagModelStore {
     }
 }
 
-public final class VescOnewheelSession: @unchecked Sendable {
+public final class VescReadOnlyTransportSession: @unchecked Sendable {
     private let inner: VescReadOnlySession
     private let chargeEstimator = MobileChargeEstimator()
     private var chargeEstimateState = ChargeEstimateState.missingProfile

@@ -34,11 +34,14 @@ vesc.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 hex-literal.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
 
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [features]
 default = []
+capture-replay = ["cutout-core/serde"]
 dangerous-controls = []

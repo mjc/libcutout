@@ -698,8 +698,8 @@ pub enum DiscoveryConnectionRoute {
     /// Electric unicycle read-only session route.
     ElectricUnicycle,
 
-    /// VESC/Onewheel read-only route.
-    VescOnewheel,
+    /// VESC controller route; physical type and installed application are resolved separately.
+    Vesc,
 }
 
 /// Purpose of a selected device connection, independent of the current link.

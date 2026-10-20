@@ -1358,7 +1358,7 @@ mod tests {
         };
         let profile = VescBoardProfile {
             motor_pole_pairs: 15,
-            gear_ratio_denominator: 1,
+            gear_ratio_milli: 1_000,
             wheel_circumference: Distance { value: 2_100 },
             battery_type: VescBatteryType::LiIon,
             battery_cells: 15,

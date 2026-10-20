@@ -3,10 +3,9 @@ import SwiftUI
 
 enum PevRideHeroStyle {
     case electricUnicycle
-    case vescOnewheel
+    case vesc
 
     static let electricUnicycleSpeedPointSize: CGFloat = 138
-    static let vescOnewheelSpeedPointSize: CGFloat = 124
     static let unitPointSize: CGFloat = 24
 
 }

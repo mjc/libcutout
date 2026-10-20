@@ -211,6 +211,71 @@ mod tests {
     }
 
     #[test]
+    fn geometry_context_changes_remain_material_for_stationary_raw_samples() {
+        let observation = |at, revision, diameter| {
+            let mut record = stationary_record(at);
+            // Identical selective Values notifications reporting zero ERPM.
+            record.bytes = vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 0, 0, 16, 181, 3].into();
+            let semantic = record.semantic_telemetry.as_mut().unwrap();
+            semantic.snapshot_schema_version = 2;
+            semantic.snapshot_json = serde_json::json!({
+                "at_ms": { "milliseconds": at },
+                "speed_observed_at_ms": { "milliseconds": at },
+                "battery_current_observed_at_ms": { "milliseconds": at },
+                "voltage_observed_at_ms": { "milliseconds": at },
+                "speed": 0,
+                "vesc_drivetrain_context": {
+                    "connection_attempt": { "platform_identifier": "controller-a", "generation": 1 },
+                    "source": "user_configured",
+                    "revision": revision,
+                    "wheel_diameter_micrometres": diameter,
+                    "motor_pole_pairs": 7,
+                    "motor_to_wheel_ratio_milli": 2500,
+                    "wheel_circumference_mm": 283
+                }
+            }).to_string();
+            record
+        };
+        for (revision, diameter) in [(2, 90_000), (1, 100_000), (2, 100_000)] {
+            let mut baseline = MaterialBaseline::new(CaptureRecordingPolicy::MaterialChanges);
+            let MaterialDecision::Retain(candidate) = baseline.prepare(
+                &observation(1, 1, 90_000),
+                CaptureRecordAdmission::StationaryTelemetry,
+            ) else {
+                panic!("first stationary observation was suppressed");
+            };
+            baseline.commit(candidate);
+            assert!(
+                matches!(
+                    baseline.prepare(
+                        &observation(2, 1, 90_000),
+                        CaptureRecordAdmission::StationaryTelemetry
+                    ),
+                    MaterialDecision::Suppress
+                ),
+                "clock-only changes with identical geometry must dedupe"
+            );
+            let MaterialDecision::Retain(candidate) = baseline.prepare(
+                &observation(3, revision, diameter),
+                CaptureRecordAdmission::StationaryTelemetry,
+            ) else {
+                panic!("changed geometry context was suppressed at zero ERPM");
+            };
+            baseline.commit(candidate);
+            assert!(
+                matches!(
+                    baseline.prepare(
+                        &observation(4, revision, diameter),
+                        CaptureRecordAdmission::StationaryTelemetry
+                    ),
+                    MaterialDecision::Suppress
+                ),
+                "the committed geometry context becomes the next baseline"
+            );
+        }
+    }
+
+    #[test]
     fn current_direction_changes_remain_material_at_the_same_magnitude() {
         let mut baseline = MaterialBaseline::new(CaptureRecordingPolicy::MaterialChanges);
         for (at, direction) in [(1, "unknown"), (2, "in"), (3, "out")] {

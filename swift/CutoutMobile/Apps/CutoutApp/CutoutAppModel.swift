@@ -281,6 +281,25 @@ final class CutoutAppModel {
     var vescRideSnapshot: VescRideSnapshot? { device.vescRideSnapshot }
     var connectionStatusText: String { device.connectionStatusText }
 
+    func selectVehicleKind(_ kind: VehicleKind, token: ConnectionAttemptToken) async throws {
+        _ = try await core.selectVehicleKind(kind, token: token)
+        device.deviceSessionSnapshot = core.rideSessionStateHandle.deviceSessionSnapshot()
+    }
+
+    func makeVescDrivetrainEditor() -> VescDrivetrainEditor? {
+        guard let snapshot = device.deviceSessionSnapshot,
+            snapshot.identity?.protocol == .vesc,
+            snapshot.identity?.vescApplication == .absent,
+            let token = snapshot.connection.token
+        else { return nil }
+        let driver = core
+        return VescDrivetrainEditor(
+            token: token,
+            load: { token in try await driver.loadVescDrivetrain(token: token) },
+            save: { token, draft in try await driver.saveVescDrivetrain(draft, token: token) }
+        )
+    }
+
     func annotateCapture(key: String, value: String) {
         _ = core.annotateCapture(key: key, value: value)
     }
@@ -508,6 +527,7 @@ final class CutoutAppModel {
         device = DevicePresentationModel(
             selectedDeviceStore: selectedDeviceStore, restoredSelection: restoredDeviceSelection)
         device.protocolIdentityCandidate = core.protocolIdentityCandidate
+        device.deviceSessionSnapshot = core.rideSessionStateHandle.deviceSessionSnapshot()
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -1168,9 +1188,10 @@ final class CutoutAppModel {
             syncLiveActivity()
             return
         }
-        if candidate.support.connectionRoute == .vescOnewheel {
+        if candidate.support.connectionRoute == .vesc {
             liveActivityIdentity = vescRideIdentity(using: candidate.displayName)
-            liveActivityGlyph = .floatwheelAtom
+            liveActivityGlyph = LiveActivityRideGlyph(
+                vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
         }
         syncLiveActivity()
     }
@@ -1202,6 +1223,7 @@ final class CutoutAppModel {
 
     private func handlePhaseChange(_ presentation: SessionConnectionPresentation) {
         let phase = presentation.phase
+        device.deviceSessionSnapshot = core.rideSessionStateHandle.deviceSessionSnapshot()
         switch (phase, connectionState) {
         case (.starting, .identified), (.starting, .connecting), (.starting, .retrying), (.starting, .connected),
             (.scanning, .identified), (.scanning, .connecting), (.scanning, .retrying), (.scanning, .connected):
@@ -1605,7 +1627,11 @@ final class CutoutAppModel {
         let statistics = recording?.liveActivityStatistics
         return liveActivityIdentity.map {
             LiveActivityRideSnapshot(
-                identity: $0, glyph: liveActivityGlyph,
+                identity: $0,
+                glyph: selectedConnectionRoute == .vesc
+                    ? LiveActivityRideGlyph(
+                        vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
+                    : liveActivityGlyph,
                 deviceIdentity: device.deviceSessionSnapshot?.identity,
                 rideState: EucRideScreenState(phase: phase, displayState: displayed),
                 now: core.now(),
@@ -1620,10 +1646,10 @@ final class CutoutAppModel {
     }
 
     private func liveActivityIdentity(for selectedRow: DevicePickerRow?) -> LiveActivityRideIdentity? {
-        if selectedRow?.connectionRoute == .vescOnewheel {
+        if selectedRow?.connectionRoute == .vesc {
             return vescRideIdentity(using: selectedRow?.title)
         }
-        if device.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+        if device.protocolIdentityCandidate?.support.connectionRoute == .vesc {
             return vescRideIdentity(using: device.protocolIdentityCandidate?.displayName)
         }
         if let model = selectedRow?.electricUnicycleModel
@@ -1636,10 +1662,10 @@ final class CutoutAppModel {
     }
 
     private func liveActivityGlyph(for selectedRow: DevicePickerRow?) -> LiveActivityRideGlyph {
-        if selectedRow?.connectionRoute == .vescOnewheel
-            || device.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel
+        if selectedRow?.connectionRoute == .vesc
+            || device.protocolIdentityCandidate?.support.connectionRoute == .vesc
         {
-            return .floatwheelAtom
+            return LiveActivityRideGlyph(vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
         }
         return .electricUnicycle
     }

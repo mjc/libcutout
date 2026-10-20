@@ -386,12 +386,26 @@ struct ContentView: View {
         return { disconnectAndReturnToPicker() }
     }
 
+    private var vescRideUsesOwnHeader: Bool {
+        let identity = model.device.deviceSessionSnapshot?.identity
+        var application = identity?.vescApplication ?? model.vescRideSnapshot?.application
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutUITestSecondaryRideFixture.vescRideSnapshot(at: model.currentMonotonicTime) {
+                application = fixture.application
+            }
+        #endif
+        return VescRideScreenPresentation.usesOwnHeader(
+            application: application, classificationRequirement: identity?.classificationRequirement
+        )
+    }
+
     @ViewBuilder
     private func destinationSurface(for destination: CutoutAppRoute) -> some View {
         let back: (() -> Void)? = destination.isMoreDestination ? { closeNestedDestination() } : nil
         Group {
             if destination == .devicePicker || isRideMapDetail(destination)
                 || (destination == .eucRide && !dynamicTypeSize.isAccessibilitySize)
+                || (destination == .vescRide && vescRideUsesOwnHeader)
             {
                 routedContent(for: destination)
             } else {
@@ -486,7 +500,7 @@ struct ContentView: View {
                 submitAction: model.submitDeviceAction
             )
         case .vescRide:
-            VescRideRouteView(model: model)
+            VescRideRouteView(model: model, disconnect: disconnectAction(for: destination))
         case .vescDebug:
             VescDebugRouteView(device: model.device, capture: model.capture)
         case .capture:
@@ -577,7 +591,10 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-            switch Self.accentKind(selectedConnectionRoute: model.device.selectedConnectionRoute, route: route) {
+            switch Self.accentKind(
+                selectedConnectionRoute: model.device.selectedConnectionRoute, route: route,
+                vehicleKind: model.device.deviceSessionSnapshot?.identity?.vehicleKind
+            ) {
             case .purple:
                 Color(uiColor: TabAccentColors.purple)
             case .yellow:
@@ -592,10 +609,16 @@ struct ContentView: View {
 
     static func accentKind(
         selectedConnectionRoute: DevicePickerConnectionRoute?,
-        route: CutoutAppRoute
+        route: CutoutAppRoute,
+        vehicleKind: VehicleKind? = nil
     ) -> PevAccent {
-        switch selectedConnectionRoute {
-        case .vescOnewheel:
+        switch vehicleKind {
+        case .onewheel?: return .purple
+        case .electricUnicycle?, .scooter?, .eskate?, .ebike?, .emoto?: return .yellow
+        case .unknown?, nil: break
+        }
+        return switch selectedConnectionRoute {
+        case .vesc:
             .purple
         case .electricUnicycle:
             .yellow

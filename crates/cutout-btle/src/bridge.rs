@@ -1,12 +1,14 @@
 use btleplug::api::Characteristic;
 use cutout_core::{
-    DeviceCommand, GattChannel, IgnoredNotificationEvidence, IgnoredNotificationReason, LinkInfo,
-    NotificationEvidence, NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput,
-    TransportAction, TransportWriteLimit, WriteMode, WritePayload,
+    ApplicationQueryTransportStatus, ApplicationQueryWrite, DeviceCommand, GattChannel,
+    IgnoredNotificationEvidence, IgnoredNotificationReason, LinkInfo, NotificationEvidence,
+    NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput, TransportAction,
+    TransportWriteLimit, WriteMode, WritePayload,
 };
 use futures_util::{Stream, StreamExt};
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 use tracing::{debug, info};
 
 use crate::{
@@ -438,7 +440,7 @@ where
         "session bridge drive inner entered"
     );
     let mut report = SessionBridgeReport::default();
-    let monotonic_origin = Instant::now();
+    let clock = BridgeClock::new(config.monotonic_start);
     if let Some(observer) = identity_observer.as_deref_mut() {
         observer.observe_connection(config.summary);
         report.identity = observer.resolution();
@@ -459,6 +461,7 @@ where
             report: &mut report,
             capture: capture.as_deref_mut(),
             write_provenance: config.write_provenance,
+            clock,
         },
         session,
         &mut outputs,
@@ -476,7 +479,8 @@ where
         };
 
     for command in config.commands {
-        monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
+        monotonic_ms = clock.sample(monotonic_ms);
+        session.observe_host_time(monotonic_ms.into_core());
         session.handle(SessionInput::Command(*command), &mut outputs);
         process_session_outputs(
             SessionOutputContext {
@@ -488,6 +492,7 @@ where
                 report: &mut report,
                 capture: capture.as_deref_mut(),
                 write_provenance: config.write_provenance,
+                clock,
             },
             session,
             &mut outputs,
@@ -496,7 +501,7 @@ where
         .await?;
     }
 
-    monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
+    monotonic_ms = clock.sample(monotonic_ms);
     session.handle(
         SessionInput::Tick {
             monotonic_ms: monotonic_ms.into_core(),
@@ -513,6 +518,7 @@ where
             report: &mut report,
             capture: capture.as_deref_mut(),
             write_provenance: config.write_provenance,
+            clock,
         },
         session,
         &mut outputs,
@@ -535,9 +541,9 @@ where
             report: &mut report,
             capture,
             write_provenance: config.write_provenance,
+            clock,
             stream_end_is_link_down: config.stream_end_is_link_down,
             link_loss_idle_window: config.link_loss_idle_window,
-            monotonic_origin,
         },
         session,
         &mut outputs,
@@ -550,10 +556,28 @@ where
     Ok((report, Some(notifications)))
 }
 
-fn elapsed_or_next(previous: MonotonicMs, origin: Instant) -> MonotonicMs {
-    previous.next().max(MonotonicMs::from_elapsed_millis(
-        origin.elapsed().as_millis(),
-    ))
+#[derive(Clone, Copy)]
+struct BridgeClock {
+    origin: Instant,
+    offset: MonotonicMs,
+}
+
+impl BridgeClock {
+    fn new(offset: MonotonicMs) -> Self {
+        Self {
+            origin: Instant::now(),
+            offset,
+        }
+    }
+
+    fn now(self) -> MonotonicMs {
+        let elapsed = MonotonicMs::from_elapsed_millis(self.origin.elapsed().as_millis());
+        MonotonicMs::new(self.offset.get().saturating_add(elapsed.get()))
+    }
+
+    fn sample(self, previous: MonotonicMs) -> MonotonicMs {
+        previous.max(self.now())
+    }
 }
 
 struct BridgeBindings {
@@ -569,6 +593,7 @@ struct LinkUpContext<'a, P: ?Sized> {
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
     write_provenance: WriteProvenance,
+    clock: BridgeClock,
 }
 
 async fn process_link_up_outputs<P, S>(
@@ -615,6 +640,7 @@ where
             report: context.report,
             capture: context.capture.as_deref_mut(),
             write_provenance: context.write_provenance,
+            clock: context.clock,
         },
         session,
         outputs,
@@ -638,7 +664,7 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     write_provenance: WriteProvenance,
     stream_end_is_link_down: bool,
     link_loss_idle_window: Option<NotificationWindow>,
-    monotonic_origin: Instant,
+    clock: BridgeClock,
 }
 
 const SESSION_DEADLINE_TICK: Duration = Duration::from_millis(100);
@@ -666,14 +692,14 @@ where
     );
     info!("session notifications stream await starting");
     info!("session notifications stream ready before protocol polling");
-    let deadline = tokio::time::Instant::now() + notification_window.as_duration();
-    let mut next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
-    let mut last_notification_at = tokio::time::Instant::now();
+    let deadline = Instant::now() + notification_window.as_duration();
+    let mut next_tick = Instant::now() + SESSION_DEADLINE_TICK;
+    let mut last_notification_at = Instant::now();
     let mut link_down_recorded = false;
-    while tokio::time::Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
         let wait = link_loss_next_wait(remaining, context.link_loss_idle_window);
-        let wait_deadline = tokio::time::Instant::now() + wait;
+        let wait_deadline = Instant::now() + wait;
         let tick_due = next_tick <= wait_deadline;
         let tick_deadline = if tick_due { next_tick } else { wait_deadline };
         debug!(
@@ -684,8 +710,8 @@ where
         tokio::select! {
             result = notifications.next() => match result {
                 Some(notification) => {
-                last_notification_at = tokio::time::Instant::now();
-                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
+                last_notification_at = Instant::now();
+                *monotonic_ms = context.clock.sample(*monotonic_ms);
                 let decode_outcome = ingest_notification(
                     &mut context,
                     session,
@@ -703,6 +729,7 @@ where
                         report: context.report,
                         capture: context.capture.as_deref_mut(),
                         write_provenance: context.write_provenance,
+            clock: context.clock,
                     },
                     session,
                     outputs,
@@ -739,7 +766,7 @@ where
                 }
             },
             () = tokio::time::sleep_until(tick_deadline), if tick_due => {
-                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
+                *monotonic_ms = context.clock.sample(*monotonic_ms);
                 session.handle(
                     SessionInput::Tick {
                         monotonic_ms: monotonic_ms.into_core(),
@@ -756,6 +783,7 @@ where
                         report: context.report,
                         capture: context.capture.as_deref_mut(),
                         write_provenance: context.write_provenance,
+            clock: context.clock,
                     },
                     session,
                     outputs,
@@ -767,7 +795,7 @@ where
                 // full). Rebase the next response deadline after that write
                 // completes instead of catching up from the old timer slot.
                 // This keeps requests serialized at the transport boundary.
-                next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
+                next_tick = Instant::now() + SESSION_DEADLINE_TICK;
             },
             () = tokio::time::sleep_until(wait_deadline) => {
                 if link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window) {
@@ -877,12 +905,11 @@ fn link_loss_next_wait(
 }
 
 fn link_loss_idle_elapsed(
-    last_notification_at: tokio::time::Instant,
+    last_notification_at: Instant,
     link_loss_idle_window: Option<NotificationWindow>,
 ) -> bool {
     link_loss_idle_window.is_some_and(|idle_window| {
-        tokio::time::Instant::now().saturating_duration_since(last_notification_at)
-            >= idle_window.as_duration()
+        Instant::now().saturating_duration_since(last_notification_at) >= idle_window.as_duration()
     })
 }
 
@@ -1060,13 +1087,14 @@ struct SessionOutputContext<'a, P: ?Sized> {
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
     write_provenance: WriteProvenance,
+    clock: BridgeClock,
 }
 
 async fn process_session_outputs<P, S>(
     mut context: SessionOutputContext<'_, P>,
     session: &mut S,
     outputs: &mut Vec<SessionOutput>,
-    monotonic_ms: MonotonicMs,
+    mut monotonic_ms: MonotonicMs,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -1074,6 +1102,7 @@ where
 {
     while !outputs.is_empty() {
         for output in std::mem::take(outputs) {
+            monotonic_ms = context.clock.sample(monotonic_ms);
             match output {
                 SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
                     info!(
@@ -1121,8 +1150,15 @@ where
                     bytes,
                     mode,
                 }) => {
-                    process_transport_write(&mut context, observed, &bytes, mode, monotonic_ms)
-                        .await?;
+                    process_transport_write(
+                        &mut context,
+                        session,
+                        observed,
+                        &bytes,
+                        mode,
+                        monotonic_ms,
+                    )
+                    .await?;
                 }
                 SessionOutput::Transport(TransportAction::Disconnect) => {
                     context.peripheral.disconnect().await?;
@@ -1144,8 +1180,9 @@ where
     Ok(())
 }
 
-async fn process_transport_write<P>(
+async fn process_transport_write<P, S>(
     context: &mut SessionOutputContext<'_, P>,
+    session: &mut S,
     observed: GattChannel,
     bytes: &WritePayload,
     mode: WriteMode,
@@ -1153,6 +1190,7 @@ async fn process_transport_write<P>(
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
 {
     if observed != context.write_channel {
         return Err(SessionBridgeError::UnexpectedChannel {
@@ -1164,17 +1202,73 @@ where
 
     context.report.protocol_writes = context.report.protocol_writes.increment();
     let write_limit = NegotiatedWriteLimit::from_bytes(context.peripheral.mtu());
-    for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
+    let query = bytes.application_query();
+    let count =
+        u16::try_from(bytes.as_slice().len().div_ceil(write_limit.chunk_len())).unwrap_or(u16::MAX);
+    for (index, chunk) in bytes.as_slice().chunks(write_limit.chunk_len()).enumerate() {
+        let index = u16::try_from(index).unwrap_or(u16::MAX);
+        let admitted_at = context.clock.now().max(monotonic_ms);
+        if let Some(query) = query
+            && (admitted_at.into_core() >= query.submit_before
+                || !session.application_query_is_current(query.id, admitted_at.into_core())
+                || !session.record_application_query_transport(
+                    query.id,
+                    index,
+                    count,
+                    ApplicationQueryTransportStatus::Queued,
+                    admitted_at.into_core(),
+                ))
+        {
+            session.record_application_query_transport(
+                query.id,
+                index,
+                count,
+                ApplicationQueryTransportStatus::Cancelled,
+                admitted_at.into_core(),
+            );
+            break;
+        }
         let chunk = BtleWriteChunk::new(chunk, write_limit).ok_or(
             SessionBridgeError::WriteChunkTooLong {
                 len: cutout_core::NotificationByteLen::from_bytes(chunk.len()),
                 limit: write_limit,
             },
         )?;
-        context
+        let receipt = query.map(|query| InFlightApplicationQuery {
+            session: &mut *session,
+            query,
+            index,
+            count,
+            clock: context.clock,
+            admitted_at,
+            armed: true,
+        });
+        let write = context
             .peripheral
-            .write(context.write_characteristic, chunk, mode)
-            .await?;
+            .write(context.write_characteristic, chunk, mode);
+        let result = if let Some(query) = query {
+            let remaining =
+                Duration::from_millis(query.submit_before.get().saturating_sub(admitted_at.get()));
+            match tokio::time::timeout(remaining, write).await {
+                Ok(result) => result,
+                Err(_) => Err(BtleError::OperationTimedOut {
+                    operation: "application query write",
+                    after: remaining,
+                }),
+            }
+        } else {
+            write.await
+        };
+        let monotonic_ms = context.clock.now().max(admitted_at);
+        if let Some(receipt) = receipt {
+            let status = if result.is_ok() {
+                ApplicationQueryTransportStatus::Submitted
+            } else {
+                ApplicationQueryTransportStatus::SubmissionUnknown
+            };
+            receipt.complete(status, monotonic_ms);
+        }
+        result?;
         if let Some(records) = context.capture.as_deref_mut() {
             records.push(SessionCaptureRecord::Write {
                 monotonic_ms,
@@ -1187,4 +1281,58 @@ where
         context.report.writes = context.report.writes.increment();
     }
     Ok(())
+}
+
+/// Keeps possibly submitted bytes attributable even when the host drops the driver future.
+struct InFlightApplicationQuery<'a, S: ProtocolSession> {
+    session: &'a mut S,
+    query: ApplicationQueryWrite,
+    index: u16,
+    count: u16,
+    clock: BridgeClock,
+    admitted_at: MonotonicMs,
+    armed: bool,
+}
+
+impl<S: ProtocolSession> InFlightApplicationQuery<'_, S> {
+    fn complete(mut self, status: ApplicationQueryTransportStatus, at: MonotonicMs) {
+        self.session.record_application_query_transport(
+            self.query.id,
+            self.index,
+            self.count,
+            status,
+            at.into_core(),
+        );
+        self.armed = false;
+    }
+}
+
+impl<S: ProtocolSession> Drop for InFlightApplicationQuery<'_, S> {
+    fn drop(&mut self) {
+        if self.armed {
+            let at = self.clock.sample(self.admitted_at);
+            self.session.record_application_query_transport(
+                self.query.id,
+                self.index,
+                self.count,
+                ApplicationQueryTransportStatus::SubmissionUnknown,
+                at.into_core(),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn application_query_bridge_event_count_does_not_create_elapsed_time() {
+        let clock = BridgeClock::new(MonotonicMs::new(10_000));
+        let mut observed = MonotonicMs::new(10_000);
+        for _ in 0..3_000 {
+            observed = clock.sample(observed);
+        }
+        assert_eq!(observed, MonotonicMs::new(10_000));
+    }
 }

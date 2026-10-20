@@ -15,6 +15,7 @@ import Foundation
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case vesc
+        case eskate
         case dynamicVesc
         case warningVesc(VescRideWarning)
         case stopVesc(VescRideStopReason)
@@ -52,6 +53,12 @@ import Foundation
             case "bluetooth-unavailable": self = .bluetoothUnavailable
             case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
             case "vesc": self = .vesc
+            case "eskate":
+                #if targetEnvironment(simulator)
+                    self = .eskate
+                #else
+                    return nil
+                #endif
             case "vesc-dynamic": self = .dynamicVesc
             case "vesc-low-voltage": self = .warningVesc(.lowVoltage)
             case "vesc-high-voltage": self = .warningVesc(.highVoltage)
@@ -156,6 +163,16 @@ import Foundation
                     ),
                     symbolName: "circle.hexagongrid.circle"
                 )
+            case .eskate:
+                DevicePickerDiscoveryCandidate(
+                    platformIdentifier: "ui-test-standard-vesc-eskate",
+                    displayName: "Workshop board",
+                    productCategory: "VESC controller",
+                    evidence: "UI test fixture",
+                    detail: "Standard VESC telemetry; physical type requires a user choice",
+                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+                    symbolName: "questionmark.circle"
+                )
             case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc,
                 .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc,
                 .connectingVesc, .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity,
@@ -166,7 +183,7 @@ import Foundation
                     productCategory: "VESC Onewheel",
                     evidence: "UI test fixture",
                     detail: "Deterministic accessibility test device",
-                    support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
                     symbolName: "circle.hexagongrid.circle"
                 )
             }
@@ -243,6 +260,19 @@ import Foundation
                 || self == .eucUnknownTopology
         }
 
+        /// These fixtures explicitly represent Refloat; the standard e-skate fixture does not.
+        var isRefloatVesc: Bool {
+            switch self {
+            case .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc,
+                .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc,
+                .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity,
+                .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+                true
+            default:
+                false
+            }
+        }
+
         private var refreshesVescSafetyState: Bool {
             testVescWarning != nil || testVescStopReason != nil
         }
@@ -298,12 +328,53 @@ import Foundation
                 #endif
                 return [frame]
             }
-            return [
-                Data([
-                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
-                    114, 104, 97, 115, 104, 0, 38, 208, 3,
-                ])
-            ]
+            if self == .eskate {
+                // Ordinary firmware identity followed by an explicit non-Refloat app-info
+                // response. The production Rust session derives Absent and requires a choice.
+                return [
+                    Self.vescFixtureFrame(
+                        [157, 7, 0, 2] + Array("fixture".utf8) + [0] + Array("test".utf8) + [0]
+                    ),
+                    Self.vescFixtureFrame(
+                        [36, 101, 0, 2, 0] + Array("No app".utf8) + Array(repeating: 0, count: 14)
+                            + [0, 0, 0] + Array(repeating: 0, count: 33)
+                    ),
+                    // Ordinary COMM_GET_VALUES_SELECTIVE (50), mask 0x0000018f:
+                    // TEMP_MOSFET, TEMP_MOTOR, AVG_CURRENT_MOTOR, AVG_CURRENT_INPUT,
+                    // RPM, VOLTAGE_IN. Field order/scales follow vesc_codec::decode_values.
+                    // 44 °C, 39 °C, 21 A motor, 12.4 A input, 10000 eRPM, 49.8 V.
+                    // No duty, geometry, charge estimate, or balance-app fields are sent.
+                    Self.vescFixtureFrame([
+                        50, 0, 0, 1, 143,
+                        1, 184, 1, 134,
+                        0, 0, 8, 52, 0, 0, 4, 216,
+                        0, 0, 39, 16, 1, 242,
+                    ]),
+                ]
+            }
+            let firmware = Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ])
+            guard isRefloatVesc else { return [firmware] }
+            // INFO v2 for Refloat 1.3.0, with a 1 kHz tick rate and no extra capabilities.
+            // The live session replays this after its own query's native submission.
+            let info = Self.vescFixtureFrame(
+                [36, 101, 0, 2, 0] + Array("Refloat".utf8) + Array(repeating: 0, count: 13)
+                    + [1, 3, 0] + Array(repeating: 0, count: 24)
+                    + [0, 0, 3, 232] + Array(repeating: 0, count: 5)
+            )
+            return [firmware, info]
+        }
+
+        private static func vescFixtureFrame(_ payload: [UInt8]) -> Data {
+            precondition(payload.count < 256)
+            var crc: UInt16 = 0
+            for byte in payload {
+                crc ^= UInt16(byte) << 8
+                for _ in 0..<8 { crc = crc & 0x8000 == 0 ? crc << 1 : (crc << 1) ^ 0x1021 }
+            }
+            return Data([2, UInt8(payload.count)] + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
         }
 
         #if os(iOS) && targetEnvironment(simulator)
@@ -322,12 +393,16 @@ import Foundation
 
         var testScript: CutoutSessionTestScript {
             let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
+            let notifications = protocolNotifications
             return CutoutSessionTestScript(
                 candidate: candidate,
-                telemetry: emitsPendingTelemetry ? nil : telemetry,
-                protocolNotifications: protocolNotifications,
-                protocolNotificationIntervalMilliseconds: isEuc
-                    && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS") ? 500 : nil,
+                telemetry: emitsPendingTelemetry || self == .eskate ? nil : telemetry,
+                protocolNotifications: notifications,
+                // Application proof belongs to the live protocol owner, after LinkUp submits INFO.
+                protocolDetectionNotifications: isRefloatVesc || self == .eskate ? Array(notifications.prefix(1)) : nil,
+                appliesProtocolNotificationSteps: self == .eskate,
+                protocolNotificationIntervalMilliseconds: self == .eskate
+                    || (isEuc && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS")) ? 500 : nil,
                 telemetryUpdate: telemetryUpdate,
                 telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
                 bmsSnapshot: testBmsSnapshot,
@@ -350,6 +425,7 @@ import Foundation
         private var connectingDelayMilliseconds: UInt64 {
             switch self {
             case .connectingVesc, .connectingEuc: 5_000
+            case .eskate: 0
             default: 1_000
             }
         }
@@ -977,9 +1053,9 @@ import Foundation
         }
 
         static func vescRideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
-            guard let fixture, !fixture.isEuc else { return nil }
+            guard fixture?.isRefloatVesc == true else { return nil }
             return VescRideSnapshot(
-                title: "VESC", vehicleKind: .float, subProtocol: .generic,
+                title: "VESC", vehicleKind: .onewheel, application: .refloat,
                 controllerState: .unknown, operatingState: .riding, warning: .none,
                 boardSpeed: Speed(value: 8_000), dutyCycle: DutyCycle(permille: 230),
                 dutyHeadroom: BatteryLevel(value: 77),

@@ -1512,8 +1512,8 @@ pub enum DiscoveryConnectionRoute {
     /// Electric unicycle read-only session route.
     ElectricUnicycle,
 
-    /// VESC/Onewheel read-only route.
-    VescOnewheel,
+    /// Controller-neutral VESC read-only route.
+    Vesc,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -2068,8 +2068,9 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
-    capture_identity_owner_id: Uuid,
     inner: Mutex<MobileSessionState>,
+    capture_identity_owner_id: Uuid,
+    vehicle_selection: Mutex<()>,
     diagnostic_database: Option<persistence::RideDatabase>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
     novatek_session: Mutex<NovatekCameraSessionState>,
@@ -2478,7 +2479,7 @@ impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
     fn from(route: CoreDiscoveryConnectionRoute) -> Self {
         match route {
             CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
-            CoreDiscoveryConnectionRoute::VescOnewheel => Self::VescOnewheel,
+            CoreDiscoveryConnectionRoute::Vesc => Self::Vesc,
         }
     }
 }
@@ -2796,8 +2797,9 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            capture_identity_owner_id: Uuid::new_v4(),
             inner: Mutex::new(MobileSessionState::default()),
+            capture_identity_owner_id: Uuid::new_v4(),
+            vehicle_selection: Mutex::new(()),
             diagnostic_database: None,
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
             novatek_session: Mutex::new(NovatekCameraSessionState::default()),
@@ -2813,8 +2815,9 @@ impl CutoutSessionStateHandle {
     )]
     pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
         Arc::new(Self {
-            capture_identity_owner_id: Uuid::new_v4(),
             inner: Mutex::new(MobileSessionState::default()),
+            capture_identity_owner_id: Uuid::new_v4(),
+            vehicle_selection: Mutex::new(()),
             diagnostic_database: Some(database.inner.clone()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState {
                 database: Some(database.inner.clone()),
@@ -4348,14 +4351,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
-            product_category: "VESC Onewheel".to_owned(),
+            product_category: "VESC controller".to_owned(),
             evidence: "VESC protocol family".to_owned(),
             detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::Supported,
             recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
             section: DiscoveryCandidateSupport::Supported.picker_section(),
-            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
+            connection_route: Some(DiscoveryConnectionRoute::Vesc),
             electric_unicycle_model: None,
             disabled_reason: None,
         };
@@ -5001,6 +5004,9 @@ pub struct MobileSessionOutputDto {
     /// Rust-owned transport operation identity, when this is a write.
     pub operation_id: Option<u64>,
 
+    /// Native admission for application discovery, independent from settings writes.
+    pub application_query: Option<MobileApplicationQueryWriteDto>,
+
     /// Typed parser-first ingest outcome.
     pub ingest: Option<MobileNotificationIngestOutcomeDto>,
 
@@ -5637,6 +5643,15 @@ pub struct MobileTelemetrySnapshotDto {
 
     /// Reported or calculated speed.
     pub speed: Option<SpeedReading>,
+
+    /// Effective local VESC geometry copied atomically with this snapshot.
+    /// Missing context in older captures remains unknown, never today's profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vesc_drivetrain_context: Option<MobileVescDrivetrainContextDto>,
+
+    /// Immutable user configurations for explicit controller targets, not effective CAN telemetry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub configured_vesc_drivetrains: Vec<MobileVescDrivetrainContextDto>,
 
     /// Conservative operating state inferred from currently available telemetry.
     pub operating_state: RideOperatingState,
@@ -9400,6 +9415,43 @@ impl RideDatabaseHandle {
     pub fn selected_device(&self) -> Result<Option<String>, MobileRideDatabaseError> {
         self.inner
             .selected_device()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Saves the user-selected physical type for this specific platform device.
+    ///
+    /// # Errors
+    /// Returns a typed error for unknown type, invalid identity or persistence failure.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns strings at this boundary."
+    )]
+    pub fn save_user_vehicle_kind(
+        &self,
+        platform_identifier: String,
+        kind: MobileVehicleKindDto,
+        updated_at_milliseconds: u64,
+    ) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .save_user_vehicle_kind(&platform_identifier, kind.into(), updated_at_milliseconds)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads only the device's user-provided type; protocol evidence is never persisted here.
+    ///
+    /// # Errors
+    /// Returns a typed error for invalid identity or persistence failure.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns strings at this boundary."
+    )]
+    pub fn user_vehicle_kind(
+        &self,
+        platform_identifier: String,
+    ) -> Result<Option<MobileVehicleKindDto>, MobileRideDatabaseError> {
+        self.inner
+            .device_vehicle_classification(&platform_identifier)
+            .map(|classification| classification.map(|value| value.kind().into()))
             .map_err(map_ride_database_error)
     }
 
@@ -15497,41 +15549,6 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
     }
 }
 
-/// VESC vehicle category independent of the installed protocol package.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileVescVehicleKindDto {
-    /// Float/Onewheel-style VESC build.
-    Float,
-
-    /// E-bike or emoto VESC build.
-    Bike,
-
-    /// Skateboard VESC build.
-    Skateboard,
-
-    /// Electric unicycle VESC build.
-    ElectricUnicycle,
-
-    /// Vehicle category is not known yet.
-    Unknown,
-}
-
-/// VESC sub-protocol available on the device.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileVescSubProtocolDto {
-    /// Refloat sub-protocol is present.
-    Refloat,
-
-    /// Bike/e-moto VESC sub-protocol is present.
-    Bike,
-
-    /// Electric-skateboard VESC sub-protocol is present.
-    Eskate,
-
-    /// Generic VESC telemetry/protocol only.
-    Generic,
-}
-
 /// Confidence level for BMS topology mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileBmsTopologyConfidenceDto {
@@ -18371,6 +18388,7 @@ impl MobileSessionOutputDto {
             channel: Vec::new(),
             bytes: Vec::new(),
             operation_id: None,
+            application_query: None,
             ingest: None,
             fault_history_readback: None,
             bms_snapshot: None,
@@ -18423,11 +18441,13 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 channel,
                 bytes,
                 operation_id,
+                application_query,
                 ..
             }) => {
                 let mut output =
                     Self::transport(MobileSessionOutputKindDto::Write, channel.to_vec(), bytes);
                 output.operation_id = operation_id;
+                output.application_query = application_query.map(Into::into);
                 output
             }
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => {
@@ -19038,6 +19058,10 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .voltage_observed_at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
+            // Bare telemetry has no persisted profile or connection identity. The
+            // connection-aware step/snapshot owners attach their canonical context.
+            vesc_drivetrain_context: None,
+            configured_vesc_drivetrains: Vec::new(),
             operating_state,
             vesc_operating_mode: snapshot.operating_mode.map(Into::into),
             vesc_warning: snapshot.ride_warning.map(Into::into),
@@ -19949,10 +19973,10 @@ pub struct VescBoardProfile {
     /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
     pub motor_pole_pairs: u8,
 
-    /// Mechanical gear reduction denominator.
-    pub gear_ratio_denominator: u8,
+    /// Motor revolutions per wheel revolution in thousandths: 1,000 is direct drive.
+    pub gear_ratio_milli: u32,
 
-    /// Wheel circumference used for direct-drive speed calculations.
+    /// Wheel circumference in millimetres, independent of drivetrain reduction.
     pub wheel_circumference: Distance,
 
     /// VESC battery type used for voltage-derived pack level.
@@ -19982,12 +20006,20 @@ impl From<VescBoardProfile> for CoreVescBoardProfile {
             VescBatteryType::LeadAcid => CoreVescBatteryType::LeadAcid,
             VescBatteryType::Other => CoreVescBatteryType::Other(0),
         };
-        let mut core_profile = CoreVescBoardProfile::new(
-            cutout_protocols::MotorPolePairs::new(profile.motor_pole_pairs),
-            cutout_protocols::GearRatioDenominator::new(profile.gear_ratio_denominator),
-            cutout_core::Distance::from_millimetres(profile.wheel_circumference.value),
-        )
-        .with_vesc_battery_type(battery_type, SeriesCount::new(profile.battery_cells));
+        let geometry = cutout_protocols::GearRatioDenominator::from_milli(profile.gear_ratio_milli)
+            .and_then(|reduction| {
+                cutout_protocols::VescSpeedGeometry::new(
+                    cutout_protocols::MotorPolePairs::new(profile.motor_pole_pairs),
+                    reduction,
+                    cutout_core::Distance::from_millimetres(profile.wheel_circumference.value),
+                )
+            });
+        let mut core_profile = geometry
+            .map_or_else(
+                CoreVescBoardProfile::without_geometry,
+                CoreVescBoardProfile::from_speed_geometry,
+            )
+            .with_vesc_battery_type(battery_type, SeriesCount::new(profile.battery_cells));
         if profile.reports_battery_current {
             core_profile = core_profile.with_reported_battery_current();
         }
@@ -20033,6 +20065,10 @@ pub enum VescBatteryCellModel {
 }
 
 /// Mobile-facing wrapper for a generic VESC read-only session.
+///
+/// An explicit board profile has no persisted revision or connection attempt.
+/// Capture callers needing that attribution use the connection-aware session
+/// step or `CutoutSessionStateHandle::connection_telemetry_snapshot` instead.
 #[derive(Debug, uniffi::Object)]
 pub struct VescReadOnlySession {
     inner: Mutex<CoreVescReadOnlySession>,
@@ -23036,13 +23072,13 @@ mod tests {
             },
         );
 
-        assert_eq!(candidate.product_category, "VESC Onewheel");
+        assert_eq!(candidate.product_category, "VESC controller");
         assert_eq!(candidate.evidence, "VESC protocol family");
         assert_eq!(candidate.detail, "VESC read-only route");
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
-            Some(DiscoveryConnectionRoute::VescOnewheel)
+            Some(DiscoveryConnectionRoute::Vesc)
         );
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(candidate.disabled_reason, None);
@@ -24554,7 +24590,11 @@ mod tests {
         custom_app_frame(&payload)
     }
 
-    fn vesc_notification(session: &VescReadOnlySession, monotonic_ms: u64, bytes: &[u8]) {
+    fn vesc_notification(
+        session: &VescReadOnlySession,
+        monotonic_ms: u64,
+        bytes: &[u8],
+    ) -> MobileSessionStepResultDto {
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Notification,
             monotonic_ms: ms(monotonic_ms),
@@ -24563,6 +24603,7 @@ mod tests {
             bytes: bytes.to_vec(),
         });
         assert_eq!(result.error, None);
+        result
     }
 
     fn notification_fixture() -> NotificationEvidenceDto {
@@ -24794,10 +24835,112 @@ mod tests {
     }
 
     #[test]
+    fn vesc_mobile_geometry_roundtrips_fractional_speed_through_uniffi() {
+        let profile = VescBoardProfile {
+            motor_pole_pairs: 7,
+            gear_ratio_milli: 2_500,
+            wheel_circumference: Distance { value: 300 },
+            battery_type: VescBatteryType::LiIon,
+            battery_cells: 12,
+            battery_parallel_cells: 1,
+            battery_cell_model: VescBatteryCellModel::Unknown,
+            charge_profile: None,
+            reports_battery_current: false,
+        };
+        let lowered = <VescBoardProfile as uniffi::FfiConverter<UniFfiTag>>::lower(profile);
+        let lifted = <VescBoardProfile as uniffi::FfiConverter<UniFfiTag>>::try_lift(lowered)
+            .expect("valid mobile profile lifts");
+        assert_eq!(lifted, profile);
+        let session = VescReadOnlySession::with_board_profile(lifted);
+        session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+        });
+        for (at, erpm, expected) in [(2, 6_000, 1_714), (3, -6_000, -1_714)] {
+            vesc_notification(&session, at, &vesc_erpm_frame(erpm));
+            let speed = session.current_snapshot().speed.expect("complete geometry");
+            assert_eq!(speed.value.value, expected);
+            assert_eq!(speed.source, MobileValueSourceDto::Calculated);
+        }
+        let direct = CoreVescBoardProfile::from(VescBoardProfile {
+            gear_ratio_milli: 1_000,
+            ..profile
+        });
+        assert_eq!(
+            direct.speed_from_erpm(cutout_core::RotationalSpeed::from_erpm(6_000)),
+            Some(cutout_core::Speed::from_millimetres_per_second(4_286))
+        );
+        for invalid in [
+            VescBoardProfile {
+                motor_pole_pairs: 0,
+                ..profile
+            },
+            VescBoardProfile {
+                gear_ratio_milli: 0,
+                ..profile
+            },
+            VescBoardProfile {
+                wheel_circumference: Distance { value: 0 },
+                ..profile
+            },
+            VescBoardProfile {
+                wheel_circumference: Distance { value: u64::MAX },
+                ..profile
+            },
+        ] {
+            let core = CoreVescBoardProfile::from(invalid);
+            assert_eq!(
+                core.speed_from_erpm(cutout_core::RotationalSpeed::from_erpm(6_000)),
+                None
+            );
+            assert!(
+                core.battery_level_from_voltage(cutout_core::Voltage::from_millivolts(50_400))
+                    .is_some()
+            );
+        }
+    }
+
+    fn vesc_erpm_frame(erpm: i32) -> Vec<u8> {
+        let mut payload = vec![50]; // COMM_GET_VALUES_SELECTIVE
+        payload.extend_from_slice(&(1_u32 << 7).to_be_bytes());
+        payload.extend_from_slice(&erpm.to_be_bytes());
+        let mut frame = vec![2, u8::try_from(payload.len()).expect("short fixture")];
+        frame.extend_from_slice(&payload);
+        frame.extend_from_slice(&crc16_xmodem(&payload).to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
+    #[test]
+    fn vesc_mobile_missing_geometry_retains_raw_erpm_without_physical_speed() {
+        let session = VescReadOnlySession::new();
+        session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+        });
+        let step = vesc_notification(&session, 2, &vesc_erpm_frame(6_000));
+        assert_eq!(session.current_snapshot().speed, None);
+        let raw = step
+            .outputs
+            .into_iter()
+            .find_map(|output| output.raw_telemetry)
+            .expect("raw evidence survives missing geometry");
+        assert!(raw.fields.iter().any(|field| {
+            field.id == cutout_protocols::VESC_RAW_ERPM_FIELD_ID && field.value == 6_000
+        }));
+    }
+
+    #[test]
     fn vesc_wrapper_with_board_profile_uses_geometry_and_pack_facts() {
         let session = VescReadOnlySession::with_board_profile(VescBoardProfile {
             motor_pole_pairs: 15,
-            gear_ratio_denominator: 1,
+            gear_ratio_milli: 1_000,
             wheel_circumference: Distance { value: 2_100 },
             battery_type: VescBatteryType::LiIon,
             battery_cells: 20,
@@ -24845,7 +24988,7 @@ mod tests {
         let estimator = MobileChargeEstimator::new();
         let board_profile = VescBoardProfile {
             motor_pole_pairs: 15,
-            gear_ratio_denominator: 1,
+            gear_ratio_milli: 1_000,
             wheel_circumference: Distance { value: 2_100 },
             battery_type: VescBatteryType::LiIon,
             battery_cells: 15,
@@ -26443,6 +26586,8 @@ mod tests {
     ) -> MobileTelemetrySnapshotDto {
         MobileTelemetrySnapshotDto {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+            vesc_drivetrain_context: None,
+            configured_vesc_drivetrains: Vec::new(),
             speed_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             battery_current_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             voltage_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),

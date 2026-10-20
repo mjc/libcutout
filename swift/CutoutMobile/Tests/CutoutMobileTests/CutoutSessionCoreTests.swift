@@ -118,6 +118,412 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testEditingVescGeometryPublishesClearedSpeedWithoutFabricatingAnObservation() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(9_000) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(
+            state.beginConnectionAttempt(
+                platformIdentifier: "geometry-refresh-\(UUID().uuidString)", nowMs: 0
+            ).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        let original = MobileVescDrivetrainDraft(wheelDiameterMm: "90", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try await core.saveVescDrivetrain(original, token: token)
+        let values = Data([
+            2, 23, 50, 0, 0, 1, 143, 1, 184, 1, 134, 0, 0, 8, 52, 0, 0, 4, 216,
+            0, 0, 39, 16, 1, 242, 169, 202, 3,
+        ])
+        func observe(at: UInt64) {
+            _ = state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: .notification, monotonicMs: MobileMonotonicMillisDto(milliseconds: at),
+                    maxWriteLen: nil, channel: BluetoothUuid.vescNordicUartNotify.bytes, bytes: values
+                ))
+        }
+        observe(at: 4_000)
+        _ = try await core.loadVescDrivetrain(token: token)
+        let before = core.displayState
+        XCTAssertNotNil(before.speed.millimetersPerSecond)
+        XCTAssertEqual(before.telemetry?.voltage?.value, 49_800)
+        let edited = MobileVescDrivetrainDraft(wheelDiameterMm: "100", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try await core.saveVescDrivetrain(edited, token: token)
+        let cleared = core.displayState
+        XCTAssertNil(cleared.speed.millimetersPerSecond)
+        XCTAssertNil(cleared.telemetry?.speed)
+        XCTAssertEqual(cleared.telemetry?.at, before.telemetry?.at)
+        XCTAssertEqual(cleared.telemetry?.voltage, before.telemetry?.voltage)
+        XCTAssertEqual(cleared.telemetry?.voltageObservedAt, before.telemetry?.voltageObservedAt)
+        XCTAssertEqual(cleared.telemetry?.motorCurrent, before.telemetry?.motorCurrent)
+        XCTAssertEqual(cleared.notificationCount, before.notificationCount)
+        XCTAssertEqual(cleared.lastUpdate, before.lastUpdate)
+        observe(at: 5_000)
+        _ = try await core.loadVescDrivetrain(token: token)
+        XCTAssertNotNil(core.displayState.speed.millimetersPerSecond)
+        XCTAssertNotEqual(core.displayState.speed.millimetersPerSecond, before.speed.millimetersPerSecond)
+        XCTAssertEqual(core.displayState.telemetry?.at, MonotonicMilliseconds(5_000))
+    }
+
+    func testControllerGeometryBridgeKeepsCanConfigurationSeparateFromLocalTelemetry() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(9_000) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let identifier = "scooter-geometry-\(UUID().uuidString)"
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        _ = try await core.selectVehicleKind(.scooter, token: token)
+        let local = MobileVescDrivetrainDraft(wheelDiameterMm: "250", motorPolePairs: "15", motorToWheelRatio: "1")
+        let can = MobileVescDrivetrainTargetDto.can(controllerId: 7, controllerUuid: Data(repeating: 1, count: 12))
+        let secondary = MobileVescDrivetrainDraft(wheelDiameterMm: "200", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        _ = try state.saveConnectionVescDrivetrain(token: token, draft: local, updatedAtMs: 1)
+        let original = try XCTUnwrap(state.connectionTelemetrySnapshot(token: token))
+        _ = try state.saveConnectionVescControllerDrivetrain(
+            token: token, target: can, draft: secondary, updatedAtMs: 2)
+        let configured = try XCTUnwrap(state.connectionTelemetrySnapshot(token: token))
+        XCTAssertEqual(configured.vescDrivetrainContext, original.vescDrivetrainContext)
+        XCTAssertEqual(configured.speed, original.speed)
+        XCTAssertEqual(configured.speedObservedAtMs, original.speedObservedAtMs)
+        XCTAssertEqual(configured.configuredVescDrivetrains.count, 2)
+        XCTAssertEqual(configured.configuredVescDrivetrains[1].target, can)
+        XCTAssertEqual(configured.configuredVescDrivetrains[1].motorToWheelRatioMilli, 2_500)
+        let next = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        let replaced = MobileVescDrivetrainTargetDto.can(controllerId: 7, controllerUuid: Data(repeating: 2, count: 12))
+        XCTAssertNil(try state.restoreConnectionVescControllerDrivetrain(token: next, target: replaced))
+        XCTAssertEqual(try state.restoreConnectionVescControllerDrivetrain(token: next, target: can), secondary)
+        XCTAssertEqual(try state.restoreConnectionVescDrivetrain(token: next), local)
+    }
+
+    func testVescDrivetrainLoadSurfacesMissingDatabaseInsteadOfUnknownGeometry() async throws {
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil)
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "no-database", nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: token)
+        do {
+            _ = try await core.loadVescDrivetrain(token: token)
+            XCTFail("A failed saved-geometry read cannot become a successful blank editor")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .PersistenceUnavailable = error else {
+                return XCTFail("Expected the actual Rust storage refusal, got \(error)")
+            }
+        }
+    }
+
+    func testVescDrivetrainBridgeKeepsTheCapturedAttemptAndRestoresSavedGeometry() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            database: database
+        )
+        defer { core.disconnectAndScan() }
+        let state = core.rideSessionStateHandle
+        let identifier = "drivetrain-controller-\(UUID().uuidString)"
+        let first = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: first)
+        let unknown = try await core.loadVescDrivetrain(token: first)
+        XCTAssertNil(unknown)
+        let draft = MobileVescDrivetrainDraft(wheelDiameterMm: "90", motorPolePairs: "7", motorToWheelRatio: "2.5")
+        let saved = try await core.saveVescDrivetrain(draft, token: first)
+        XCTAssertEqual(saved, draft)
+        let loaded = try await core.loadVescDrivetrain(token: first)
+        XCTAssertEqual(loaded, draft)
+        let replacement = try XCTUnwrap(
+            state.beginConnectionAttempt(
+                platformIdentifier: "replacement-\(UUID().uuidString)", nowMs: 0
+            ).token)
+        do {
+            _ = try await core.saveVescDrivetrain(draft, token: first)
+            XCTFail("An open editor cannot redirect its save to another connection")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .ConnectionUnavailable = error else {
+                return XCTFail("Expected a captured-attempt refusal, got \(error)")
+            }
+        }
+        do {
+            _ = try await core.loadVescDrivetrain(token: first)
+            XCTFail("An open editor cannot load another connection's geometry")
+        } catch {
+            guard let error = error as? MobileVescDrivetrainError, case .ConnectionUnavailable = error else {
+                return XCTFail("Expected a captured-attempt refusal, got \(error)")
+            }
+        }
+        XCTAssertEqual(state.connectionAttemptSnapshot().token, replacement)
+        let reconnected = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        finishGenericVescApplicationDiscovery(state, token: reconnected)
+        _ = try await core.selectVehicleKind(.eskate, token: reconnected)
+        let restored = try await core.loadVescDrivetrain(token: reconnected)
+        XCTAssertEqual(restored, draft)
+    }
+
+    @MainActor
+    func testApplicationTimeoutPublishesDeviceChoiceToMainWithoutTelemetry() async throws {
+        let identifier = "timeout-controller-\(UUID().uuidString)"
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
+            evidence: "fixture", detail: "fixture",
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(),
+            testScript: CutoutSessionTestScript(
+                candidate: candidate, telemetry: nil,
+                protocolNotifications: [
+                    Data([
+                        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                        114, 104, 97, 115, 104, 0, 38, 208, 3,
+                    ])
+                ], appliesProtocolNotificationSteps: true, connectionDelayMilliseconds: 0
+            )
+        )
+        let pending = expectation(description: "Application discovery pending")
+        let required = expectation(description: "Timer publishes required device choice")
+        var observedPending = false
+        var observedRequired = false
+        core.onDeviceSessionSnapshotChange = { snapshot in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(snapshot.connection.token, core.connectionSnapshot.token)
+            switch snapshot.identity?.classificationRequirement {
+            case .pending where !observedPending:
+                observedPending = true
+                pending.fulfill()
+            case .userSelectionRequired where !observedRequired:
+                observedRequired = true
+                XCTAssertEqual(snapshot.identity?.vescApplication, .absent)
+                XCTAssertEqual(snapshot.identity?.vehicleKind, .unknown)
+                required.fulfill()
+            default:
+                break
+            }
+        }
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: identifier))
+        await fulfillment(of: [pending, required], timeout: 5)
+        XCTAssertNil(
+            core.displayState.telemetry?.speed, "No current-value telemetry was supplied to drive this transition")
+        XCTAssertNil(core.displayState.telemetry?.voltage)
+        core.onDeviceSessionSnapshotChange = nil
+        core.disconnectAndScan()
+    }
+
+    func testVehicleKindSelectionPersistsOnlyForTheCapturedAttempt() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let suiteName = "CutoutSessionCoreVehicleKindTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(database: database, defaults: defaults)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil),
+            selectedDeviceStore: store, database: database
+        )
+        let state = core.rideSessionStateHandle
+        let firstIdentifier = "controller-a-\(UUID().uuidString)"
+        let first = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: firstIdentifier, nowMs: 1).token)
+        finishGenericVescApplicationDiscovery(state, token: first)
+        let snapshot = try await core.selectVehicleKind(.eskate, token: first)
+        XCTAssertEqual(snapshot.connection.token, first)
+        XCTAssertEqual(try store.userVehicleKind(for: firstIdentifier), .eskate)
+
+        let edited = try await core.selectVehicleKind(.ebike, token: first)
+        XCTAssertEqual(edited.identity?.classificationRequirement, .resolved)
+        XCTAssertEqual(edited.identity?.classificationProvenance, .userProvided)
+        XCTAssertEqual(edited.identity?.vehicleKind, .ebike)
+        XCTAssertEqual(edited.identity?.vescApplication, .absent)
+        XCTAssertEqual(try database.userVehicleKind(platformIdentifier: firstIdentifier), .ebike)
+
+        let secondIdentifier = "controller-b-\(UUID().uuidString)"
+        let second = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: secondIdentifier, nowMs: 2).token)
+        do {
+            _ = try await core.selectVehicleKind(.emoto, token: first)
+            XCTFail("A stale UI choice must not change either device")
+        } catch {
+            guard let selectionError = error as? MobileVehicleSelectionError,
+                case .ConnectionUnavailable = selectionError
+            else {
+                return XCTFail("Expected a Rust connection refusal, got \(error)")
+            }
+        }
+        XCTAssertEqual(state.connectionAttemptSnapshot().token, second)
+        XCTAssertEqual(try store.userVehicleKind(for: firstIdentifier), .ebike)
+        XCTAssertNil(try store.userVehicleKind(for: secondIdentifier))
+    }
+
+    private func finishGenericVescApplicationDiscovery(
+        _ state: CutoutSessionStateHandle, token: ConnectionAttemptToken
+    ) {
+        _ = state.connectionLinkEstablished(token: token)
+        _ = state.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ]))
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        for (kind, at) in [(MobileSessionInputKindDto.linkUp, UInt64(1)), (.tick, 3_000)] {
+            let result = state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: kind, monotonicMs: MobileMonotonicMillisDto(milliseconds: at),
+                    maxWriteLen: nil, channel: Data(), bytes: Data()
+                ))
+            for query in result?.result.outputs.compactMap(\.applicationQuery) ?? [] {
+                XCTAssertTrue(
+                    state.markApplicationQueryTransport(
+                        token: token, queryId: query.queryId, fragmentIndex: 0, fragmentCount: 1,
+                        status: .submitted, monotonicMs: at
+                    ))
+            }
+        }
+    }
+
+    func testPairRestoresSavedVehicleKindIntoTheSameRustAttempt() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let suiteName = "CutoutSessionCoreVehicleRestoreTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let identifier = "controller-\(UUID().uuidString)"
+        let store = DevicePickerSelectionStore(database: database, defaults: defaults)
+        try database.saveUserVehicleKind(platformIdentifier: identifier, kind: .eskate, updatedAtMilliseconds: 1)
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
+            evidence: "fixture", detail: "fixture",
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1) },
+            testScript: CutoutSessionTestScript(
+                candidate: candidate, telemetry: nil, connectionDelayMilliseconds: 60_000
+            ), selectedDeviceStore: store, database: database
+        )
+        defer { core.disconnectAndScan() }
+        XCTAssertTrue(core.pair(platformIdentifier: identifier))
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(state.connectionAttemptSnapshot().token)
+        _ = state.connectionLinkEstablished(token: token)
+        _ = state.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ]))
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        func step(_ kind: MobileSessionInputKindDto, at: UInt64) {
+            let result = state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: kind, monotonicMs: MobileMonotonicMillisDto(milliseconds: at),
+                    maxWriteLen: nil, channel: Data(), bytes: Data()
+                ))
+            for query in result?.result.outputs.compactMap(\.applicationQuery) ?? [] {
+                XCTAssertTrue(
+                    state.markApplicationQueryTransport(
+                        token: token, queryId: query.queryId, fragmentIndex: 0, fragmentCount: 1,
+                        status: .submitted, monotonicMs: at
+                    ))
+            }
+        }
+        step(.linkUp, at: 1)
+        XCTAssertEqual(state.deviceSessionSnapshot().identity?.classificationRequirement, .pending)
+        step(.tick, at: 3_000)
+        await core.waitForVehicleKindRestoration()
+        let identity = try XCTUnwrap(state.deviceSessionSnapshot().identity)
+        XCTAssertEqual(identity.classificationRequirement, .resolved)
+        XCTAssertEqual(identity.classificationProvenance, .userProvided)
+        XCTAssertEqual(identity.vehicleKind, .eskate)
+        XCTAssertEqual(identity.vescApplication, .absent)
+        XCTAssertNil(identity.model)
+
+        let edited = try await core.selectVehicleKind(.scooter, token: token)
+        XCTAssertEqual(edited.identity?.vehicleKind, .scooter)
+        XCTAssertEqual(edited.identity?.classificationRequirement, .resolved)
+        XCTAssertEqual(edited.identity?.classificationProvenance, .userProvided)
+        XCTAssertEqual(try database.userVehicleKind(platformIdentifier: identifier), .scooter)
+    }
+
+    @MainActor
+    func testDelayedVehicleKindRestoreDoesNotBlockQueuesOrReplaceNewerChoices() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        for replacesAttempt in [false, true] {
+            let suiteName = "CutoutSessionCoreDelayedRestoreTests-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let started = expectation(description: "Saved type read started off the owner queues")
+            let release = DispatchSemaphore(value: 0)
+            let returned = Mutex(false)
+            let store = DevicePickerSelectionStore(defaults: defaults) { _ in
+                XCTAssertFalse(Thread.isMainThread)
+                started.fulfill()
+                _ = release.wait(timeout: .now() + 5)
+                returned.withLock { $0 = true }
+                return .ebike
+            }
+            let identifier = "delayed-controller-\(UUID().uuidString)"
+            let candidate = DevicePickerDiscoveryCandidate(
+                platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
+                evidence: "fixture", detail: "fixture",
+                support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+                symbolName: "circle.hexagongrid.circle"
+            )
+            let queue = DispatchQueue(label: "cutout.delayed-vehicle-restore.test")
+            let core = CutoutSessionCore(
+                clock: MonotonicClock { MonotonicMilliseconds(1) },
+                testScript: CutoutSessionTestScript(
+                    candidate: candidate, telemetry: nil, connectionDelayMilliseconds: 60_000
+                ), selectedDeviceStore: store, database: database, bleQueue: queue
+            )
+            defer {
+                release.signal()
+                core.disconnectAndScan()
+            }
+            XCTAssertTrue(core.pair(platformIdentifier: identifier))
+            await fulfillment(of: [started], timeout: 1)
+            let ownerAvailable = expectation(description: "BLE owner remains available during storage")
+            queue.async { ownerAvailable.fulfill() }
+            await fulfillment(of: [ownerAvailable], timeout: 1)
+            XCTAssertFalse(returned.withLock { $0 }, "Pair and BLE work must finish before the saved read returns")
+            let state = core.rideSessionStateHandle
+            let token = try XCTUnwrap(state.connectionAttemptSnapshot().token)
+            finishGenericVescApplicationDiscovery(state, token: token)
+            if replacesAttempt {
+                let replacement = try XCTUnwrap(
+                    state.beginConnectionAttempt(
+                        platformIdentifier: "replacement-\(UUID().uuidString)", nowMs: 0
+                    ).token)
+                finishGenericVescApplicationDiscovery(state, token: replacement)
+            } else {
+                _ = try await core.selectVehicleKind(.eskate, token: token)
+            }
+            release.signal()
+            await core.waitForVehicleKindRestoration()
+            let snapshot = state.deviceSessionSnapshot()
+            let identity = try XCTUnwrap(snapshot.identity)
+            if replacesAttempt {
+                XCTAssertNotEqual(snapshot.connection.token, token)
+                XCTAssertEqual(identity.classificationRequirement, .userSelectionRequired)
+                XCTAssertEqual(identity.vehicleKind, .unknown)
+            } else {
+                XCTAssertEqual(identity.classificationRequirement, .resolved)
+                XCTAssertEqual(identity.vehicleKind, .eskate)
+            }
+        }
+    }
+
     func testScriptedSessionUsesExplicitDatabaseForDurableDiagnosticConsent() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)
@@ -3035,8 +3441,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testVescRideSnapshotKeepsRideCriticalFieldsTyped() {
         let snapshot = VescRideSnapshot(
             title: "Fungineers X7",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             warning: .dutyPushback,
             boardSpeed: speedValue(19_000),
@@ -3050,8 +3456,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             motorTemperature: temperatureValue(49_000)
         )
 
-        XCTAssertEqual(snapshot.vehicleKind, .float)
-        XCTAssertEqual(snapshot.subProtocol, .refloat)
+        XCTAssertEqual(snapshot.vehicleKind, .onewheel)
+        XCTAssertEqual(snapshot.application, .refloat)
         XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertEqual(snapshot.warning, .dutyPushback)
         XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
@@ -3088,8 +3494,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testVescRideSnapshotOwnsBatteryReadbackFormatting() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             batteryLevelReported: batteryLevelValue(72),
             batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000)
@@ -3104,8 +3510,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testVescRideSnapshotOwnsBoardAngleReadbackFormatting() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             boardAngle: angleValue(-18_000),
             balanceAngle: angleValue(500)
@@ -3120,8 +3526,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testVescRideSnapshotOwnsMotorTemperatureReadbackFormatting() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             motorTemperature: temperatureValue(49_000)
         )
@@ -3135,8 +3541,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testRideHeroReadoutOwnsVescSpeedFreshnessAndSeverity() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
-            vehicleKind: .float,
-            subProtocol: .refloat,
+            vehicleKind: .onewheel,
+            application: .refloat,
             controllerState: .unknown,
             warning: .dutyPushback,
             boardSpeed: speedValue(19_000),
@@ -3169,34 +3575,34 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testVescVehicleKindDoesNotImplySubProtocol() {
+    func testVehicleKindDoesNotImplyApplication() {
         let snapshot = VescRideSnapshot(
             title: "VESC Bike",
-            vehicleKind: .bike,
-            subProtocol: .generic,
+            vehicleKind: .ebike,
+            application: .absent,
             controllerState: .unknown
         )
 
-        XCTAssertEqual(snapshot.vehicleKind, .bike)
-        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertEqual(snapshot.vehicleKind, .ebike)
+        XCTAssertEqual(snapshot.application, .absent)
 
         let bike = VescRideSnapshot(
             title: "VESC Bike",
-            vehicleKind: .bike,
-            subProtocol: .bike,
+            vehicleKind: .ebike,
+            application: .absent,
             controllerState: .unknown
         )
-        XCTAssertEqual(bike.vehicleKind, .bike)
-        XCTAssertEqual(bike.subProtocol, .bike)
+        XCTAssertEqual(bike.vehicleKind, .ebike)
+        XCTAssertEqual(bike.application, .absent)
 
         let eskate = VescRideSnapshot(
             title: "VESC Skateboard",
-            vehicleKind: .skateboard,
-            subProtocol: .eskate,
+            vehicleKind: .eskate,
+            application: .absent,
             controllerState: .unknown
         )
-        XCTAssertEqual(eskate.vehicleKind, .skateboard)
-        XCTAssertEqual(eskate.subProtocol, .eskate)
+        XCTAssertEqual(eskate.vehicleKind, .eskate)
+        XCTAssertEqual(eskate.application, .absent)
     }
 
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
@@ -3213,8 +3619,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: "Little FOCer BT"))
 
         XCTAssertEqual(snapshot.title, "Little FOCer BT")
-        XCTAssertEqual(snapshot.vehicleKind, .float)
-        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertEqual(snapshot.vehicleKind, .unknown)
+        XCTAssertEqual(snapshot.application, .pending)
         XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertNil(snapshot.boardSpeed)
         XCTAssertEqual(snapshot.batteryVoltage, voltageValue(75_400))
@@ -3223,6 +3629,36 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
+    func testVescRideSnapshotUsesOnlyCanonicalRecordingStatisticsForTripAndTime() throws {
+        func snapshot(points: UInt64, statistics: MobileRideMapLiveActivityStatisticsDto?) throws -> VescRideSnapshot {
+            let display = RideDisplayState(
+                // A wheel's lifetime odometer is never the current ride's trip distance.
+                telemetry: TelemetrySnapshot(voltage: voltageValue(49_800), distance: Distance(value: 9_000_000)),
+                logicalRide: MobileRideMapSnapshotDto(
+                    rideID: "current-ride", state: statistics == nil ? .stopped : .active,
+                    summary: MobileRideMapSummaryDto(
+                        pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                )
+            )
+            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: nil))
+        }
+        let statistics = MobileRideMapLiveActivityStatisticsDto(
+            durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
+        let recorded = try snapshot(points: 2, statistics: statistics)
+        XCTAssertNil(recorded.boardSpeed)
+        XCTAssertEqual(recorded.tripDistance, Distance(value: 1_609_344))
+        XCTAssertEqual(recorded.rideDuration, MonotonicMilliseconds(522_000))
+
+        let withoutRoute = try snapshot(points: 0, statistics: statistics)
+        XCTAssertNil(withoutRoute.tripDistance)
+        XCTAssertEqual(withoutRoute.rideDuration, MonotonicMilliseconds(522_000))
+
+        let stopped = try snapshot(points: 2, statistics: nil)
+        XCTAssertNil(stopped.tripDistance)
+        XCTAssertNil(stopped.rideDuration)
     }
 
     func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
@@ -3434,7 +3870,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
 
         XCTAssertEqual(snapshot.title, VescRideSnapshot.defaultTitle)
-        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertEqual(snapshot.application, .pending)
         XCTAssertNil(snapshot.boardSpeed)
         XCTAssertNil(snapshot.dutyHeadroom)
         XCTAssertNil(snapshot.boardAngle)
@@ -3927,10 +4363,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
     }
 
-    func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {
-        XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil))
-    }
-
     @MainActor
     func testCaptureIdentityRequiresFreshAttemptEvidenceAndRefreshesAnEqualCandidate() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -4038,21 +4470,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             identityAnnotations.count, Set(identityAnnotations).count, "Repeated snapshots do not duplicate proof")
         XCTAssertEqual(try Data(contentsOf: files[0]), firstBytes, "A later attempt cannot rewrite the closed segment")
-    }
-
-    func testPevcapIdentityUsesProtocolConfirmedCandidate() {
-        let candidate = DevicePickerDiscoveryCandidate(
-            candidate: mobileDiscoveryCandidateFromVeteranProtocolIdentity(
-                platformIdentifier: "ios-local-aero",
-                displayName: "NF2557",
-                modelId: 43
-            ))
-
-        let identity = captureResolvedIdentity(protocolIdentityCandidate: candidate)
-
-        XCTAssertEqual(identity?.protocolFamily, .veteranLeaperkimNosfet)
-        XCTAssertEqual(identity?.model?.value, "NOSFET Aero")
-        XCTAssertEqual(identity?.model?.verification, .hardwareVerified)
     }
 
     @MainActor
@@ -5311,7 +5728,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             productCategory: "VESC Onewheel",
             evidence: "test script",
             detail: "core callback fixture",
-            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
             symbolName: "circle.hexagongrid.circle"
         )
     }
@@ -5369,8 +5786,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             locationEffects: locationEffects
         )
 
+        defer { core.onPhoneLocationSnapshotChange = nil }
         core.onPhoneLocationSnapshotChange = { snapshot, _ in
-            if snapshot.latestSample != nil { published.fulfill() }
+            guard snapshot.latestSample != nil else { return }
+            // Availability changes may republish the retained sample; wait for its first publication.
+            core.onPhoneLocationSnapshotChange = nil
+            published.fulfill()
         }
         core.deliverPhoneLocationsForTesting([location])
         await fulfillment(of: [recorded, published], timeout: 2)

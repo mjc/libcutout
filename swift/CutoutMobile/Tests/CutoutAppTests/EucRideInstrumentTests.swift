@@ -1,5 +1,6 @@
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import SwiftUI
 import XCTest
 
@@ -11,6 +12,55 @@ import XCTest
 
 @MainActor
 final class EucRideInstrumentTests: XCTestCase {
+    func testTimerUpdatesCachedVehicleChoiceThroughRegistrarWithoutTelemetry() async throws {
+        let suiteName = "EucRideInstrumentTests-device-type-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let identifier = "controller-\(UUID().uuidString)"
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
+            evidence: "fixture", detail: "fixture",
+            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: candidate, telemetry: nil,
+                protocolNotifications: [
+                    Data([
+                        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                        114, 104, 97, 115, 104, 0, 38, 208, 3,
+                    ])
+                ], appliesProtocolNotificationSteps: true, connectionDelayMilliseconds: 0
+            ), suppressNativeLocation: true, selectedDeviceStore: store
+        )
+        let manager = CutoutUITestSessionFixture.euc.makeLiveActivityManager()
+        XCTAssertTrue(manager is CutoutUITestLiveActivityManager)
+        let model = CutoutAppModel(core: core, selectedDeviceStore: store, liveActivityManager: manager)
+        defer { core.disconnectAndScan() }
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: identifier))
+        let deadline = ContinuousClock.now + .seconds(5)
+        var sawPending = false
+        while ContinuousClock.now < deadline {
+            let requirement = model.device.deviceSessionSnapshot?.identity?.classificationRequirement
+            if requirement == .pending { sawPending = true }
+            if requirement == .userSelectionRequired { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let snapshot = try XCTUnwrap(model.device.deviceSessionSnapshot)
+        let identity = try XCTUnwrap(snapshot.identity)
+        XCTAssertTrue(sawPending)
+        XCTAssertEqual(snapshot.connection.token?.platformIdentifier, identifier)
+        XCTAssertEqual(identity.classificationRequirement, .userSelectionRequired)
+        XCTAssertEqual(identity.vescApplication, .absent)
+        XCTAssertEqual(identity.vehicleKind, .unknown)
+        XCTAssertNil(identity.model)
+        XCTAssertNil(model.displayState.telemetry?.speed)
+        XCTAssertNil(model.displayState.telemetry?.voltage)
+    }
+
     func testOrdinaryRideFixturesDoNotCreateSystemLiveActivities() {
         for fixture in [
             CutoutUITestSessionFixture.euc, .dynamicEuc, .staleEuc, .vesc, .unknownDevice, .bluetoothUnavailable,
@@ -23,6 +73,92 @@ final class EucRideInstrumentTests: XCTestCase {
         ] {
             XCTAssertTrue(fixture.makeLiveActivityManager() is LiveActivityRideActivityKitManager)
         }
+    }
+
+    func testRefloatFixtureResolvesApplicationThroughSubmittedQueryWithoutUserClassification() async throws {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let suiteName = "EucRideInstrumentTests-refloat-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let core = CutoutSessionCore(
+            testScript: fixture.testScript, suppressNativeLocation: true, selectedDeviceStore: store
+        )
+        let model = CutoutAppModel(
+            core: core, selectedDeviceStore: store, liveActivityManager: fixture.makeLiveActivityManager()
+        )
+        defer { core.disconnectAndScan() }
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if model.device.deviceSessionSnapshot?.identity?.vescApplication == .refloat,
+                model.displayState.telemetry?.voltage != nil
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let identity = try XCTUnwrap(model.device.deviceSessionSnapshot?.identity)
+        XCTAssertEqual(identity.protocol, .vesc)
+        XCTAssertEqual(identity.vescApplication, .refloat)
+        XCTAssertEqual(identity.vescApplicationQuery, .resolved)
+        XCTAssertEqual(identity.classificationRequirement, .resolved)
+        XCTAssertEqual(identity.classificationProvenance, .protocol)
+        XCTAssertEqual(identity.vehicleKind, .onewheel)
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.application, .refloat)
+        XCTAssertEqual(ride.vehicleKind, .onewheel)
+    }
+
+    func testEskateFixtureRequiresUserClassificationAndLeavesUnsupportedReadingsUnavailable() async throws {
+        let fixture = CutoutUITestSessionFixture.eskate
+        XCTAssertNil(fixture.testScript.telemetry, "Measured values must enter through the real protocol owner")
+        XCTAssertTrue(fixture.testScript.appliesProtocolNotificationSteps)
+        XCTAssertEqual(fixture.testScript.protocolDetectionNotifications?.count, 1)
+        XCTAssertEqual(fixture.testScript.protocolNotificationIntervalMilliseconds, 500)
+        let suiteName = "EucRideInstrumentTests-eskate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let core = CutoutSessionCore(
+            testScript: fixture.testScript, suppressNativeLocation: true, selectedDeviceStore: store
+        )
+        let model = CutoutAppModel(
+            core: core, selectedDeviceStore: store, liveActivityManager: fixture.makeLiveActivityManager()
+        )
+        defer { core.disconnectAndScan() }
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if model.device.deviceSessionSnapshot?.identity?.vescApplication == .absent,
+                model.displayState.telemetry?.voltage != nil
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let identity = try XCTUnwrap(model.device.deviceSessionSnapshot?.identity)
+        XCTAssertEqual(identity.protocol, .vesc)
+        XCTAssertEqual(identity.vescApplication, .absent)
+        XCTAssertEqual(identity.classificationRequirement, .userSelectionRequired)
+        XCTAssertEqual(identity.vehicleKind, .unknown)
+        XCTAssertTrue(fixture.makeLiveActivityManager() is CutoutUITestLiveActivityManager)
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.batteryVoltage, Voltage(value: 49_800))
+        XCTAssertEqual(ride.batteryCurrent, BatteryCurrent.currentOut(milliamps: 12_400))
+        XCTAssertEqual(ride.powerFlow, .discharge)
+        XCTAssertEqual(ride.motorCurrent, PhaseCurrent(value: 21_000))
+        XCTAssertEqual(ride.controllerTemperature, Temperature(value: 44_000))
+        XCTAssertEqual(ride.motorTemperature, Temperature(value: 39_000))
+        XCTAssertNil(ride.boardSpeed)
+        XCTAssertNil(ride.batteryLevelReported)
+        XCTAssertNil(ride.batteryLevelEstimated)
+        XCTAssertNil(ride.footpad)
+        XCTAssertNil(ride.dutyCycle)
+        XCTAssertNil(ride.dutyHeadroom)
+        XCTAssertNil(ride.boardAngle)
     }
 
     func testIsolatedLiveActivityPreservesLifecycleReceiptsWithoutSystemEffects() async throws {
@@ -188,7 +324,7 @@ final class EucRideInstrumentTests: XCTestCase {
         func testBatteryStripKeepsItsSizeWhenTelemetryBecomesUnavailable() {
             func size(progress: Double?) -> CGSize {
                 let host = NSHostingView(
-                    rootView: EucInstrumentReading(
+                    rootView: PevInstrumentReading(
                         label: "Battery", value: .available(display: "78", accessibility: "78"),
                         unit: "%", pointSize: 52, identifier: "battery", showsProgress: true, progress: progress
                     ).environment(\.dynamicTypeSize, .large).frame(width: 180))

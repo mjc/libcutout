@@ -4178,6 +4178,15 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
+        if family == .euc {
+            // A fresh Simulator can request location when the ride starts. The
+            // system prompt belongs to SpringBoard and ignores CutOut's text-size override.
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            dismissLocationPromptIfNeeded(in: springboard, timeout: 5)
+            XCTAssertFalse(springboard.alerts.firstMatch.exists, "A system alert still obscures the Ride audit")
+            app.activate()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        }
         assertRideWindowHasSettled(screen, landscape: isLandscapeTest)
         assertRideTextSizeReadback(screen, systemCategory: rideTextSizeCategory)
         let windowFrame = app.windows.firstMatch.frame
@@ -4236,6 +4245,242 @@ final class CutoutAppUITests: XCTestCase {
             assertAccessibleRideReadings(family == .euc ? Self.eucDetailMetricLabels : metricLabels)
         }
         try beforeDisconnect?(screen)
+    }
+
+    func testStandardEskateFixtureKeepsUnknownGeometryAndRestoresUserType() throws {
+        let (use, choice, energy) = try launchStandardEskateRide()
+        XCTAssertEqual(energy.label, "Pack voltage")
+        XCTAssertTrue((energy.value as? String ?? "").contains("49.8"))
+        XCTAssertEqual(app.buttons.matching(identifier: "dashboard.disconnect").count, 1)
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.exists)
+        XCTAssertTrue((speed.value as? String ?? "").localizedCaseInsensitiveContains("unavailable"))
+        XCTAssertFalse(app.descendants(matching: .any)["euc.ride.headroom"].exists)
+        let window = app.windows.firstMatch.frame
+        let trip = app.descendants(matching: .any)["vesc.ride.tripDistance"]
+        let duration = app.descendants(matching: .any)["vesc.ride.rideDuration"]
+        let motor = app.descendants(matching: .any)["vesc.ride.motorTemperature"]
+        for reading in [trip, duration, motor] {
+            XCTAssertTrue(reading.exists, "Missing approved Ride reading: \(reading.identifier)")
+            XCTAssertTrue(reading.isHittable)
+        }
+        // The approved face puts speed and pack voltage above the divided summary,
+        // rather than centering speed in a mostly empty screen.
+        XCTAssertLessThan(speed.frame.midY, window.minY + window.height * 0.4)
+        XCTAssertLessThan(energy.frame.midY, window.minY + window.height * 0.62)
+        XCTAssertLessThan(speed.frame.maxY, energy.frame.minY)
+        XCTAssertLessThan(energy.frame.maxY, trip.frame.minY)
+        XCTAssertLessThan(trip.frame.maxY, motor.frame.minY)
+        XCTAssertLessThan(motor.frame.maxY, app.tabBars.firstMatch.frame.minY)
+        XCTAssertTrue(app.buttons["vesc.drivetrain.open"].isHittable)
+        try performTextClippingAudit(named: "standard-eskate-ride")
+        energy.tap()
+        let detail = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        for label in ["Pack voltage", "battery current", "motor current", "Controller", "Motor", "Trip", "Ride time"] {
+            XCTAssertTrue(
+                detail.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                    .firstMatch.exists, "Missing measured reading: \(label)")
+        }
+        XCTAssertFalse(detail.staticTexts["board angle"].exists)
+        app.buttons["ride.readings.done"].tap()
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Standard e-skate without drivetrain geometry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["dashboard.disconnect"].tap()
+        app.terminate()
+        // Keep the same fixture database to verify that the Rust-owned user association restores.
+        app.launch()
+        // Existing selected-device restoration reconnects directly; no second manual pairing is needed.
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(use.exists)
+        XCTAssertFalse(choice.exists)
+        XCTAssertEqual(energy.label, "Pack voltage")
+    }
+
+    func testStandardVescVehicleTypeRemainsEditableFromTuneAndRestoresItsNewChoice() throws {
+        let (_, _, energy) = try launchStandardEskateRide()
+        tapNavigationTab("tune", title: "Tune")
+        let tune = app.descendants(matching: .any)["settings.screen.tune"]
+        XCTAssertTrue(tune.waitForExistence(timeout: 5), app.debugDescription)
+        let edit = app.buttons["device.type.edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(edit, in: tune, maxScrolls: 6)
+        edit.tap()
+        let chooser = app.descendants(matching: .any)["device.type.selection"]
+        XCTAssertTrue(chooser.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["device.type.choice.eskate"].isSelected)
+        let ebike = app.buttons["device.type.choice.ebike"]
+        scrollElementFrameIntoViewport(ebike, in: chooser, maxScrolls: 6)
+        let ebikeLabel = ebike.label
+        ebike.tap()
+        XCTAssertTrue(chooser.waitForNonExistence(timeout: 5), app.debugDescription)
+        let updated = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", ebikeLabel), object: edit
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed, app.debugDescription)
+        edit.tap()
+        XCTAssertTrue(chooser.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(ebike.isSelected)
+        scrollElementFrameIntoViewport(ebike, in: chooser, maxScrolls: 6)
+        ebike.tap()
+        XCTAssertTrue(chooser.waitForNonExistence(timeout: 5), app.debugDescription)
+
+        let drivetrain = app.buttons["vesc.drivetrain.open"]
+        XCTAssertTrue(drivetrain.exists, "Changing the vehicle type must preserve drivetrain editing")
+        scrollElementFrameIntoViewport(drivetrain, in: tune, maxScrolls: 6)
+        drivetrain.tap()
+        let drivetrainEditor = app.descendants(matching: .any)["vesc.drivetrain.editor"]
+        XCTAssertTrue(drivetrainEditor.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["vesc.drivetrain.done"].tap()
+        XCTAssertTrue(drivetrainEditor.waitForNonExistence(timeout: 5), app.debugDescription)
+        tapNavigationTab("ride", title: "Ride")
+        app.buttons["dashboard.disconnect"].tap()
+        app.terminate()
+        // Reuse the fixture database to read the edited association after relaunch.
+        app.launch()
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(chooser.exists)
+        tapNavigationTab("tune", title: "Tune")
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(edit, in: tune, maxScrolls: 6)
+        XCTAssertTrue(edit.label.contains(ebikeLabel), app.debugDescription)
+        edit.tap()
+        XCTAssertTrue(chooser.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(ebike.isSelected)
+    }
+
+    func testStandardEskateDrivetrainFormValidatesAndRestoresFractionalReduction() throws {
+        executionTimeAllowance = 300
+        let (_, choice, energy) = try launchStandardEskateRide()
+        app.buttons["vesc.drivetrain.open"].tap()
+        let editor = app.descendants(matching: .any)["vesc.drivetrain.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
+        let save = app.buttons["vesc.drivetrain.save"]
+        let editable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [editable], timeout: 5), .completed)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["vesc.drivetrain.wheel-diameter.error"].waitForExistence(timeout: 5))
+        for (identifier, value) in [
+            ("wheel-diameter", "90"), ("motor-pole-pairs", "7"), ("reduction", "2.5"),
+        ] {
+            let field = app.textFields["vesc.drivetrain.\(identifier)"]
+            XCTAssertTrue(field.exists)
+            field.tap()
+            field.typeText(value)
+        }
+        scrollElementFrameIntoViewport(
+            save, in: editor, maxScrolls: 8,
+            occludedBy: app.keyboards.firstMatch.exists ? app.keyboards.firstMatch : nil
+        )
+        save.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), app.debugDescription)
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        let measured = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "6.0, mph, available,"), object: speed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [measured], timeout: 5), .completed,
+            "Expected the speed calculated from 90 mm / 7 pole pairs / 2.5 reduction. \(String(describing: speed.value))"
+        )
+        let before = speed.value as? String
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Standard e-skate with saved fractional drivetrain"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["dashboard.disconnect"].tap()
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(choice.exists)
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", before ?? ""), object: speed
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed, app.debugDescription)
+        XCTAssertFalse(app.buttons["vesc.drivetrain.open"].exists)
+
+        tapNavigationTab("tune", title: "Tune")
+        let edit = app.buttons["vesc.drivetrain.open"]
+        guard edit.waitForExistence(timeout: 5) else {
+            XCTFail("Configured geometry must remain editable after fresh speed arrives")
+            return
+        }
+        edit.tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed)
+        let reduction = app.textFields["vesc.drivetrain.reduction"]
+        XCTAssertEqual(reduction.value as? String, "2.5")
+        reduction.tap()
+        reduction.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "3")
+        scrollElementFrameIntoViewport(
+            save, in: editor, maxScrolls: 8,
+            occludedBy: app.keyboards.firstMatch.exists ? app.keyboards.firstMatch : nil
+        )
+        save.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), app.debugDescription)
+        tapNavigationTab("ride", title: "Ride")
+        let corrected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "5.0, mph, available,"), object: speed
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [corrected], timeout: 5), .completed, app.debugDescription)
+    }
+
+    func testStandardEskateRidePreservesReadingsAtAccessibilityDynamicType() throws {
+        let (_, _, energy) = try launchStandardEskateRide(textSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        let window = app.windows.firstMatch.frame
+        for identifier in [
+            "ride.hero.speed", "vesc.ride.tripDistance", "vesc.ride.rideDuration", "dashboard.disconnect",
+        ] {
+            let reading = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(reading.exists)
+            XCTAssertTrue(reading.isHittable, "Clipped Ride element: \(identifier)")
+            XCTAssertTrue(window.insetBy(dx: -2, dy: -2).contains(reading.frame))
+        }
+        try performTextClippingAudit(named: "standard-eskate-ride-accessibility-text")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Standard e-skate at largest accessibility text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        energy.tap()
+        let detail = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        for label in ["Pack voltage", "battery current", "motor current", "Controller", "Motor", "Trip", "Ride time"] {
+            XCTAssertTrue(
+                detail.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+                    .exists,
+                "Missing accessible reading: \(label)"
+            )
+        }
+    }
+
+    private func launchStandardEskateRide(textSize: String = "UICTContentSizeCategoryL") throws -> (
+        XCUIElement, XCUIElement, XCUIElement
+    ) {
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("The e-skate presentation fixture is restricted to Simulator")
+        #endif
+        app.terminate()
+        app.launchArguments = [
+            "-CUTOUT_UI_TEST_FIXTURE", "eskate",
+            "-UIPreferredContentSizeCategoryName", textSize,
+            "-io.cutout.music.monitoring.enabled", "NO", "-CUTOUT_UI_TEST_MUSIC", "silent",
+        ]
+        app.launchEnvironment = [
+            "CUTOUT_UI_TEST_FIXTURE": "eskate",
+            "CUTOUT_UI_TEST_RIDE_DATABASE_ID": UUID().uuidString,
+        ]
+        app.launch()
+        let use = app.buttons["device-picker.use.ui-test-standard-vesc-eskate"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
+        use.tap()
+        let choice = app.buttons["device.type.choice.eskate"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
+        choice.tap()
+        let energy = app.buttons["ride.readings.open"]
+        XCTAssertTrue(energy.waitForExistence(timeout: 10), app.debugDescription)
+        return (use, choice, energy)
     }
 
     func testEucAccessibleReadingsPreserveAvailableSecondaryValuesAtAccessibilityDynamicType() throws {
@@ -5270,11 +5515,35 @@ final class CutoutAppUITests: XCTestCase {
         }
     }
 
-    private func dismissLocationPromptIfNeeded(in springboard: XCUIApplication) {
+    private func dismissLocationPromptIfNeeded(in springboard: XCUIApplication, timeout: TimeInterval = 1) {
         let locationPrompt = springboard.alerts.firstMatch
-        if locationPrompt.waitForExistence(timeout: 1) {
-            locationPrompt.buttons["Don’t Allow"].tap()
+        guard locationPrompt.waitForExistence(timeout: timeout) else { return }
+        let locationTitle = locationPrompt.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@", "CutOut", "location")
+        ).firstMatch
+        guard
+            locationTitle.exists
+                || (locationPrompt.label.localizedCaseInsensitiveContains("CutOut")
+                    && locationPrompt.label.localizedCaseInsensitiveContains("location"))
+        else { return }
+        let deny = locationPrompt.buttons.matching(
+            NSPredicate(format: "label == %@ OR label == %@", "Don’t Allow", "Don't Allow")
+        ).firstMatch
+        XCTAssertTrue(deny.waitForExistence(timeout: 2), springboard.debugDescription)
+        // SpringBoard may retain an accessibility text size from another run,
+        // placing the final permission action below the visible alert viewport.
+        for _ in 0..<4 where deny.exists && !deny.isHittable {
+            locationPrompt.swipeUp()
         }
+        guard deny.exists, deny.isHittable else {
+            XCTFail("The location permission denial is not reachable. \(springboard.debugDescription)")
+            return
+        }
+        deny.tap()
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !locationPrompt.exists }, object: locationPrompt
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, springboard.debugDescription)
     }
 
     private func attachScreenshot(of application: XCUIApplication, named name: String) {

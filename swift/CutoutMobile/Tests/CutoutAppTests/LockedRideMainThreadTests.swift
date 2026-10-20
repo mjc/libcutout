@@ -408,7 +408,10 @@ final class LockedRideMainThreadTests: XCTestCase {
         let fixture = try await SQLiteRideStall.make()
         defer { fixture.release.signal() }
         let identity = "automatic-pair-\(UUID().uuidString)"
-        let store = DevicePickerSelectionStore(database: fixture.database)
+        let suiteName = "LockedRideMainThreadTests-automatic-pair-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(database: fixture.database, defaults: defaults)
         let previous = try await Task.detached {
             let previous = try fixture.database.selectedDevice()
             try fixture.database.rememberSelectedDevice(

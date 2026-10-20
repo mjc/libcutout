@@ -4,6 +4,40 @@ import XCTest
 @testable import CutoutMobile
 
 final class DevicePickerSelectionStoreTests: XCTestCase {
+    func testVehicleKindUsesExistingDatabaseAndDoesNotChangeNamesOrSelection() throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let suiteName = "DevicePickerSelectionStoreTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let first = "controller-a-\(UUID().uuidString)"
+        let second = "controller-b-\(UUID().uuidString)"
+        let selected = try database.selectedDevice()
+        let store = DevicePickerSelectionStore(database: database, defaults: defaults)
+        XCTAssertNil(try store.userVehicleKind(for: first))
+
+        try database.saveUserVehicleKind(platformIdentifier: first, kind: .eskate, updatedAtMilliseconds: 1)
+        try database.saveUserVehicleKind(platformIdentifier: second, kind: .scooter, updatedAtMilliseconds: 2)
+        let restored = DevicePickerSelectionStore(database: database, defaults: defaults)
+        XCTAssertEqual(try restored.userVehicleKind(for: first), .eskate)
+        XCTAssertEqual(try restored.userVehicleKind(for: second), .scooter)
+        XCTAssertEqual(try database.selectedDevice(), selected)
+        XCTAssertNil(try database.deviceName(platformIdentifier: first))
+        XCTAssertThrowsError(
+            try database.saveUserVehicleKind(platformIdentifier: first, kind: .unknown, updatedAtMilliseconds: 3))
+        XCTAssertEqual(try restored.userVehicleKind(for: first), .eskate)
+        XCTAssertTrue((defaults.persistentDomain(forName: suiteName) ?? [:]).isEmpty)
+    }
+
+    func testVehicleKindDoesNotInventPreferenceOnlyPersistence() {
+        let suiteName = "DevicePickerSelectionStoreTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        XCTAssertThrowsError(try store.userVehicleKind(for: "controller")) {
+            XCTAssertEqual($0 as? DeviceVehicleSelectionError, .persistenceUnavailable)
+        }
+    }
+
     func testSelectedDeviceStorePersistsAndClearsPlatformIdentifier() {
         let suiteName = "DevicePickerSelectionStoreTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

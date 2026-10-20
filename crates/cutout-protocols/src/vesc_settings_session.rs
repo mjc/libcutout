@@ -164,6 +164,46 @@ pub(crate) struct VescSettingsSession {
 }
 
 impl VescSettingsSession {
+    pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
+        self.read_only.application_query_state()
+    }
+    pub(crate) fn application_query_deadline(&self) -> Option<MonotonicTimestamp> {
+        self.read_only.application_query_deadline()
+    }
+    pub(crate) fn advance_application_query_deadlines(&mut self, at: MonotonicTimestamp) {
+        self.read_only.advance_application_query_deadlines(at);
+    }
+    pub(crate) fn application_query_is_current(
+        &self,
+        id: cutout_core::ApplicationQueryId,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.read_only.application_query_is_current(id, at)
+    }
+    pub(crate) fn record_application_query_transport(
+        &mut self,
+        id: cutout_core::ApplicationQueryId,
+        index: u16,
+        count: u16,
+        status: cutout_core::ApplicationQueryTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.read_only
+            .record_application_query_transport(id, index, count, status, at)
+    }
+
+    pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
+        self.read_only.configure_user_drivetrain(value);
+        self.last_speed = None;
+    }
+    pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
+        if self.identity_invalidated {
+            crate::VescApplicationDiscovery::Pending
+        } else {
+            self.read_only.application_discovery()
+        }
+    }
+
     pub(crate) fn new(board_profile: Option<VescBoardProfile>) -> Self {
         Self {
             read_only: board_profile.map_or_else(
@@ -205,19 +245,6 @@ impl VescSettingsSession {
         .into_iter()
         .flatten()
         .min()
-    }
-
-    pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
-        if self.identity_invalidated {
-            return crate::VescApplicationDiscovery::Pending;
-        }
-        match self.read_only.settings_evidence().package {
-            None => crate::VescApplicationDiscovery::Pending,
-            Some(package) if package.package_name.as_str() == "Refloat" => {
-                crate::VescApplicationDiscovery::Refloat
-            }
-            Some(_) => crate::VescApplicationDiscovery::Absent,
-        }
     }
 
     pub(crate) fn control_profile(&self) -> DeviceControlProfile {

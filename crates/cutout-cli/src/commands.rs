@@ -226,23 +226,17 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     let header = pevcap_reader(&args.input, args.input_format)?
         .header()
         .clone();
-    let replay_vesc = (match args.profile {
+    let replay_vesc = match args.profile {
         PevcapReplayProfile::Vesc => true,
-        _ => false,
-    }) || ((match args.profile {
-        PevcapReplayProfile::Auto => true,
-        _ => false,
-    }) && header
-        .annotations
-        .iter()
-        .any(|annotation| annotation == "route=vesc_onewheel"));
+        PevcapReplayProfile::Auto => auto_pevcap_uses_vesc(&header)?,
+        PevcapReplayProfile::Aero | PevcapReplayProfile::Falcon => false,
+    };
     let report = if replay_vesc {
-        replay_pevcap_stream_with_session(
-            &args.input,
-            args.input_format,
-            ReadOnlySession::<cutout_protocols::VescGenericModel>::default(),
-        )?
+        replay_vesc_pevcap_stream(&args.input, args.input_format, args.vesc_drivetrain)?
     } else {
+        if args.vesc_drivetrain.is_some() {
+            bail!("--vesc-drivetrain requires a VESC replay profile");
+        }
         replay_pevcap_stream(
             &args.input,
             args.input_format,
@@ -276,6 +270,42 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         info!("{firmware}");
     }
     Ok(())
+}
+
+fn auto_pevcap_uses_vesc(header: &PevcapHeader) -> Result<bool> {
+    if let Some(identity) = &header.resolved_identity
+        && identity.protocol_family.is_none()
+    {
+        bail!(
+            "PEVCAP replay --profile auto found unavailable or conflicting protocol identity metadata"
+        );
+    }
+    let protocol = header
+        .resolved_identity
+        .as_ref()
+        .and_then(|identity| identity.protocol_family);
+    // Historical native writers recorded verified route promotion in annotations.
+    // Preserve those captures, but never let a route override typed protocol proof.
+    let legacy_vesc = header
+        .annotations
+        .iter()
+        .any(|annotation| match annotation.as_str() {
+            "route=vesc" | "route=vesc_onewheel" | "protocol_detection_resolved=vesc" => true,
+            _ => false,
+        });
+    let legacy_euc = header
+        .annotations
+        .iter()
+        .any(|annotation| match annotation.as_str() {
+            "route=electric_unicycle" | "protocol_detection_resolved=electric_unicycle" => true,
+            _ => false,
+        });
+    let vesc = protocol == Some(ProtocolFamily::Vesc) || legacy_vesc;
+    let euc = protocol.is_some_and(|family| family != ProtocolFamily::Vesc) || legacy_euc;
+    if vesc && euc {
+        bail!("PEVCAP replay --profile auto found conflicting protocol metadata");
+    }
+    Ok(vesc)
 }
 
 fn pevcap_reader(
@@ -319,6 +349,28 @@ fn replay_pevcap_stream(
     }
 }
 
+fn replay_vesc_pevcap_stream(
+    path: &std::path::Path,
+    format: PevcapFormat,
+    geometry: Option<cutout_core::VescDrivetrain>,
+) -> Result<PevcapReplayReport> {
+    use cutout_protocols::{VescCaptureReplaySession, VescReplayGeometryPolicy};
+    let policy = geometry.map_or(
+        VescReplayGeometryPolicy::Captured,
+        VescReplayGeometryPolicy::Explicit,
+    );
+    let (mut report, host) = replay_pevcap_stream_with_record_context(
+        path,
+        format,
+        VescCaptureReplaySession::new(policy),
+        VescCaptureReplaySession::observe_record,
+    )?;
+    let observation = VescCaptureReplaySession::observation(&host);
+    report.telemetry_snapshot = observation.telemetry;
+    report.vesc_replay = Some(observation);
+    Ok(report)
+}
+
 fn replay_pevcap_stream_with_session<S>(
     path: &std::path::Path,
     format: PevcapFormat,
@@ -327,15 +379,29 @@ fn replay_pevcap_stream_with_session<S>(
 where
     S: Clone + ProtocolSession,
 {
+    Ok(replay_pevcap_stream_with_record_context(path, format, session, |_, _| {})?.0)
+}
+
+fn replay_pevcap_stream_with_record_context<S, F>(
+    path: &std::path::Path,
+    format: PevcapFormat,
+    session: S,
+    record_context: F,
+) -> Result<(PevcapReplayReport, HostSession<S>)>
+where
+    S: Clone + ProtocolSession,
+    F: Copy + FnMut(cutout_core::PevcapReplayRecord<'_>, &mut HostSession<S>),
+{
     let mut reader = pevcap_reader(path, format)?;
     let contains_link_up = pevcap_contains_link_up(path, format)?;
     let mut host = HostSession::new(session.clone());
     let mut outputs = Vec::new();
-    let whole_stats = reader.replay_into_host_with_known_link_up(
+    let whole_stats = reader.replay_into_host_with_record_context(
         PevcapReplayMode::Whole,
         &mut host,
         &mut outputs,
         contains_link_up,
+        record_context,
     )?;
     let arbitrary_lengths = whole_stats.arbitrary_notification_chunk_lengths();
     let whole = pevcap_stream_semantic_events(
@@ -344,6 +410,7 @@ where
         session.clone(),
         PevcapReplayMode::Whole,
         contains_link_up,
+        record_context,
     )?;
     let one_byte = pevcap_stream_semantic_events(
         path,
@@ -351,6 +418,7 @@ where
         session.clone(),
         PevcapReplayMode::OneByte,
         contains_link_up,
+        record_context,
     )?;
     let arbitrary = pevcap_stream_semantic_events(
         path,
@@ -358,6 +426,7 @@ where
         session,
         PevcapReplayMode::Lengths(&arbitrary_lengths),
         contains_link_up,
+        record_context,
     )?;
     let comparison = ReplayChunkComparison {
         whole_semantic_events: cutout_core::SemanticEventCount::from_events(whole.0.len()),
@@ -366,11 +435,14 @@ where
         one_byte_matches: one_byte.0 == whole.0,
         arbitrary_matches: arbitrary.0 == whole.0,
     };
-    Ok(summarize_pevcap_replay(
-        ReplayRecordCount::new(whole_stats.replay_input_count),
-        ReplayChunkPlanLen::new(arbitrary_lengths.len()),
-        &outputs,
-        comparison,
+    Ok((
+        summarize_pevcap_replay(
+            ReplayRecordCount::new(whole_stats.replay_input_count),
+            ReplayChunkPlanLen::new(arbitrary_lengths.len()),
+            &outputs,
+            comparison,
+        ),
+        host,
     ))
 }
 
@@ -384,21 +456,24 @@ fn pevcap_contains_link_up(path: &std::path::Path, format: PevcapFormat) -> Resu
     Ok(false)
 }
 
-fn pevcap_stream_semantic_events<S>(
+fn pevcap_stream_semantic_events<S, F>(
     path: &std::path::Path,
     format: PevcapFormat,
     session: S,
     mode: PevcapReplayMode<'_>,
     contains_link_up: bool,
+    record_context: F,
 ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats)>
 where
     S: ProtocolSession,
+    F: FnMut(cutout_core::PevcapReplayRecord<'_>, &mut HostSession<S>),
 {
     Ok(
-        pevcap_reader(path, format)?.replay_semantic_events_with_known_link_up(
+        pevcap_reader(path, format)?.replay_semantic_events_with_record_context(
             mode,
             session,
             contains_link_up,
+            record_context,
         )?,
     )
 }
@@ -414,6 +489,7 @@ struct PevcapReplayReport {
     chunk_one_byte_matches: bool,
     chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
+    vesc_replay: Option<cutout_protocols::VescReplayObservation>,
     firmware: Option<FirmwareInfo>,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -608,6 +684,7 @@ fn summarize_pevcap_replay(
         chunk_one_byte_matches: chunk_comparison.one_byte_matches,
         chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
         telemetry_snapshot: TelemetrySnapshot::default(),
+        vesc_replay: None,
         firmware: None,
         capacity: BegodeCapacitySelection::Missing,
         layout: BegodePackLayoutSelection::Missing,
@@ -951,7 +1028,44 @@ impl fmt::Display for PevcapReplayReportLine<'_> {
         )?;
         write_capacity_evidence(f, report.capacity)?;
         write_layout_evidence(f, report.layout)?;
-        write_pack_evidence_consistency(f, report.pack_evidence_consistency)
+        write_pack_evidence_consistency(f, report.pack_evidence_consistency)?;
+        if let Some(replay) = &report.vesc_replay {
+            use cutout_protocols::VescReplayGeometryBasis;
+            f.write_str(" replay_provenance=replay")?;
+            match &replay.geometry {
+                VescReplayGeometryBasis::Unknown => f.write_str(" geometry_basis=unknown")?,
+                VescReplayGeometryBasis::Captured(context) => write!(
+                    f,
+                    " geometry_basis=captured geometry_revision={}",
+                    context.profile().revision().get()
+                )?,
+                VescReplayGeometryBasis::Explicit(value) => write!(
+                    f,
+                    " geometry_basis=explicit geometry_diameter_mm={} geometry_pole_pairs={} geometry_ratio={}",
+                    value.diameter_text(),
+                    value.pole_pairs_text(),
+                    value.reduction_text()
+                )?,
+                VescReplayGeometryBasis::ProtocolEvidence(_) => {
+                    f.write_str(" geometry_basis=protocol_evidence")?;
+                }
+            }
+            match replay.telemetry.speed {
+                Some(speed) => {
+                    write!(f, " speed_mm_s={}", speed.value.as_millimetres_per_second())?;
+                }
+                None => f.write_str(" speed_mm_s=--")?,
+            }
+            write!(f, " record_disposition={:?}", replay.disposition)?;
+            write!(
+                f,
+                " interpreter_library={} interpreter_registry={} interpreter_decoder_source={}",
+                replay.library_version(),
+                hex::encode(replay.registry_hash()),
+                replay.decoder_source_hash().unwrap_or("--")
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -3110,9 +3224,9 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
         ),
         VescReadOnlyReply::Stats(stats) => info!(?stats, "vesc stats"),
         VescReadOnlyReply::MotorConfig(config) => info!(
-            motor_pole_pairs = config.speed_geometry.motor_pole_pairs.get(),
-            gear_ratio_denominator = config.speed_geometry.gear_ratio_denominator.get(),
-            wheel_circumference_mm = config.speed_geometry.wheel_circumference.as_millimetres(),
+            motor_pole_pairs = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.motor_pole_pairs.get().to_string()),
+            gear_ratio_denominator = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.gear_ratio_denominator.get().to_string()),
+            wheel_circumference_mm = %config.speed_geometry.map_or_else(|| "--".to_owned(), |geometry| geometry.wheel_circumference.as_millimetres().to_string()),
             battery_type = ?config.battery_type,
             battery_cells = config.battery_cells.get(),
             "vesc motor config"
@@ -3174,9 +3288,9 @@ fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
         }),
         VescReadOnlyReply::MotorConfig(config) => serde_json::json!({
             "type": "vesc_motor_config",
-            "motor_pole_pairs": config.speed_geometry.motor_pole_pairs.get(),
-            "gear_ratio_denominator": config.speed_geometry.gear_ratio_denominator.get(),
-            "wheel_circumference_mm": config.speed_geometry.wheel_circumference.as_millimetres(),
+            "motor_pole_pairs": config.speed_geometry.map(|geometry| geometry.motor_pole_pairs.get()),
+            "gear_ratio_denominator": config.speed_geometry.map(|geometry| geometry.gear_ratio_denominator.get()),
+            "wheel_circumference_mm": config.speed_geometry.map(|geometry| geometry.wheel_circumference.as_millimetres()),
             "battery_type": format!("{:?}", config.battery_type),
             "battery_cells": config.battery_cells.get(),
         }),
@@ -5178,6 +5292,161 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_vesc_replay_consumes_captured_profiles_and_marks_explicit_reinterpretation() {
+        use cutout_core::{PevcapSemanticTelemetry, PevcapTelemetryProvenance, VescDrivetrain};
+        let mut capture = sample_pevcap_capture();
+        capture.records.clear();
+        for (at, diameter, circumference, revision) in
+            [(100, 90_000, 283, 1), (200, 100_000, 314, 2)]
+        {
+            let snapshot = serde_json::json!({
+                "vesc_drivetrain_context": {
+                    "connection_attempt": {"generation": 1, "platform_identifier": "board-a"},
+                    "revision": revision,
+                    "source": "user_configured",
+                    "wheel_diameter_micrometres": diameter,
+                    "wheel_circumference_mm": circumference,
+                    "motor_pole_pairs": 7,
+                    "motor_to_wheel_ratio_milli": 2500
+                },
+                "speed": {"value": {"value": 999_999}}
+            });
+            capture.records.push(
+                PevcapRecord::inbound_notification(
+                    ms(at),
+                    VESC_NOTIFY_CHANNEL,
+                    GattChannel::from_bytes([0; 16]),
+                    vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
+                )
+                .with_semantic_telemetry(PevcapSemanticTelemetry {
+                    observed_at_ms: Some(ms(at)),
+                    provenance: PevcapTelemetryProvenance::LiveSession,
+                    snapshot_schema_version: 2,
+                    library_version: "original".to_owned(),
+                    snapshot_json: snapshot.to_string(),
+                }),
+            );
+        }
+        for (encoding, format) in [
+            (PevcapEncoding::Jsonl, PevcapFormat::Jsonl),
+            (PevcapEncoding::Binary, PevcapFormat::Binary),
+        ] {
+            let bytes = capture.encode(encoding).unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "cutout-geometry-replay-{}-{encoding:?}.pevcap",
+                std::process::id()
+            ));
+            fs::write(&path, &bytes).unwrap();
+            let report = replay_vesc_pevcap_stream(&path, format, None).unwrap();
+            assert_eq!(
+                report
+                    .telemetry_snapshot
+                    .speed
+                    .unwrap()
+                    .value
+                    .as_millimetres_per_second(),
+                1794
+            );
+            assert!(report.chunk_one_byte_matches && report.chunk_arbitrary_matches);
+            assert!(matches!(
+                report.vesc_replay.as_ref().unwrap().geometry,
+                cutout_protocols::VescReplayGeometryBasis::Captured(_)
+            ));
+            let override_geometry = VescDrivetrain::parse("90", "7", "2.5").unwrap();
+            let overridden =
+                replay_vesc_pevcap_stream(&path, format, Some(override_geometry)).unwrap();
+            assert_eq!(
+                overridden
+                    .telemetry_snapshot
+                    .speed
+                    .unwrap()
+                    .value
+                    .as_millimetres_per_second(),
+                1617
+            );
+            assert!(matches!(
+                overridden.vesc_replay.as_ref().unwrap().geometry,
+                cutout_protocols::VescReplayGeometryBasis::Explicit(_)
+            ));
+            assert_eq!(
+                overridden.vesc_replay.as_ref().unwrap().original,
+                capture.records.last().unwrap().semantic_telemetry
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn pevcap_vesc_report_distinguishes_retained_speed_from_ignored_final_records() {
+        let mut capture = sample_pevcap_capture();
+        capture.records.clear();
+        let good = PevcapRecord::inbound_notification(
+            ms(100),
+            VESC_NOTIFY_CHANNEL,
+            GattChannel::from_bytes([0; 16]),
+            vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
+        );
+        let geometry = cutout_core::VescDrivetrain::parse("100", "7", "2.5").unwrap();
+        for (encoding, format) in [
+            (PevcapEncoding::Jsonl, PevcapFormat::Jsonl),
+            (PevcapEncoding::Binary, PevcapFormat::Binary),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "cutout-replay-disposition-{}-{encoding:?}.pevcap",
+                std::process::id()
+            ));
+            capture.records = vec![good.clone()];
+            fs::write(&path, capture.encode(encoding).unwrap()).unwrap();
+            let accepted = replay_vesc_pevcap_stream(&path, format, Some(geometry)).unwrap();
+            let speed = accepted.telemetry_snapshot.speed.unwrap();
+            assert_eq!(speed.value.as_millimetres_per_second(), 1794);
+            assert_eq!(
+                accepted.telemetry_snapshot.speed_observed_at_ms,
+                Some(ms(100))
+            );
+            let accepted_line = render_pevcap_replay_report(&accepted).to_string();
+            assert!(
+                accepted_line.contains("record_disposition=Accepted"),
+                "{accepted_line}"
+            );
+            for (characteristic, at, reason) in [
+                (GattChannel::from_bytes([0; 16]), 200, "WrongCharacteristic"),
+                (VESC_NOTIFY_CHANNEL, 99, "OutOfOrder"),
+            ] {
+                let mut ignored = good.clone();
+                ignored.characteristic = characteristic;
+                ignored.monotonic_ms = ms(at);
+                capture.records = vec![good.clone(), ignored];
+                let bytes = capture.encode(encoding).unwrap();
+                fs::write(&path, &bytes).unwrap();
+                let report = replay_vesc_pevcap_stream(&path, format, Some(geometry)).unwrap();
+                assert_eq!(
+                    report.telemetry_snapshot.speed,
+                    Some(speed),
+                    "ignored records must retain the earlier measurement and its clock"
+                );
+                assert_eq!(
+                    report.telemetry_snapshot.speed_observed_at_ms,
+                    Some(ms(100))
+                );
+                let line = render_pevcap_replay_report(&report).to_string();
+                assert!(line.contains("speed_mm_s=1794"), "{line}");
+                assert!(
+                    line.contains(&format!("record_disposition=Ignored({reason})")),
+                    "{line}"
+                );
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    bytes,
+                    "reporting cannot rewrite captured bytes"
+                );
+            }
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
     fn pevcap_replay_report_renders_counts() {
         let report = PevcapReplayReport {
             replay_records: ReplayRecordCount::new(2),
@@ -5189,6 +5458,7 @@ mod tests {
             chunk_one_byte_matches: true,
             chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
+            vesc_replay: None,
             firmware: None,
             capacity: BegodeCapacitySelection::Missing,
             layout: BegodePackLayoutSelection::Missing,
@@ -6367,6 +6637,198 @@ mod tests {
                 .map(|voltage| voltage.value.get()),
             Some(61_500)
         );
+    }
+
+    fn public_vesc_auto_replay_fixture() -> (
+        PevcapCapture,
+        std::path::PathBuf,
+        crate::cli::PevcapReplayArgs,
+    ) {
+        use clap::Parser;
+        let capture = PevcapCapture::decode(
+            include_str!("../fixtures/pevcap/vesc-refloat-live.jsonl").as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "cutout-vesc-route-{}-{}.jsonl",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            path.to_str().unwrap(),
+            "--input-format",
+            "jsonl",
+            "--profile",
+            "auto",
+        ])
+        .unwrap();
+        let Command::Pevcap(PevcapArgs {
+            command: PevcapCommand::Replay(args),
+        }) = cli.command
+        else {
+            panic!("expected replay arguments");
+        };
+        (capture, path, args)
+    }
+
+    #[test]
+    fn pevcap_public_auto_replay_accepts_neutral_and_legacy_vesc_route_annotations() {
+        let (mut capture, path, args) = public_vesc_auto_replay_fixture();
+        for annotation in [
+            "route=vesc",
+            "route=vesc_onewheel",
+            "protocol_detection_resolved=vesc",
+        ] {
+            capture.header.annotations.clear();
+            capture.header.annotations.push(annotation.to_owned());
+            let bytes = capture.encode(PevcapEncoding::Jsonl).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let result = pevcap_replay(&args);
+            let retained = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            result.unwrap_or_else(|error| panic!("{annotation} must select VESC replay: {error}"));
+            assert_eq!(retained, bytes, "replay must preserve the capture");
+        }
+    }
+
+    #[test]
+    fn pevcap_public_auto_replay_uses_protocol_identity_independent_of_model_and_capture_role() {
+        let (mut capture, path, args) = public_vesc_auto_replay_fixture();
+        capture.header.annotations.clear();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::Vesc),
+            model: None,
+            firmware: None,
+        });
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let mut args = args.clone();
+            args.input_format = match encoding {
+                PevcapEncoding::Jsonl => PevcapFormat::Jsonl,
+                PevcapEncoding::Binary => PevcapFormat::Binary,
+            };
+            let bytes = capture.encode(encoding).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let result = pevcap_replay(&args);
+            let retained = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            result.expect("verified VESC protocol needs no invented model or route annotation");
+            assert_eq!(retained, bytes, "replay must preserve the capture");
+        }
+
+        capture
+            .header
+            .annotations
+            .push("route=record_only".to_owned());
+        let bytes = capture.encode(PevcapEncoding::Jsonl).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let result = pevcap_replay(&args);
+        let retained = fs::read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        result.expect("a capture role cannot contradict verified VESC protocol identity");
+        assert_eq!(retained, bytes);
+
+        capture.header.resolved_identity = None;
+        let bytes = capture.encode(PevcapEncoding::Jsonl).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let result = pevcap_replay(&args);
+        let retained = fs::read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("requires resolved model identity")
+        );
+        assert_eq!(retained, bytes);
+    }
+
+    #[test]
+    fn pevcap_public_auto_replay_rejects_conflicting_protocol_evidence() {
+        let (mut capture, path, args) = public_vesc_auto_replay_fixture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::Vesc),
+            model: None,
+            firmware: None,
+        });
+
+        for (protocol, annotations) in [
+            (Some(ProtocolFamily::BegodeGotway), vec!["route=vesc"]),
+            (
+                Some(ProtocolFamily::Vesc),
+                vec!["protocol_detection_resolved=electric_unicycle"],
+            ),
+            (
+                None,
+                vec![
+                    "protocol_detection_resolved=vesc",
+                    "route=electric_unicycle",
+                ],
+            ),
+        ] {
+            capture
+                .header
+                .resolved_identity
+                .as_mut()
+                .unwrap()
+                .protocol_family = protocol;
+            capture.header.annotations = annotations.into_iter().map(str::to_owned).collect();
+            let bytes = capture.encode(PevcapEncoding::Jsonl).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let error = pevcap_replay(&args).unwrap_err();
+            let retained = fs::read(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            assert!(
+                error.to_string().contains("conflicting protocol"),
+                "{error}"
+            );
+            assert_eq!(retained, bytes, "rejected replay must preserve the capture");
+        }
+    }
+
+    #[test]
+    fn pevcap_public_auto_replay_rejects_explicitly_unresolved_identity_despite_legacy_routes() {
+        let (mut capture, path, args) = public_vesc_auto_replay_fixture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: None,
+            model: None,
+            firmware: None,
+        });
+        for annotation in [
+            "route=vesc",
+            "route=vesc_onewheel",
+            "protocol_detection_resolved=vesc",
+        ] {
+            capture.header.annotations.clear();
+            capture.header.annotations.push(annotation.into());
+            for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+                let mut args = args.clone();
+                args.input_format = match encoding {
+                    PevcapEncoding::Jsonl => PevcapFormat::Jsonl,
+                    PevcapEncoding::Binary => PevcapFormat::Binary,
+                };
+                let bytes = capture.encode(encoding).unwrap();
+                fs::write(&path, &bytes).unwrap();
+                let result = pevcap_replay(&args);
+                let mut explicit = args.clone();
+                explicit.profile = PevcapReplayProfile::Vesc;
+                pevcap_replay(&explicit).expect("explicit profile remains a bounded user override");
+                let retained = fs::read(&path).unwrap();
+                fs::remove_file(&path).unwrap();
+                assert!(
+                    result.is_err(),
+                    "explicit unresolved identity must reject legacy alias {annotation}"
+                );
+                assert_eq!(retained, bytes);
+            }
+        }
     }
 
     #[test]

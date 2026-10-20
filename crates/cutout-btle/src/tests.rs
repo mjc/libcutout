@@ -1373,8 +1373,391 @@ async fn drive_session_rebases_deadline_after_transport_submission() {
     );
 }
 
-#[allow(clippy::too_many_lines)]
 #[tokio::test]
+async fn application_query_bridge_reports_submission_to_the_protocol_owner() {
+    use cutout_protocols::{
+        ReadOnlySession, VescApplicationDiscovery, VescApplicationQueryState, VescGenericModel,
+    };
+    let peripheral = RecordingPeripheral::default();
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await
+    .unwrap();
+    let VescApplicationQueryState::AwaitingResponse {
+        response_deadline_ms,
+        ..
+    } = session.application_query_state()
+    else {
+        panic!(
+            "successful native submission must start the response interval; got {:?}",
+            session.application_query_state()
+        );
+    };
+    assert_eq!(
+        session.application_discovery(),
+        VescApplicationDiscovery::Pending
+    );
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: ms(response_deadline_ms),
+        },
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        session.application_discovery(),
+        VescApplicationDiscovery::Absent
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_starts_the_response_window_after_delayed_submission() {
+    use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
+    let peripheral = RecordingPeripheral::with_open_notifications_and_write_delay(
+        Vec::new(),
+        Duration::from_millis(400),
+    );
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await
+    .unwrap();
+    let VescApplicationQueryState::AwaitingResponse {
+        submitted_at_ms,
+        response_deadline_ms,
+        ..
+    } = session.application_query_state()
+    else {
+        panic!("complete delayed query must await its response");
+    };
+    assert!(
+        submitted_at_ms >= 400,
+        "time spent awaiting native completion must precede the response interval"
+    );
+    assert_eq!(response_deadline_ms - submitted_at_ms, 2_000);
+}
+
+#[tokio::test]
+async fn application_query_bridge_does_not_call_a_backend_error_known_unsent() {
+    use cutout_protocols::{
+        ReadOnlySession, VescApplicationDiscovery, VescApplicationQueryState, VescGenericModel,
+    };
+    let peripheral = RecordingPeripheral {
+        fail_write_at: Some(0),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    let result = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(
+        session.application_query_state(),
+        VescApplicationQueryState::PartialUncertain { query_id: 1 }
+    );
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: ms(20_000),
+        },
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        session.application_discovery(),
+        VescApplicationDiscovery::Pending
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_fragmented_submission_uses_final_completion() {
+    use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
+    let peripheral = RecordingPeripheral {
+        mtu: 4,
+        write_delay: Duration::from_millis(100),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await
+    .unwrap();
+    let VescApplicationQueryState::AwaitingResponse {
+        submitted_at_ms,
+        response_deadline_ms,
+        ..
+    } = session.application_query_state()
+    else {
+        panic!("every fragment must be submitted before awaiting a response");
+    };
+    // The pinned 10-byte INFO frame takes three 4-byte-or-smaller writes.
+    assert_eq!(submitted_at_ms, 300);
+    assert_eq!(response_deadline_ms, 2_300);
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_bounds_an_inflight_fragment_and_retires_the_tail() {
+    use cutout_protocols::{
+        ReadOnlySession, VescApplicationDiscovery, VescApplicationQueryState, VescGenericModel,
+    };
+    let peripheral = RecordingPeripheral {
+        mtu: 4,
+        write_delay: Duration::from_millis(4_000),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    let started = tokio::time::Instant::now();
+    let result = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(crate::BtleError::OperationTimedOut { .. })
+    ));
+    assert!(started.elapsed() <= Duration::from_millis(5_001));
+    assert_eq!(
+        session.application_query_state(),
+        VescApplicationQueryState::PartialUncertain { query_id: 1 }
+    );
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let writes = peripheral.writes.lock().unwrap();
+    assert_eq!(
+        writes.len(),
+        1,
+        "the cancelled await and remaining fragments must not flush later"
+    );
+    assert_eq!(writes[0].1.as_ref(), &[2, 5, 36, 101]);
+    drop(writes);
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: ms(20_000),
+        },
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        session.application_discovery(),
+        VescApplicationDiscovery::Pending
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_preserves_the_reconnect_clock_offset() {
+    use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
+    let peripheral = RecordingPeripheral {
+        write_delay: Duration::from_millis(400),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    crate::bridge::drive_session_inner(
+        &peripheral,
+        &mut session,
+        crate::bridge::DriveSessionConfig {
+            write_channel: cutout_protocols::VESC_WRITE_CHANNEL,
+            subscribe_channel: cutout_protocols::VESC_NOTIFY_CHANNEL,
+            admit_notifications: true,
+            summary: &summary,
+            endpoints: summary.select_session_endpoints().unwrap(),
+            notification_window: crate::NotificationWindow::from_millis(0),
+            commands: &[DeviceCommand::RequestTelemetry],
+            write_provenance: crate::WriteProvenance::Stable,
+            monotonic_start: crate::MonotonicMs::new(10_000),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let VescApplicationQueryState::AwaitingResponse {
+        submitted_at_ms,
+        response_deadline_ms,
+        ..
+    } = session.application_query_state()
+    else {
+        panic!("reconnect query must await its response");
+    };
+    assert_eq!(submitted_at_ms, 10_400);
+    assert_eq!(response_deadline_ms, 12_400);
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_keeps_following_effect_timestamps_after_submission() {
+    struct WriteThenDisconnect;
+    impl ProtocolSession for WriteThenDisconnect {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            if matches!(input, SessionInput::LinkUp(_)) {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                    bytes: cutout_core::WritePayload::try_from_slice(b"read").unwrap(),
+                    mode: WriteMode::WithResponse,
+                }));
+                output.push(SessionOutput::Transport(TransportAction::Disconnect));
+            }
+        }
+    }
+    let peripheral = RecordingPeripheral {
+        write_delay: Duration::from_millis(400),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let capture = crate::capture_session(
+        &peripheral,
+        &mut WriteThenDisconnect,
+        GattChannel::from_bytes([0xA1; 16]),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        crate::WriteProvenance::Stable,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(capture.records[1], crate::SessionCaptureRecord::Write { monotonic_ms, .. } if monotonic_ms == crate::MonotonicMs::new(400))
+    );
+    assert!(
+        matches!(capture.records[2], crate::SessionCaptureRecord::LinkDown { monotonic_ms } if monotonic_ms == crate::MonotonicMs::new(400))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_dropped_driver_retains_inflight_uncertainty() {
+    use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
+    let started = Arc::new(tokio::sync::Notify::new());
+    let peripheral = RecordingPeripheral {
+        write_started: Some(started.clone()),
+        write_delay: Duration::from_secs(100),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    let mut driver = Box::pin(crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    ));
+    tokio::select! {
+        () = started.notified() => {},
+        result = &mut driver => panic!("driver unexpectedly completed before cancellation: {result:?}"),
+    }
+    drop(driver);
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: ms(20_000),
+        },
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        session.application_query_state(),
+        VescApplicationQueryState::PartialUncertain { query_id: 1 }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_slow_setup_does_not_expire_an_unissued_query() {
+    use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
+    let peripheral = RecordingPeripheral {
+        subscribe_delay: Duration::from_secs(6),
+        ..RecordingPeripheral::default()
+    };
+    let summary = shared_write_notify_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await
+    .unwrap();
+    let VescApplicationQueryState::AwaitingResponse {
+        submitted_at_ms,
+        response_deadline_ms,
+        ..
+    } = session.application_query_state()
+    else {
+        panic!(
+            "setup before query emission must not consume its admission interval: {:?}",
+            session.application_query_state()
+        );
+    };
+    assert_eq!(submitted_at_ms, 6_000);
+    assert_eq!(response_deadline_ms, 8_000);
+    assert_eq!(
+        peripheral.writes.lock().unwrap()[0].1.as_ref(),
+        &[2, 5, 36, 101, 0, 2, 0, 2, 71, 3]
+    );
+}
+
+#[allow(clippy::too_many_lines)]
+#[tokio::test(start_paused = true)]
 async fn drive_session_relays_notifications_back_into_session() {
     let peripheral =
         RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
@@ -1463,14 +1846,14 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ProcessedTelemetry {
             monotonic_ms,
             ..
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
+        } if *monotonic_ms == crate::MonotonicMs::new(0)
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::Diagnostics {
             monotonic_ms,
             diagnostics,
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
+        } if *monotonic_ms == crate::MonotonicMs::new(0)
             && diagnostics.malformed_frames == parser_diag_count(1)
     )));
     assert!(report.events.iter().any(|event| matches!(
@@ -1478,7 +1861,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
             response,
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
+        } if *monotonic_ms == crate::MonotonicMs::new(0)
             && matches!(response.as_ref(), ReadOnlyResponse::Firmware(firmware)
                 if firmware.firmware_major == Some(Measured::reported(43)))
     )));
@@ -1487,7 +1870,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
             response,
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
+        } if *monotonic_ms == crate::MonotonicMs::new(0)
             && matches!(response.as_ref(), ReadOnlyResponse::Settings(settings)
                 if settings.entries()[0].is_some())
     )));
@@ -1496,7 +1879,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::DiagnosticError {
             monotonic_ms,
             error,
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
+        } if *monotonic_ms == crate::MonotonicMs::new(0)
             && error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
     )));
     assert_eq!(*session.notification_count.lock().expect("count"), 1);
@@ -1752,7 +2135,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn capture_session_records_subscribe_write_and_notification_bytes() {
     let peripheral =
         RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
@@ -1790,7 +2173,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: crate::MonotonicMs::new(1),
+                monotonic_ms: crate::MonotonicMs::new(0),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithResponse,
                 bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(
@@ -1799,7 +2182,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
                 provenance: crate::WriteProvenance::Provisional,
             },
             crate::SessionCaptureRecord::Notification {
-                monotonic_ms: crate::MonotonicMs::new(2),
+                monotonic_ms: crate::MonotonicMs::new(0),
                 characteristic: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
                 service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                 bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\x13\x37")),
@@ -1808,10 +2191,13 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn capture_session_with_commands_records_command_writes_before_tick() {
     let peripheral = RecordingPeripheral::default();
-    let mut session = CommandWriteSession::default();
+    let mut session = CommandWriteSession {
+        writes: peripheral.writes.clone(),
+        ..CommandWriteSession::default()
+    };
     let summary = begode_falcon_summary("Begode_Falcon");
 
     let capture = crate::capture_session_with_commands(
@@ -1844,14 +2230,16 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
         })
         .collect::<Vec<_>>();
     assert_eq!(write_times.len(), 2);
-    assert!(write_times[0] > crate::MonotonicMs::new(0));
-    assert!(write_times[0] < write_times[1]);
+    assert_eq!(write_times[0], crate::MonotonicMs::new(0));
+    assert_eq!(write_times[0], write_times[1]);
     let tick_time = session
         .ticks
         .expect("zero-length notification window still records the terminal tick");
-    assert!(
-        write_times[1].into_core() < tick_time,
-        "both command writes must precede the tick"
+    assert_eq!(write_times[1].into_core(), tick_time);
+    assert_eq!(
+        session.writes_at_tick,
+        Some(2),
+        "both native command writes must precede the tick"
     );
 
     assert_eq!(
@@ -1948,7 +2336,7 @@ async fn capture_session_chunks_writes_by_negotiated_write_limit() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn drive_session_feeds_link_down_after_intentional_disconnect() {
     let peripheral = RecordingPeripheral::default();
     let mut session = DisconnectOnTickSession::default();
@@ -1971,14 +2359,14 @@ async fn drive_session_feeds_link_down_after_intentional_disconnect() {
     assert_eq!(
         report.events.as_slice(),
         &[crate::SessionBridgeEvent::LinkDown {
-            monotonic_ms: crate::MonotonicMs::new(1)
+            monotonic_ms: crate::MonotonicMs::new(0)
         }]
     );
     assert_eq!(*session.link_down_count.lock().expect("count"), 1);
     assert_eq!(*peripheral.disconnects.lock().expect("disconnect log"), 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn capture_session_records_link_down_after_intentional_disconnect() {
     let peripheral = RecordingPeripheral::default();
     let mut session = DisconnectOnTickSession::default();
@@ -2006,14 +2394,14 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
                 max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::LinkDown {
-                monotonic_ms: crate::MonotonicMs::new(1)
+                monotonic_ms: crate::MonotonicMs::new(0)
             },
         ]
     );
     assert_eq!(capture.report.disconnects, disconnects(1));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
     let first = RecordingPeripheral::default();
     let second = RecordingPeripheral::default();
@@ -2089,9 +2477,8 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         Some(crate::SessionCaptureRecord::LinkDown { monotonic_ms }) => *monotonic_ms,
         record => panic!("expected the first link to disconnect, got {record:?}"),
     };
-    // The bridge uses elapsed monotonic time when it exceeds the next logical millisecond.
-    // Reconnection must start exactly one millisecond after the captured disconnect.
-    assert!(disconnect_at >= crate::MonotonicMs::new(1));
+    // The paused clock has not advanced; event order does not fabricate elapsed duration.
+    assert_eq!(disconnect_at, crate::MonotonicMs::new(0));
     let reconnect_at = disconnect_at.next();
     assert_eq!(
         capture.records,
@@ -2152,7 +2539,7 @@ async fn capture_reconnecting_session_preserves_partial_capture_when_reconnect_f
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn capture_reconnecting_session_retries_after_external_notification_stream_end() {
     let first = RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
         Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
@@ -2228,8 +2615,7 @@ async fn capture_reconnecting_session_retries_after_external_notification_stream
         })
         .nth(1)
         .expect("reconnect records a second link");
-    // Real elapsed time may exceed the minimum event-order timestamps under load.
-    assert!(first_notification >= crate::MonotonicMs::new(2));
+    assert_eq!(first_notification, crate::MonotonicMs::new(0));
     assert!(first_link_down > first_notification);
     assert_eq!(second_link, first_link_down.next());
 }
@@ -2430,6 +2816,8 @@ impl ProtocolSession for SubscribeOnlySession {
 #[derive(Default)]
 struct CommandWriteSession {
     ticks: Option<cutout_core::MonotonicTimestamp>,
+    writes: WriteLog,
+    writes_at_tick: Option<usize>,
 }
 
 #[derive(Default)]
@@ -2512,6 +2900,7 @@ impl ProtocolSession for CommandWriteSession {
             }
             SessionInput::Tick { monotonic_ms } => {
                 self.ticks = Some(monotonic_ms);
+                self.writes_at_tick = Some(self.writes.lock().expect("write log").len());
             }
             SessionInput::LinkDown | SessionInput::Notification { .. } => {}
         }
@@ -2736,6 +3125,9 @@ struct RecordingPeripheral {
     mtu: u16,
     keep_notifications_open: bool,
     write_delay: Duration,
+    fail_write_at: Option<usize>,
+    write_started: Option<Arc<tokio::sync::Notify>>,
+    subscribe_delay: Duration,
 }
 
 impl Default for RecordingPeripheral {
@@ -2748,6 +3140,9 @@ impl Default for RecordingPeripheral {
             mtu: 185,
             keep_notifications_open: false,
             write_delay: Duration::ZERO,
+            fail_write_at: None,
+            write_started: None,
+            subscribe_delay: Duration::ZERO,
         }
     }
 }
@@ -2856,6 +3251,9 @@ impl crate::SessionPeripheral for RecordingPeripheral {
     }
 
     async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), crate::BtleError> {
+        if !self.subscribe_delay.is_zero() {
+            tokio::time::sleep(self.subscribe_delay).await;
+        }
         self.subscribes
             .lock()
             .expect("subscribe log")
@@ -2869,8 +3267,14 @@ impl crate::SessionPeripheral for RecordingPeripheral {
         chunk: crate::BtleWriteChunk<'_>,
         mode: WriteMode,
     ) -> Result<(), crate::BtleError> {
+        if let Some(started) = &self.write_started {
+            started.notify_one();
+        }
         if !self.write_delay.is_zero() {
             tokio::time::sleep(self.write_delay).await;
+        }
+        if self.fail_write_at == Some(self.writes.lock().expect("write log").len()) {
+            return Err(crate::BtleError::Backend(btleplug::Error::NotConnected));
         }
         self.writes.lock().expect("write log").push((
             characteristic.uuid,

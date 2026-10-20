@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 50;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 54;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -73,6 +73,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         47 => migrate_v47_to_v48(connection)?,
         48 => migrate_v48_to_v49(connection)?,
         49 => migrate_v49_to_v50(connection)?,
+        50 => migrate_v50_to_v51(connection)?,
+        51 => migrate_v51_to_v52(connection)?,
+        52 => migrate_v52_to_v53(connection)?,
+        53 => migrate_v53_to_v54(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -121,6 +125,18 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 49 {
             migrate_v49_to_v50(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 50 {
+            migrate_v50_to_v51(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 51 {
+            migrate_v51_to_v52(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 52 {
+            migrate_v52_to_v53(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 53 {
+            migrate_v53_to_v54(connection)?;
         }
     }
     Ok(())
@@ -227,6 +243,8 @@ fn migrate_v2_to_current(connection: &mut Connection) -> Result<(), StorageError
     reason = "the declarative schema stays in one transaction"
 )]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute_batch(super::device_vehicle::SCHEMA)?;
+    connection.execute_batch(super::device_drivetrain::SCHEMA)?;
     connection.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
     connection.execute_batch(DIAGNOSTIC_RECORDING_PREFERENCES_SCHEMA)?;
     connection.execute_batch(
@@ -1950,6 +1968,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_points",
         "ride_segments",
         "devices",
+        "device_vehicle_classifications",
+        "device_vesc_drivetrains",
         "phone_alarm_preferences",
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
@@ -2025,6 +2045,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
+    super::device_vehicle::verify_schema(connection)?;
+    super::device_drivetrain::verify_schema(connection)?;
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
@@ -2166,9 +2188,151 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v50_to_v51(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::device_vehicle::SCHEMA)?;
+    transaction.execute_batch(&schema_pragmas(51))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v51_to_v52(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::device_drivetrain::SCHEMA_V51)?;
+    transaction.execute_batch(&schema_pragmas(52))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v52_to_v53(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if !table_has_column(&transaction, "device_vesc_drivetrains", "revision")? {
+        transaction.execute_batch("ALTER TABLE device_vesc_drivetrains ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0);")?;
+    }
+    if table_has_column(&transaction, "device_vesc_drivetrains", "target_key")? {
+        super::device_drivetrain::verify_schema(&transaction)?;
+    } else {
+        super::device_drivetrain::verify_v52_schema(&transaction)?;
+    }
+    transaction.execute_batch(&schema_pragmas(53))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v53_to_v54(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if !table_has_column(&transaction, "device_vesc_drivetrains", "target_key")? {
+        super::device_drivetrain::verify_v52_schema(&transaction)?;
+        transaction.execute_batch(
+            "ALTER TABLE device_vesc_drivetrains RENAME TO device_vesc_drivetrains_v52;",
+        )?;
+        transaction.execute_batch(super::device_drivetrain::SCHEMA)?;
+        transaction.execute_batch("INSERT INTO device_vesc_drivetrains (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision,target_key)
+            SELECT platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision,'local' FROM device_vesc_drivetrains_v52;
+            DROP TABLE device_vesc_drivetrains_v52;")?;
+    }
+    super::device_drivetrain::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(54))?;
+    transaction.commit()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drivetrain_revision_upgrade_preserves_existing_receipts_from_older_version_paths() {
+        for version in [48, 49, 50, 51, 52, 53] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO device_vesc_drivetrains
+                     (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision)
+                     VALUES ('controller-a',90000,7,2500,17,7)",
+                    [],
+                )
+                .unwrap();
+            // Migration fixtures and compatible newer table shapes may retain a valid
+            // revision column while their overall database version is still older.
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+
+            migrate(&mut connection).unwrap();
+
+            verify_current_schema(&connection).unwrap();
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms,revision
+                         FROM device_vesc_drivetrains WHERE platform_identifier='controller-a'",
+                        [],
+                        |row| {
+                            Ok((
+                                row.get::<_, u32>(0)?,
+                                row.get::<_, u8>(1)?,
+                                row.get::<_, u32>(2)?,
+                                row.get::<_, u64>(3)?,
+                                row.get::<_, u64>(4)?,
+                            ))
+                        },
+                    )
+                    .unwrap(),
+                (90_000, 7, 2_500, 17, 7)
+            );
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                CURRENT_SCHEMA_VERSION
+            );
+        }
+    }
+
+    #[test]
+    fn drivetrain_revision_upgrade_rejects_malformed_existing_column_without_advancing() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch("DROP TABLE device_vesc_drivetrains;")
+            .unwrap();
+        connection
+            .execute_batch(super::super::device_drivetrain::SCHEMA_V51)
+            .unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE device_vesc_drivetrains ADD COLUMN revision TEXT NOT NULL DEFAULT '7';
+                 INSERT INTO device_vesc_drivetrains
+                 (platform_identifier,diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms)
+                 VALUES ('controller-a',90000,7,2500,17);
+                 PRAGMA user_version=52;",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            migrate(&mut connection),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            52
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision FROM device_vesc_drivetrains WHERE platform_identifier='controller-a'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "7"
+        );
+    }
 
     #[test]
     fn diagnostic_consent_migration_rejects_unowned_database_without_mutation() {

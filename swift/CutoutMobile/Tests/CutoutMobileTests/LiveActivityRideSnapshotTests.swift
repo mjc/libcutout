@@ -4,6 +4,22 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testLiveActivityGlyphUsesCanonicalPhysicalKindWithoutAnOEMModelGuess() throws {
+        let expected: [(VehicleKind, LiveActivityRideGlyph)] = [
+            (.unknown, .unknown), (.electricUnicycle, .electricUnicycle), (.onewheel, .onewheel),
+            (.scooter, .scooter), (.eskate, .eskate), (.ebike, .ebike), (.emoto, .emoto),
+        ]
+        for (kind, glyph) in expected {
+            let actual = LiveActivityRideGlyph(vehicleKind: kind)
+            XCTAssertEqual(actual, glyph)
+            XCTAssertEqual(
+                try JSONDecoder().decode(LiveActivityRideGlyph.self, from: JSONEncoder().encode(actual)), glyph)
+        }
+        XCTAssertEqual(
+            try JSONDecoder().decode(LiveActivityRideGlyph.self, from: Data("\"floatwheelAtom\"".utf8)), .floatwheelAtom
+        )
+    }
+
     func testMetricGridOmitsMissingOptionalValuesAndFooterOwnedSafetyMetrics() {
         let snapshot = gridSnapshot()
         XCTAssertEqual(snapshot.metricGridValues.map(\.role), [.battery, .packVoltage, .pwm])
@@ -781,8 +797,8 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             telemetry: TelemetrySnapshot(
                 at: MonotonicMilliseconds(1_000), speed: Speed(value: 12_000),
                 operatingState: .riding, pwm: DutyCycle(permille: 800)))
-        for glyph in [LiveActivityRideGlyph.floatwheelAtom, .electricUnicycle] {
-            for application in [MobileVescApplicationDiscoveryDto?.none, .pending, .absent, .refloat] {
+        for glyph in [LiveActivityRideGlyph.onewheel, .eskate, .unknown, .electricUnicycle] {
+            for application in [VescApplication?.none, .pending, .absent, .refloat] {
                 let snapshot = LiveActivityRideSnapshot(
                     identity: .device("Controller"), glyph: glyph,
                     deviceIdentity: vescIdentity(application: application),
@@ -810,7 +826,8 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             identity: .device("EUC"),
             deviceIdentity: MobileDeviceIdentityDto(
                 protocol: .veteranLeaperkimNosfet, vehicleKind: .electricUnicycle,
-                vescApplication: nil, model: nil),
+                classificationProvenance: .protocol, classificationRequirement: .resolved,
+                vescApplication: nil, vescApplicationQuery: nil, model: nil),
             rideState: ride)
         let decodedEuc = try JSONDecoder().decode(
             LiveActivityRideSnapshot.self, from: JSONEncoder().encode(explicitEuc))
@@ -826,7 +843,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testLegacySnapshotWithoutCompactApplicationEvidenceDecodesConservatively() throws {
         let snapshot = LiveActivityRideSnapshot(
-            identity: .device("Controller"), glyph: .floatwheelAtom,
+            identity: .device("Controller"), glyph: .onewheel,
             deviceIdentity: vescIdentity(application: .refloat),
             rideState: liveRideState(
                 speed: 12_000,
@@ -846,10 +863,11 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertFalse(legacy.presented(isStale: true).minimalAccessibilitySummary.contains("Reduce acceleration"))
     }
 
-    private func vescIdentity(application: MobileVescApplicationDiscoveryDto?) -> MobileDeviceIdentityDto {
+    private func vescIdentity(application: VescApplication?) -> MobileDeviceIdentityDto {
         MobileDeviceIdentityDto(
-            protocol: .vesc, vehicleKind: .board, vescApplication: application,
-            model: nil)
+            protocol: .vesc, vehicleKind: .onewheel, classificationProvenance: .userProvided,
+            classificationRequirement: .resolved, vescApplication: application,
+            vescApplicationQuery: application == .pending ? .notRequested : .resolved, model: nil)
     }
 
     private func assertEncodedHeadroomNotApplicable(

@@ -78,7 +78,7 @@ enum CutoutAppRoute: Hashable {
         switch connectionRoute {
         case .electricUnicycle?:
             .eucRide
-        case .vescOnewheel?:
+        case .vesc?:
             .vescRide
         case nil:
             .devicePicker
@@ -180,7 +180,7 @@ enum CutoutAppRoute: Hashable {
             switch connectionRoute {
             case .electricUnicycle?, nil:
                 PevRideTabs.eucRideTabs(isTuneSelected: true)
-            case .vescOnewheel?:
+            case .vesc?:
                 PevRideTabs.vescRideTabs(isTuneSelected: true)
             }
         case .vescRide:
@@ -231,7 +231,7 @@ enum CutoutAppRoute: Hashable {
             let connectedTabs =
                 switch connectionRoute {
                 case .electricUnicycle: PevRideTabs.eucRideTabs()
-                case .vescOnewheel: PevRideTabs.vescRideTabs()
+                case .vesc: PevRideTabs.vescRideTabs()
                 }
             tabs = connectedTabs.map { tab in
                 PevScreenTab(

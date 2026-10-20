@@ -15,7 +15,7 @@ use crate::{
 use crate::{MobileRideMapAdmissionPollDto, MobileRideMapCoreSnapshotDto};
 
 /// Identity captured with native callbacks and decoded telemetry.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileConnectionAttemptTokenDto {
     /// Distinguishes retries, including retries of the same peripheral.
     pub generation: u64,
@@ -117,18 +117,21 @@ impl From<MobileConnectionAttemptTokenDto> for ConnectionAttemptToken {
     }
 }
 
+impl From<&ConnectionAttemptToken> for MobileConnectionAttemptTokenDto {
+    fn from(token: &ConnectionAttemptToken) -> Self {
+        Self {
+            generation: token.generation(),
+            platform_identifier: token.platform_identifier().to_owned(),
+        }
+    }
+}
+
 impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
     fn from(value: &ConnectionAttemptSnapshot) -> Self {
         Self {
             generation: value.generation,
             revision: value.revision,
-            token: value
-                .token
-                .as_ref()
-                .map(|token| MobileConnectionAttemptTokenDto {
-                    generation: token.generation(),
-                    platform_identifier: token.platform_identifier().to_owned(),
-                }),
+            token: value.token.as_ref().map(Into::into),
             readiness: match value.readiness {
                 ConnectionReadiness::Disconnected => MobileConnectionReadinessDto::Disconnected,
                 ConnectionReadiness::Pending => MobileConnectionReadinessDto::Pending,

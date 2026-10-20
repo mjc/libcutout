@@ -467,71 +467,7 @@ impl Default for VescValuesTelemetry {
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MotorPolePairs(u8);
-
-impl MotorPolePairs {
-    /// Creates a motor pole-pair count.
-    #[must_use]
-    pub const fn new(value: u8) -> Self {
-        Self(value)
-    }
-
-    /// Returns the motor pole-pair count.
-    #[must_use]
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-/// Mechanical gear-reduction denominator stored in thousandths.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct GearRatioDenominator(u32);
-
-impl GearRatioDenominator {
-    /// Creates a gear-reduction denominator.
-    #[must_use]
-    pub const fn new(value: u8) -> Self {
-        Self((value as u32) * 1_000)
-    }
-
-    /// Creates a denominator from a finite positive VESC ratio.
-    #[must_use]
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "The wire representation is a validated positive ratio in thousandths."
-    )]
-    pub fn from_ratio(value: f32) -> Option<Self> {
-        if !value.is_finite() || value <= 0.0 {
-            return None;
-        }
-        let scaled = (value * 1_000.0).round();
-        if scaled > u32::MAX as f32 {
-            return None;
-        }
-        Some(Self(scaled as u32))
-    }
-
-    /// Returns the gear-reduction denominator.
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "The public denominator is intentionally represented as a controller-sized u8."
-    )]
-    pub const fn get(self) -> u8 {
-        (self.0 / 1_000) as u8
-    }
-
-    /// Returns the ratio in thousandths.
-    #[must_use]
-    pub const fn as_milli(self) -> u32 {
-        self.0
-    }
-}
+pub use cutout_core::{GearRatioDenominator, MotorPolePairs, VescSpeedGeometry};
 
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -588,24 +524,11 @@ impl Default for VescStatsTelemetry {
     }
 }
 
-/// VESC speed geometry from motor setup config.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VescSpeedGeometry {
-    /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
-    pub motor_pole_pairs: MotorPolePairs,
-
-    /// Mechanical gear reduction denominator.
-    pub gear_ratio_denominator: GearRatioDenominator,
-
-    /// Wheel circumference.
-    pub wheel_circumference: Distance,
-}
-
 /// VESC motor config facts needed by read-only display code.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VescMotorConfig {
-    /// Speed geometry from VESC setup config.
-    pub speed_geometry: VescSpeedGeometry,
+    /// Checked speed geometry, when the VESC setup values can represent it.
+    pub speed_geometry: Option<VescSpeedGeometry>,
 
     /// VESC battery type used for voltage-derived pack level.
     pub battery_type: VescBatteryType,
@@ -688,6 +611,17 @@ pub enum VescBatteryCurve {
 }
 
 impl VescBoardProfile {
+    /// Creates a pack-only profile whose physical speed remains unavailable.
+    #[must_use]
+    pub const fn without_geometry() -> Self {
+        Self::new(
+            MotorPolePairs::new(0),
+            GearRatioDenominator::new(0),
+            Distance::from_millimetres(0),
+        )
+        .without_calculated_speed()
+    }
+
     /// Creates a board profile from explicit geometry.
     #[must_use]
     pub const fn new(
@@ -751,6 +685,29 @@ impl VescBoardProfile {
         self
     }
 
+    /// Replaces local speed geometry without inventing pack or charge facts.
+    #[must_use]
+    pub const fn with_speed_geometry(mut self, geometry: VescSpeedGeometry) -> Self {
+        self.motor_pole_pairs = geometry.motor_pole_pairs;
+        self.gear_ratio_denominator = geometry.gear_ratio_denominator;
+        self.wheel_circumference = geometry.wheel_circumference;
+        self.calculates_speed = true;
+        self
+    }
+
+    /// Returns the checked geometry used by this profile's calculated speed.
+    pub(crate) fn speed_geometry(self) -> Option<VescSpeedGeometry> {
+        self.calculates_speed
+            .then(|| {
+                VescSpeedGeometry::new(
+                    self.motor_pole_pairs,
+                    self.gear_ratio_denominator,
+                    self.wheel_circumference,
+                )
+            })
+            .flatten()
+    }
+
     /// Creates a profile from VESC speed geometry.
     #[must_use]
     pub const fn from_speed_geometry(geometry: VescSpeedGeometry) -> Self {
@@ -764,8 +721,11 @@ impl VescBoardProfile {
     /// Creates a profile from VESC motor config and a known cell voltage curve.
     #[must_use]
     pub const fn from_motor_config(config: &VescMotorConfig) -> Self {
-        Self::from_speed_geometry(config.speed_geometry)
-            .with_vesc_battery_type(config.battery_type, config.battery_cells)
+        let profile = match config.speed_geometry {
+            Some(geometry) => Self::from_speed_geometry(geometry),
+            None => Self::without_geometry(),
+        };
+        profile.with_vesc_battery_type(config.battery_type, config.battery_cells)
     }
 
     /// Calculates signed road speed from eRPM.
@@ -774,21 +734,26 @@ impl VescBoardProfile {
         if !self.calculates_speed {
             return None;
         }
-        let wheel_circumference_mm =
-            i64::try_from(self.wheel_circumference.as_millimetres()).ok()?;
-        let denominator = i64::from(self.motor_pole_pairs.get())
-            .checked_mul(i64::from(self.gear_ratio_denominator.as_milli()))?
-            .checked_mul(60)?;
-        if denominator == 0 {
-            return None;
-        }
-        let numerator = i64::from(erpm.as_erpm())
-            .checked_mul(wheel_circumference_mm)?
-            .checked_mul(1_000)?;
-        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
-            numerator,
-            denominator,
-        )))
+        let geometry = VescSpeedGeometry::new(
+            self.motor_pole_pairs,
+            self.gear_ratio_denominator,
+            self.wheel_circumference,
+        )?;
+        let denominator = i128::from(geometry.motor_pole_pairs.get())
+            * i128::from(geometry.gear_ratio_denominator.as_milli())
+            * 60;
+        let numerator = i128::from(erpm.as_erpm())
+            * i128::from(geometry.wheel_circumference.as_millimetres())
+            * 1_000;
+        // Nearest millimetre per second, with ties rounded away from zero.
+        let rounded = if numerator >= 0 {
+            (numerator + denominator / 2) / denominator
+        } else {
+            (numerator - denominator / 2) / denominator
+        };
+        i32::try_from(rounded)
+            .ok()
+            .map(Speed::from_millimetres_per_second)
     }
 
     /// Estimates battery level from pack voltage when a voltage curve is known.
@@ -1584,29 +1549,36 @@ fn decode_speed_geometry(body: &[u8]) -> Result<VescSpeedGeometry, VescCodecErro
     let setup = body
         .get(VESC_MCCONF_TEMP_SETUP_OFFSET..)
         .ok_or(VescCodecError::DecodeFailed)?;
-    decode_setup_fields(setup).map(|(geometry, _next)| geometry)
+    decode_setup_fields(setup)?
+        .0
+        .ok_or(VescCodecError::DecodeFailed)
 }
 
-fn decode_setup_fields(body: &[u8]) -> Result<(VescSpeedGeometry, usize), VescCodecError> {
+fn decode_setup_fields(body: &[u8]) -> Result<(Option<VescSpeedGeometry>, usize), VescCodecError> {
     let motor_poles = *body.first().ok_or(VescCodecError::DecodeFailed)?;
     let gear_ratio = read_vesc_f32_auto(body, 1)?;
     let wheel_diameter_metres = read_vesc_f32_auto(body, 5)?;
-    let motor_pole_pairs = motor_poles / 2;
-    if motor_pole_pairs == 0 || gear_ratio <= 0.0 || wheel_diameter_metres <= 0.0 {
-        return Err(VescCodecError::DecodeFailed);
-    }
-    let gear_ratio_denominator =
-        GearRatioDenominator::from_ratio(gear_ratio).ok_or(VescCodecError::DecodeFailed)?;
     Ok((
-        VescSpeedGeometry {
-            motor_pole_pairs: MotorPolePairs::new(motor_pole_pairs),
-            gear_ratio_denominator,
-            wheel_circumference: Distance::from_metres_f32(
-                wheel_diameter_metres * core::f32::consts::PI,
-            ),
-        },
+        checked_setup_geometry(motor_poles, gear_ratio, wheel_diameter_metres),
         9,
     ))
+}
+
+fn checked_setup_geometry(
+    motor_poles: u8,
+    gear_ratio: f32,
+    wheel_diameter_metres: f32,
+) -> Option<VescSpeedGeometry> {
+    let motor_pole_pairs = MotorPolePairs::from_motor_poles(motor_poles)?;
+    if !wheel_diameter_metres.is_finite() || wheel_diameter_metres <= 0.0 {
+        return None;
+    }
+    let gear_ratio_denominator = GearRatioDenominator::from_ratio(gear_ratio)?;
+    VescSpeedGeometry::new(
+        motor_pole_pairs,
+        gear_ratio_denominator,
+        Distance::from_metres_f32(wheel_diameter_metres * core::f32::consts::PI),
+    )
 }
 
 fn read_vesc_f32_auto(bytes: &[u8], offset: usize) -> Result<f32, VescCodecError> {
@@ -1616,22 +1588,6 @@ fn read_vesc_f32_auto(bytes: &[u8], offset: usize) -> Result<f32, VescCodecError
         .map(u32::from_be_bytes)
         .ok_or(VescCodecError::DecodeFailed)?;
     Ok(f32::from_bits(word))
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "The value is clamped to the i32 range before conversion."
-)]
-fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
-    if denominator == 0 {
-        return 0;
-    }
-    let rounded = if numerator >= 0 {
-        (numerator + denominator / 2) / denominator
-    } else {
-        (numerator - denominator / 2) / denominator
-    };
-    rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 fn command_for_can_request(request: VescCanReadOnlyRequest) -> vesc::Command<'static> {
@@ -2041,23 +1997,76 @@ mod tests {
 
         assert_eq!(config.battery_cells, SeriesCount::new(20));
         assert_eq!(config.battery_type, VescBatteryType::LiIon);
+        let geometry = config.speed_geometry.expect("valid speed geometry");
+        assert_eq!(geometry.motor_pole_pairs, MotorPolePairs::new(15));
         assert_eq!(
-            config.speed_geometry.motor_pole_pairs,
-            MotorPolePairs::new(15)
-        );
-        assert_eq!(
-            config.speed_geometry.gear_ratio_denominator,
+            geometry.gear_ratio_denominator,
             GearRatioDenominator::new(1)
         );
-        assert_eq!(
-            config.speed_geometry.wheel_circumference.as_millimetres(),
-            880
-        );
+        assert_eq!(geometry.wheel_circumference.as_millimetres(), 880);
         assert_eq!(
             VescBoardProfile::from_motor_config(&config)
                 .battery_level_from_voltage(Voltage::from_millivolts(84_000)),
             Some(BatteryLevel::from_percent(100))
         );
+    }
+
+    #[test]
+    fn motor_config_keeps_battery_facts_when_speed_geometry_is_unusable() {
+        for (motor_poles, gear_ratio, diameter) in [
+            (0, 1.0, 0.280),
+            (31, 1.0, 0.280),
+            (30, 1.0, 0.0),
+            (30, 1.0, -0.280),
+            (30, 1.0, f32::NAN),
+            (30, 0.0, 0.280),
+            (30, 2.666_666_7, 0.280),
+        ] {
+            let frame = motor_config_frame(motor_poles, gear_ratio, diameter, 20);
+            let reply = VescReadOnlyCodec::decode_reply(&frame)
+                .expect("valid motor config framing retains independent battery facts");
+            let VescReadOnlyReply::MotorConfig(config) = reply else {
+                panic!("expected motor config reply");
+            };
+            assert_eq!(config.battery_cells, SeriesCount::new(20));
+            assert_eq!(config.battery_type, VescBatteryType::LiIon);
+            assert_eq!(
+                config.serialized.get(VESC_MCCONF_SETUP_OFFSET),
+                Some(&motor_poles)
+            );
+            assert_eq!(
+                config
+                    .serialized
+                    .get(VESC_MCCONF_SETUP_OFFSET + 1..VESC_MCCONF_SETUP_OFFSET + 5),
+                Some(gear_ratio.to_bits().to_be_bytes().as_slice())
+            );
+            let profile = VescBoardProfile::from_motor_config(&config);
+            assert_eq!(
+                profile.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
+                None
+            );
+            assert_eq!(
+                profile.battery_level_from_voltage(Voltage::from_millivolts(84_000)),
+                Some(BatteryLevel::from_percent(100))
+            );
+        }
+    }
+
+    #[test]
+    fn short_motor_setup_config_still_requires_usable_speed_geometry() {
+        for (motor_poles, gear_ratio, diameter) in [
+            (0, 1.0, 0.280),
+            (31, 1.0, 0.280),
+            (30, 1.0, 0.0),
+            (30, 1.0, f32::NAN),
+            (30, 2.666_666_7, 0.280),
+        ] {
+            let frame = motor_setup_config_frame(motor_poles, gear_ratio, diameter);
+            assert_eq!(
+                VescReadOnlyCodec::decode_reply(&frame),
+                Err(VescCodecError::DecodeFailed)
+            );
+        }
     }
 
     #[test]
@@ -2196,6 +2205,104 @@ mod tests {
             profile.speed_from_erpm(RotationalSpeed::from_erpm(-4_500)),
             Some(Speed::from_millimetres_per_second(-10_500))
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "The fixed-point projection must preserve exact simple ratios."
+    )]
+    fn fractional_gear_ratio_roundtrips_without_integer_truncation() {
+        let ratio = GearRatioDenominator::from_ratio(2.5).expect("valid reduction");
+        assert_eq!(ratio.as_milli(), 2_500);
+        assert_eq!(ratio.get(), 2.5);
+        assert_eq!(
+            GearRatioDenominator::from_ratio(2.7).unwrap().as_milli(),
+            2_700
+        );
+        assert_eq!(GearRatioDenominator::new(255).get(), 255.0);
+        assert_eq!(GearRatioDenominator::from_milli(0), None);
+        assert_eq!(
+            GearRatioDenominator::from_milli(u32::MAX)
+                .unwrap()
+                .as_milli(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn gear_ratio_rejects_unrepresentable_values() {
+        for ratio in [
+            0.0,
+            -1.0,
+            0.000_1,
+            2.500_1,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            4_294_967.5,
+        ] {
+            assert_eq!(GearRatioDenominator::from_ratio(ratio), None, "{ratio}");
+        }
+    }
+
+    #[test]
+    fn vesc_geometry_rejects_odd_motor_poles_and_zero_wheel() {
+        for (poles, diameter) in [
+            (0, 0.1),
+            (1, 0.1),
+            (15, 0.1),
+            (14, 0.0),
+            (14, -0.1),
+            (14, 0.000_001),
+            (14, f32::NAN),
+            (14, f32::INFINITY),
+            (14, f32::MAX),
+        ] {
+            let frame = motor_setup_config_frame(poles, 2.5, diameter);
+            assert!(VescReadOnlyCodec::decode_reply(&frame).is_err());
+        }
+        assert_eq!(
+            MotorPolePairs::from_motor_poles(14),
+            Some(MotorPolePairs::new(7))
+        );
+    }
+
+    #[test]
+    fn fractional_vesc_geometry_preserves_signed_speed_and_checked_range() {
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(7),
+            GearRatioDenominator::from_milli(2_500).unwrap(),
+            Distance::from_millimetres(300),
+        );
+        assert_eq!(
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(6_000)),
+            Some(Speed::from_millimetres_per_second(1_714))
+        );
+        assert_eq!(
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(-6_000)),
+            Some(Speed::from_millimetres_per_second(-1_714))
+        );
+        assert_eq!(
+            VescBoardProfile::new(
+                MotorPolePairs::new(7),
+                GearRatioDenominator::new(1),
+                Distance::from_millimetres(300),
+            )
+            .speed_from_erpm(RotationalSpeed::from_erpm(6_000)),
+            Some(Speed::from_millimetres_per_second(4_286))
+        );
+        for circumference in [0, u64::MAX / 2, u64::MAX] {
+            let invalid = VescBoardProfile::new(
+                MotorPolePairs::new(7),
+                GearRatioDenominator::new(1),
+                Distance::from_millimetres(circumference),
+            );
+            assert_eq!(
+                invalid.speed_from_erpm(RotationalSpeed::from_erpm(i32::MAX)),
+                None
+            );
+        }
     }
 
     #[test]

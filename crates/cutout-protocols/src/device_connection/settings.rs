@@ -80,6 +80,7 @@ impl DeviceConnectionSession {
         [
             self.state.settings.next_confirmation_at(),
             queued_expiry,
+            device.application_query_deadline(),
             can_poll.then(|| device.next_tick_at()).flatten(),
         ]
         .into_iter()

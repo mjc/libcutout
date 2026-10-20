@@ -25,7 +25,7 @@ clap.workspace = true
 cutout-btle = { path = "../cutout-btle", version = "0.1.0" }
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
 libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
-cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0", features = ["capture-replay"] }
 ratatui.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true

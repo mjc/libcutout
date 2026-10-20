@@ -206,7 +206,7 @@ struct IdentificationProbeTransportCoordinator {
         at now: MonotonicMilliseconds,
         using sink: any CoreBluetoothOperationSink
     ) {
-        let session = VescOnewheelSession()
+        let session = VescReadOnlyTransportSession()
         guard
             let linkActions = try? session.linkUp(
                 at: now,
@@ -491,9 +491,7 @@ public final class CutoutSessionCore: NSObject {
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPresentation) -> Void)?
-    public var onConnectionSnapshotChange: ((ConnectionSnapshot) -> Void)?
     public var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
-    private var publishedDeviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
@@ -518,6 +516,9 @@ public final class CutoutSessionCore: NSObject {
     private let rustSessionState: CutoutSessionStateHandle
     private let databaseForCapturePublication: RideDatabaseHandle?
     private let selectedDeviceStore: DevicePickerSelectionStore
+    private var vehicleKindRestoreTask: Task<Void, Never>?
+    private var vescDrivetrainRestore: (token: ConnectionAttemptToken, task: Task<Void, Never>)?
+    private var publishedDeviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
     private let injectedNotificationEffects: CutoutSessionNotificationEffects?
     private let injectedLocationEffects: CutoutSessionLocationEffects?
     private let injectedCaptureRecorder: (any CutoutSessionCaptureRecording)?
@@ -766,6 +767,8 @@ public final class CutoutSessionCore: NSObject {
     #endif
 
     deinit {
+        vehicleKindRestoreTask?.cancel()
+        vescDrivetrainRestore?.task.cancel()
         #if DEBUG
             testProtocolNotificationTimer?.cancel()
         #endif
@@ -1300,6 +1303,185 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    /// Saves a user choice for the captured attempt; Rust retains application and Ride admission policy.
+    public func selectVehicleKind(
+        _ kind: MobileVehicleKindDto, token: ConnectionAttemptToken
+    ) async throws -> MobileDeviceSessionSnapshotDto {
+        guard let updatedAt = unixMilliseconds(for: wallClock()) else {
+            throw DeviceVehicleSelectionError.invalidTimestamp
+        }
+        let state = rustSessionState
+        let snapshot = try await Task.detached(priority: .userInitiated) {
+            try state.selectConnectionVehicleKind(token: token, kind: kind, updatedAtMs: updatedAt)
+        }.value
+        await publishDeviceStateAfterStorage(token: token)
+        return snapshot
+    }
+
+    /// Loads the captured connection's geometry after its automatic restore effect has settled.
+    public func loadVescDrivetrain(token: ConnectionAttemptToken) async throws -> MobileVescDrivetrainDraft? {
+        let restore = onBleQueue { vescDrivetrainRestore?.token == token ? vescDrivetrainRestore?.task : nil }
+        await restore?.value
+        try Task<Never, Never>.checkCancellation()
+        let state = rustSessionState
+        let restored = try await Task.detached(priority: .utility) {
+            try state.restoreConnectionVescDrivetrain(token: token)
+        }.value
+        await publishDeviceStateAfterStorage(token: token)
+        return restored
+    }
+
+    /// Rust validates and persists the draft; new geometry applies to future real measurements.
+    public func saveVescDrivetrain(
+        _ draft: MobileVescDrivetrainDraft, token: ConnectionAttemptToken
+    ) async throws -> MobileVescDrivetrainDraft {
+        guard let updatedAt = unixMilliseconds(for: wallClock()) else {
+            throw DeviceVehicleSelectionError.invalidTimestamp
+        }
+        let state = rustSessionState
+        let saved = try await Task.detached(priority: .userInitiated) {
+            try state.saveConnectionVescDrivetrain(token: token, draft: draft, updatedAtMs: updatedAt)
+        }.value
+        await publishDeviceStateAfterStorage(token: token)
+        return saved
+    }
+
+    private func publishDeviceStateAfterStorage(token: ConnectionAttemptToken) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let work = DispatchWorkItem { [self] in
+                if rustSessionState.connectionAttemptIsCurrent(token: token) {
+                    publishConnectionSnapshot()
+                    refreshCanonicalDeviceTelemetry(token: token)
+                    publishDisplayState()
+                }
+                continuation.resume(returning: ())
+            }
+            bleQueue.async(execute: work)
+        }
+    }
+
+    /// Replaces the presentation from Rust facts without recording a new observation.
+    private func refreshCanonicalDeviceTelemetry(token: ConnectionAttemptToken) {
+        assertOnBleQueue()
+        guard let canonical = rustSessionState.connectionTelemetrySnapshot(token: token) else { return }
+        let snapshot = TelemetrySnapshot(canonical, chargeEstimate: displayState.telemetry?.chargeEstimate)
+        displayState = RideDisplayState(
+            speed: SpeedReadout(snapshot: snapshot),
+            telemetry: snapshot,
+            notificationCount: displayState.notificationCount,
+            lastUpdate: displayState.lastUpdate,
+            logicalRide: displayState.logicalRide
+        )
+    }
+
+    private func restoreUserVehicleKind(for token: ConnectionAttemptToken) {
+        assertOnBleQueue()
+        vescDrivetrainRestore?.task.cancel()
+        vescDrivetrainRestore = nil
+        vehicleKindRestoreTask?.cancel()
+        let store = selectedDeviceStore
+        let queue = bleQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        vehicleKindRestoreTask = Task<Void, Never> {
+            await Self.loadAndRestoreVehicleKind(store: store, token: token, queue: queue, reference: reference)
+        }
+    }
+
+    private static func loadAndRestoreVehicleKind(
+        store: DevicePickerSelectionStore,
+        token: ConnectionAttemptToken,
+        queue: DispatchQueue,
+        reference: WeakCutoutSessionCoreReference
+    ) async {
+        do {
+            try Task<Never, Never>.checkCancellation()
+            let kind: MobileVehicleKindDto? = try await store.loadUserVehicleKind(for: token.platformIdentifier)
+            try Task<Never, Never>.checkCancellation()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let work = DispatchWorkItem {
+                    defer { continuation.resume(returning: ()) }
+                    guard let core = reference.value else { return }
+                    if let kind,
+                        core.rustSessionState.restoreConnectionVehicleKind(token: token, kind: kind)
+                    {
+                        core.publishConnectionSnapshot()
+                    }
+                }
+                queue.async(execute: work)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            let work = DispatchWorkItem {
+                guard let core = reference.value,
+                    core.rustSessionState.connectionAttemptIsCurrent(token: token)
+                else { return }
+                core.record("vehicle_kind_restore_failed=storage_unavailable")
+            }
+            queue.async(execute: work)
+        }
+    }
+
+    /// Waits for the current restore effect, including its attempt-scoped application on the BLE owner.
+    func waitForVehicleKindRestoration() async {
+        let restore = onBleQueue { vehicleKindRestoreTask }
+        await restore?.value
+    }
+
+    private func restoreVescDrivetrainIfNeeded(_ snapshot: MobileDeviceSessionSnapshotDto) {
+        guard snapshot.identity?.protocol == .vesc,
+            snapshot.identity?.vescApplication == .absent,
+            let token = snapshot.connection.token,
+            vescDrivetrainRestore?.token != token
+        else { return }
+        vescDrivetrainRestore?.task.cancel()
+        let state = rustSessionState
+        let queue = bleQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        let task = Task<Void, Never> {
+            await Self.restoreVescDrivetrain(state: state, token: token, queue: queue, reference: reference)
+        }
+        vescDrivetrainRestore = (token, task)
+    }
+
+    private static func restoreVescDrivetrain(
+        state: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
+        queue: DispatchQueue,
+        reference: WeakCutoutSessionCoreReference
+    ) async {
+        do {
+            try Task<Never, Never>.checkCancellation()
+            let restored: MobileVescDrivetrainDraft? = try await Task.detached(priority: .utility) {
+                try state.restoreConnectionVescDrivetrain(token: token)
+            }.value
+            try Task<Never, Never>.checkCancellation()
+            guard restored != nil else { return }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let work = DispatchWorkItem {
+                    defer { continuation.resume(returning: ()) }
+                    guard let core = reference.value,
+                        core.rustSessionState.connectionAttemptIsCurrent(token: token)
+                    else { return }
+                    core.publishConnectionSnapshot()
+                    core.refreshCanonicalDeviceTelemetry(token: token)
+                    core.publishDisplayState()
+                }
+                queue.async(execute: work)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            let work = DispatchWorkItem {
+                guard let core = reference.value,
+                    core.rustSessionState.connectionAttemptIsCurrent(token: token)
+                else { return }
+                core.record("vesc_drivetrain_restore_failed=not_applied")
+            }
+            queue.async(execute: work)
+        }
+    }
+
     #if DEBUG
         private func start(testScript: CutoutSessionTestScript) {
             onBleQueue {
@@ -1374,6 +1556,7 @@ public final class CutoutSessionCore: NSObject {
                     platformIdentifier: platformIdentifier, nowMs: clock.now().rawValue
                 ).token
             else { return false }
+            restoreUserVehicleKind(for: token)
             if let vescBoardProfile {
                 _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
             }
@@ -1439,12 +1622,8 @@ public final class CutoutSessionCore: NSObject {
                         return channel
                     }
                     if let channel = channels.first {
-                        let replayStartedAt = clock.now()
-                        let replayInterval = testScript.protocolNotificationIntervalMilliseconds ?? 1
-                        for (index, bytes) in testScript.protocolNotifications.enumerated() {
-                            let receivedAt = MonotonicMilliseconds(
-                                replayStartedAt.rawValue + UInt64(index) * replayInterval
-                            )
+                        for bytes in testScript.protocolNotifications {
+                            let receivedAt = clock.now()
                             let step = try ingestAcceptedLiveNotification(
                                 AcceptedLiveNotificationIngress(
                                     channel: channel,
@@ -1645,6 +1824,10 @@ public final class CutoutSessionCore: NSObject {
     #endif
 
     private func disconnectAndScanOnBleQueue() {
+        vescDrivetrainRestore?.task.cancel()
+        vescDrivetrainRestore = nil
+        vehicleKindRestoreTask?.cancel()
+        vehicleKindRestoreTask = nil
         liveOwner?.invalidate()
         let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
         if !phoneAlarmActions.schedule.isEmpty || !phoneAlarmActions.cancelRequestIds.isEmpty {
@@ -1780,7 +1963,7 @@ public final class CutoutSessionCore: NSObject {
             displayUpdateKind
         )
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
-        publishDeviceSessionSnapshotIfChanged()
+        publishDeviceSessionSnapshot(rustSessionState.deviceSessionSnapshot())
         publishDisplayState()
         publishPhoneAlarmActionsAvailable()
         return captureOutcomes
@@ -1926,18 +2109,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishConnectionSnapshot() {
-        if let outcome = updateCaptureIdentity() { _ = acceptCaptureWrite(outcome) }
-        let sessionSnapshot = rustSessionState.deviceSessionSnapshot()
-        let snapshot = sessionSnapshot.connection
-        publishOnMain { [weak self] in
-            guard let self, self.connectionSnapshot.revision == snapshot.revision else { return }
-            self.onConnectionSnapshotChange?(snapshot)
-        }
-        publishDeviceSessionSnapshotIfChanged(sessionSnapshot)
+        publishDeviceSessionSnapshot(rustSessionState.deviceSessionSnapshot())
     }
 
-    private func publishDeviceSessionSnapshotIfChanged(_ captured: MobileDeviceSessionSnapshotDto? = nil) {
-        let snapshot = captured ?? rustSessionState.deviceSessionSnapshot()
+    private func publishDeviceSessionSnapshot(_ snapshot: MobileDeviceSessionSnapshotDto) {
+        guard snapshot == rustSessionState.deviceSessionSnapshot() else { return }
+        restoreVescDrivetrainIfNeeded(snapshot)
+        if let outcome = updateCaptureIdentity() { _ = acceptCaptureWrite(outcome) }
         guard snapshot != publishedDeviceSessionSnapshot else { return }
         publishedDeviceSessionSnapshot = snapshot
         publishOnMain { [weak self] in
@@ -1965,6 +2143,7 @@ public final class CutoutSessionCore: NSObject {
             )
         }
         guard let token = snapshot.token else { return }
+        restoreUserVehicleKind(for: token)
         if let vescBoardProfile {
             _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
         }
@@ -2113,6 +2292,10 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: writeLimit, operationSink: sink,
             queue: bleQueue, clock: clock
         )
+        owner.onDeviceSessionSnapshotChange = { [weak self, weak owner] snapshot in
+            guard let self, let owner, self.liveOwner === owner else { return }
+            self.publishDeviceSessionSnapshot(snapshot)
+        }
         owner.onSubscriptionFailure = { [weak self] channel, error in
             guard let self, self.liveOwner?.token == token else { return }
             _ = self.rustSessionState.connectionTransportFailed(token: token)
@@ -2159,7 +2342,7 @@ public final class CutoutSessionCore: NSObject {
         switch selectedRoute {
         case .electricUnicycle:
             return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
-        case .vescOnewheel:
+        case .vesc:
             return nil
         case nil:
             return nil
@@ -2993,19 +3176,12 @@ public final class CutoutSessionCore: NSObject {
         captureRecorder.elapsedMilliseconds(since: captureStartedAt)
     }
 
-    /// Records only evidence admitted on this Rust connection attempt; picker identity may survive link loss.
     private func updateCaptureIdentity(
         token capturedToken: ConnectionAttemptToken? = nil
     ) -> MobileCaptureWriteOutcomeDto? {
         guard let token = capturedToken ?? connectionSnapshot.token else { return nil }
         return captureRecorder.updateIdentity(from: rustSessionState, token: token)
     }
-}
-
-func captureResolvedIdentity(
-    protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-) -> MobileResolvedIdentityDto? {
-    captureResolvedIdentity(model: protocolIdentityCandidate?.support.electricUnicycleModel?.dto)
 }
 
 func pevcapAnnotation(key: String, value: String) -> String {
@@ -3450,9 +3626,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             channel: channel, characteristic: characteristic.uuid,
             service: characteristic.service?.uuid, value: value,
             notificationPeripheral: characteristic.service?.peripheral)
-
     }
 
+    /// Observation may retire this callback's token; retain it through capture reconciliation.
     private func receiveAcceptedNotification(
         token: ConnectionAttemptToken?, channel: BluetoothUuid, characteristic: CBUUID,
         service: CBUUID?, value: Data, notificationPeripheral: CBPeripheral?
@@ -3624,7 +3800,7 @@ extension CutoutSessionCore {
 
     fileprivate func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
         switch route {
-        case .vescOnewheel:
+        case .vesc:
             return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
         case .electricUnicycle:
             return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid

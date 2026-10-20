@@ -15,6 +15,10 @@
 
 mod gatt;
 pub use gatt::*;
+#[cfg(feature = "capture-replay")]
+mod vesc_capture_replay;
+#[cfg(feature = "capture-replay")]
+pub use vesc_capture_replay::*;
 mod begode_frame;
 pub use begode_frame::{
     BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameParseResult, BegodeFrameReassembler,
@@ -159,8 +163,8 @@ pub use session::{
     VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
     VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
     VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
-    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
-    VeteranNotificationDecoder,
+    VESC_RAW_TACHOMETER_FIELD_ID, VescApplicationDiscovery, VescApplicationQueryState,
+    VescGenericModel, VescNotificationDecoder, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     GearRatioDenominator, MotorPolePairs, MotorPosition, TransferredCharge, TransferredEnergy,
