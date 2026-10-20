@@ -26,6 +26,9 @@ const FFI_RECEIPT: &str = ".cutout-artifact.json";
 const FFI_CHECKER: &str = ".cutout-ffi-check";
 const FFI_GENERATIONS: &str = "target/swift-ffi/generations";
 const SWIFT_FFI_SLICES: [&str; 3] = ["ios-arm64", "ios-arm64-simulator", "macos-arm64"];
+const SWIFT_FFI_TOOLS_VERSION: &str = "6.4";
+const SWIFT_FFI_IOS_MINIMUM_MAJOR: u16 = 27;
+const SWIFT_FFI_MACOS_MINIMUM_MAJOR: u16 = 27;
 
 fn lock_swift_ffi(root: &Path) -> Result<fs::File> {
     let path = root.join(SWIFT_FFI_LOCK);
@@ -401,14 +404,20 @@ fn swift_ffi_package_command(root: &Path, snapshot: &Path) -> Command {
         )
         // Match the native products for both rustc and C build scripts; their
         // defaults differ, and Cargo Swift's platforms only set package metadata.
-        .env("IPHONEOS_DEPLOYMENT_TARGET", "27.0")
-        .env("MACOSX_DEPLOYMENT_TARGET", "27.0")
+        .env(
+            "IPHONEOS_DEPLOYMENT_TARGET",
+            format!("{SWIFT_FFI_IOS_MINIMUM_MAJOR}.0"),
+        )
+        .env(
+            "MACOSX_DEPLOYMENT_TARGET",
+            format!("{SWIFT_FFI_MACOS_MINIMUM_MAJOR}.0"),
+        )
+        .args(["swift", "package", "--platforms"])
         .args([
-            "swift",
-            "package",
-            "--platforms",
-            "ios@27",
-            "macos@27",
+            format!("ios@{SWIFT_FFI_IOS_MINIMUM_MAJOR}"),
+            format!("macos@{SWIFT_FFI_MACOS_MINIMUM_MAJOR}"),
+        ])
+        .args([
             "--release",
             "--name",
             "CutoutMobileFFI",
@@ -421,7 +430,7 @@ fn swift_ffi_package_command(root: &Path, snapshot: &Path) -> Command {
             "--skip-toolchains-check",
             "--accept-all",
             "--swift-tools-version",
-            "6.4",
+            SWIFT_FFI_TOOLS_VERSION,
             "--silent",
         ]);
     command
@@ -616,12 +625,12 @@ fn is_ffi_generation_name(name: &str) -> bool {
 
 fn ffi_selector_manifest(generation: &str) -> String {
     format!(
-        r#"// swift-tools-version: 6.0
+        r#"// swift-tools-version: {SWIFT_FFI_TOOLS_VERSION}
 // cutout-generation: {generation}
 import PackageDescription
 let package = Package(
     name: "CutoutMobileFFI",
-    platforms: [.iOS(.v18), .macOS(.v15)],
+    platforms: [.iOS(.v{SWIFT_FFI_IOS_MINIMUM_MAJOR}), .macOS(.v{SWIFT_FFI_MACOS_MINIMUM_MAJOR})],
     products: [.library(name: "CutoutMobileFFI", targets: ["CutoutMobileFFI"])],
     targets: [
         .binaryTarget(
@@ -1569,6 +1578,14 @@ mod tests {
             .position(|line| *line == "--swift-tools-version")
             .unwrap();
         assert_eq!(lines[tools + 1], "6.4");
+
+        let selector = ffi_selector_manifest(&"a".repeat(64));
+        assert_eq!(
+            selector.lines().next(),
+            Some(format!("// swift-tools-version: {}", lines[tools + 1]).as_str())
+        );
+        assert!(selector.contains(".iOS(.v27)"));
+        assert!(selector.contains(".macOS(.v27)"));
     }
 
     #[test]
