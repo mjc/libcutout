@@ -1239,8 +1239,16 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         let published = expectation(description: "Phone sample delivered to Main")
         core.onPhoneLocationSnapshotChange = { snapshot, _ in
-            if snapshot.latestSample != nil { published.fulfill() }
+            guard snapshot.latestSample?.latitudeDegrees == 39.7392,
+                snapshot.latestSample?.longitudeDegrees == -104.9903
+            else { return }
+
+            // Location services may publish additional callbacks while this test is running.
+            // The injected sample is the event under test; retire the observer after it arrives.
+            core.onPhoneLocationSnapshotChange = nil
+            published.fulfill()
         }
+        defer { core.onPhoneLocationSnapshotChange = nil }
         core.deliverPhoneLocationsForTesting([location])
         await fulfillment(of: [published], timeout: 2)
 
