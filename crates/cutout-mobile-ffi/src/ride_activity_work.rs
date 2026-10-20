@@ -1,6 +1,6 @@
 //! Bounded platform presentation ownership; recording lifecycle is reduced independently.
 
-use std::sync::{Mutex, PoisonError};
+use cutout_application::ride_activity as application;
 
 use crate::{
     MobileActivityProjectionStateDto, MobileRideSessionEffectDto, MobileRideSessionIdentityDto,
@@ -13,11 +13,12 @@ use crate::{
 pub fn ride_activity_pending_start_effect(
     snapshot: MobileRideSessionSnapshotDto,
 ) -> MobileRideSessionEffectDto {
-    if snapshot.phase == MobileRideSessionPhaseDto::Starting
-        && snapshot.activity == MobileActivityProjectionStateDto::Starting
-        && let Some(identity) = snapshot.identity
-    {
-        MobileRideSessionEffectDto::StartActivity { identity }
+    if application::pending_start(&observation(snapshot.clone())) {
+        snapshot
+            .identity
+            .map_or(MobileRideSessionEffectDto::None, |identity| {
+                MobileRideSessionEffectDto::StartActivity { identity }
+            })
     } else {
         MobileRideSessionEffectDto::None
     }
@@ -29,22 +30,18 @@ pub fn ride_activity_pending_start_effect(
 pub fn ride_activity_background_projection_effect(
     snapshot: MobileRideSessionSnapshotDto,
 ) -> MobileRideSessionEffectDto {
-    let Some(identity) = snapshot.identity else {
-        return MobileRideSessionEffectDto::None;
-    };
-    match snapshot.activity {
-        MobileActivityProjectionStateDto::Active { .. }
-        | MobileActivityProjectionStateDto::Stale { .. } => {}
-        _ => return MobileRideSessionEffectDto::None,
-    }
-    match snapshot.phase {
-        MobileRideSessionPhaseDto::Active => {
-            MobileRideSessionEffectDto::UpdateActivity { identity }
-        }
-        MobileRideSessionPhaseDto::Reconnecting | MobileRideSessionPhaseDto::Stale => {
-            MobileRideSessionEffectDto::MarkActivityStale { identity }
-        }
-        _ => MobileRideSessionEffectDto::None,
+    match application::background_projection(&observation(snapshot.clone())) {
+        application::BackgroundProjection::Update => snapshot
+            .identity
+            .map_or(MobileRideSessionEffectDto::None, |identity| {
+                MobileRideSessionEffectDto::UpdateActivity { identity }
+            }),
+        application::BackgroundProjection::Stale => snapshot
+            .identity
+            .map_or(MobileRideSessionEffectDto::None, |identity| {
+                MobileRideSessionEffectDto::MarkActivityStale { identity }
+            }),
+        application::BackgroundProjection::None => MobileRideSessionEffectDto::None,
     }
 }
 
@@ -82,21 +79,11 @@ pub fn ride_activity_admitted_telemetry_input(
     snapshot: MobileRideSessionSnapshotDto,
     telemetry_at_ms: u64,
 ) -> Option<MobileRideSessionInputDto> {
-    if snapshot.identity.is_none()
-        || snapshot
-            .last_telemetry_at_ms
-            .is_some_and(|previous| telemetry_at_ms <= previous)
-    {
-        return None;
-    }
-    match snapshot.phase {
-        MobileRideSessionPhaseDto::Starting
-        | MobileRideSessionPhaseDto::Active
-        | MobileRideSessionPhaseDto::Stale => Some(MobileRideSessionInputDto::TelemetryObserved {
+    application::admits_telemetry(&observation(snapshot), telemetry_at_ms).then_some(
+        MobileRideSessionInputDto::TelemetryObserved {
             at_ms: telemetry_at_ms,
-        }),
-        _ => None,
-    }
+        },
+    )
 }
 
 /// Keeps a startup marker until the lifecycle has explicitly ended.
@@ -104,10 +91,7 @@ pub fn ride_activity_admitted_telemetry_input(
 #[must_use]
 #[allow(clippy::needless_pass_by_value)] // UniFFI exports owned boundary records.
 pub fn ride_activity_may_clear_marker(snapshot: MobileRideSessionSnapshotDto) -> bool {
-    match snapshot.phase {
-        MobileRideSessionPhaseDto::Ended { .. } => true,
-        _ => false,
-    }
+    application::may_clear_marker(&observation(snapshot))
 }
 
 /// One platform operation admitted by Rust. Apple snapshot payloads remain native-owned.
@@ -121,14 +105,6 @@ pub enum MobileRideActivityWorkDto {
         effect: MobileRideSessionEffectDto,
         stale_after_ms: u64,
     },
-}
-
-impl MobileRideActivityWorkDto {
-    const fn request_id(&self) -> u64 {
-        match self {
-            Self::Presentation { request_id } | Self::Terminal { request_id, .. } => *request_id,
-        }
-    }
 }
 
 /// Native dispatch effect for an admitted request.
@@ -153,31 +129,105 @@ pub struct MobileRideActivityWorkSnapshotDto {
     pub pending_terminal_request_id: Option<u64>,
 }
 
-#[derive(Debug, Default)]
-struct WorkState {
-    latest_request_id: u64,
-    latest_presentation_request_id: u64,
-    latest_telemetry_at_ms: Option<u64>,
-    latest_transport_request_id: u64,
-    disconnected_at_ms: Option<u64>,
-    latest_session_request_id: u64,
-    latest_session_identity: Option<MobileRideSessionIdentityDto>,
-    pending_start_platform_identifier: Option<String>,
-    latest_scene_request_id: u64,
-    latest_background_request_id: u64,
-    latest_terminal_request_id: u64,
-    in_flight_request_id: Option<u64>,
-    pending_presentation_request_id: Option<u64>,
-    terminal: Option<MobileRideActivityWorkDto>,
-    last_projection_telemetry_at_ms: Option<u64>,
+type ApplicationQueue = application::ActivityWorkQueue<
+    MobileRideSessionIdentityDto,
+    crate::MobileRideSessionEndReasonDto,
+>;
+
+impl application::ActivityIdentity for MobileRideSessionIdentityDto {
+    fn platform_identifier(&self) -> &str {
+        &self.platform_identifier
+    }
 }
 
-/// One in-flight Apple effect, one latest presentation and one fixed terminal obligation.
-///
-/// No waiters or snapshots are stored here. Required capture flushes never enter this queue.
+fn observation(
+    snapshot: MobileRideSessionSnapshotDto,
+) -> application::ActivityObservation<MobileRideSessionIdentityDto> {
+    application::ActivityObservation {
+        identity: snapshot.identity,
+        phase: match snapshot.phase {
+            MobileRideSessionPhaseDto::Idle => application::RidePhase::Idle,
+            MobileRideSessionPhaseDto::Starting => application::RidePhase::Starting,
+            MobileRideSessionPhaseDto::Active => application::RidePhase::Active,
+            MobileRideSessionPhaseDto::Reconnecting => application::RidePhase::Reconnecting,
+            MobileRideSessionPhaseDto::Stale => application::RidePhase::Stale,
+            MobileRideSessionPhaseDto::Ending { .. } => application::RidePhase::Ending,
+            MobileRideSessionPhaseDto::Ended { .. } => application::RidePhase::Ended,
+        },
+        projection: match snapshot.activity {
+            MobileActivityProjectionStateDto::Starting => application::ProjectionState::Starting,
+            MobileActivityProjectionStateDto::Active { .. } => application::ProjectionState::Active,
+            MobileActivityProjectionStateDto::Stale { .. } => application::ProjectionState::Stale,
+            _ => application::ProjectionState::Other,
+        },
+        last_telemetry_at_ms: snapshot.last_telemetry_at_ms,
+    }
+}
+
+impl
+    From<
+        application::ActivityWork<
+            MobileRideSessionIdentityDto,
+            crate::MobileRideSessionEndReasonDto,
+        >,
+    > for MobileRideActivityWorkDto
+{
+    fn from(
+        work: application::ActivityWork<
+            MobileRideSessionIdentityDto,
+            crate::MobileRideSessionEndReasonDto,
+        >,
+    ) -> Self {
+        match work {
+            application::ActivityWork::Presentation { request_id } => {
+                Self::Presentation { request_id }
+            }
+            application::ActivityWork::Terminal {
+                request_id,
+                effect,
+                stale_after_ms,
+            } => Self::Terminal {
+                request_id,
+                effect: MobileRideSessionEffectDto::EndActivity {
+                    identity: effect.identity,
+                    reason: effect.reason,
+                },
+                stale_after_ms,
+            },
+        }
+    }
+}
+
+impl
+    From<
+        application::ActivityWorkAdmission<
+            MobileRideSessionIdentityDto,
+            crate::MobileRideSessionEndReasonDto,
+        >,
+    > for MobileRideActivityWorkAdmissionDto
+{
+    fn from(
+        value: application::ActivityWorkAdmission<
+            MobileRideSessionIdentityDto,
+            crate::MobileRideSessionEndReasonDto,
+        >,
+    ) -> Self {
+        match value {
+            application::ActivityWorkAdmission::Run { work } => Self::Run { work: work.into() },
+            application::ActivityWorkAdmission::Queued {
+                replaced_request_id,
+            } => Self::Queued {
+                replaced_request_id,
+            },
+            application::ActivityWorkAdmission::Rejected => Self::Rejected,
+        }
+    }
+}
+
+/// Bounded application work, adapted to native request and effect records.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobileRideActivityWorkQueue {
-    state: Mutex<WorkState>,
+    inner: ApplicationQueue,
 }
 
 #[uniffi::export]
@@ -188,21 +238,10 @@ impl MobileRideActivityWorkQueue {
         Self::default()
     }
 
-    /// Orders observations before native code reduces the shared Rust lifecycle.
     pub fn accept_request(&self, request_id: u64) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if request_id <= state.latest_presentation_request_id
-            || request_id <= state.latest_terminal_request_id
-        {
-            return false;
-        }
-        state.latest_presentation_request_id = request_id;
-        state.latest_request_id = request_id;
-        true
+        self.inner.accept_request(request_id)
     }
 
-    /// Separates new ride intent from same-ride presentation ordering.
-    #[allow(clippy::needless_pass_by_value)] // UniFFI exports owned boundary records.
     pub fn accept_presentation_request(
         &self,
         request_id: u64,
@@ -210,193 +249,81 @@ impl MobileRideActivityWorkQueue {
         snapshot: MobileRideSessionSnapshotDto,
         telemetry_at_ms: u64,
     ) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if request_id <= state.latest_presentation_request_id
-            || request_id <= state.latest_terminal_request_id
-        {
-            return false;
-        }
-        let starts_new_session = match snapshot.phase {
-            MobileRideSessionPhaseDto::Idle
-            | MobileRideSessionPhaseDto::Ending { .. }
-            | MobileRideSessionPhaseDto::Ended { .. } => true,
-            _ => snapshot
-                .identity
-                .as_ref()
-                .is_none_or(|identity| identity.platform_identifier != platform_identifier),
-        } && state.pending_start_platform_identifier.as_ref()
-            != Some(&platform_identifier);
-        if !starts_new_session
-            && state
-                .disconnected_at_ms
-                .is_some_and(|disconnected| telemetry_at_ms <= disconnected)
-        {
-            return false;
-        }
-        state.latest_presentation_request_id = request_id;
-        state.latest_request_id = request_id;
-        if starts_new_session {
-            state.latest_session_request_id = request_id;
-            state.pending_start_platform_identifier = Some(platform_identifier);
-            state.disconnected_at_ms = None;
-            state.latest_telemetry_at_ms = Some(telemetry_at_ms);
-        } else {
-            state.latest_telemetry_at_ms = Some(
-                state
-                    .latest_telemetry_at_ms
-                    .unwrap_or(telemetry_at_ms)
-                    .max(telemetry_at_ms),
-            );
-        }
-        true
+        self.inner.accept_presentation_request(
+            request_id,
+            platform_identifier,
+            observation(snapshot),
+            telemetry_at_ms,
+        )
     }
 
-    /// Records the request that owns a Rust-issued session identity.
     pub fn note_session_start(&self, request_id: u64, identity: MobileRideSessionIdentityDto) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.latest_session_identity.as_ref() != Some(&identity) {
-            if request_id >= state.latest_session_request_id
-                && state.pending_start_platform_identifier.as_ref()
-                    == Some(&identity.platform_identifier)
-            {
-                // A newer payload fulfils the original intent; it is not a new ride.
-                state.pending_start_platform_identifier = None;
-            } else {
-                state.latest_session_request_id = state.latest_session_request_id.max(request_id);
-            }
-            state.latest_session_identity = Some(identity);
-        }
+        self.inner.note_session_start(request_id, identity);
     }
 
-    /// Required lifecycle effects have separate fences from replaceable presentation.
     #[must_use]
-    #[allow(clippy::needless_pass_by_value)] // UniFFI exports owned boundary records.
     pub fn accept_lifecycle_request(
         &self,
         request_id: u64,
         kind: MobileRideActivityLifecycleRequestDto,
         snapshot: MobileRideSessionSnapshotDto,
     ) -> MobileRideActivityLifecycleAdmissionDto {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if request_id == 0 {
-            return MobileRideActivityLifecycleAdmissionDto::Rejected;
-        }
-        match kind {
-            MobileRideActivityLifecycleRequestDto::Terminal => {
-                if request_id <= state.latest_session_request_id
-                    || request_id <= state.latest_terminal_request_id
-                {
-                    return MobileRideActivityLifecycleAdmissionDto::Rejected;
-                }
-                state.latest_terminal_request_id = request_id;
-                state.pending_start_platform_identifier = None;
-                state.latest_request_id = state.latest_request_id.max(request_id);
-            }
+        let kind = match kind {
             MobileRideActivityLifecycleRequestDto::Background => {
-                if request_id <= state.latest_background_request_id {
-                    return MobileRideActivityLifecycleAdmissionDto::Rejected;
-                }
-                state.latest_background_request_id = request_id;
-                if request_id <= state.latest_scene_request_id {
-                    return MobileRideActivityLifecycleAdmissionDto::FlushOnly;
-                }
-                state.latest_scene_request_id = request_id;
-                match snapshot.phase {
-                    MobileRideSessionPhaseDto::Idle | MobileRideSessionPhaseDto::Ended { .. } => {
-                        return MobileRideActivityLifecycleAdmissionDto::ReduceAndFlush;
-                    }
-                    _ => {}
-                }
-            }
-            MobileRideActivityLifecycleRequestDto::TransportDisconnected { at_ms } => {
-                if request_id <= state.latest_transport_request_id
-                    || request_id <= state.latest_session_request_id
-                    || state
-                        .latest_telemetry_at_ms
-                        .is_some_and(|received| received > at_ms)
-                    || state
-                        .disconnected_at_ms
-                        .is_some_and(|previous| at_ms < previous)
-                {
-                    return MobileRideActivityLifecycleAdmissionDto::Rejected;
-                }
-                state.latest_transport_request_id = request_id;
-                state.disconnected_at_ms = Some(at_ms);
-                state.pending_presentation_request_id = None;
+                application::LifecycleRequest::Background
             }
             MobileRideActivityLifecycleRequestDto::Foreground => {
-                if request_id <= state.latest_scene_request_id {
-                    return MobileRideActivityLifecycleAdmissionDto::Rejected;
-                }
-                state.latest_scene_request_id = request_id;
+                application::LifecycleRequest::Foreground
+            }
+            MobileRideActivityLifecycleRequestDto::Terminal => {
+                application::LifecycleRequest::Terminal
+            }
+            MobileRideActivityLifecycleRequestDto::TransportDisconnected { at_ms } => {
+                application::LifecycleRequest::TransportDisconnected { at_ms }
+            }
+        };
+        match self
+            .inner
+            .accept_lifecycle_request(request_id, kind, observation(snapshot))
+        {
+            application::LifecycleAdmission::Reduce => {
+                MobileRideActivityLifecycleAdmissionDto::Reduce
+            }
+            application::LifecycleAdmission::ReduceAndFlush => {
+                MobileRideActivityLifecycleAdmissionDto::ReduceAndFlush
+            }
+            application::LifecycleAdmission::FlushOnly => {
+                MobileRideActivityLifecycleAdmissionDto::FlushOnly
+            }
+            application::LifecycleAdmission::Rejected => {
+                MobileRideActivityLifecycleAdmissionDto::Rejected
             }
         }
-        MobileRideActivityLifecycleAdmissionDto::Reduce
     }
 
-    /// Queues only the current semantic scene or transport projection.
     #[must_use]
     pub fn enqueue_lifecycle_projection(
         &self,
         request_id: u64,
     ) -> MobileRideActivityWorkAdmissionDto {
-        {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            if request_id == 0
-                || (request_id != state.latest_scene_request_id
-                    && request_id != state.latest_transport_request_id)
-                || (request_id < state.latest_request_id
-                    && request_id != state.latest_transport_request_id)
-            {
-                return MobileRideActivityWorkAdmissionDto::Rejected;
-            }
-            state.latest_request_id = request_id;
-        }
-        self.enqueue_presentation(request_id)
+        self.inner.enqueue_lifecycle_projection(request_id).into()
     }
 
-    /// Renews equal content only when received telemetry advanced by half the stale window.
     #[must_use]
     pub fn presentation_requires_renewal(&self, telemetry_at_ms: u64, stale_after_ms: u64) -> bool {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state
-            .last_projection_telemetry_at_ms
-            .map_or(telemetry_at_ms > 0, |previous| {
-                telemetry_at_ms > previous
-                    && telemetry_at_ms - previous >= (stale_after_ms / 2).max(1)
-            })
+        self.inner
+            .presentation_requires_renewal(telemetry_at_ms, stale_after_ms)
     }
 
-    /// Records successful platform presentation, rather than admission or a failed Apple await.
     pub fn presentation_updated(&self, telemetry_at_ms: u64) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.last_projection_telemetry_at_ms = Some(
-            state
-                .last_projection_telemetry_at_ms
-                .unwrap_or(telemetry_at_ms)
-                .max(telemetry_at_ms),
-        );
+        self.inner.presentation_updated(telemetry_at_ms);
     }
 
-    /// Admits presentation without retaining a caller when the Apple worker is occupied.
     #[must_use]
     pub fn enqueue_presentation(&self, request_id: u64) -> MobileRideActivityWorkAdmissionDto {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if request_id != state.latest_request_id || request_id == 0 {
-            return MobileRideActivityWorkAdmissionDto::Rejected;
-        }
-        if state.in_flight_request_id.is_none() {
-            state.in_flight_request_id = Some(request_id);
-            return MobileRideActivityWorkAdmissionDto::Run {
-                work: MobileRideActivityWorkDto::Presentation { request_id },
-            };
-        }
-        MobileRideActivityWorkAdmissionDto::Queued {
-            replaced_request_id: state.pending_presentation_request_id.replace(request_id),
-        }
+        self.inner.enqueue_presentation(request_id).into()
     }
 
-    /// Retains terminal cleanup ahead of presentation. Only Rust end effects are admissible.
     #[must_use]
     pub fn enqueue_terminal(
         &self,
@@ -404,65 +331,30 @@ impl MobileRideActivityWorkQueue {
         effect: MobileRideSessionEffectDto,
         stale_after_ms: u64,
     ) -> MobileRideActivityWorkAdmissionDto {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        match &effect {
-            MobileRideSessionEffectDto::EndActivity { .. } => {}
-            _ => return MobileRideActivityWorkAdmissionDto::Rejected,
-        }
-        if request_id == 0
-            || (request_id != state.latest_request_id
-                && request_id != state.latest_terminal_request_id)
-        {
+        let MobileRideSessionEffectDto::EndActivity { identity, reason } = effect else {
             return MobileRideActivityWorkAdmissionDto::Rejected;
-        }
-        let work = MobileRideActivityWorkDto::Terminal {
-            request_id,
-            effect,
-            stale_after_ms,
         };
-        let replaced_request_id = state.pending_presentation_request_id.take();
-        if state.in_flight_request_id.is_none() {
-            state.in_flight_request_id = Some(request_id);
-            return MobileRideActivityWorkAdmissionDto::Run { work };
-        }
-        // Cleanup cannot be superseded by a newer observation, including another end.
-        // The lifecycle owns one activity identity until that cleanup is acknowledged.
-        if state.terminal.is_none() {
-            state.terminal = Some(work);
-        }
-        MobileRideActivityWorkAdmissionDto::Queued {
-            replaced_request_id,
-        }
+        self.inner
+            .enqueue_terminal(
+                request_id,
+                application::TerminalEffect { identity, reason },
+                stale_after_ms,
+            )
+            .into()
     }
 
-    /// Consumes one matching completion and transfers the worker to required cleanup first.
     #[must_use]
     pub fn finish_work(&self, request_id: u64) -> Option<MobileRideActivityWorkDto> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.in_flight_request_id != Some(request_id) {
-            return None;
-        }
-        let next = state.terminal.take().or_else(|| {
-            state
-                .pending_presentation_request_id
-                .take()
-                .filter(|request_id| *request_id == state.latest_request_id)
-                .map(|request_id| MobileRideActivityWorkDto::Presentation { request_id })
-        });
-        state.in_flight_request_id = next.as_ref().map(MobileRideActivityWorkDto::request_id);
-        next
+        self.inner.finish_work(request_id).map(Into::into)
     }
 
     #[must_use]
     pub fn snapshot(&self) -> MobileRideActivityWorkSnapshotDto {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let snapshot = self.inner.snapshot();
         MobileRideActivityWorkSnapshotDto {
-            in_flight_request_id: state.in_flight_request_id,
-            pending_presentation_request_id: state.pending_presentation_request_id,
-            pending_terminal_request_id: state
-                .terminal
-                .as_ref()
-                .map(MobileRideActivityWorkDto::request_id),
+            in_flight_request_id: snapshot.in_flight_request_id,
+            pending_presentation_request_id: snapshot.pending_presentation_request_id,
+            pending_terminal_request_id: snapshot.pending_terminal_request_id,
         }
     }
 }

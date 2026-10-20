@@ -1,14 +1,13 @@
 //! Capture-history projection through the existing database handle.
 
 use crate::{
-    CaptureJsonlExport, CaptureWriterFinish, CaptureWriterSlot, MobileCaptureArtifactIdDto,
-    MobileCaptureOriginDto, MobilePevcapCaptureBuilder, MobilePevcapEncodingDto,
-    MobilePevcapImportReceiptDto, MobileRideDatabaseError, MobileRideIdDto,
-    MobileVerifiedStringDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
+    MobileCaptureArtifactIdDto, MobileCaptureOriginDto, MobilePevcapCaptureBuilder,
+    MobilePevcapEncodingDto, MobilePevcapImportReceiptDto, MobileRideDatabaseError,
+    MobileRideIdDto, MobileVerifiedStringDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
     map_ride_database_error, mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id,
     persistence,
 };
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 /// Rust-retained recording identity and device labels; not foreign completion authority.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -89,29 +88,10 @@ impl RideDatabaseHandle {
         advertised_name: Option<String>,
         published_at: MobileWallClockUnixMillisDto,
     ) -> Result<MobilePevcapImportReceiptDto, MobileRideDatabaseError> {
-        let artifact = {
-            let slot = builder
-                .writer
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            match &*slot {
-                CaptureWriterSlot::Complete(Ok(CaptureWriterFinish::FileSaved(artifact))) => {
-                    (**artifact).clone()
-                }
-                CaptureWriterSlot::Complete(Ok(CaptureWriterFinish::DatabaseFinished {
-                    jsonl_export: CaptureJsonlExport::Available(artifact),
-                    ..
-                })) => (**artifact).clone(),
-                CaptureWriterSlot::Ready
-                | CaptureWriterSlot::Recording(_)
-                | CaptureWriterSlot::Finalizing
-                | CaptureWriterSlot::Complete(
-                    Ok(CaptureWriterFinish::DatabaseFinished { .. }) | Err(_),
-                ) => {
-                    return Err(MobileRideDatabaseError::CaptureNotFinished);
-                }
-            }
-        };
+        let artifact = builder
+            .writer
+            .completed_artifact()
+            .ok_or(MobileRideDatabaseError::CaptureNotFinished)?;
         self.inner
             .retain_finished_capture(
                 &artifact,

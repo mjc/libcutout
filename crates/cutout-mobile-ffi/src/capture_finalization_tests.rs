@@ -146,13 +146,7 @@ fn native_admission_loss_does_not_fail_usable_capture_lifecycle() {
         );
         persistence::CAPTURE_LOCATION_BATCH_CAPACITY + 1
     ];
-    let outcome = builder
-        .writer_ingress
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .record_location_batch(&locations);
+    let outcome = builder.writer.record_location_batch(&locations);
     assert_ne!(outcome, CaptureWriteOutcome::Accepted);
     assert_ne!(
         lifecycle.apply_capture_write_outcome(Some(generation), outcome.into()),

@@ -1,10 +1,9 @@
 //! Atomic identity evidence admission for native recording adapters.
 
 use crate::{
-    CaptureWriteOutcome, CaptureWriterSlot, DiscoveryElectricUnicycleModel,
-    MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder, MobileProtocolFamilyDto,
-    MobileResolvedIdentityDto, MobileVerificationStatusDto, MobileVerifiedStringDto,
-    format_pevcap_annotation,
+    DiscoveryElectricUnicycleModel, MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder,
+    MobileProtocolFamilyDto, MobileResolvedIdentityDto, MobileVerificationStatusDto,
+    MobileVerifiedStringDto,
 };
 
 /// Capture identity from a protocol-confirmed model, never a provisional picker selection.
@@ -31,61 +30,30 @@ pub fn capture_resolved_identity(
         firmware: None,
     })
 }
-use std::sync::PoisonError;
-
 #[uniffi::export]
 impl MobilePevcapCaptureBuilder {
     /// Admits identity and its evidence in one metadata update. Rejection preserves
     /// the last admitted identity and annotations, including label-closure capacity.
+    #[must_use]
     pub fn update_resolved_identity(
         &self,
         identity: MobileResolvedIdentityDto,
         evidence: Option<String>,
         detail: Option<String>,
     ) -> MobileCaptureWriteOutcomeDto {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Ready | CaptureWriterSlot::Recording(_) => {}
-            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => {
-                return MobileCaptureWriteOutcomeDto::Failed;
+        match self
+            .writer
+            .update_resolved_identity(identity.into(), evidence, detail)
+        {
+            Ok(()) => MobileCaptureWriteOutcomeDto::Accepted,
+            Err(cutout_application::capture_writer::CaptureAnnotationError::CapacityReached) => {
+                MobileCaptureWriteOutcomeDto::Rejected
             }
+            Err(cutout_application::capture_writer::CaptureAnnotationError::AdmissionLost {
+                dropped_messages,
+            }) => MobileCaptureWriteOutcomeDto::AdmissionLost { dropped_messages },
+            Err(_) => MobileCaptureWriteOutcomeDto::Failed,
         }
-        let mut metadata = self.metadata();
-        let mut annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut candidate = annotations.clone();
-        let additions = [
-            evidence.map(|value| format_pevcap_annotation("resolved_evidence".into(), value)),
-            detail.map(|value| format_pevcap_annotation("resolved_detail".into(), value)),
-        ]
-        .into_iter()
-        .flatten();
-        if candidate.try_append(additions).is_err() {
-            return MobileCaptureWriteOutcomeDto::Rejected;
-        }
-        let identity = Some(identity.into());
-        if metadata.resolved_identity == identity && candidate.entries() == annotations.entries() {
-            return MobileCaptureWriteOutcomeDto::Accepted;
-        }
-        metadata.resolved_identity.clone_from(&identity);
-        metadata.annotations = candidate.entries().to_vec();
-        if let Some(writer) = writer.as_ref() {
-            match writer.update_metadata(metadata) {
-                CaptureWriteOutcome::Accepted => {}
-                outcome @ (CaptureWriteOutcome::AdmissionLost { .. }
-                | CaptureWriteOutcome::Failed) => {
-                    return outcome.into();
-                }
-            }
-        }
-        *self
-            .resolved_identity
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = identity;
-        *annotations = candidate;
-        MobileCaptureWriteOutcomeDto::Accepted
     }
 }
 

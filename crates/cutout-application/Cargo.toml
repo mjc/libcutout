@@ -13,6 +13,19 @@ categories = ["hardware-support"]
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
+hex.workspace = true
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+cutout-music = { path = "../cutout-music", version = "0.1.0" }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
 libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
+reqwest = { workspace = true, features = ["rustls-tls-webpki-roots", "stream"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+uuid.workspace = true

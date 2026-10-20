@@ -1,13 +1,12 @@
 //! Capture startup validation and one-shot ownership through the existing writer.
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::sync::Arc;
+
+use cutout_application::capture as application;
 
 use crate::{
-    MobileCaptureOriginDto, MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder,
-    MobileTransportWriteLimitDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
+    MobileCaptureOriginDto, MobilePevcapCaptureBuilder, MobileWallClockUnixMillisDto,
+    RideDatabaseHandle,
 };
 
 /// Native observations for one capture startup; Rust owns normalization and admission.
@@ -44,28 +43,26 @@ pub enum MobileCaptureStartError {
     AutomaticRecordingDisabled,
 }
 
-#[derive(Debug)]
-struct PreparedCaptureWriter {
-    builder: Arc<MobilePevcapCaptureBuilder>,
-    path: String,
-    database: Option<Arc<RideDatabaseHandle>>,
-    origin: MobileCaptureOriginDto,
-}
-
-fn admits_recording(origin: MobileCaptureOriginDto, database: Option<&RideDatabaseHandle>) -> bool {
-    origin == MobileCaptureOriginDto::Manual
-        || database.is_some_and(|database| {
-            database
-                .inner
-                .automatic_diagnostic_recording_enabled()
-                .unwrap_or(false)
-        })
+impl From<application::CaptureStartError> for MobileCaptureStartError {
+    fn from(error: application::CaptureStartError) -> Self {
+        match error {
+            application::CaptureStartError::InvalidWallClock => Self::InvalidWallClock,
+            application::CaptureStartError::InvalidFilenameNonce => Self::InvalidFilenameNonce,
+            application::CaptureStartError::InvalidDirectory => Self::InvalidDirectory,
+            application::CaptureStartError::InvalidMetadata => Self::InvalidMetadata,
+            application::CaptureStartError::AlreadyStarted => Self::AlreadyStarted,
+            application::CaptureStartError::WriterStartFailed => Self::WriterStartFailed,
+            application::CaptureStartError::AutomaticRecordingDisabled => {
+                Self::AutomaticRecordingDisabled
+            }
+        }
+    }
 }
 
 /// Admitted startup metadata. The writer remains untouched until `start` consumes it.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePreparedCaptureStart {
-    prepared: Mutex<Option<PreparedCaptureWriter>>,
+    inner: application::PreparedCaptureStart<application::CaptureWriterBackend>,
 }
 
 /// The existing writer and Rust-selected path for native presentation/ownership.
@@ -78,29 +75,9 @@ pub struct MobileStartedCaptureWriterDto {
 /// Normalizes a native wall-clock observation without reading another clock.
 #[must_use]
 #[uniffi::export]
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "finite nonnegative milliseconds below 2^64 are checked before truncation"
-)]
 pub fn wall_clock_unix_milliseconds(seconds: f64) -> Option<MobileWallClockUnixMillisDto> {
-    let milliseconds = seconds * 1_000.0;
-    if !milliseconds.is_finite() || !(0.0..18_446_744_073_709_551_616.0).contains(&milliseconds) {
-        return None;
-    }
-    Some(MobileWallClockUnixMillisDto {
-        milliseconds: milliseconds.floor() as u64,
-    })
-}
-
-fn annotation_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '=' | '\n' | '\r' => ' ',
-            other => other,
-        })
-        .collect()
+    application::wall_clock_unix_milliseconds(seconds)
+        .map(|milliseconds| MobileWallClockUnixMillisDto { milliseconds })
 }
 
 /// Formats one annotation without permitting a value to add delimiters or lines.
@@ -111,11 +88,7 @@ fn annotation_component(value: &str) -> String {
     reason = "UniFFI string inputs are owned"
 )]
 pub fn format_pevcap_annotation(key: String, value: String) -> String {
-    format!(
-        "{}={}",
-        annotation_component(&key),
-        annotation_component(&value)
-    )
+    application::format_annotation(&key, &value)
 }
 
 /// Splits only the first delimiter, then normalizes each supplied component.
@@ -126,24 +99,7 @@ pub fn format_pevcap_annotation(key: String, value: String) -> String {
     reason = "UniFFI string inputs are owned"
 )]
 pub fn sanitize_pevcap_annotation(annotation: String) -> String {
-    match annotation.split_once('=') {
-        Some((key, value)) => format_pevcap_annotation(key.to_owned(), value.to_owned()),
-        None => annotation_component(&annotation),
-    }
-}
-
-fn startup_owned_annotation(annotation: &str) -> bool {
-    let Some((key, _)) = annotation.split_once('=') else {
-        return false;
-    };
-    match key {
-        "source"
-        | "capture_reason"
-        | "capture_privacy"
-        | "capture_evidence"
-        | "capture_recording_policy" => true,
-        _ => false,
-    }
+    application::sanitize_annotation(&annotation)
 }
 
 /// Validates all required startup evidence without creating files or database rows.
@@ -157,81 +113,23 @@ pub fn prepare_capture_writer(
     request: MobileCaptureStartRequestDto,
     database: Option<Arc<RideDatabaseHandle>>,
 ) -> Result<Arc<MobilePreparedCaptureStart>, MobileCaptureStartError> {
-    let wall_clock = wall_clock_unix_milliseconds(request.wall_clock_unix_seconds)
-        .ok_or(MobileCaptureStartError::InvalidWallClock)?;
-    let nonce = uuid::Uuid::parse_str(&request.filename_nonce)
-        .map_err(|_| MobileCaptureStartError::InvalidFilenameNonce)?;
-    if !nonce
-        .hyphenated()
-        .to_string()
-        .eq_ignore_ascii_case(&request.filename_nonce)
-    {
-        return Err(MobileCaptureStartError::InvalidFilenameNonce);
-    }
-    let directory = Path::new(&request.directory_path);
-    if !directory.is_absolute() || request.directory_path.contains('\0') {
-        return Err(MobileCaptureStartError::InvalidDirectory);
-    }
-    if request.advertised_services.len() > cutout_core::PEVCAP_MAX_ADVERTISED_SERVICES
-        || request
-            .advertised_services
-            .iter()
-            .any(|service| service.len() > 16)
-    {
-        return Err(MobileCaptureStartError::InvalidMetadata);
-    }
-    let path = directory.join(format!(
-        "cutout-btle-capture-{}-{}.jsonl",
-        wall_clock.milliseconds / 1_000,
-        request.filename_nonce
-    ));
-    let builder = MobilePevcapCaptureBuilder::new(
-        wall_clock,
-        request.platform_id,
-        Some(MobileTransportWriteLimitDto { bytes: 23 }),
-    );
-    if !builder.set_recording_origin(request.origin) {
-        return Err(MobileCaptureStartError::InvalidMetadata);
-    }
-    for service in request.advertised_services {
-        if builder.add_advertised_service(service) != MobileCaptureWriteOutcomeDto::Accepted {
-            return Err(MobileCaptureStartError::InvalidMetadata);
-        }
-    }
-    for annotation in [
-        format_pevcap_annotation("source".to_owned(), request.source),
-        format_pevcap_annotation("capture_reason".to_owned(), request.reason),
-        "capture_privacy=private".to_owned(),
-        format_pevcap_annotation("capture_evidence".to_owned(), request.evidence),
-    ] {
-        if builder.add_annotation(annotation) != MobileCaptureWriteOutcomeDto::Accepted {
-            return Err(MobileCaptureStartError::InvalidMetadata);
-        }
-    }
-    for annotation in request.annotations {
-        let annotation = sanitize_pevcap_annotation(annotation);
-        if startup_owned_annotation(&annotation)
-            || builder.add_annotation(annotation) != MobileCaptureWriteOutcomeDto::Accepted
-        {
-            return Err(MobileCaptureStartError::InvalidMetadata);
-        }
-    }
-    if !admits_recording(request.origin, database.as_deref()) {
-        return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
-    }
-    if let Some(database) = database.as_ref()
-        && !builder.set_database(Arc::clone(database))
-    {
-        return Err(MobileCaptureStartError::InvalidMetadata);
-    }
-    Ok(Arc::new(MobilePreparedCaptureStart {
-        prepared: Mutex::new(Some(PreparedCaptureWriter {
-            builder,
-            path: path.to_string_lossy().into_owned(),
-            database,
-            origin: request.origin,
-        })),
-    }))
+    let request = application::CaptureStartRequest {
+        wall_clock_unix_seconds: request.wall_clock_unix_seconds,
+        platform_id: request.platform_id,
+        advertised_services: request.advertised_services,
+        directory_path: request.directory_path,
+        filename_nonce: request.filename_nonce,
+        source: request.source,
+        reason: request.reason,
+        evidence: request.evidence,
+        annotations: request.annotations,
+        origin: request.origin.into(),
+    };
+    let inner = application::prepare_capture_start(
+        request,
+        database.map(|database| database.inner.clone()),
+    )?;
+    Ok(Arc::new(MobilePreparedCaptureStart { inner }))
 }
 
 #[uniffi::export]
@@ -245,27 +143,12 @@ impl MobilePreparedCaptureStart {
         &self,
         monotonic_ms: u64,
     ) -> Result<MobileStartedCaptureWriterDto, MobileCaptureStartError> {
-        let prepared = self
-            .prepared
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-            .ok_or(MobileCaptureStartError::AlreadyStarted)?;
-        if !admits_recording(prepared.origin, prepared.database.as_deref()) {
-            return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
-        }
-        if !prepared
-            .builder
-            .set_capture_start_monotonic_ms(monotonic_ms)
-        {
-            return Err(MobileCaptureStartError::WriterStartFailed);
-        }
-        if !prepared.builder.start_writer(prepared.path.clone()) {
-            return Err(MobileCaptureStartError::WriterStartFailed);
-        }
+        let started = self.inner.start(monotonic_ms)?;
         Ok(MobileStartedCaptureWriterDto {
-            builder: prepared.builder,
-            path: prepared.path,
+            builder: Arc::new(MobilePevcapCaptureBuilder {
+                writer: started.writer,
+            }),
+            path: started.path,
         })
     }
 }
@@ -273,7 +156,11 @@ impl MobilePreparedCaptureStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::PathBuf, thread};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        thread,
+    };
 
     struct Directory(PathBuf);
     impl Directory {
@@ -448,10 +335,6 @@ mod tests {
             "cutout-btle-capture-1700000000-3F2504E0-4F89-41D3-9A0C-0305E82C3301.jsonl"
         ));
         assert_eq!(
-            started.builder.wall_clock_start_unix_ms.as_milliseconds(),
-            1_700_000_000_125
-        );
-        assert_eq!(
             started.builder.metadata().annotations,
             [
                 "source=ios-app",
@@ -561,14 +444,9 @@ mod tests {
             Some(MobileCaptureStartError::InvalidDirectory)
         );
         let prepared = prepare_capture_writer(request(&directory), None).unwrap();
-        let path = prepared
-            .prepared
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .path
-            .clone();
+        let path = directory
+            .0
+            .join("cutout-btle-capture-1700000000-3F2504E0-4F89-41D3-9A0C-0305E82C3301.jsonl");
         fs::write(&path, b"original capture").unwrap();
         assert_eq!(
             prepared.start(1_000).err(),

@@ -34,6 +34,7 @@ uniffi = { workspace = true, features = ["tokio"] }
 uuid.workspace = true
 
 [dev-dependencies]
+cutout-application = { path = "../cutout-application", version = "0.1.0", features = ["test-support"] }
 reqwest = { workspace = true, features = ["json"] }
 hex-literal.workspace = true
 axum.workspace = true

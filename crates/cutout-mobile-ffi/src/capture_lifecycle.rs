@@ -1,6 +1,7 @@
 //! Capture lifecycle through the existing session-state owner.
 
 use crate::{CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto, MobileCaptureWriterStatusDto};
+use cutout_application::session::{CaptureWriteDecision, CaptureWriterOutcome};
 use cutout_core::{
     CaptureAttemptSnapshot, CaptureCompletionDisposition, CaptureFinishToken, CaptureGeneration,
     CaptureOrigin, CaptureStage,
@@ -48,6 +49,29 @@ pub enum MobileCaptureWriteDecisionDto {
     StaleFailure,
 }
 
+impl From<CaptureWriteDecision> for MobileCaptureWriteDecisionDto {
+    fn from(value: CaptureWriteDecision) -> Self {
+        match value {
+            CaptureWriteDecision::Continue => Self::Continue,
+            CaptureWriteDecision::Rejected => Self::Rejected,
+            CaptureWriteDecision::AdmissionLost => Self::AdmissionLost,
+            CaptureWriteDecision::FailWriter => Self::FailWriter,
+            CaptureWriteDecision::StaleFailure => Self::StaleFailure,
+        }
+    }
+}
+impl From<MobileCaptureWriteDecisionDto> for CaptureWriteDecision {
+    fn from(value: MobileCaptureWriteDecisionDto) -> Self {
+        match value {
+            MobileCaptureWriteDecisionDto::Continue => Self::Continue,
+            MobileCaptureWriteDecisionDto::Rejected => Self::Rejected,
+            MobileCaptureWriteDecisionDto::AdmissionLost => Self::AdmissionLost,
+            MobileCaptureWriteDecisionDto::FailWriter => Self::FailWriter,
+            MobileCaptureWriteDecisionDto::StaleFailure => Self::StaleFailure,
+        }
+    }
+}
+
 /// Durability receipt for one flush; observation loss is tracked separately.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileCaptureFlushOutcomeDto {
@@ -80,40 +104,10 @@ fn apply_writer_health(
     fatal: bool,
     healthy: MobileCaptureWriteDecisionDto,
 ) -> MobileCaptureWriteDecisionDto {
-    let Some(generation) = generation else {
-        return MobileCaptureWriteDecisionDto::StaleFailure;
-    };
-    let mut inner = handle.lock_inner();
-    let capture = &mut inner.session_state_mut().capture;
-    let Some(attempt) = capture.snapshot() else {
-        return MobileCaptureWriteDecisionDto::StaleFailure;
-    };
-    if attempt.generation != generation.into() {
-        return MobileCaptureWriteDecisionDto::StaleFailure;
-    }
-    match attempt.stage {
-        CaptureStage::Recording | CaptureStage::SaveFailed => {
-            if fatal {
-                capture.writer_failed(generation.into());
-                MobileCaptureWriteDecisionDto::FailWriter
-            } else {
-                healthy
-            }
-        }
-        // The finish token still owns Saving. Its typed flush receipt will move this
-        // attempt to Finalizing or SaveFailed through finish_capture_flush.
-        CaptureStage::Saving => {
-            if fatal {
-                MobileCaptureWriteDecisionDto::FailWriter
-            } else {
-                healthy
-            }
-        }
-        CaptureStage::Starting
-        | CaptureStage::Finalizing
-        | CaptureStage::Saved
-        | CaptureStage::Failed => MobileCaptureWriteDecisionDto::StaleFailure,
-    }
+    handle
+        .lock_inner()
+        .apply_capture_writer_health(generation.map(Into::into), fatal, healthy.into())
+        .into()
 }
 
 /// One Rust-issued writer attempt, not a connection or device identity.
@@ -193,12 +187,11 @@ impl From<MobileCaptureFinishTokenDto> for CaptureFinishToken {
 impl CutoutSessionStateHandle {
     /// Reads admission without copying unrelated telemetry or settings.
     pub fn capture_lifecycle_snapshot(&self) -> MobileCaptureLifecycleSnapshotDto {
-        let inner = self.lock_inner();
-        let capture = &inner.session_state().capture;
+        let snapshot = self.lock_inner().capture_snapshot();
         MobileCaptureLifecycleSnapshotDto {
-            attempt: capture.snapshot().map(Into::into),
-            can_start: capture.can_start(),
-            can_pair: capture.can_pair(),
+            attempt: snapshot.attempt.map(Into::into),
+            can_start: snapshot.can_start,
+            can_pair: snapshot.can_pair,
         }
     }
 
@@ -208,26 +201,19 @@ impl CutoutSessionStateHandle {
         origin: MobileCaptureOriginDto,
     ) -> Option<MobileCaptureGenerationDto> {
         self.lock_inner()
-            .session_state_mut()
-            .capture
-            .begin(origin.into())
+            .begin_capture(origin.into())
             .map(Into::into)
     }
 
     /// Reports successful writer creation, never just the user's intent to start.
     pub fn capture_writer_started(&self, generation: MobileCaptureGenerationDto) -> bool {
-        self.lock_inner()
-            .session_state_mut()
-            .capture
-            .writer_started(generation.into())
+        self.lock_inner().capture_writer_started(generation.into())
     }
 
     /// Reports a failed constructor for its reserved attempt.
     pub fn capture_writer_start_failed(&self, generation: MobileCaptureGenerationDto) -> bool {
         self.lock_inner()
-            .session_state_mut()
-            .capture
-            .writer_start_failed(generation.into())
+            .capture_writer_start_failed(generation.into())
     }
 
     /// Claims a save operation before native asynchronous work.
@@ -236,9 +222,7 @@ impl CutoutSessionStateHandle {
         generation: MobileCaptureGenerationDto,
     ) -> Option<MobileCaptureFinishTokenDto> {
         self.lock_inner()
-            .session_state_mut()
-            .capture
-            .begin_finish(generation.into())
+            .begin_capture_finish(generation.into())
             .map(Into::into)
     }
 
@@ -258,9 +242,7 @@ impl CutoutSessionStateHandle {
             | MobileCaptureFlushOutcomeDto::Failed { .. } => false,
         };
         self.lock_inner()
-            .session_state_mut()
-            .capture
-            .finish_flush(token.into(), succeeded)
+            .finish_capture_flush(token.into(), succeeded)
     }
 
     /// Interprets one flush receipt without native queue or writer-health policy.
@@ -312,10 +294,7 @@ impl CutoutSessionStateHandle {
 
     /// Marks failed evidence without letting a later counter update clear it.
     pub fn capture_writer_failed(&self, generation: MobileCaptureGenerationDto) -> bool {
-        self.lock_inner()
-            .session_state_mut()
-            .capture
-            .writer_failed(generation.into())
+        self.lock_inner().capture_writer_failed(generation.into())
     }
 
     /// Applies a writer result to the Rust-owned capture lifecycle.
@@ -324,28 +303,22 @@ impl CutoutSessionStateHandle {
         generation: Option<MobileCaptureGenerationDto>,
         outcome: MobileCaptureWriteOutcomeDto,
     ) -> MobileCaptureWriteDecisionDto {
-        match outcome {
-            MobileCaptureWriteOutcomeDto::Accepted => MobileCaptureWriteDecisionDto::Continue,
-            MobileCaptureWriteOutcomeDto::Rejected => MobileCaptureWriteDecisionDto::Rejected,
+        let outcome = match outcome {
+            MobileCaptureWriteOutcomeDto::Accepted => CaptureWriterOutcome::Accepted,
+            MobileCaptureWriteOutcomeDto::Rejected => CaptureWriterOutcome::Rejected,
             MobileCaptureWriteOutcomeDto::AdmissionLost { .. } => {
-                MobileCaptureWriteDecisionDto::AdmissionLost
+                CaptureWriterOutcome::AdmissionLost
             }
-            MobileCaptureWriteOutcomeDto::Failed => {
-                if generation.is_some_and(|generation| self.capture_writer_failed(generation)) {
-                    MobileCaptureWriteDecisionDto::FailWriter
-                } else {
-                    MobileCaptureWriteDecisionDto::StaleFailure
-                }
-            }
-        }
+            MobileCaptureWriteOutcomeDto::Failed => CaptureWriterOutcome::Failed,
+        };
+        self.lock_inner()
+            .apply_capture_write_outcome(generation.map(Into::into), outcome)
+            .into()
     }
 
     /// Detaches active ownership while the consumed writer finishes.
     pub fn retire_capture_writer(&self, generation: MobileCaptureGenerationDto) -> bool {
-        self.lock_inner()
-            .session_state_mut()
-            .capture
-            .retire(generation.into())
+        self.lock_inner().retire_capture_writer(generation.into())
     }
 
     /// Consumes one owned terminal receipt, preserving current state for retired writers.
@@ -368,9 +341,7 @@ impl CutoutSessionStateHandle {
             crate::capture_completion::completion_succeeded(&completion, prior_write_outcome);
         let disposition = self
             .lock_inner()
-            .session_state_mut()
-            .capture
-            .complete(generation.into(), succeeded);
+            .complete_capture_writer(generation.into(), succeeded);
         match disposition {
             CaptureCompletionDisposition::Rejected => {
                 crate::MobileCaptureCompletionDecisionDto::Rejected
@@ -403,12 +374,7 @@ mod tests {
         handle.connection_link_established(token.clone());
         {
             let mut inner = handle.lock_inner();
-            assert!(
-                inner
-                    .session_state_mut()
-                    .connection
-                    .finish_detection(&token.clone().into(), true)
-            );
+            assert!(inner.finish_detection(&token.clone().into(), true));
         }
         let connection_before = handle.connection_attempt_snapshot();
 

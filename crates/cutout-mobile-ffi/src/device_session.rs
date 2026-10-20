@@ -190,8 +190,7 @@ impl CutoutSessionStateHandle {
         allow_closest_match: bool,
     ) -> crate::DiscoveryCandidate {
         let inner = self.lock_inner();
-        let resolution: DeviceDetectionResolutionRecord =
-            inner.detector().resolution(inner.session_state()).into();
+        let resolution: DeviceDetectionResolutionRecord = inner.detector_resolution().into();
         if allow_closest_match {
             crate::mobile_discovery_candidate_from_closest_detection_resolution(
                 platform_identifier,
