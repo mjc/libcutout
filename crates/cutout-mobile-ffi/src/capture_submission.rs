@@ -126,9 +126,11 @@ impl From<cutout_core::CaptureAttachments> for MobileCaptureEvidenceDto {
         Self {
             note: evidence.note,
             screenshots: evidence.screenshots.into_iter().map(|s| s.jpeg).collect(),
-            note_limit_bytes: 1024,
-            screenshot_limit: 4,
-            screenshot_limit_bytes: 5 * 1024 * 1024,
+            note_limit_bytes: u32::try_from(cutout_core::MAX_CAPTURE_NOTE_BYTES)
+                .unwrap_or(u32::MAX),
+            screenshot_limit: u32::try_from(cutout_core::MAX_CAPTURE_SCREENSHOTS)
+                .unwrap_or(u32::MAX),
+            screenshot_limit_bytes: cutout_core::MAX_CAPTURE_SCREENSHOT_BYTES as u64,
         }
     }
 }

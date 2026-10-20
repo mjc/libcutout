@@ -275,9 +275,21 @@ async fn content(
     let actor = actor(&store, &headers).await?;
     let operation = id(&operation)?;
     store.capture_read_budget(actor.clone()).await?;
-    let total = store
-        .capture_content_size(actor.clone(), operation.clone())
+    let metadata = store
+        .capture_content_metadata(actor.clone(), operation.clone())
         .await?;
+    let total = metadata.bytes;
+    let (content_type, disposition) = if metadata.evidence.is_some() {
+        (
+            "application/vnd.cutout.capture-evidence",
+            "attachment; filename=\"bluetooth-capture.capture-evidence\"",
+        )
+    } else {
+        (
+            "application/octet-stream",
+            "attachment; filename=\"bluetooth-capture.pevcap\"",
+        )
+    };
     let permit = store.capture_transfer(&actor)?;
     let lease = DownloadLease::new(permit);
     let stream = futures_util::stream::unfold(
@@ -312,11 +324,8 @@ async fn content(
     );
     Ok((
         [
-            (header::CONTENT_TYPE, "application/octet-stream"),
-            (
-                header::CONTENT_DISPOSITION,
-                "attachment; filename=\"bluetooth-capture.pevcap\"",
-            ),
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         Body::from_stream(stream),
     )
@@ -459,6 +468,14 @@ mod tests {
         let response = content(State(store.clone()), Path(operation.clone()), reviewer)
             .await
             .unwrap();
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/vnd.cutout.capture-evidence"
+        );
+        assert_eq!(
+            response.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"bluetooth-capture.capture-evidence\""
+        );
         let downloaded = axum::body::to_bytes(response.into_body(), 1_000_000)
             .await
             .unwrap();
@@ -510,6 +527,14 @@ mod tests {
         )
         .await
         .expect("first download");
+        assert_eq!(
+            first.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
+        assert_eq!(
+            first.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"bluetooth-capture.pevcap\""
+        );
         assert_eq!(
             content(
                 State(store.clone()),
