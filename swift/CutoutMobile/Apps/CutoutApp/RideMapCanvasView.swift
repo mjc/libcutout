@@ -75,6 +75,7 @@ struct RideMapCanvasView: View {
     var cameraSpanDidChange: (MKCoordinateSpan) -> Void = { _ in }
     var defaultCameraSpan: MKCoordinateSpan? = nil
     var defaultCameraCenter: CLLocationCoordinate2D? = nil
+    var currentLocation: CLLocationCoordinate2D? = nil
     var previouslyFittedCameraID: String? = nil
     var cameraFitDidApply: (String) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -287,6 +288,17 @@ struct RideMapCanvasView: View {
             let markerCaptionWidth = min(300, mapGeometry.size.width * 0.75)
 
             Map(position: $mapPosition, interactionModes: interactionModes) {
+                if let currentLocation = validatedCurrentLocation {
+                    Annotation("", coordinate: currentLocation) {
+                        RideMapRouteMarker(
+                            title: localizedAppText("ride_map.current_marker"),
+                            color: PevColors.green,
+                            captionOffset: .zero,
+                            captionWidth: markerCaptionWidth
+                        )
+                        .accessibilityIdentifier("ride-map.phone-location-marker")
+                    }
+                }
                 ForEach(contextSegmentPaths) { segment in
                     MapPolyline(coordinates: segment.coordinates)
                         .stroke(
@@ -383,8 +395,16 @@ struct RideMapCanvasView: View {
                 rebuildContextPaths()
                 if priorRouteID != key.routeID, points.isEmpty {
                     // Do not leave an unrelated route's camera behind while an empty route is
-                    // selected. Its first point will trigger the normal Rust-bounded fit below.
-                    mapPosition = .automatic
+                    // selected. Live mode may have a canonical phone location before its first
+                    // recorded route point, so retain that valid local camera when available.
+                    if let region = Self.emptyRouteDefaultRegion(
+                        center: defaultCameraCenter,
+                        span: defaultCameraSpan
+                    ) {
+                        mapPosition = .region(region)
+                    } else {
+                        mapPosition = .automatic
+                    }
                     isApplyingCamera = true
                 }
                 let cameraFitID = key.cameraFitID ?? key.routeID
@@ -410,6 +430,17 @@ struct RideMapCanvasView: View {
             contextRoutes: contextRoutes,
             cameraFitID: cameraFitID
         )
+    }
+
+    private var validatedCurrentLocation: CLLocationCoordinate2D? {
+        Self.validatedCoordinate(currentLocation)
+    }
+
+    static func validatedCoordinate(_ coordinate: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        guard let coordinate, CLLocationCoordinate2DIsValid(coordinate),
+            coordinate.latitude.isFinite, coordinate.longitude.isFinite
+        else { return nil }
+        return coordinate
     }
 
     private var startReasonsBySegmentID: [UInt64: MobileRideMapSegmentStartReason] {
@@ -582,6 +613,14 @@ struct RideMapCanvasView: View {
         span: MKCoordinateSpan
     ) -> MKCoordinateRegion? {
         RideMapPresentationState.localRegion(center: center, longitudeDelta: span.longitudeDelta)
+    }
+
+    static func emptyRouteDefaultRegion(
+        center: CLLocationCoordinate2D?,
+        span: MKCoordinateSpan?
+    ) -> MKCoordinateRegion? {
+        guard let center = validatedCoordinate(center), let span else { return nil }
+        return localRegion(center: center, span: span)
     }
 }
 

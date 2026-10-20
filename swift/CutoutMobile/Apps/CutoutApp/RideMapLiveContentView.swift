@@ -50,38 +50,40 @@ struct RideMapLiveContentView: View {
             VStack(spacing: 0) {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        if !displayPoints.isEmpty {
-                            RideMapCanvasView(
-                                points: displayPoints,
-                                routeID: routeID,
-                                projectionVersion: projectionVersion,
-                                showsStartMarker: showsRecordedBounds,
-                                showsEndMarker: showsRecordedBounds,
-                                showsCurrentMarker: true,
-                                endpointMetadata: endpointMetadata,
-                                cameraRegion: cameraRegion,
-                                segments: segments,
-                                contextRoutes: [],
-                                fitsRouteOnChange: isTerminalRide,
-                                cameraFitID: cameraFitID,
-                                mapPosition: $mapPosition,
-                                isApplyingCamera: $isApplyingCamera,
-                                cameraDidChange: { _ in
-                                    followsLatestPoint = false
-                                },
-                                cameraSpanDidChange: cameraSpanDidChange,
-                                defaultCameraSpan: isTerminalRide ? nil : cameraSpan,
-                                defaultCameraCenter: isTerminalRide ? nil : userLocationCenter
+                        RideMapCanvasView(
+                            points: displayPoints,
+                            routeID: routeID,
+                            projectionVersion: projectionVersion,
+                            showsStartMarker: showsRecordedBounds,
+                            showsEndMarker: showsRecordedBounds,
+                            showsCurrentMarker: true,
+                            endpointMetadata: endpointMetadata,
+                            cameraRegion: cameraRegion,
+                            segments: segments,
+                            contextRoutes: [],
+                            fitsRouteOnChange: isTerminalRide,
+                            cameraFitID: cameraFitID,
+                            mapPosition: $mapPosition,
+                            isApplyingCamera: $isApplyingCamera,
+                            cameraDidChange: { _ in
+                                followsLatestPoint = false
+                            },
+                            cameraSpanDidChange: cameraSpanDidChange,
+                            defaultCameraSpan: isTerminalRide ? nil : cameraSpan,
+                            defaultCameraCenter: isTerminalRide ? nil : RideMapCanvasView.validatedCoordinate(userLocationCenter),
+                            currentLocation: Self.phoneLocationAnnotationCoordinate(
+                                routePoints: displayPoints,
+                                location: userLocationCenter
                             )
-                            .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
-                            .frame(maxWidth: .infinity)
-                            .overlay(alignment: .topTrailing) {
-                                RideMapCameraControlsView(
-                                    mode: cameraActionMode,
-                                    action: performCameraAction
-                                )
-                                .padding(12)
-                            }
+                        )
+                        .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .topTrailing) {
+                            RideMapCameraControlsView(
+                                mode: cameraActionMode,
+                                action: performCameraAction
+                            )
+                            .padding(12)
                         }
 
                         VStack(alignment: .leading, spacing: 12) {
@@ -148,18 +150,18 @@ struct RideMapLiveContentView: View {
         }
         .onChange(of: projectionVersion, initial: true) { _, _ in
             guard followsLatestPoint else { return }
-            recenterOnLatestPoint(centerOnUserLocation: !didPlaceInitialCamera)
-            didPlaceInitialCamera = userLocationCenter != nil
+            recenterForLiveData(centerOnUserLocation: !didPlaceInitialCamera)
+            didPlaceInitialCamera = RideMapCanvasView.validatedCoordinate(userLocationCenter) != nil
         }
         .onChange(of: userLocationCenter?.latitude) { _, _ in
             guard followsLatestPoint, !didPlaceInitialCamera else { return }
-            recenterOnLatestPoint(centerOnUserLocation: true)
-            didPlaceInitialCamera = userLocationCenter != nil
+            recenterForLiveData(centerOnUserLocation: true)
+            didPlaceInitialCamera = RideMapCanvasView.validatedCoordinate(userLocationCenter) != nil
         }
         .onChange(of: userLocationCenter?.longitude) { _, _ in
             guard followsLatestPoint, !didPlaceInitialCamera else { return }
-            recenterOnLatestPoint(centerOnUserLocation: true)
-            didPlaceInitialCamera = userLocationCenter != nil
+            recenterForLiveData(centerOnUserLocation: true)
+            didPlaceInitialCamera = RideMapCanvasView.validatedCoordinate(userLocationCenter) != nil
         }
         .confirmationDialog(
             localizedAppText("ride_map.discard_confirm_title"),
@@ -185,7 +187,8 @@ struct RideMapLiveContentView: View {
             state: snapshot?.state,
             hasPoints: displayPoints.isEmpty == false,
             hasCameraRegion: cameraRegion != nil,
-            followsLatestPoint: followsLatestPoint
+            followsLatestPoint: followsLatestPoint,
+            hasUserLocation: RideMapCanvasView.validatedCoordinate(userLocationCenter) != nil
         )
     }
 
@@ -193,13 +196,15 @@ struct RideMapLiveContentView: View {
         state: MobileRideMapStateDto?,
         hasPoints: Bool,
         hasCameraRegion: Bool,
-        followsLatestPoint: Bool
+        followsLatestPoint: Bool,
+        hasUserLocation: Bool = false
     ) -> CameraActionMode {
-        guard hasPoints, hasCameraRegion else { return .unavailable }
         switch state {
         case .active, .paused:
+            guard (hasPoints && hasCameraRegion) || hasUserLocation else { return .unavailable }
             return followsLatestPoint ? .following : .notFollowing
         case .stopped, .interrupted, .discarded, .saved, .imported:
+            guard hasPoints, hasCameraRegion else { return .unavailable }
             return .showFullRide
         case .draft, nil:
             return .unavailable
@@ -251,6 +256,21 @@ struct RideMapLiveContentView: View {
         }
     }
 
+    static func phoneLocationAnnotationCoordinate(
+        routePoints: [MobileRideMapRouteDisplayPoint],
+        location: CLLocationCoordinate2D?
+    ) -> CLLocationCoordinate2D? {
+        guard routePoints.isEmpty else { return nil }
+        return RideMapCanvasView.validatedCoordinate(location)
+    }
+
+    static func emptyRouteCameraRegion(
+        location: CLLocationCoordinate2D?,
+        span: MKCoordinateSpan
+    ) -> MKCoordinateRegion? {
+        RideMapCanvasView.emptyRouteDefaultRegion(center: location, span: span)
+    }
+
     private func showFullRide() {
         guard cameraActionMode == .showFullRide,
             let cameraRegion,
@@ -282,7 +302,7 @@ struct RideMapLiveContentView: View {
     private func performCameraAction() {
         switch cameraActionMode {
         case .following, .notFollowing:
-            recenterOnLatestPoint()
+            recenterForLiveData(centerOnUserLocation: true)
         case .showFullRide:
             showFullRide()
         case .unavailable:
@@ -299,10 +319,26 @@ struct RideMapLiveContentView: View {
         }
         followsLatestPoint = true
         isApplyingCamera = true
-        let center = centerOnUserLocation ? (userLocationCenter ?? coordinate(for: point)) : coordinate(for: point)
+        let center = centerOnUserLocation
+            ? (RideMapCanvasView.validatedCoordinate(userLocationCenter) ?? coordinate(for: point))
+            : coordinate(for: point)
         guard let region = RideMapCanvasView.localRegion(center: center, span: cameraSpan) else {
             return
         }
+        mapPosition = .region(region)
+    }
+
+    private func recenterForLiveData(centerOnUserLocation: Bool) {
+        guard Self.supportsLatestPointFollow(state: snapshot?.state) else { return }
+        if !displayPoints.isEmpty, cameraRegion != nil {
+            recenterOnLatestPoint(centerOnUserLocation: centerOnUserLocation)
+            return
+        }
+        guard displayPoints.isEmpty,
+            let region = Self.emptyRouteCameraRegion(location: userLocationCenter, span: cameraSpan)
+        else { return }
+        followsLatestPoint = true
+        isApplyingCamera = true
         mapPosition = .region(region)
     }
 
