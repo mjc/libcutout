@@ -52,9 +52,15 @@ enum DevCommand {
         package: PathBuf,
         output: PathBuf,
     },
-    IosDeploy(Vec<String>),
+    IosDeploy(IosLaunchIntent),
     IosVerifyApp(PathBuf),
     IosCaptures,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum IosLaunchIntent {
+    InstallOnly,
+    Launch { arguments: Vec<String> },
 }
 
 fn main() -> Result<()> {
@@ -70,7 +76,7 @@ fn main() -> Result<()> {
             package,
             output,
         } => check_swift_ffi_build(&root, &package, &output),
-        DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
+        DevCommand::IosDeploy(launch_intent) => deploy_ios(&root, launch_intent),
         DevCommand::IosVerifyApp(product) => verify_ios_app(&product),
         DevCommand::IosCaptures => pull_ios_captures(&root),
     }
@@ -100,15 +106,29 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::IosVerifyApp(product.into()))
         }
         [ios, deploy] if ios == "ios" && deploy == "deploy" => {
-            Ok(DevCommand::IosDeploy(Vec::new()))
+            Ok(DevCommand::IosDeploy(IosLaunchIntent::InstallOnly))
+        }
+        [ios, deploy, launch] if ios == "ios" && deploy == "deploy" && launch == "--launch" => {
+            Ok(DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: Vec::new(),
+            }))
+        }
+        [ios, deploy, launch, separator, launch_args @ ..]
+            if ios == "ios" && deploy == "deploy" && launch == "--launch" && separator == "--" =>
+        {
+            Ok(DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: launch_args.to_vec(),
+            }))
         }
         [ios, deploy, separator, launch_args @ ..]
             if ios == "ios" && deploy == "deploy" && separator == "--" =>
         {
-            Ok(DevCommand::IosDeploy(launch_args.to_vec()))
+            Ok(DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: launch_args.to_vec(),
+            }))
         }
         _ => bail!(
-            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev swift -- <args> | cutout-dev xcodebuild -- <args> | cutout-dev ios deploy [-- <launch args>...] | cutout-dev ios verify-app <app bundle> | cutout-dev ios captures"
+            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev swift -- <args> | cutout-dev xcodebuild -- <args> | cutout-dev ios deploy [--launch [-- <launch args>...]] | cutout-dev ios verify-app <app bundle> | cutout-dev ios captures"
         ),
     }
 }
@@ -581,7 +601,7 @@ fn selected_ffi_generation(root: &Path) -> Result<PathBuf> {
     Ok(package)
 }
 
-fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
+fn deploy_ios(root: &Path, launch_intent: IosLaunchIntent) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "iPhone deployment requires macOS"
@@ -642,6 +662,20 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
         ]),
         "install iPhone app",
     )?;
+    if let Some(mut launch) = ios_launch_command(launch_intent, &device, &bundle_id) {
+        run(&mut launch, "launch iPhone app")?;
+    }
+
+    println!("ios_device_udid={device}");
+    println!("ios_app_bundle_id={bundle_id}");
+    println!("ios_app_product={}", product.display());
+    Ok(())
+}
+
+fn ios_launch_command(intent: IosLaunchIntent, device: &str, bundle_id: &str) -> Option<Command> {
+    let IosLaunchIntent::Launch { arguments } = intent else {
+        return None;
+    };
     let mut launch = command("xcrun");
     launch
         .args([
@@ -651,18 +685,13 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
             "process",
             "launch",
             "--device",
-            &device,
+            device,
             "--terminate-existing",
             "--activate",
-            &bundle_id,
+            bundle_id,
         ])
-        .args(launch_args);
-    run(&mut launch, "launch iPhone app")?;
-
-    println!("ios_device_udid={device}");
-    println!("ios_app_bundle_id={bundle_id}");
-    println!("ios_app_product={}", product.display());
-    Ok(())
+        .args(arguments);
+    Some(launch)
 }
 
 fn pull_ios_captures(root: &Path) -> Result<()> {
@@ -2026,12 +2055,65 @@ mod tests {
     }
 
     #[test]
-    fn ios_deploy_accepts_launch_arguments_after_separator() {
-        let args = ["ios", "deploy", "--", "--launch-smoke"].map(str::to_owned);
+    fn ios_deploy_is_install_only_unless_launch_is_explicit() {
+        assert_eq!(
+            parse_cli(&["ios".into(), "deploy".into()]).unwrap(),
+            DevCommand::IosDeploy(IosLaunchIntent::InstallOnly)
+        );
+        assert_eq!(
+            parse_cli(&["ios".into(), "deploy".into(), "--launch".into()]).unwrap(),
+            DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: Vec::new(),
+            })
+        );
+        assert!(
+            ios_launch_command(IosLaunchIntent::InstallOnly, "device-id", "lol.cutout.app")
+                .is_none()
+        );
+    }
 
+    #[test]
+    fn ios_deploy_preserves_explicit_launch_arguments_and_command_construction() {
+        let args = ["ios", "deploy", "--", "--launch-smoke"].map(str::to_owned);
         assert_eq!(
             parse_cli(&args).unwrap(),
-            DevCommand::IosDeploy(vec!["--launch-smoke".to_owned()])
+            DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: vec!["--launch-smoke".to_owned()],
+            })
+        );
+
+        let args = ["ios", "deploy", "--launch", "--", "--launch-smoke"].map(str::to_owned);
+        assert_eq!(
+            parse_cli(&args).unwrap(),
+            DevCommand::IosDeploy(IosLaunchIntent::Launch {
+                arguments: vec!["--launch-smoke".to_owned()],
+            })
+        );
+
+        let launch = ios_launch_command(
+            IosLaunchIntent::Launch {
+                arguments: vec!["--launch-smoke".to_owned()],
+            },
+            "device-id",
+            "lol.cutout.app",
+        )
+        .unwrap();
+        assert_eq!(launch.get_program(), OsStr::new("xcrun"));
+        assert_eq!(
+            launch.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("devicectl"),
+                OsStr::new("--quiet"),
+                OsStr::new("device"),
+                OsStr::new("process"),
+                OsStr::new("launch"),
+                OsStr::new("--device"),
+                OsStr::new("device-id"),
+                OsStr::new("--terminate-existing"),
+                OsStr::new("--activate"),
+                OsStr::new("lol.cutout.app"),
+                OsStr::new("--launch-smoke"),
+            ]
         );
     }
 
