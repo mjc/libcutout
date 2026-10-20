@@ -100,6 +100,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn device_metadata_leaves_room_for_repeated_action_intervals() {
+        let metadata = [
+            "source=ios-app",
+            "capture_reason=record-only",
+            "capture_privacy=private",
+            "capture_evidence=hardware_tested",
+            "route=record_only",
+            "user_note=user-initiated Bluetooth capture",
+            "resolved_evidence=Veteran protocol model id",
+            "resolved_detail=NOSFET Aero confirmed by model id 43",
+        ];
+        let mut annotations = CaptureAnnotations::default();
+        annotations.try_append(metadata.map(str::to_owned)).unwrap();
+        for _ in 0..16 {
+            annotations
+                .start(CaptureSessionLabel::PoweredOnStationary)
+                .unwrap();
+            annotations
+                .stop(CaptureSessionLabel::PoweredOnStationary)
+                .unwrap();
+        }
+        assert_eq!(&annotations.entries()[..metadata.len()], metadata);
+        assert_eq!(annotations.entries().len(), metadata.len() + 32);
+        assert_eq!(annotations.active_labels(), []);
+    }
+
+    #[test]
     fn rejected_exclusive_replacement_preserves_the_original_interval() {
         let mut annotations = CaptureAnnotations::default();
         annotations

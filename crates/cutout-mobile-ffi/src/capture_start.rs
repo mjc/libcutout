@@ -484,6 +484,11 @@ mod tests {
         request
             .annotations
             .push("capture_label=ride_start".to_owned());
+        // Four startup annotations, one automatic policy and one reserved stop.
+        let padding = cutout_core::PEVCAP_MAX_ANNOTATIONS - 6 - request.annotations.len();
+        request
+            .annotations
+            .extend((0..padding).map(|index| format!("note={index}")));
         let prepared =
             prepare_capture_writer(request.clone(), Some(Arc::clone(&database))).unwrap();
         request.annotations.push("note=overflow".to_owned());
