@@ -14,6 +14,13 @@ const SCREENSHOT_ASSETS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/ride-tracking.png"),
     ),
     (
+        "/assets/screenshots/en/ride-music-history.png?v=20261019-history-music",
+        "image/png",
+        include_bytes!(
+            "../../../docs/mockups/cutout-site/assets/screenshots/en/ride-music-history.png"
+        ),
+    ),
+    (
         "/assets/screenshots/en/charging-map.png",
         "image/png",
         include_bytes!("../../../docs/mockups/cutout-site/assets/screenshots/en/charging-map.png"),
