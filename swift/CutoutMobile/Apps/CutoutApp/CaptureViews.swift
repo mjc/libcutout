@@ -86,7 +86,7 @@ struct CaptureRecordingScreen: View {
                 .padding(.vertical, 8)
             }
 
-            Section("Observed activity") {
+            Section(localizedAppText("captures.observed_activity")) {
                 CaptureLabelControls(
                     labels: CaptureQuickLabel.activity,
                     compact: true,
@@ -120,7 +120,7 @@ struct CaptureRecordingScreen: View {
                         stopCaptureLabel: stopCaptureLabel
                     ).disabled(!canAnnotate)
                 } label: {
-                    Text("More action markers").accessibilityIdentifier("captures.labels")
+                    Text(localizedAppText("captures.more_actions")).accessibilityIdentifier("captures.labels")
                 }
             }
 
