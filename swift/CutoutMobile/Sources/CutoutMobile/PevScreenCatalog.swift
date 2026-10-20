@@ -565,6 +565,10 @@ extension DevicePickerRow {
         section == .probeFirst
     }
 
+    public var canConnect: Bool {
+        isSupported || isProbeRecommended
+    }
+
     public var captureActionTitle: String {
         pevLocalizedText(isProbeRecommended ? "picker.row.action.use" : "picker.action.start_capture")
     }

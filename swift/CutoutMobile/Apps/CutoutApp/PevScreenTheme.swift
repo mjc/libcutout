@@ -18,11 +18,11 @@ extension DevicePickerRow {
     }
 
     var titleColor: Color {
-        isSupported ? PevColors.primaryText : PevColors.disabledText
+        canConnect ? PevColors.primaryText : PevColors.disabledText
     }
 
     var secondaryTextColor: Color {
-        isSupported ? PevColors.muted : PevColors.disabledSecondaryText
+        canConnect ? PevColors.muted : PevColors.disabledSecondaryText
     }
 }
 

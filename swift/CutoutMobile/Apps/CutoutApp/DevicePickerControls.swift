@@ -23,7 +23,7 @@ struct PickerDeviceRow: View {
                     .accessibilityIdentifier("device-picker.details.\(row.id)")
                 }
             }
-            if let action, row.state.isSupported || row.isProbeRecommended {
+            if let action, row.canConnect {
                 Button(action: action) {
                     Text(localizedAppText("picker.connect"))
                         .font(.headline)

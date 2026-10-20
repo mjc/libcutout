@@ -228,7 +228,7 @@ final class DevicePresentationModel {
             )
             return .unavailable
         }
-        guard selectedRow.isSupported || selectedRow.isProbeRecommended else { return .ignored }
+        guard selectedRow.canConnect else { return .ignored }
 
         let selection = ConnectionSelection(
             platformIdentifier: selectedRow.id,
