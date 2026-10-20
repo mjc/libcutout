@@ -91,7 +91,8 @@ class MainActivity : Activity() {
         root.addView(nestedToolbar, LinearLayout.LayoutParams(-1, -2))
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        ride = RideDashboardView(this, onDisconnect = { client.disconnect() }, onChooseDevice = { showPage(R.string.devices) })
+        ride = RideDashboardView(this, onDisconnect = { client.disconnect() }, onChooseDevice = { showPage(R.string.devices) },
+            onOpenTune = { showPage(R.string.configuration) }, onChooseVehicleKind = ::chooseVehicleKind)
         observations += app.locations.observePhoneSpeed(ride::renderPhoneSpeed)
         picker = DevicePickerPanel(this, onScan = ::scanOrRequestPermission,
             onOpenSettings = ::openAppSettings,
@@ -99,6 +100,9 @@ class MainActivity : Activity() {
             onConnect = { client.connect(it); showPage(R.string.ride) })
         settings = SettingsPanel(this, client.settingsDraftOwnerId,
             onOpenPhoneAlarms = { showPage(R.string.phone_alarm_title) },
+            onChooseVehicleKind = ::chooseVehicleKind,
+            loadDrivetrain = client::loadVescDrivetrain,
+            saveDrivetrain = client::saveVescDrivetrain,
             submit = { token, id, value, refused -> client.submit(token, id, value, refused) },
             submitAction = { token, id, refused -> client.submitAction(token, id, refused) })
         settings.restoreUiState(savedInstanceState?.getBundle("settings-ui"))
@@ -127,6 +131,7 @@ class MainActivity : Activity() {
         onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback)
         observations += app.rides.observe { value ->
             app.latestRide = value
+            ride.renderRecording(value.snapshot)
             if (resumed) maintainForegroundWork()
         }
         observations += app.music.observe { value ->
@@ -253,11 +258,43 @@ class MainActivity : Activity() {
         ride.render(value, value.chargeEstimate)
         picker.render(value, client.hasPermissions(), client.isEnabled(), scanned)
         settings.render(value.settings)
+        settings.renderVehicleSetup(value)
         pack?.render(value)
         debug?.render(value)
         if (page == R.string.more && moreIdentity != latest.session?.identity?.toString()) renderMore()
         updateNavigation()
         if (resumed) maintainForegroundWork()
+    }
+
+    private fun chooseVehicleKind() {
+        val token = latest.session?.connection?.token ?: return
+        val kinds = uniffi.cutout_mobile_ffi.userSelectableVehicleKinds()
+        val labels = kinds.map { kind -> ui.label(when (kind) {
+            MobileVehicleKindDto.ONEWHEEL -> "vesc.vehicle.float"
+            MobileVehicleKindDto.EBIKE -> "vesc.vehicle.bike"
+            MobileVehicleKindDto.ESKATE -> "vesc.vehicle.skateboard"
+            MobileVehicleKindDto.ELECTRIC_UNICYCLE -> "vesc.vehicle.electric_unicycle"
+            MobileVehicleKindDto.SCOOTER -> "device.type.scooter"
+            MobileVehicleKindDto.EMOTO -> "device.type.emoto"
+            MobileVehicleKindDto.UNKNOWN -> "vesc.vehicle.unknown"
+        }) }.toTypedArray()
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle(ui.label("device.type.choose"))
+            .setAdapter(object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
+                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    super.getView(position, convertView, parent).apply {
+                        tag = "device.type.choice.${kinds[position].name.lowercase(java.util.Locale.ROOT)}"
+                    }
+            }) { _, index ->
+                client.selectVehicleKind(token, kinds[index]) { result ->
+                    if (isFinishing || isDestroyed) return@selectVehicleKind
+                    result.onFailure { Toast.makeText(this, ui.label("device.type.save_failed"), Toast.LENGTH_LONG).show() }
+                }
+            }.setNegativeButton(R.string.cancel, null).create()
+        dialog.setOnShowListener {
+            dialog.listView.tag = "device.type.selection"
+        }
+        dialog.show()
     }
 
     private fun addPanel(id: Int, panel: View) {

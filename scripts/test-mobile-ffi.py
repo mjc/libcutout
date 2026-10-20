@@ -32,9 +32,9 @@ RUNNER = f"{APP}.test/androidx.test.runner.AndroidJUnitRunner"
 ANDROID_TARGETS = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}
 EMULATOR_TESTS = "lol.cutout.ffitest.MobileFfiTest,lol.cutout.ffitest.ProductionAppTest"
 GRADLE_CACHE = TARGET / "android-tests/gradle-cache"
-SHARED_LABEL_PREFIXES = ("settings.", "actions.", "controls.", "euc.", "vesc.",
+SHARED_LABEL_PREFIXES = ("device.", "settings.", "actions.", "controls.", "euc.", "vesc.",
                          "ride.", "status.", "footpad.", "music.", "bms.", "lighting.",
-                         "charging.", "setup.", "navigation.", "ride_map.", "camera.", "captures.")
+                         "charging.", "setup.", "navigation.", "ride_map.", "camera.", "captures.", "capture.")
 
 
 def select_device(output: str, selector: str | None) -> str:
