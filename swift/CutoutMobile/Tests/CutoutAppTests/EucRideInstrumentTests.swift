@@ -141,7 +141,7 @@ final class EucRideInstrumentTests: XCTestCase {
                 for (frameIndex, playerFrame) in playerFrames.enumerated() {
                     let image = try XCTUnwrap(renderedDashboard(height: height, playerFrame: playerFrame))
                     let pixels = try normalizedPixels(in: image, region: commonDashboardRegion)
-                    guard pixels != baselinePixels else { continue }
+                    guard !pixelsMatchWithinOneChannelStep(baselinePixels, pixels) else { continue }
                     let imagePath = pngArtifactPath(
                         for: image, name: "cutout-ride-layout-\(Int(height))-frame-\(frameIndex).png"
                     )
@@ -152,6 +152,13 @@ final class EucRideInstrumentTests: XCTestCase {
                     )
                 }
             }
+        }
+
+        func testRenderedPixelComparisonAllowsOnlySamePixelOneStepRounding() {
+            let baseline = Data([100, 150, 200, 255, 20, 30, 40, 255])
+            XCTAssertTrue(pixelsMatchWithinOneChannelStep(baseline, Data([101, 149, 201, 254, 20, 30, 40, 255])))
+            XCTAssertFalse(pixelsMatchWithinOneChannelStep(baseline, Data([102, 150, 200, 255, 20, 30, 40, 255])))
+            XCTAssertFalse(pixelsMatchWithinOneChannelStep(baseline, Data([20, 30, 40, 255, 100, 150, 200, 255])))
         }
 
         func testBatteryStripKeepsItsSizeWhenTelemetryBecomesUnavailable() {
@@ -265,11 +272,10 @@ final class EucRideInstrumentTests: XCTestCase {
             var maxX = -1
             var minY = left.count / (width * 4)
             var maxY = -1
-            var firstPixel: (x: Int, y: Int, baseline: [UInt8], actual: [UInt8])?
+            var firstPixel: (x: Int, y: Int, delta: Int, baseline: [UInt8], actual: [UInt8])?
             for offset in stride(from: 0, to: left.count, by: 4) {
-                guard left[offset] != right[offset] || left[offset + 1] != right[offset + 1]
-                    || left[offset + 2] != right[offset + 2] || left[offset + 3] != right[offset + 3]
-                else { continue }
+                let maximumDelta = (0 ..< 4).map { abs(Int(left[offset + $0]) - Int(right[offset + $0])) }.max() ?? 0
+                guard maximumDelta > 1 else { continue }
                 let pixel = offset / 4
                 let x = pixel % width
                 let y = pixel / width
@@ -279,12 +285,25 @@ final class EucRideInstrumentTests: XCTestCase {
                 minY = min(minY, y)
                 maxY = max(maxY, y)
                 if firstPixel == nil {
-                    firstPixel = (x, y, Array(left[offset ..< offset + 4]), Array(right[offset ..< offset + 4]))
+                    firstPixel = (
+                        x, y, maximumDelta, Array(left[offset ..< offset + 4]), Array(right[offset ..< offset + 4])
+                    )
                 }
             }
             guard let firstPixel else { return "no differing RGBA pixels" }
-            return "changedPixels=\(changedPixels), bounds=(\(minX),\(minY))-(\(maxX),\(maxY)), "
-                + "first=(\(firstPixel.x),\(firstPixel.y)) baselineRGBA=\(firstPixel.baseline) actualRGBA=\(firstPixel.actual)"
+            return "pixelsOverTolerance=\(changedPixels), bounds=(\(minX),\(minY))-(\(maxX),\(maxY)), "
+                + "first=(\(firstPixel.x),\(firstPixel.y)) maxChannelDelta=\(firstPixel.delta) "
+                + "baselineRGBA=\(firstPixel.baseline) actualRGBA=\(firstPixel.actual)"
+        }
+
+        private func pixelsMatchWithinOneChannelStep(_ lhs: Data, _ rhs: Data) -> Bool {
+            guard lhs.count == rhs.count, lhs.count.isMultiple(of: 4) else { return false }
+            let left = [UInt8](lhs)
+            let right = [UInt8](rhs)
+            for index in left.indices where abs(Int(left[index]) - Int(right[index])) > 1 {
+                return false
+            }
+            return true
         }
 
         private func pngArtifactPath(for image: CGImage, name: String) -> String? {
