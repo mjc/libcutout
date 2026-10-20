@@ -44,7 +44,11 @@ impl Server {
         });
         Self {
             address,
-            client: Client::builder().no_proxy().build().expect("client"),
+            client: cutout_core::http::client_builder()
+                .expect("platform verifier")
+                .no_proxy()
+                .build()
+                .expect("client"),
             task,
         }
     }
@@ -1682,7 +1686,8 @@ async fn retry_after_a_client_timeout_cannot_duplicate_a_committed_creation() {
     connection
         .execute_batch("BEGIN IMMEDIATE;")
         .expect("hold write lock");
-    let client = Client::builder()
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
         .no_proxy()
         .timeout(std::time::Duration::from_millis(250))
         .build()

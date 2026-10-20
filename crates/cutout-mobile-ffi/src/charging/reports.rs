@@ -202,7 +202,10 @@ mod tests {
             middleware::from_fn_with_state(first.clone(), lose_first_receipt),
         );
         let (base_url, task) = start(router).await?;
-        let http = reqwest::Client::new();
+        let http = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .build()
+            .expect("HTTP client");
         let identity: Value = http
             .post(format!("{base_url}v1/identities"))
             .send()

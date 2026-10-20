@@ -29,7 +29,11 @@ impl Server {
         });
         Self {
             address,
-            client: Client::builder().no_proxy().build().expect("client"),
+            client: cutout_core::http::client_builder()
+                .expect("platform verifier")
+                .no_proxy()
+                .build()
+                .expect("client"),
             task,
         }
     }
@@ -981,7 +985,8 @@ impl CombinedCaptureServer {
         let mut server = Self {
             child,
             address,
-            client: Client::builder()
+            client: cutout_core::http::client_builder()
+                .expect("platform verifier")
                 .no_proxy()
                 .timeout(Duration::from_secs(15))
                 .build()

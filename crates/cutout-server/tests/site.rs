@@ -61,7 +61,11 @@ impl Server {
         });
         Self {
             address,
-            client: Client::builder().no_proxy().build().expect("client"),
+            client: cutout_core::http::client_builder()
+                .expect("platform verifier")
+                .no_proxy()
+                .build()
+                .expect("client"),
             task,
         }
     }

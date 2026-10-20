@@ -33,7 +33,8 @@ impl ChargingHttpClient {
 
     fn build(base_url: &str) -> Result<Self, MobileChargingError> {
         let base_url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
-        let mut builder = Client::builder()
+        let mut builder = cutout_core::http::client_builder()
+            .map_err(|_| MobileChargingError::Network)?
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none());
         if base_url.scheme() == "http" {

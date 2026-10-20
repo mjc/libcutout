@@ -9,6 +9,9 @@
 
 //! Core types and setup scaffolding for Cutout.
 
+#[cfg(feature = "http")]
+pub mod http;
+
 use std::{
     cmp::Ordering,
     fmt,

@@ -41,11 +41,7 @@ impl SignupState {
     pub(crate) fn from_env() -> Self {
         Self {
             config: None,
-            client: Client::builder()
-                .timeout(Duration::from_millis(1_100))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .ok(),
+            client: turnstile_client(),
             #[cfg(test)]
             siteverify_url: SITEVERIFY_URL.to_owned(),
         }
@@ -58,11 +54,7 @@ impl SignupState {
         if !valid_production_key(&site_key, &secret) || hostname != "cutout.lol" {
             return None;
         }
-        let client = Client::builder()
-            .timeout(Duration::from_millis(1_100))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .ok()?;
+        let client = turnstile_client()?;
         Some(Self {
             config: Some(Config {
                 site_key,
@@ -83,14 +75,19 @@ impl SignupState {
                 secret: "test-secret".into(),
                 hostname: "cutout.lol".into(),
             }),
-            client: Client::builder()
-                .timeout(Duration::from_millis(1_100))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .ok(),
+            client: turnstile_client(),
             siteverify_url,
         }
     }
+}
+
+fn turnstile_client() -> Option<Client> {
+    cutout_core::http::client_builder()
+        .ok()?
+        .timeout(Duration::from_millis(1_100))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .ok()
 }
 
 fn valid_production_key(site_key: &str, secret: &str) -> bool {
@@ -930,7 +927,11 @@ mod tests {
         }))
         .await;
         let (address, store, signup_task, _directory) = signup_server(verify_url).await;
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         let key = Uuid::new_v4().to_string();
         let payload = body(&key, "opaque-token", "rider@example.com");
         let first = submit(&client, &address, payload.clone(), "https://cutout.lol").await;
@@ -1180,7 +1181,11 @@ mod tests {
             )
             .await
             .expect("seed matching signup");
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         let known_key = Uuid::new_v4().to_string();
         let known_payload = removal_body(&known_key, "first-token", "known@example.com");
         let known = submit_removal_http(
@@ -1257,7 +1262,11 @@ mod tests {
         ] {
             let (verify_url, verify_calls, verify_task) = test_server(reply).await;
             let (address, _store, signup_task, _directory) = signup_server(verify_url).await;
-            let client = Client::builder().no_proxy().build().expect("client");
+            let client = cutout_core::http::client_builder()
+                .expect("platform verifier")
+                .no_proxy()
+                .build()
+                .expect("client");
             let response = submit(
                 &client,
                 &address,
@@ -1313,7 +1322,11 @@ mod tests {
         let verify_task =
             tokio::spawn(async move { axum::serve(listener, mock).await.expect("mock serve") });
         let (address, _store, signup_task, _directory) = signup_server(verify_url).await;
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         let key = Uuid::new_v4().to_string();
         let response = submit(
             &client,
@@ -1342,7 +1355,11 @@ mod tests {
         )
         .await;
         let (address, _store, signup_task, _directory) = signup_server(verify_url).await;
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         let wrong_origin = submit(
             &client,
             &address,
@@ -1421,7 +1438,11 @@ mod tests {
         }))
         .await;
         let (address, _store, signup_task, _directory) = signup_server(verify_url).await;
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         for index in 0..5 {
             let body = body(
                 &Uuid::new_v4().to_string(),

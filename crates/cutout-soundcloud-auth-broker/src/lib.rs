@@ -235,7 +235,8 @@ impl SoundCloudClient {
             return Err(BrokerError::CredentialsUnavailable);
         }
 
-        let http = Client::builder()
+        let http = cutout_core::http::client_builder()
+            .map_err(|_| BrokerError::ProviderUnavailable)?
             .timeout(std::time::Duration::from_secs(15))
             .redirect(Policy::none())
             .build()
@@ -1088,12 +1089,20 @@ mod tests {
         let server =
             tokio::spawn(async move { axum::serve(listener, router(server_broker)).await });
 
-        let health = reqwest::get(format!("http://{address}/healthz"))
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .build()
+            .expect("HTTP client");
+        let health = client
+            .get(format!("http://{address}/healthz"))
+            .send()
             .await
             .expect("health request");
         assert_eq!(health.status(), reqwest::StatusCode::NO_CONTENT);
 
-        let token = reqwest::get(format!("http://{address}/v1/token"))
+        let token = client
+            .get(format!("http://{address}/v1/token"))
+            .send()
             .await
             .expect("token request");
         assert_eq!(token.status(), reqwest::StatusCode::OK);
@@ -1105,7 +1114,9 @@ mod tests {
         assert_eq!(body["expires_in"], 3_600);
         assert!(body.get("refresh_token").is_none());
 
-        let cached = reqwest::get(format!("http://{address}/v1/token"))
+        let cached = client
+            .get(format!("http://{address}/v1/token"))
+            .send()
             .await
             .expect("cached token request");
         let cached_body: serde_json::Value =

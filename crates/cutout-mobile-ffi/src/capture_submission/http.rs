@@ -32,7 +32,8 @@ impl HttpCaptureTransport {
 
     fn build(base_url: &str) -> Result<Self, CaptureSubmissionTransferError> {
         let base_url = Url::parse(base_url).map_err(|_| CaptureSubmissionTransferError::Network)?;
-        let mut builder = Client::builder()
+        let mut builder = cutout_core::http::client_builder()
+            .map_err(|_| CaptureSubmissionTransferError::Network)?
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none());

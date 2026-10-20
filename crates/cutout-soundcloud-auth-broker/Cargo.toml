@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+cutout-core = { path = "../cutout-core", version = "0.1.0", default-features = false, features = ["http"] }
 reqwest = { workspace = true, features = ["form"] }
 serde.workspace = true
 serde_json.workspace = true

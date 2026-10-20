@@ -28,7 +28,8 @@ async fn combined_runtime_routes_isolates_and_drains_with_cached_music_state() {
         &fixture.credentials_directory,
         &fixture.state_path,
     );
-    let client = Client::builder()
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
         .timeout(Duration::from_secs(2))
         .build()
         .expect("HTTP client");

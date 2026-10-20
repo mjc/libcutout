@@ -31,7 +31,8 @@ impl LificSync {
         {
             return None;
         }
-        let client = Client::builder()
+        let client = cutout_core::http::client_builder()
+            .ok()?
             .timeout(Duration::from_secs(2))
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -601,7 +602,11 @@ mod tests {
         let address = format!("http://{}", listener.local_addr().expect("mock address"));
         let task =
             tokio::spawn(async move { axum::serve(listener, app).await.expect("serve mock") });
-        let client = Client::builder().no_proxy().build().expect("client");
+        let client = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()
+            .expect("client");
         (
             LificSync {
                 client,

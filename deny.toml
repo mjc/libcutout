@@ -23,6 +23,10 @@ yanked = "deny"
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+deny = [
+    { name = "aws-lc-rs", reason = "Cutout uses Rustls with Ring and platform certificate verification." },
+    { name = "aws-lc-sys", reason = "Cutout uses Rustls with Ring and platform certificate verification." },
+]
 
 [sources]
 unknown-registry = "deny"

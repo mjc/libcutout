@@ -70,7 +70,10 @@ async fn request(
 #[tokio::test]
 async fn canonical_hosts_dispatch_to_three_isolated_routers_and_keep_readiness_local() {
     let (base, task) = serve(app("127.0.0.1".parse().expect("proxy ip"))).await;
-    let client = reqwest::Client::new();
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .build()
+        .expect("HTTP client");
 
     let response = request(&client, &base, MUSIC, "/v1/token").await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -118,7 +121,10 @@ async fn canonical_hosts_dispatch_to_three_isolated_routers_and_keep_readiness_l
 #[tokio::test]
 async fn unknown_malformed_duplicate_or_conflicting_host_metadata_never_dispatches() {
     let (base, task) = serve(app("127.0.0.1".parse().expect("proxy ip"))).await;
-    let client = reqwest::Client::new();
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .build()
+        .expect("HTTP client");
     for host in [
         "unknown.cutout.lol",
         "Music.cutout.lol",
@@ -185,7 +191,10 @@ async fn unknown_malformed_duplicate_or_conflicting_host_metadata_never_dispatch
 #[tokio::test]
 async fn untrusted_transport_peer_cannot_select_a_service_with_claimed_host_headers() {
     let (base, task) = serve(app("192.0.2.9".parse().expect("different proxy ip"))).await;
-    let client = reqwest::Client::new();
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .build()
+        .expect("HTTP client");
     let response = client
         .get(format!("{base}/v1/token"))
         .header(reqwest::header::HOST, MUSIC)

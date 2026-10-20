@@ -849,7 +849,10 @@ mod tests {
             )
             .await;
         });
-        let http = reqwest::Client::builder().no_proxy().build()?;
+        let http = cutout_core::http::client_builder()
+            .expect("platform verifier")
+            .no_proxy()
+            .build()?;
         let identity: Value = http
             .post(format!("{base_url}v1/identities"))
             .send()
