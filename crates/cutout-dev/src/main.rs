@@ -24,6 +24,7 @@ const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.generation.lock";
 const FFI_RECEIPT: &str = ".cutout-artifact.json";
 const FFI_CHECKER: &str = ".cutout-ffi-check";
 const FFI_GENERATIONS: &str = "target/swift-ffi/generations";
+const SWIFT_FFI_SLICES: [&str; 3] = ["ios-arm64", "ios-arm64-simulator", "macos-arm64"];
 
 fn lock_swift_ffi(root: &Path) -> Result<fs::File> {
     let path = root.join(SWIFT_FFI_LOCK);
@@ -336,6 +337,7 @@ fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<
             ]),
         "generate Swift FFI package",
     )?;
+    regenerate_swift_bindings(root, &snapshot.path, &cargo_package, lock)?;
     if source_fingerprint(&snapshot.path)? != expected {
         let lockfile_changed =
             fs::read(snapshot.path.join("Cargo.lock"))? != fs::read(root.join("Cargo.lock"))?;
@@ -349,6 +351,72 @@ fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<
     trim_generated_sources(&cargo_package)?;
     seal_swift_ffi(root, &cargo_package, expected)?;
     publish_swift_ffi(root, &cargo_package, expected, lock)?;
+    Ok(())
+}
+
+/// Cargo Swift owns native compilation and bundling; the workspace-pinned
+/// `UniFFI` generator owns bindings, as it already does for Kotlin. Cargo Swift
+/// 0.11.1 embeds `UniFFI` 0.31.1, whose callback pointer fails Swift 6 checking.
+fn regenerate_swift_bindings(
+    root: &Path,
+    snapshot: &Path,
+    package: &Path,
+    lock: &fs::File,
+) -> Result<()> {
+    let output = tempfile::Builder::new()
+        .prefix(".workspace-bindings-")
+        .tempdir_in(package)?;
+    let library =
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/libcutout_mobile_ffi.a");
+    run(
+        command("cargo")
+            .stdin(lock.try_clone()?)
+            .current_dir(snapshot)
+            .env("CARGO_TARGET_DIR", root.join("target"))
+            .args([
+                "run",
+                "--locked",
+                "--jobs",
+                "1",
+                "-p",
+                "cutout-uniffi-bindgen",
+                "--",
+                "generate",
+                "--language",
+                "swift",
+                "--no-format",
+                "--library",
+            ])
+            .arg(library)
+            .arg("--out-dir")
+            .arg(output.path()),
+        "generate Swift bindings with the workspace UniFFI version",
+    )?;
+    install_swift_bindings(package, output.path())
+}
+
+fn install_swift_bindings(package: &Path, generated: &Path) -> Result<()> {
+    let swift = generated.join("cutout_mobile_ffi.swift");
+    let header = generated.join("cutout_mobile_ffiFFI.h");
+    let modulemap = generated.join("cutout_mobile_ffiFFI.modulemap");
+    for input in [&swift, &header, &modulemap] {
+        ensure!(
+            input.is_file() && fs::metadata(input)?.len() > 0,
+            "missing workspace-generated Swift binding: {}",
+            input.display()
+        );
+    }
+    fs::copy(
+        swift,
+        package.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"),
+    )?;
+    for slice in SWIFT_FFI_SLICES {
+        let headers = package.join(format!(
+            "cutout_mobile_ffiFFI.xcframework/{slice}/Headers/cutout_mobile_ffiFFI"
+        ));
+        fs::copy(&header, headers.join("cutout_mobile_ffiFFI.h"))?;
+        fs::copy(&modulemap, headers.join("module.modulemap"))?;
+    }
     Ok(())
 }
 
@@ -1166,7 +1234,7 @@ fn check_swift_ffi_build(root: &Path, package: &Path, output: &Path) -> Result<(
 fn verify_swift_ffi(package: &Path) -> Result<()> {
     verify_swift_ffi_files(package)?;
     if cfg!(target_os = "macos") {
-        for slice in ["ios-arm64", "ios-arm64-simulator", "macos-arm64"] {
+        for slice in SWIFT_FFI_SLICES {
             let library = package.join(format!(
                 "cutout_mobile_ffiFFI.xcframework/{slice}/libcutout_mobile_ffi.a"
             ));
@@ -1357,6 +1425,58 @@ mod tests {
             fs::write(path, build).unwrap();
         }
         write_ffi_receipt(package, source).unwrap();
+    }
+
+    #[test]
+    fn workspace_bindings_replace_all_slices_without_changing_native_archives() {
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("package");
+        fixture_artifact(&package, "source", "old-bundler");
+        let generated = root.path().join("generated");
+        fs::create_dir(&generated).unwrap();
+        for (name, content) in [
+            ("cutout_mobile_ffi.swift", "workspace Swift"),
+            ("cutout_mobile_ffiFFI.h", "workspace header"),
+        ] {
+            fs::write(generated.join(name), content).unwrap();
+        }
+        // An incomplete generator result must not replace the existing wrapper.
+        assert!(install_swift_bindings(&package, &generated).is_err());
+        assert_eq!(
+            fs::read_to_string(package.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"))
+                .unwrap(),
+            "old-bundler"
+        );
+        fs::write(
+            generated.join("cutout_mobile_ffiFFI.modulemap"),
+            "workspace module map",
+        )
+        .unwrap();
+        install_swift_bindings(&package, &generated).unwrap();
+        assert!(verify_ffi_receipt(&package, "source").is_err());
+        assert_eq!(
+            fs::read_to_string(package.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"))
+                .unwrap(),
+            "workspace Swift"
+        );
+        for slice in SWIFT_FFI_SLICES {
+            let slice = package.join(format!("cutout_mobile_ffiFFI.xcframework/{slice}"));
+            assert_eq!(
+                fs::read_to_string(slice.join("libcutout_mobile_ffi.a")).unwrap(),
+                "old-bundler"
+            );
+            let headers = slice.join("Headers/cutout_mobile_ffiFFI");
+            assert_eq!(
+                fs::read_to_string(headers.join("cutout_mobile_ffiFFI.h")).unwrap(),
+                "workspace header"
+            );
+            assert_eq!(
+                fs::read_to_string(headers.join("module.modulemap")).unwrap(),
+                "workspace module map"
+            );
+        }
+        write_ffi_receipt(&package, "source").unwrap();
+        verify_ffi_receipt(&package, "source").unwrap();
     }
 
     #[test]
