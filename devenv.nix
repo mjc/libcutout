@@ -81,6 +81,7 @@ in
 
   env.ANDROID_NDK_ROOT = androidNdkRoot;
   env.ANDROID_HOME = "${androidPackages.androidsdk}/libexec/android-sdk";
+  env.ANDROID_SDK_ROOT = config.env.ANDROID_HOME;
   env.CUTOUT_ANDROID_API = androidApi;
   env.CUTOUT_ANDROID_BUILD_TOOLS = androidBuildTools;
   env.CUTOUT_JNA_VERSION = pkgs.jna.version;
