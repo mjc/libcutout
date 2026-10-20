@@ -62,11 +62,16 @@ final class VescDrivetrainEditor: Identifiable {
     var motorToWheelRatio = "" { didSet { if oldValue != motorToWheelRatio { clearFailure() } } }
     private(set) var stage = Stage.unloaded
     private(set) var hasLoaded = false
+    @ObservationIgnored private let decimalSeparator: String
     @ObservationIgnored private let loadDraft: VescDrivetrainLoad
     @ObservationIgnored private let saveDraft: VescDrivetrainSave
 
-    init(token: ConnectionAttemptToken, load: @escaping VescDrivetrainLoad, save: @escaping VescDrivetrainSave) {
+    init(
+        token: ConnectionAttemptToken, locale: Locale = .current,
+        load: @escaping VescDrivetrainLoad, save: @escaping VescDrivetrainSave
+    ) {
         self.token = token
+        self.decimalSeparator = locale.decimalSeparator ?? "."
         self.loadDraft = load
         self.saveDraft = save
     }
@@ -92,7 +97,8 @@ final class VescDrivetrainEditor: Identifiable {
 
     var draft: MobileVescDrivetrainDraft {
         MobileVescDrivetrainDraft(
-            wheelDiameterMm: wheelDiameterMm, motorPolePairs: motorPolePairs, motorToWheelRatio: motorToWheelRatio
+            wheelDiameterMm: canonicalDecimalText(wheelDiameterMm), motorPolePairs: motorPolePairs,
+            motorToWheelRatio: canonicalDecimalText(motorToWheelRatio)
         )
     }
 
@@ -133,9 +139,17 @@ final class VescDrivetrainEditor: Identifiable {
     }
 
     private func apply(_ draft: MobileVescDrivetrainDraft) {
-        wheelDiameterMm = draft.wheelDiameterMm
+        wheelDiameterMm = displayedDecimalText(draft.wheelDiameterMm)
         motorPolePairs = draft.motorPolePairs
-        motorToWheelRatio = draft.motorToWheelRatio
+        motorToWheelRatio = displayedDecimalText(draft.motorToWheelRatio)
+    }
+
+    private func canonicalDecimalText(_ text: String) -> String {
+        text.replacingOccurrences(of: decimalSeparator, with: ".")
+    }
+
+    private func displayedDecimalText(_ text: String) -> String {
+        text.replacingOccurrences(of: ".", with: decimalSeparator)
     }
 
     private func clearFailure() {
