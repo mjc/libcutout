@@ -3,9 +3,10 @@
   "strings" : {
     "music.spotify.disconnect" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify"}}}},
     "music.spotify.disconnect.title" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify?"}}}},
-    "music.spotify.disconnect.message" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify and remove its ride listening history. Music metadata is also removed from Bluetooth captures stored in this app. Rides, other ride listening history, and Bluetooth data stay."}}}},
+    "music.spotify.disconnect.message" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Disconnect Spotify and remove its ride listening history. Rides and other providers' listening history stay."}}}},
     "music.spotify.disconnect.failed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Spotify cleanup could not be completed. Try again."}}}},
     "music.spotify.content_link" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Open in Spotify"}}}},
+    "music.spotify.retry_saved_authorization" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Retry saved connection"}}}},
     "music.cancel" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Cancel"}}}},
     "battery.current.in" : {
       "comment" : "Battery current flowing into the battery. The placeholder is the formatted current magnitude.",
