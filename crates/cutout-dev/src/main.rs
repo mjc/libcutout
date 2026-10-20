@@ -64,21 +64,20 @@ enum IosLaunchIntent {
 }
 
 fn main() -> Result<()> {
-    let root = workspace_root();
     let args = env::args().skip(1).collect::<Vec<_>>();
     match parse_cli(&args)? {
         DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
-        DevCommand::SwiftFfi => ensure_swift_ffi(&root),
-        DevCommand::Swift(args) => build_apple_client(&root, "swift", &args),
-        DevCommand::Xcodebuild(args) => build_apple_client(&root, "xcodebuild", &args),
+        DevCommand::SwiftFfi => ensure_swift_ffi(&workspace_root()?),
+        DevCommand::Swift(args) => build_apple_client(&workspace_root()?, "swift", &args),
+        DevCommand::Xcodebuild(args) => build_apple_client(&workspace_root()?, "xcodebuild", &args),
         DevCommand::SwiftFfiCheck {
             root,
             package,
             output,
         } => check_swift_ffi_build(&root, &package, &output),
-        DevCommand::IosDeploy(launch_intent) => deploy_ios(&root, launch_intent),
+        DevCommand::IosDeploy(launch_intent) => deploy_ios(&workspace_root()?, launch_intent),
         DevCommand::IosVerifyApp(product) => verify_ios_app(&product),
-        DevCommand::IosCaptures => pull_ios_captures(&root),
+        DevCommand::IosCaptures => pull_ios_captures(&workspace_root()?),
     }
 }
 
@@ -289,12 +288,25 @@ const fn setting(id: SettingId, value: DeviceSettingValue) -> DeviceCommand {
     DeviceCommand::SetSetting { id, value }
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("cutout-dev must remain under crates/")
-        .to_path_buf()
+fn workspace_root() -> Result<PathBuf> {
+    workspace_root_from_context(
+        env::var_os("CARGO_MANIFEST_DIR").as_deref().map(Path::new),
+        &env::current_dir().context("read current project directory")?,
+    )
+    .context("run cutout-dev inside a libcutout checkout or through its Cargo alias")
+}
+
+fn workspace_root_from_context(manifest_dir: Option<&Path>, current_dir: &Path) -> Option<PathBuf> {
+    // The executable can be reused through a shared Cargo target directory.
+    // Its compile-time manifest path does not identify the invoking checkout.
+    manifest_dir
+        .into_iter()
+        .chain(std::iter::once(current_dir))
+        .flat_map(Path::ancestors)
+        .find(|root| {
+            root.join("Cargo.toml").is_file() && root.join("crates/cutout-dev/Cargo.toml").is_file()
+        })
+        .map(Path::to_path_buf)
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
@@ -1402,6 +1414,48 @@ fn ensure_success(status: ExitStatus, description: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn workspace_fixture(root: &Path) -> PathBuf {
+        let manifest_dir = root.join("crates/cutout-dev");
+        fs::create_dir_all(&manifest_dir).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(
+            manifest_dir.join("Cargo.toml"),
+            "[package]\nname = 'cutout-dev'\n",
+        )
+        .unwrap();
+        manifest_dir
+    }
+
+    #[test]
+    fn workspace_context_uses_the_runtime_cargo_checkout() {
+        let compiled_checkout = tempfile::tempdir().unwrap();
+        workspace_fixture(compiled_checkout.path());
+        let current_checkout = tempfile::tempdir().unwrap();
+        let manifest = workspace_fixture(current_checkout.path());
+        assert_eq!(
+            workspace_root_from_context(Some(&manifest), compiled_checkout.path()),
+            Some(current_checkout.path().to_path_buf()),
+        );
+    }
+
+    #[test]
+    fn workspace_context_finds_direct_execution_in_the_current_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        workspace_fixture(root.path());
+        let nested = root.path().join("swift/CutoutMobile");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(
+            workspace_root_from_context(None, &nested),
+            Some(root.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn workspace_context_rejects_an_unrelated_directory() {
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(workspace_root_from_context(None, outside.path()), None);
+    }
 
     #[test]
     fn apple_build_commands_preserve_native_arguments() {
