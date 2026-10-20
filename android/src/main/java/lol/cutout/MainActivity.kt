@@ -261,7 +261,7 @@ class MainActivity : Activity() {
                     resolveVehicleName = { identifier ->
                         latest.session?.takeIf { it.connection?.token?.platformIdentifier == identifier }?.identity?.model
                             ?: latest.devices.firstOrNull { it.id == identifier }?.name
-                    }, onOpenLocationSettings = ::openAppSettings)
+                    }, onOpenLocationSettings = ::openAppSettings, mapSurfaceFactory = app::createRideMapSurface)
                 map = panel; addPanel(id, panel)
                 panel.restoreUiState(restoredMapUiState)
                 restoredMapUiState = null

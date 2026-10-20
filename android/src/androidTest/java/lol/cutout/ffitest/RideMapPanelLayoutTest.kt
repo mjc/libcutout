@@ -119,29 +119,30 @@ open class RideMapPanelLayoutTest {
             runtime.close()
         }
     }
+}
 
-    private class TestRideMapSurface(context: Context) : FrameLayout(context), RideMapSurface {
-        var chargingPopup: View? = null
-        var chargingSpots: List<MobileChargingSpotDto> = emptyList()
-        var recenterCount = 0
-        override val view: View get() = this
-        override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
-        override var onChargingSpotSelected: ((String) -> Unit)? = null
-        override fun show(projection: MobileRideMapRouteProjectionDto) = Unit
-        override fun showCurrentLocation(latitude: Double, longitude: Double) = Unit
-        override fun clearRoute() = Unit
-        override fun currentMapCenter(): LatLng? = null
-        override fun currentCameraPosition(): CameraPosition? = null
-        override fun restoreCameraPosition(position: CameraPosition?) = Unit
-        override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) { chargingSpots = spots }
-        override fun showChargingPopup(view: View?) { chargingPopup = view }
-        override fun recenter() { recenterCount++ }
-        override fun setActive(value: Boolean) = Unit
-        override fun onHostStart() = Unit
-        override fun onHostResume() = Unit
-        override fun onHostPause() = Unit
-        override fun onHostStop() = Unit
-        override fun onHostDestroy() = Unit
-        override fun onHostLowMemory() = Unit
-    }
+/** Renderer-only substitute shared by panel layout and Activity restoration tests. */
+internal class TestRideMapSurface(context: Context) : FrameLayout(context), RideMapSurface {
+    var chargingPopup: View? = null
+    var chargingSpots: List<MobileChargingSpotDto> = emptyList()
+    var recenterCount = 0
+    override val view: View get() = this
+    override var onViewportChanged: ((MobileGeoBoundsDto) -> Unit)? = null
+    override var onChargingSpotSelected: ((String) -> Unit)? = null
+    override fun show(projection: MobileRideMapRouteProjectionDto) = Unit
+    override fun showCurrentLocation(latitude: Double, longitude: Double) = Unit
+    override fun clearRoute() = Unit
+    override fun currentMapCenter(): LatLng? = null
+    override fun currentCameraPosition(): CameraPosition? = null
+    override fun restoreCameraPosition(position: CameraPosition?) = Unit
+    override fun showChargingSpots(spots: List<MobileChargingSpotDto>, selectedId: String?) { chargingSpots = spots }
+    override fun showChargingPopup(view: View?) { chargingPopup = view }
+    override fun recenter() { recenterCount++ }
+    override fun setActive(value: Boolean) = Unit
+    override fun onHostStart() = Unit
+    override fun onHostResume() = Unit
+    override fun onHostPause() = Unit
+    override fun onHostStop() = Unit
+    override fun onHostDestroy() = Unit
+    override fun onHostLowMemory() = Unit
 }

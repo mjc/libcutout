@@ -6,6 +6,9 @@ import uniffi.cutout_mobile_ffi.*
 
 /** Process-owned native adapters; every screen uses the same Rust recording and storage owners. */
 open class CutoutApplication : Application() {
+    /** Keep the native renderer replaceable without replacing Activity navigation or ride state. */
+    open fun createRideMapSurface(context: android.content.Context): RideMapSurface = RideRouteMapView(context)
+
     private val rideOwner = lazy { RideMapRuntime(this) }
     val rides: RideMapRuntime get() = rideOwner.value
     private val locationOwner = lazy { RideLocationRuntime(this, rides) { rideServiceActive } }
