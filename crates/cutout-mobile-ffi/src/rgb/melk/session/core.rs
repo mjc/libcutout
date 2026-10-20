@@ -10,8 +10,10 @@ use cutout_protocols::MelkLightingProfile;
 use super::super::commands::plan_schedule;
 use super::{
     contract::{
-        MobileMelkLightingSessionActionDto, MobileMelkLightingSessionCandidateDto,
-        MobileMelkLightingSessionEventDto, MobileMelkLightingSessionSnapshotDto,
+        MobileMelkLightingCharacteristicEvidenceDto, MobileMelkLightingSessionActionDto,
+        MobileMelkLightingSessionCandidateDto, MobileMelkLightingSessionEventDto,
+        MobileMelkLightingSessionSnapshotDto, MobileMelkLightingSessionStateDto,
+        MobileMelkLightingTimerDto,
     },
     reducer::SessionReducer,
 };
@@ -20,6 +22,7 @@ use crate::{
     MobileMelkLightingWriteDto, MobileMelkLightingWriteModeDto, MobileMelkScheduleDto,
     mobile_melk_control, mobile_melk_transport_action,
 };
+use cutout_application::lighting::melk::{self as application_melk, session as application};
 
 /// Rust-owned MELK session exposed to the thin `CoreBluetooth` wrapper.
 #[derive(Debug, uniffi::Object)]
@@ -63,7 +66,7 @@ impl MobileMelkLightingSessionCore {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .handle(event);
+            .handle(event.into());
     }
 
     /// Selects a first-pairing candidate.
@@ -143,7 +146,7 @@ impl MobileMelkLightingSessionCore {
         {
             return Ok(false);
         }
-        Ok(inner.queue_writes(writes))
+        Ok(inner.queue_writes(writes.into_iter().map(Into::into)))
     }
 
     /// Enqueues a controller-local schedule after synchronizing its local clock.
@@ -161,7 +164,7 @@ impl MobileMelkLightingSessionCore {
         if !inner.is_ready() {
             return Ok(false);
         }
-        Ok(inner.queue_writes(writes))
+        Ok(inner.queue_writes(writes.into_iter().map(Into::into)))
     }
 
     /// Marks the latest requested command as physically confirmed.
@@ -181,11 +184,13 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Returns the current Rust-owned snapshot.
+    #[must_use]
     pub fn snapshot(&self) -> MobileMelkLightingSessionSnapshotDto {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .snapshot()
+            .into()
     }
 
     /// Drains requested platform operations.
@@ -194,6 +199,9 @@ impl MobileMelkLightingSessionCore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .drain_actions()
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Drains bounded diagnostic records.
@@ -210,6 +218,9 @@ impl MobileMelkLightingSessionCore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .drain_candidates()
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Drains candidate identities removed by Rust's bounded scan policy.
@@ -243,6 +254,289 @@ impl MobileMelkLightingSessionCore {
         if !inner.is_ready() {
             return false;
         }
-        inner.queue_write(write)
+        inner.queue_write(write.into())
+    }
+}
+
+impl From<MobileMelkLightingSessionEventDto> for application::LightingSessionEvent {
+    fn from(event: MobileMelkLightingSessionEventDto) -> Self {
+        use MobileMelkLightingSessionEventDto as Native;
+        use application::LightingSessionEvent as App;
+        match event {
+            Native::Resume => App::Resume,
+            Native::BluetoothState {
+                powered_on,
+                state_code,
+            } => App::BluetoothState {
+                powered_on,
+                state_code,
+            },
+            Native::Discovered {
+                name,
+                platform_identifier,
+                rssi,
+            } => App::Discovered {
+                name,
+                platform_identifier,
+                rssi,
+            },
+            Native::Restored {
+                name,
+                platform_identifier,
+                connected,
+                pending,
+            } => App::Restored {
+                name,
+                platform_identifier,
+                connected,
+                pending,
+            },
+            Native::RestoreUnavailable => App::RestoreUnavailable,
+            Native::Connected {
+                name,
+                platform_identifier,
+            } => App::Connected {
+                name,
+                platform_identifier,
+            },
+            Native::ConnectFailed { reason } => App::ConnectFailed { reason },
+            Native::ConnectTimeout => App::ConnectTimeout,
+            Native::ServicesDiscovered {
+                service_uuids,
+                error,
+            } => App::ServicesDiscovered {
+                service_uuids: service_uuids.into_iter().map(Into::into).collect(),
+                error,
+            },
+            Native::CharacteristicsDiscovered {
+                name,
+                service_uuid,
+                characteristics,
+                error,
+            } => App::CharacteristicsDiscovered {
+                name,
+                service_uuid: service_uuid.into(),
+                characteristics: characteristics.into_iter().map(Into::into).collect(),
+                error,
+            },
+            Native::NotificationState {
+                characteristic,
+                ready,
+                can_send,
+                error,
+            } => App::NotificationState {
+                characteristic: characteristic.into(),
+                ready,
+                can_send,
+                error,
+            },
+            Native::Notification {
+                characteristic,
+                bytes,
+            } => App::Notification {
+                characteristic: characteristic.into(),
+                bytes,
+            },
+            Native::WriteReady { can_send } => App::WriteReady { can_send },
+            Native::TimerFired { timer, can_send } => App::TimerFired {
+                timer: timer.into(),
+                can_send,
+            },
+            Native::Disconnected { reason, powered_on } => App::Disconnected { reason, powered_on },
+        }
+    }
+}
+
+impl From<MobileMelkLightingSessionStateDto> for application::LightingSessionState {
+    fn from(state: MobileMelkLightingSessionStateDto) -> Self {
+        use MobileMelkLightingSessionStateDto as Native;
+        use application::LightingSessionState as App;
+        match state {
+            Native::Idle => App::Idle,
+            Native::Scanning => App::Scanning,
+            Native::Connecting => App::Connecting,
+            Native::Retrying {
+                attempt,
+                delay_milliseconds,
+            } => App::Retrying {
+                attempt,
+                delay_milliseconds,
+            },
+            Native::Discovering => App::Discovering,
+            Native::Ready => App::Ready,
+            Native::Disconnected => App::Disconnected,
+            Native::Failed { reason } => App::Failed { reason },
+        }
+    }
+}
+
+impl From<application::LightingSessionState> for MobileMelkLightingSessionStateDto {
+    fn from(state: application::LightingSessionState) -> Self {
+        use MobileMelkLightingSessionStateDto as Native;
+        use application::LightingSessionState as App;
+        match state {
+            App::Idle => Native::Idle,
+            App::Scanning => Native::Scanning,
+            App::Connecting => Native::Connecting,
+            App::Retrying {
+                attempt,
+                delay_milliseconds,
+            } => Native::Retrying {
+                attempt,
+                delay_milliseconds,
+            },
+            App::Discovering => Native::Discovering,
+            App::Ready => Native::Ready,
+            App::Disconnected => Native::Disconnected,
+            App::Failed { reason } => Native::Failed { reason },
+        }
+    }
+}
+
+impl From<MobileMelkLightingTimerDto> for application::LightingTimer {
+    fn from(timer: MobileMelkLightingTimerDto) -> Self {
+        match timer {
+            MobileMelkLightingTimerDto::ConnectionAttempt => Self::ConnectionAttempt,
+            MobileMelkLightingTimerDto::Discovery => Self::Discovery,
+            MobileMelkLightingTimerDto::Reconnect => Self::Reconnect,
+            MobileMelkLightingTimerDto::Initialization => Self::Initialization,
+            MobileMelkLightingTimerDto::WriteDrain => Self::WriteDrain,
+        }
+    }
+}
+
+impl From<application::LightingTimer> for MobileMelkLightingTimerDto {
+    fn from(timer: application::LightingTimer) -> Self {
+        match timer {
+            application::LightingTimer::ConnectionAttempt => Self::ConnectionAttempt,
+            application::LightingTimer::Discovery => Self::Discovery,
+            application::LightingTimer::Reconnect => Self::Reconnect,
+            application::LightingTimer::Initialization => Self::Initialization,
+            application::LightingTimer::WriteDrain => Self::WriteDrain,
+        }
+    }
+}
+
+impl From<MobileMelkLightingCharacteristicEvidenceDto>
+    for application::LightingCharacteristicEvidence
+{
+    fn from(value: MobileMelkLightingCharacteristicEvidenceDto) -> Self {
+        Self {
+            uuid: value.uuid.into(),
+            write_without_response: value.write_without_response,
+            notify_or_indicate: value.notify_or_indicate,
+        }
+    }
+}
+
+impl From<MobileMelkLightingWriteDto> for application_melk::LightingWrite {
+    fn from(value: MobileMelkLightingWriteDto) -> Self {
+        Self {
+            characteristic: value.characteristic.into(),
+            payload: value.payload,
+            mode: match value.mode {
+                MobileMelkLightingWriteModeDto::WithoutResponse => {
+                    application_melk::LightingWriteMode::WithoutResponse
+                }
+            },
+            confirmation_characteristic: value.confirmation_characteristic.into(),
+            minimum_interval_ms: value.minimum_interval_ms,
+        }
+    }
+}
+
+impl From<application_melk::LightingWrite> for MobileMelkLightingWriteDto {
+    fn from(value: application_melk::LightingWrite) -> Self {
+        Self {
+            characteristic: value.characteristic.into(),
+            payload: value.payload,
+            mode: MobileMelkLightingWriteModeDto::WithoutResponse,
+            confirmation_characteristic: value.confirmation_characteristic.into(),
+            minimum_interval_ms: value.minimum_interval_ms,
+        }
+    }
+}
+
+impl From<application::LightingSessionSnapshot> for MobileMelkLightingSessionSnapshotDto {
+    fn from(value: application::LightingSessionSnapshot) -> Self {
+        Self {
+            state: value.state.into(),
+            platform_identifier: value.platform_identifier,
+            name: value.name,
+            command_status: value.command_status,
+            notification_ready: value.notification_ready,
+        }
+    }
+}
+
+impl From<application::LightingSessionCandidate> for MobileMelkLightingSessionCandidateDto {
+    fn from(value: application::LightingSessionCandidate) -> Self {
+        Self {
+            platform_identifier: value.platform_identifier,
+            name: value.name,
+            rssi: value.rssi,
+        }
+    }
+}
+
+impl From<application::LightingSessionAction> for MobileMelkLightingSessionActionDto {
+    fn from(action: application::LightingSessionAction) -> Self {
+        use MobileMelkLightingSessionActionDto as Native;
+        use application::LightingSessionAction as App;
+        match action {
+            App::RestartTransport => Native::RestartTransport,
+            App::Scan => Native::Scan,
+            App::StopScan => Native::StopScan,
+            App::RestorePeripheral {
+                platform_identifier,
+            } => Native::RestorePeripheral {
+                platform_identifier,
+            },
+            App::Connect {
+                platform_identifier,
+            } => Native::Connect {
+                platform_identifier,
+            },
+            App::CancelConnect {
+                platform_identifier,
+            } => Native::CancelConnect {
+                platform_identifier,
+            },
+            App::DiscoverServices {
+                platform_identifier,
+                service,
+            } => Native::DiscoverServices {
+                platform_identifier,
+                service: service.into(),
+            },
+            App::DiscoverCharacteristics {
+                platform_identifier,
+                service,
+            } => Native::DiscoverCharacteristics {
+                platform_identifier,
+                service: service.into(),
+            },
+            App::Subscribe {
+                platform_identifier,
+                characteristic,
+            } => Native::Subscribe {
+                platform_identifier,
+                characteristic: characteristic.into(),
+            },
+            App::Write {
+                platform_identifier,
+                write,
+            } => Native::Write {
+                platform_identifier,
+                write: write.into(),
+            },
+            App::ArmTimer {
+                timer,
+                delay_milliseconds,
+            } => Native::ArmTimer {
+                timer: timer.into(),
+                delay_milliseconds,
+            },
+        }
     }
 }

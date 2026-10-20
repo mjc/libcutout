@@ -1,8 +1,8 @@
 //! Thin mobile projection of the Rust-owned provider lifecycle.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
-use cutout_core::{MonotonicTimestamp, WallClockUnixTimestamp};
+use cutout_application::music::provider_lifecycle as application;
 use cutout_music::callback_epoch::{
     AuthorizationTransactionKind, AuthorizationTransactionMatch, CallbackEpochMatch,
 };
@@ -15,20 +15,18 @@ use cutout_music::ids::{
 use cutout_music::player_request::{MusicPlayerRequestCompletion, MusicPlayerRequestExpiration};
 use cutout_music::provider_lifecycle::{
     MusicConnectionAttemptAdmission, MusicConnectionAttemptEffect, MusicConnectionEffect,
-    MusicPlaybackTransport, MusicProviderLifecycle, MusicProviderWorkState,
-    MusicTransportCompletion, MusicTransportOutcome, MusicTransportOwner,
-    select_playback_transport,
+    MusicPlaybackTransport, MusicProviderWorkState, MusicTransportCompletion,
+    MusicTransportOutcome, MusicTransportOwner,
 };
 use cutout_music::{
     MusicHistoryTransitionAcknowledgement, MusicMonitorRequest, MusicMonitorResume,
-    MusicMonitorStart, MusicObservationOutcome, MusicObservationTiming,
+    MusicMonitorStart,
 };
 
 use crate::{
-    CoreMusicCapabilities, CoreMusicCommand, CoreMusicPlaybackState, CoreMusicSnapshot,
-    MobileMusicCapabilitiesDto, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
-    MobileMusicProviderDto, MobileMusicRideEventKindDto, MobileMusicSnapshotDto,
-    MobileRideMapCoreErrorDto,
+    CoreMusicCapabilities, CoreMusicPlaybackState, CoreMusicSnapshot, MobileMusicCapabilitiesDto,
+    MobileMusicCommandDto, MobileMusicPlaybackStateDto, MobileMusicProviderDto,
+    MobileMusicRideEventKindDto, MobileMusicSnapshotDto, MobileRideMapCoreErrorDto,
 };
 
 /// Platform interface selected by the Rust provider contract.
@@ -55,31 +53,23 @@ pub struct MobileMusicProviderProfile {
 #[uniffi::export]
 #[must_use]
 pub fn music_provider_profile(provider: MobileMusicProviderDto) -> MobileMusicProviderProfile {
-    let (interface, storage_key, title_key, unavailable_key) = match provider {
-        MobileMusicProviderDto::AppleMusic => (
-            MobileMusicProviderInterface::AppleMusicSystemPlayer,
-            "apple_music",
-            "music.provider.apple_music",
-            None,
-        ),
-        MobileMusicProviderDto::Spotify => (
-            MobileMusicProviderInterface::SpotifyAppRemote,
-            "spotify",
-            "music.provider.spotify",
-            None,
-        ),
-        MobileMusicProviderDto::SoundCloud => (
-            MobileMusicProviderInterface::AppHandoffOnly,
-            "soundcloud",
-            "music.provider.soundcloud",
-            Some("music.soundcloud.unavailable"),
-        ),
+    let profile = application::provider_profile(provider.into());
+    let interface = match profile.interface {
+        application::ProviderInterface::AppleMusicSystemPlayer => {
+            MobileMusicProviderInterface::AppleMusicSystemPlayer
+        }
+        application::ProviderInterface::SpotifyAppRemote => {
+            MobileMusicProviderInterface::SpotifyAppRemote
+        }
+        application::ProviderInterface::AppHandoffOnly => {
+            MobileMusicProviderInterface::AppHandoffOnly
+        }
     };
     MobileMusicProviderProfile {
         interface,
-        storage_key: storage_key.to_owned(),
-        title_key: title_key.to_owned(),
-        unavailable_key: unavailable_key.map(str::to_owned),
+        storage_key: profile.storage_key.to_owned(),
+        title_key: profile.title_key.to_owned(),
+        unavailable_key: profile.unavailable_key.map(str::to_owned),
     }
 }
 
@@ -88,18 +78,14 @@ pub fn music_provider_profile(provider: MobileMusicProviderDto) -> MobileMusicPr
 #[must_use]
 #[allow(clippy::needless_pass_by_value)] // UniFFI owns strings at this boundary.
 pub fn music_provider_from_storage(value: Option<String>) -> MobileMusicProviderDto {
-    match value.as_deref() {
-        Some("spotify") => MobileMusicProviderDto::Spotify,
-        Some("soundcloud") => MobileMusicProviderDto::SoundCloud,
-        _ => MobileMusicProviderDto::AppleMusic,
-    }
+    application::provider_from_storage(value.as_deref()).into()
 }
 
 /// Projects the supported local `SoundCloud` snapshot with no invented observations.
 #[uniffi::export]
 #[must_use]
 pub fn soundcloud_unavailable_snapshot(now_ms: u64) -> MobileMusicSnapshotDto {
-    (&cutout_music::soundcloud::unavailable_snapshot(MonotonicTimestamp::new(now_ms))).into()
+    (&application::soundcloud_unavailable_snapshot(now_ms)).into()
 }
 
 /// Capability-checked, session-owned `SoundCloud` command effect.
@@ -121,16 +107,14 @@ pub enum MobileSoundCloudCommandAdmission {
 #[must_use]
 #[allow(clippy::needless_pass_by_value)] // UniFFI owns strings at this boundary.
 pub fn music_callback_path_matches(expected: String, actual: String) -> bool {
-    cutout_music::music_callback_path_matches(&expected, &actual)
+    application::callback_path_matches(&expected, &actual)
 }
 
 /// Localized title key preserving playback state when track metadata is absent.
 #[uniffi::export]
 #[must_use]
 pub fn music_playback_title_key(state: MobileMusicPlaybackStateDto) -> String {
-    CoreMusicPlaybackState::from(state)
-        .fallback_title_key()
-        .to_owned()
+    application::playback_title_key(CoreMusicPlaybackState::from(state)).to_owned()
 }
 
 /// Playback transport selected from live App Remote and authorization capabilities.
@@ -161,7 +145,7 @@ pub fn music_playback_transport(
     app_remote_connected: bool,
     web_playback_authorized: bool,
 ) -> MobileMusicPlaybackTransport {
-    select_playback_transport(app_remote_connected, web_playback_authorized).into()
+    application::playback_transport(app_remote_connected, web_playback_authorized).into()
 }
 
 /// User intent for the next foreground provider start.
@@ -518,12 +502,10 @@ pub struct MobileMusicProviderSuspension {
 /// One thread-safe Rust owner shared by app scene and provider adapter code.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobileMusicProviderLifecycle {
-    inner: Mutex<MusicProviderLifecycle>,
+    inner: application::ProviderLifecycle,
     observation_owner: Arc<()>,
     observation_queue:
         Mutex<Arc<crate::music_observation_admission::MusicObservationAdmissionQueue>>,
-    correlation_ride_id: Mutex<Option<String>>,
-    player_observations: Mutex<[Option<CoreMusicSnapshot>; 3]>,
 }
 
 impl MobileMusicProviderLifecycle {
@@ -587,24 +569,17 @@ impl MobileMusicProviderLifecycle {
     ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        let mut lifecycle = self.lock_inner();
-        let mut correlation = self
-            .correlation_ride_id
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if *correlation != ride_id {
-            if lifecycle.has_pending_history() {
-                return Err(MobileRideMapCoreErrorDto::PendingMusicHistory);
-            }
-            lifecycle.reset_observation_correlation();
-            *correlation = ride_id;
-        }
-        Self::project_observation(
-            &mut lifecycle,
-            snapshot,
-            wall_clock_at_ms,
-            clock_uncertainty_ms,
-        )
+        self.inner
+            .observe_for_ride(ride_id, snapshot, wall_clock_at_ms, clock_uncertainty_ms)
+            .map(|decision| decision.as_ref().map(Self::project_observation))
+            .map_err(|error| match error {
+                application::ObserveRideError::PendingHistory => {
+                    MobileRideMapCoreErrorDto::PendingMusicHistory
+                }
+                application::ObserveRideError::HistoryFull => {
+                    MobileRideMapCoreErrorDto::MusicHistoryFull
+                }
+            })
     }
 
     /// Orders live player presentation independently of ride-history acceptance.
@@ -629,24 +604,9 @@ impl MobileMusicProviderLifecycle {
             }
         };
         self.observation_queue().with_ready(&lease, || {
-            let index = match snapshot.provider() {
-                cutout_music::MusicProvider::AppleMusic => 0,
-                cutout_music::MusicProvider::Spotify => 1,
-                cutout_music::MusicProvider::SoundCloud => 2,
-            };
-            let mut latest = self
-                .player_observations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if latest[index]
-                .as_ref()
-                .is_some_and(|previous| previous.observed_at() >= snapshot.observed_at())
-            {
-                return None;
-            }
-            let canonical = (&snapshot).into();
-            latest[index] = Some(snapshot);
-            Some(canonical)
+            self.inner
+                .observe_player(snapshot)
+                .map(|snapshot| (&snapshot).into())
         })
     }
 
@@ -669,14 +629,31 @@ impl MobileMusicProviderLifecycle {
         lease.validate_provider_owner(&self.observation_owner)?;
         let ride_id = recording.as_ref().map(|token| token.ride_id.clone());
         self.observation_queue().observe(&lease, recording, || {
-            self.observe_music_for_ride(ride_id, snapshot, wall_clock_at_ms, clock_uncertainty_ms)
+            let snapshot = CoreMusicSnapshot::try_from(snapshot)
+                .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
+            let decision = self
+                .inner
+                .observe_for_ride(ride_id, snapshot, wall_clock_at_ms, clock_uncertainty_ms)
+                .map_err(|error| match error {
+                    application::ObserveRideError::PendingHistory => {
+                        MobileRideMapCoreErrorDto::PendingMusicHistory
+                    }
+                    application::ObserveRideError::HistoryFull => {
+                        MobileRideMapCoreErrorDto::MusicHistoryFull
+                    }
+                })?;
+            let transition = decision
+                .as_ref()
+                .and_then(|decision| decision.history_transition().cloned());
+            let projected = decision.as_ref().map(Self::project_observation);
+            Ok(projected.map(|projected| (projected, transition)))
         })
     }
 
     /// Begins one replaceable command-feedback presentation.
     #[must_use]
     pub fn begin_command_feedback(&self) -> Option<MobileMusicCommandFeedbackId> {
-        self.lock_inner().begin_command_feedback().map(Into::into)
+        self.inner.begin_command_feedback().map(Into::into)
     }
 
     /// Classifies a command completion without changing the visible request.
@@ -685,7 +662,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicCommandFeedbackId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .classify_command_feedback(CommandFeedbackId::from_raw(id.value))
             .into()
     }
@@ -696,14 +673,14 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicCommandFeedbackId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .dismiss_command_feedback(CommandFeedbackId::from_raw(id.value))
             .into()
     }
 
     /// Records provider monitoring intent.
     pub fn request_monitor(&self, request: MobileMusicProviderMonitorRequest) {
-        self.lock_inner().request_monitor(request.into());
+        self.inner.request_monitor(request.into());
     }
 
     /// Cancels monitoring and all provider work.
@@ -711,14 +688,14 @@ impl MobileMusicProviderLifecycle {
     pub fn cancel_monitor(&self) -> MobileMusicTransportCompletion {
         self.observation_queue()
             .retire_if(&self.observation_owner, || {
-                (true, self.lock_inner().cancel_monitor().into())
+                (true, self.inner.cancel_monitor().into())
             })
     }
 
     /// Admits one foreground monitor task with a Rust-owned identity.
     #[must_use]
     pub fn begin_monitor(&self) -> Option<MobileMusicProviderMonitorEffect> {
-        self.lock_inner()
+        self.inner
             .begin_monitor()
             .map(|effect| MobileMusicProviderMonitorEffect {
                 generation: effect.generation.into(),
@@ -732,7 +709,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         generation: MobileMusicMonitorId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .classify_monitor(MonitorId::from_raw(generation.value))
             .into()
     }
@@ -743,7 +720,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         generation: MobileMusicMonitorId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .finish_monitor(MonitorId::from_raw(generation.value))
             .into()
     }
@@ -756,7 +733,7 @@ impl MobileMusicProviderLifecycle {
         work_state: MobileMusicProviderWorkState,
         now_ms: u64,
     ) -> Option<MobileMusicMonitorPollEffect> {
-        self.lock_inner()
+        self.inner
             .next_monitor_poll(
                 MonitorId::from_raw(generation.value),
                 work_state.into(),
@@ -771,7 +748,7 @@ impl MobileMusicProviderLifecycle {
     /// Whether provider work is allowed in the current scene.
     #[must_use]
     pub fn is_scene_active(&self) -> bool {
-        self.lock_inner().is_scene_active()
+        self.inner.is_scene_active()
     }
 
     /// Suspends active provider work while retaining passive intent and in-flight authorization.
@@ -779,9 +756,7 @@ impl MobileMusicProviderLifecycle {
     pub fn suspend(&self) -> MobileMusicProviderSuspension {
         let suspension = self
             .observation_queue()
-            .retire_if(&self.observation_owner, || {
-                (true, self.lock_inner().suspend())
-            });
+            .retire_if(&self.observation_owner, || (true, self.inner.suspend()));
         MobileMusicProviderSuspension {
             observation_gap: suspension.observation_gap,
             cancelled_transport_request_id: suspension
@@ -793,7 +768,7 @@ impl MobileMusicProviderLifecycle {
     /// Restores the foreground scene without granting authorization.
     #[must_use]
     pub fn resume(&self) -> MobileMusicProviderMonitorResume {
-        self.lock_inner().resume().into()
+        self.inner.resume().into()
     }
 
     /// Begins a replaceable provider SDK object generation.
@@ -801,14 +776,14 @@ impl MobileMusicProviderLifecycle {
     pub fn begin_provider_session(&self) -> Option<MobileMusicProviderSessionId> {
         self.observation_queue()
             .retire_if(&self.observation_owner, || {
-                let next = self.lock_inner().begin_provider_session().map(Into::into);
+                let next = self.inner.begin_provider_session().map(Into::into);
                 (next.is_some(), next)
             })
     }
 
     /// Invalidates command feedback when the provider session changes.
     pub fn invalidate_command_feedback(&self) {
-        self.lock_inner().invalidate_command_feedback();
+        self.inner.invalidate_command_feedback();
     }
 
     /// Canonicalizes, orders, and classifies one provider observation.
@@ -825,12 +800,17 @@ impl MobileMusicProviderLifecycle {
     ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        Self::project_observation(
-            &mut self.lock_inner(),
-            snapshot,
-            wall_clock_at_ms,
-            clock_uncertainty_ms,
-        )
+        self.inner
+            .observe(snapshot, wall_clock_at_ms, clock_uncertainty_ms)
+            .map(|decision| decision.as_ref().map(Self::project_observation))
+            .map_err(|error| match error {
+                application::ObserveRideError::PendingHistory => {
+                    MobileRideMapCoreErrorDto::PendingMusicHistory
+                }
+                application::ObserveRideError::HistoryFull => {
+                    MobileRideMapCoreErrorDto::MusicHistoryFull
+                }
+            })
     }
 
     /// Removes only the matching transition after durable handling.
@@ -839,7 +819,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicHistoryTransitionId,
     ) -> MobileMusicHistoryTransitionAcknowledgement {
-        self.lock_inner()
+        self.inner
             .acknowledge_history_transition(HistoryTransitionId::from_raw(id.value))
             .into()
     }
@@ -848,7 +828,7 @@ impl MobileMusicProviderLifecycle {
     pub fn reset_observation_correlation(&self) {
         self.observation_queue()
             .retire_if(&self.observation_owner, || {
-                self.lock_inner().reset_observation_correlation();
+                self.inner.reset_observation_correlation();
                 (true, ())
             });
     }
@@ -857,14 +837,14 @@ impl MobileMusicProviderLifecycle {
     pub fn reset_observation_baselines(&self) {
         self.observation_queue()
             .retire_if(&self.observation_owner, || {
-                self.lock_inner().reset_observation_baselines();
+                self.inner.reset_observation_baselines();
                 (true, ())
             });
     }
 
     /// Drops accepted command correlation while preserving provider observations.
     pub fn clear_pending_command_correlation(&self) {
-        self.lock_inner().clear_pending_command_correlation();
+        self.inner.clear_pending_command_correlation();
     }
 
     /// Classifies a provider callback without ending its generation.
@@ -873,7 +853,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicProviderSessionId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .classify_provider_session(ProviderSessionId::from_raw(id.value))
             .into()
     }
@@ -886,11 +866,10 @@ impl MobileMusicProviderLifecycle {
     ) -> MobileMusicTransportCompletion {
         self.observation_queue()
             .retire_if(&self.observation_owner, || {
-                let mut lifecycle = self.lock_inner();
                 let id = ProviderSessionId::from_raw(id.value);
                 let current =
-                    lifecycle.classify_provider_session(id) == CallbackEpochMatch::Current;
-                (current, lifecycle.retire_provider_session(id).into())
+                    self.inner.classify_provider_session(id) == CallbackEpochMatch::Current;
+                (current, self.inner.retire_provider_session(id).into())
             })
     }
 
@@ -901,9 +880,7 @@ impl MobileMusicProviderLifecycle {
         kind: MobileMusicProviderAuthorizationKind,
         now_ms: u64,
     ) -> Option<MobileMusicAuthorizationEffect> {
-        let effect = self
-            .lock_inner()
-            .begin_authorization_effect(kind.into(), now_ms)?;
+        let effect = self.inner.begin_authorization_effect(kind.into(), now_ms)?;
         Some(MobileMusicAuthorizationEffect {
             id: effect.id.into(),
             deadline_ms: effect.deadline.as_milliseconds(),
@@ -916,7 +893,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicAuthorizationId,
     ) -> MobileMusicProviderAuthorizationMatch {
-        self.lock_inner()
+        self.inner
             .classify_authorization(AuthorizationId::from_raw(id.value))
             .into()
     }
@@ -927,14 +904,14 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicAuthorizationId,
     ) -> MobileMusicProviderAuthorizationMatch {
-        self.lock_inner()
+        self.inner
             .finish_authorization(AuthorizationId::from_raw(id.value))
             .into()
     }
 
     /// Explicitly retires provider authorization.
     pub fn invalidate_authorization(&self) {
-        self.lock_inner().invalidate_authorization();
+        self.inner.invalidate_authorization();
     }
 
     /// Begins one bounded provider connection attempt.
@@ -943,7 +920,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         now_ms: u64,
     ) -> MobileMusicProviderConnectionAttemptAdmission {
-        self.lock_inner().begin_connection_attempt(now_ms).into()
+        self.inner.begin_connection_attempt(now_ms).into()
     }
 
     /// Classifies a connection or player callback without changing retry state.
@@ -953,7 +930,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicConnectionAttemptId,
         now_ms: u64,
     ) -> MobileMusicProviderConnectionCallback {
-        self.lock_inner()
+        self.inner
             .classify_connection(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
@@ -965,7 +942,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicConnectionAttemptId,
         now_ms: u64,
     ) -> Option<MobileMusicEstablishedConnectionId> {
-        self.lock_inner()
+        self.inner
             .connection_established(ConnectionAttemptId::from_raw(id.value), now_ms)
             .map(Into::into)
     }
@@ -977,7 +954,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicConnectionAttemptId,
         now_ms: u64,
     ) -> MobileMusicProviderConnectionEffect {
-        self.lock_inner()
+        self.inner
             .connection_failed_effect(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
@@ -989,7 +966,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicConnectionAttemptId,
         now_ms: u64,
     ) -> MobileMusicProviderConnectionEffect {
-        self.lock_inner()
+        self.inner
             .connection_expired_effect(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
@@ -1001,7 +978,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicConnectionAttemptId,
         now_ms: u64,
     ) -> MobileMusicProviderConnectionEffect {
-        self.lock_inner()
+        self.inner
             .connection_disconnected_effect(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
@@ -1012,7 +989,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         now_ms: u64,
     ) -> Option<MobileMusicPlayerStateRequestId> {
-        self.lock_inner()
+        self.inner
             .begin_player_state_request(now_ms)
             .map(Into::into)
     }
@@ -1024,7 +1001,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicPlayerStateRequestId,
         now_ms: u64,
     ) -> MobileMusicRequestCompletion {
-        self.lock_inner()
+        self.inner
             .complete_player_state_request(PlayerStateRequestId::from_raw(id.value), now_ms)
             .into()
     }
@@ -1036,7 +1013,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicPlayerStateRequestId,
         now_ms: u64,
     ) -> MobileMusicRequestExpiration {
-        self.lock_inner()
+        self.inner
             .expire_player_state_request(PlayerStateRequestId::from_raw(id.value), now_ms)
             .into()
     }
@@ -1049,7 +1026,7 @@ impl MobileMusicProviderLifecycle {
         observation_revision: MobileMusicObservationRevision,
         now_ms: u64,
     ) -> MobileMusicRequestCompletion {
-        self.lock_inner()
+        self.inner
             .complete_player_state_request_if_current(
                 PlayerStateRequestId::from_raw(id.value),
                 ObservationRevision::from_raw(observation_revision.value),
@@ -1061,18 +1038,18 @@ impl MobileMusicProviderLifecycle {
     /// Returns the latest authoritative player observation revision.
     #[must_use]
     pub fn player_state_observation_revision(&self) -> MobileMusicObservationRevision {
-        self.lock_inner().player_state_observation_revision().into()
+        self.inner.player_state_observation_revision().into()
     }
 
     /// Refreshes the current player-state freshness window.
     pub fn mark_player_state_observed(&self, now_ms: u64) {
-        self.lock_inner().mark_player_state_observed(now_ms);
+        self.inner.mark_player_state_observed(now_ms);
     }
 
     /// Whether the cached state exceeded the portable freshness deadline.
     #[must_use]
     pub fn is_player_state_stale(&self, now_ms: u64) -> bool {
-        self.lock_inner().is_player_state_stale(now_ms)
+        self.inner.is_player_state_stale(now_ms)
     }
 
     /// Begins one bounded artwork request.
@@ -1082,7 +1059,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         now_ms: u64,
     ) -> Option<MobileMusicArtworkEffect> {
-        self.lock_inner()
+        self.inner
             .begin_artwork_effect(
                 ProviderSessionId::from_raw(provider_generation.value),
                 now_ms,
@@ -1100,7 +1077,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         id: MobileMusicArtworkRequestId,
     ) -> MobileMusicRequestCompletion {
-        self.lock_inner()
+        self.inner
             .complete_artwork_request(
                 ProviderSessionId::from_raw(provider_generation.value),
                 ArtworkRequestId::from_raw(id.value),
@@ -1110,7 +1087,7 @@ impl MobileMusicProviderLifecycle {
 
     /// Starts a fresh artwork budget for a new item.
     pub fn reset_artwork(&self) {
-        self.lock_inner().reset_artwork();
+        self.inner.reset_artwork();
     }
 
     /// Schedules another artwork attempt using a distinct Rust identity.
@@ -1120,7 +1097,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         now_ms: u64,
     ) -> Option<MobileMusicArtworkRetryEffect> {
-        self.lock_inner()
+        self.inner
             .begin_artwork_retry_effect(
                 ProviderSessionId::from_raw(provider_generation.value),
                 now_ms,
@@ -1138,7 +1115,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         id: MobileMusicArtworkRetryId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .complete_artwork_retry(
                 ProviderSessionId::from_raw(provider_generation.value),
                 ArtworkRetryId::from_raw(id.value),
@@ -1154,7 +1131,7 @@ impl MobileMusicProviderLifecycle {
         command: MobileMusicCommandDto,
         now_ms: u64,
     ) -> Option<MobileMusicTransportEffect> {
-        self.lock_inner()
+        self.inner
             .begin_transport_effect(owner.into(), command.into(), now_ms)
             .map(|effect| MobileMusicTransportEffect {
                 id: effect.id.into(),
@@ -1172,11 +1149,17 @@ impl MobileMusicProviderLifecycle {
         capabilities: MobileMusicCapabilitiesDto,
         now_ms: u64,
     ) -> Option<MobileMusicTransportEffect> {
-        let capabilities = CoreMusicCapabilities::from(capabilities);
-        if !capabilities.supports(CoreMusicCommand::from(command)) {
-            return None;
-        }
-        self.begin_transport_effect(owner, command, now_ms)
+        self.inner
+            .begin_supported_transport_effect(
+                owner.into(),
+                command.into(),
+                CoreMusicCapabilities::from(capabilities),
+                now_ms,
+            )
+            .map(|effect| MobileMusicTransportEffect {
+                id: effect.id.into(),
+                deadline_ms: effect.deadline.as_milliseconds(),
+            })
     }
 
     /// Admits only explicit local app opening using the shared transport lifecycle.
@@ -1187,29 +1170,32 @@ impl MobileMusicProviderLifecycle {
         command: MobileMusicCommandDto,
         now_ms: u64,
     ) -> MobileSoundCloudCommandAdmission {
-        let cutout_music::soundcloud::SoundCloudCommandAdmission::Handoff(handoff) =
-            cutout_music::soundcloud::admit_command(command.into())
-        else {
-            return MobileSoundCloudCommandAdmission::Refused;
-        };
-        let Some(effect) = self.begin_transport_effect(
-            MobileMusicTransportOwner::Provider {
-                provider_generation,
-            },
-            command,
+        match self.inner.begin_soundcloud_command(
+            ProviderSessionId::from_raw(provider_generation.value),
+            command.into(),
             now_ms,
-        ) else {
-            return MobileSoundCloudCommandAdmission::Unavailable;
-        };
-        MobileSoundCloudCommandAdmission::Handoff {
-            url: handoff.url().to_owned(),
-            effect,
+        ) {
+            application::SoundCloudCommandAdmission::Refused => {
+                MobileSoundCloudCommandAdmission::Refused
+            }
+            application::SoundCloudCommandAdmission::Unavailable => {
+                MobileSoundCloudCommandAdmission::Unavailable
+            }
+            application::SoundCloudCommandAdmission::Handoff { url, effect } => {
+                MobileSoundCloudCommandAdmission::Handoff {
+                    url,
+                    effect: MobileMusicTransportEffect {
+                        id: effect.id.into(),
+                        deadline_ms: effect.deadline.as_milliseconds(),
+                    },
+                }
+            }
         }
     }
 
     /// Begins playback confirmation for a command dispatched by an app handoff.
     pub fn begin_play_handoff(&self, now_ms: u64) -> Option<MobileMusicPlayHandoffEffect> {
-        self.lock_inner()
+        self.inner
             .begin_play_handoff(now_ms)
             .map(|effect| MobileMusicPlayHandoffEffect {
                 id: effect.id.into(),
@@ -1224,7 +1210,7 @@ impl MobileMusicProviderLifecycle {
         state: MobileMusicPlaybackStateDto,
         observed_at_ms: u64,
     ) -> Option<MobileMusicTransportOutcome> {
-        self.lock_inner()
+        self.inner
             .observe_play_handoff(
                 PlayHandoffId::from_raw(id.value),
                 state.into(),
@@ -1239,7 +1225,7 @@ impl MobileMusicProviderLifecycle {
         id: MobileMusicPlayHandoffId,
         now_ms: u64,
     ) -> Option<MobileMusicTransportOutcome> {
-        self.lock_inner()
+        self.inner
             .expire_play_handoff(PlayHandoffId::from_raw(id.value), now_ms)
             .map(Into::into)
     }
@@ -1249,7 +1235,7 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicPlayHandoffId,
     ) -> MobileMusicProviderCallbackMatch {
-        self.lock_inner()
+        self.inner
             .finish_play_handoff(PlayHandoffId::from_raw(id.value))
             .into()
     }
@@ -1262,7 +1248,7 @@ impl MobileMusicProviderLifecycle {
         request_id: MobileMusicTransportRequestId,
         outcome: MobileMusicTransportOutcome,
     ) -> MobileMusicTransportCompletion {
-        self.lock_inner()
+        self.inner
             .finish_transport(
                 ProviderSessionId::from_raw(provider_generation.value),
                 TransportRequestId::from_raw(request_id.value),
@@ -1278,7 +1264,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         now_ms: u64,
     ) -> MobileMusicTransportCompletion {
-        self.lock_inner()
+        self.inner
             .expire_transport(
                 ProviderSessionId::from_raw(provider_generation.value),
                 now_ms,
@@ -1293,7 +1279,7 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         request_id: MobileMusicTransportRequestId,
     ) -> MobileMusicTransportCompletion {
-        self.lock_inner()
+        self.inner
             .cancel_transport(
                 ProviderSessionId::from_raw(provider_generation.value),
                 TransportRequestId::from_raw(request_id.value),
@@ -1311,19 +1297,11 @@ impl MobileMusicProviderLifecycle {
     ) -> Result<Option<crate::MobileMusicHistoryTerminalFailure>, MobileRideMapCoreErrorDto> {
         lease.validate_provider_owner(&self.observation_owner)?;
         self.observation_queue().with_ready(lease, || {
-            let mut lifecycle = self.lock_inner();
-            let mut correlation = self
-                .correlation_ride_id
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            let previous = correlation.as_ref()?;
-            let current = current_ride_id?;
-            if previous == current && !current_closed {
-                return None;
-            }
-            let ride_id = previous.clone();
-            let transitions = lifecycle
-                .retire_history_association()
+            let retired = self
+                .inner
+                .retire_closed_history(current_ride_id, current_closed)?;
+            let transitions = retired
+                .transitions
                 .into_iter()
                 .map(|pending| crate::MobileMusicUnsettledHistoryTransition {
                     id: pending.id.into(),
@@ -1344,46 +1322,28 @@ impl MobileMusicProviderLifecycle {
                     clock_uncertainty_ms: pending.timing.clock_uncertainty_milliseconds(),
                 })
                 .collect::<Vec<_>>();
-            *correlation = None;
             (!transitions.is_empty()).then_some(crate::MobileMusicHistoryTerminalFailure {
-                ride_id,
+                ride_id: retired.ride_id,
                 transitions,
             })
         })
     }
 
     fn project_observation(
-        lifecycle: &mut MusicProviderLifecycle,
-        snapshot: CoreMusicSnapshot,
-        wall_clock_at_ms: u64,
-        clock_uncertainty_ms: u64,
-    ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
-        let timing = MusicObservationTiming::new(
-            WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
-            clock_uncertainty_ms,
-        );
-        Ok(match lifecycle.observe_music(snapshot, timing) {
-            MusicObservationOutcome::Accepted(decision) => Some(MobileMusicObservationDecision {
-                snapshot: decision.snapshot().into(),
-                history_transition: decision.history_transition().map(|transition| {
-                    MobileMusicHistoryTransition {
-                        id: transition.id().into(),
-                        snapshot: transition.snapshot().into(),
-                        kind: transition.kind().into(),
-                        wall_clock_at_ms: transition.timing().wall_clock_at().as_milliseconds(),
-                        clock_uncertainty_ms: transition.timing().clock_uncertainty_milliseconds(),
-                    }
-                }),
+        decision: &cutout_music::MusicObservationDecision,
+    ) -> MobileMusicObservationDecision {
+        MobileMusicObservationDecision {
+            snapshot: decision.snapshot().into(),
+            history_transition: decision.history_transition().map(|transition| {
+                MobileMusicHistoryTransition {
+                    id: transition.id().into(),
+                    snapshot: transition.snapshot().into(),
+                    kind: transition.kind().into(),
+                    wall_clock_at_ms: transition.timing().wall_clock_at().as_milliseconds(),
+                    clock_uncertainty_ms: transition.timing().clock_uncertainty_milliseconds(),
+                }
             }),
-            MusicObservationOutcome::OutOfOrder => None,
-            MusicObservationOutcome::Full => {
-                return Err(MobileRideMapCoreErrorDto::MusicHistoryFull);
-            }
-        })
-    }
-
-    fn lock_inner(&self) -> MutexGuard<'_, MusicProviderLifecycle> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+        }
     }
 }
 

@@ -13,9 +13,9 @@ use std::net::IpAddr;
 use std::time::Duration;
 use uuid::Uuid;
 
+const SYNC_TIMEOUT: Duration = Duration::from_secs(20);
 const DIRECTORY_URL: &str = "https://rides.cutout.lol/";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const SYNC_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_REQUEST_BODY_BYTES: usize = 32 * 1024;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const CHANGE_PAGE_SIZE: u32 = 10;
@@ -29,18 +29,6 @@ pub(super) struct ChargingHttpClient {
 impl ChargingHttpClient {
     pub(super) fn production() -> Result<Self, MobileChargingError> {
         Self::build(DIRECTORY_URL)
-    }
-
-    fn build(base_url: &str) -> Result<Self, MobileChargingError> {
-        let base_url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
-        let mut builder = Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none());
-        if base_url.scheme() == "http" {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build().map_err(|_| MobileChargingError::Network)?;
-        Ok(Self { client, base_url })
     }
 
     pub(super) fn loopback(base_url: &str) -> Result<Self, MobileChargingError> {
@@ -64,6 +52,18 @@ impl ChargingHttpClient {
             return Err(MobileChargingError::Network);
         }
         Self::build(base_url)
+    }
+
+    fn build(base_url: &str) -> Result<Self, MobileChargingError> {
+        let base_url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
+        let mut builder = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none());
+        if base_url.scheme() == "http" {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().map_err(|_| MobileChargingError::Network)?;
+        Ok(Self { client, base_url })
     }
 
     pub(super) async fn request<T: DeserializeOwned>(
@@ -1192,13 +1192,9 @@ mod tests {
     ) -> Result<RideDatabaseHandle, Box<dyn std::error::Error>> {
         let inner = persistence::RideDatabase::open(path)?;
         Ok(RideDatabaseHandle {
-            marker_writer: persistence::RideSessionMarkerWriter::new(inner.clone()),
+            application: cutout_application::database::RideDatabaseApplication::new(inner.clone()),
             inner,
             charging_sync_lock: tokio::sync::Mutex::new(()),
-            pending_bms_writes: std::sync::Mutex::new(crate::PendingBmsVoltageWrites {
-                next_request_id: 1,
-                writes: std::collections::VecDeque::new(),
-            }),
         })
     }
 

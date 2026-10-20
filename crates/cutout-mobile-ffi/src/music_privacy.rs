@@ -9,7 +9,7 @@ use std::sync::PoisonError;
     reason = "UniFFI owns boundary strings"
 )]
 pub fn spotify_content_url(identifier: String) -> Option<String> {
-    cutout_music::spotify::content_url(&identifier)
+    cutout_application::music::privacy::spotify_content_url(&identifier)
 }
 
 #[uniffi::export]
@@ -25,9 +25,7 @@ impl MobileRideMapCore {
             .database
             .clone()
             .ok_or_else(MobileRideMapCoreErrorDto::storage_unavailable)?;
-        database
-            .inner
-            .delete_spotify_music_history()
+        cutout_application::music::privacy::delete_spotify_music_history(&database.inner)
             .map_err(map_storage_core_error)
     }
 }

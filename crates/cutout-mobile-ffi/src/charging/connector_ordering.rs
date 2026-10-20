@@ -21,10 +21,11 @@ impl RideDatabaseHandle {
             .transpose()
             .map_err(|_| MobileChargingError::InvalidMetadata)?;
         run_database(self.inner.clone(), move |database| {
-            database
-                .charging_connector_choices_near(origin, country)
-                .map(|choices| choices.into_iter().map(Into::into).collect())
-                .map_err(storage_error)
+            cutout_application::charging::connector_ordering::charging_connector_choices_near(
+                &database, origin, country,
+            )
+            .map(|choices| choices.into_iter().map(Into::into).collect())
+            .map_err(storage_error)
         })
         .await
     }

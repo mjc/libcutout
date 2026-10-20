@@ -4,6 +4,35 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
+## Shared application services
+
+`cutout-application` provides portable application operations for direct Rust
+clients and the native binding adapter. It has no dependency on UniFFI or a UI
+toolkit. It owns device-session orchestration, capture startup and durable writer
+operations, location normalization and freshness, activity work admission, music
+provider and observation coordination, phone-alarm effects, camera command and
+media authorization, lighting session reduction, and charging editor and map
+workflows. The corresponding `cutout-mobile-ffi` exports convert inputs and
+results and delegate to these services; their existing Swift and Kotlin API
+remains the binding contract.
+
+Discovery retains the caller's filter value without interpreting it. Reconciliation
+uses the caller's row through `ChargingObservation`, preserving its payload while
+applying shared revision, visibility, and withdrawal rules. This lets Rust callers
+use ordinary application/domain values while bindings retain their native records.
+
+Rust callers can use `capture::prepare_capture_start` to prepare the shared
+writer directly. Capture settings operations accept a draft and monotonic time;
+the service assigns capture identity, normalizes time, validates the protocol
+catalog, and publishes only acknowledged observations. Database application
+operations retain bounded BMS requests and ordered ride-marker writes across
+calls. Persistence continues to own SQLite transactions and stored queries.
+
+Live ride-map recording and the charging network runtime are still being
+extracted from the mobile binding crate. Native adapters continue to own
+platform handles and effects. Compose the application services once per process
+so consumers share the same session, recording and database owners.
+
 ## Native shell ownership
 
 Swift supplies Apple API observations and executes native effects. Portable

@@ -67,11 +67,12 @@ use std::{
 };
 
 use persistence::{
-    CaptureJsonlExport, CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish,
-    CaptureWriterMonitor, CaptureWriterStatus, LiveCaptureIntegrity, SavedCaptureArtifact,
-    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
-    VerifiedConnectionRideTarget,
+    CaptureJsonlExport, CaptureWriteOutcome, CaptureWriterFinish, CaptureWriterStatus,
+    LiveCaptureIntegrity, SavedCaptureArtifact, VerifiedConnectionLifecycleMutation,
+    VerifiedConnectionRideMetadata, VerifiedConnectionRideTarget,
 };
+#[cfg(test)]
+use persistence::{CaptureMetadata, CaptureWriter};
 
 #[cfg(test)]
 use cutout_core::RideOperatingStateDto;
@@ -108,8 +109,7 @@ use cutout_core::{
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
     PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PevcapSemanticTelemetry,
-    PevcapTelemetryProvenance, PhaseCurrentReadingDto,
-    PhoneAlarmEvidence as CorePhoneAlarmEvidence, PhoneAlarmManager as CorePhoneAlarmManager,
+    PevcapTelemetryProvenance, PhaseCurrentReadingDto, PhoneAlarmManager as CorePhoneAlarmManager,
     PhoneAlarmPreferences as CorePhoneAlarmPreferences,
     PowerFlowDirection as CorePowerFlowDirection, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
@@ -129,7 +129,7 @@ use cutout_core::{
     ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto,
     VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate,
     VoltageSagEstimator, VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
-    calibrate_location_source_offset_ms, unix_milliseconds_from_seconds,
+    calibrate_location_source_offset_ms,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -139,17 +139,17 @@ use cutout_music::{
     MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
 };
+#[cfg(test)]
+use cutout_protocols::NovatekCommandOutcome;
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     H264FileSink, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
-    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
-    NovatekMediaDownloadAuthorizationError, NovatekMediaDownloadOperations, NovatekMediaPathError,
-    NovatekMediaThumbnailError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
-    NovatekR3V1Session, NovatekReadCommand, NovatekReadOnlySnapshot, NovatekRecordingCommand,
-    NovatekSessionError, NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence, RtspError,
-    RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
+    NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin, NovatekMediaPathError,
+    NovatekOriginError, NovatekProfileError, NovatekR3V1Profile, NovatekR3V1Session,
+    NovatekReadCommand, NovatekReadOnlySnapshot, NovatekSessionError, NovatekStoragePresence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    RtspError, RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
     VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
     VescReadOnlySession as CoreVescReadOnlySession, VideoClockRate, VideoConfiguration, VideoFrame,
     closest_known_model, identify_known_model, is_r3_pro_firmware, parse_read_only_snapshot,
@@ -871,15 +871,6 @@ pub enum MobileNovatekCommandDto {
     StillCapture,
 }
 
-impl MobileNovatekCommandDto {
-    const fn expected_response_command_id(self) -> u16 {
-        match self {
-            Self::StartRecording | Self::StopRecording => 2001,
-            Self::StillCapture => 1001,
-        }
-    }
-}
-
 /// A camera command target authorized against one retained camera origin.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNovatekCommandRequestDto {
@@ -1384,6 +1375,7 @@ fn novatek_snapshot_dto(snapshot: &NovatekReadOnlySnapshot) -> MobileNovatekRead
 ///
 /// Returns [`MobileNovatekParseError::InvalidResponse`] when the response is
 /// not valid bounded UTF-8 or contains a malformed status value.
+#[cfg(test)]
 fn parse_novatek_command_outcome(
     response: &[u8],
     expected_command_id: u16,
@@ -2074,240 +2066,252 @@ pub struct CutoutSessionStateHandle {
     novatek_session: Mutex<NovatekCameraSessionState>,
 }
 
-type MobileSessionState = cutout_protocols::DeviceConnectionSession;
-
-#[derive(Debug)]
-struct RetainedNovatekSession {
-    profile: NovatekR3V1Session,
-    read_only_snapshot: NovatekReadOnlySnapshot,
-}
+type MobileSessionState = cutout_application::session::ApplicationDeviceSession;
 
 #[derive(Debug, Default)]
 struct NovatekCameraSessionState {
-    generation: NovatekSessionGeneration,
-    retained: Option<RetainedNovatekSession>,
-    media_downloads: NovatekMediaDownloadOperations,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct NovatekSessionGeneration(u64);
-
-impl NovatekSessionGeneration {
-    fn advance(&mut self) {
-        self.0 = self.0.wrapping_add(1);
-    }
+    inner: cutout_application::camera::NovatekCameraSessionState,
 }
 
 impl NovatekCameraSessionState {
     fn replace_read_only(
         &mut self,
         profile: NovatekR3V1Session,
-        read_only_snapshot: NovatekReadOnlySnapshot,
+        snapshot: NovatekReadOnlySnapshot,
     ) {
-        self.generation.advance();
-        self.media_downloads.clear();
-        self.retained = Some(RetainedNovatekSession {
-            profile,
-            read_only_snapshot,
-        });
+        self.inner.replace_read_only(profile, snapshot);
     }
-
     fn clear(&mut self) {
-        self.generation.advance();
-        self.media_downloads.clear();
-        self.retained = None;
+        self.inner.clear();
     }
-
     fn profile(&self) -> Option<&NovatekR3V1Session> {
-        self.retained.as_ref().map(|session| &session.profile)
+        self.inner.profile()
     }
-
     fn authorize_command(
         &self,
-        requested_origin: &MobileNovatekHttpOriginDto,
+        origin: &MobileNovatekHttpOriginDto,
         command: MobileNovatekCommandDto,
     ) -> Result<MobileNovatekCommandRequestDto, MobileNovatekCommandAuthorizationError> {
-        let profile = self
-            .profile()
-            .ok_or(MobileNovatekCommandAuthorizationError::Unsupported)?;
-        let origin = MobileNovatekHttpOriginDto {
-            address: profile.origin().address().to_string(),
-            port: profile.origin().port(),
-        };
-        if requested_origin != &origin {
-            return Err(MobileNovatekCommandAuthorizationError::OriginMismatch);
-        }
-
-        let target = match command {
-            MobileNovatekCommandDto::StartRecording => profile
-                .recording_command_target(NovatekRecordingCommand::Start)
-                .map(|target| target.as_str().to_owned()),
-            MobileNovatekCommandDto::StopRecording => profile
-                .recording_command_target(NovatekRecordingCommand::Stop)
-                .map(|target| target.as_str().to_owned()),
-            MobileNovatekCommandDto::StillCapture => profile
-                .still_capture_command_target(NovatekStillCaptureCommand)
-                .map(|target| target.as_str().to_owned()),
-        };
-        let target = target.map_err(|_| MobileNovatekCommandAuthorizationError::Unsupported)?;
-
-        Ok(MobileNovatekCommandRequestDto {
-            origin,
-            target,
-            command,
-            session_generation: self.generation.0,
-            camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
-        })
+        self.inner
+            .authorize_command(&origin.clone().into(), command.into())
+            .map(Into::into)
+            .map_err(Into::into)
     }
-
     fn complete_command(
         &self,
         request: &MobileNovatekCommandRequestDto,
         response: &[u8],
     ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
-        let Ok(current_request) = self.authorize_command(&request.origin, request.command) else {
-            return Err(MobileNovatekCommandCompletionError::StaleSession);
-        };
-        if current_request.origin != request.origin
-            || current_request.target != request.target
-            || current_request.command != request.command
-            || current_request.session_generation != request.session_generation
-        {
-            return Err(MobileNovatekCommandCompletionError::StaleSession);
-        }
-
-        Ok(
-            parse_novatek_command_outcome(response, request.command.expected_response_command_id())
-                .unwrap_or(MobileNovatekCommandOutcomeDto::Unknown),
-        )
+        self.inner
+            .complete_command(&request.clone().into(), response)
+            .map(Into::into)
+            .map_err(Into::into)
     }
-
-    fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
-        self.retained.as_ref().is_some_and(|session| {
-            session.read_only_snapshot.media().is_some_and(|media| {
-                media
-                    .entries()
-                    .iter()
-                    .any(|entry| entry.path() == path && entry.size_bytes() == size_bytes)
-            })
-        })
+    fn media_is_current(&self, path: &str, size: u64) -> bool {
+        self.inner.media_is_current(path, size)
     }
-
     fn authorize_media_download(
         &mut self,
         path: &str,
     ) -> Result<MobileNovatekMediaDownloadRequestDto, MobileNovatekMediaDownloadAuthorizationError>
     {
-        let session = self
-            .retained
-            .as_ref()
-            .ok_or(MobileNovatekMediaDownloadAuthorizationError::SessionUnavailable)?;
-        let authorization = self
-            .media_downloads
-            .authorize(
-                session
-                    .read_only_snapshot
-                    .media()
-                    .ok_or(MobileNovatekMediaDownloadAuthorizationError::MediaNotRetained)?,
-                path,
-            )
-            .map_err(|error| match error {
-                NovatekMediaDownloadAuthorizationError::MediaNotRetained => {
-                    MobileNovatekMediaDownloadAuthorizationError::MediaNotRetained
-                }
-                NovatekMediaDownloadAuthorizationError::InvalidPath(_) => {
-                    MobileNovatekMediaDownloadAuthorizationError::InvalidPath
-                }
-                NovatekMediaDownloadAuthorizationError::OperationIdExhausted => {
-                    MobileNovatekMediaDownloadAuthorizationError::OperationIdExhausted
-                }
-            })?;
-        Ok(MobileNovatekMediaDownloadRequestDto {
-            operation_id: authorization.id().get(),
-            target: authorization.target().as_str().to_owned(),
-            size_bytes: authorization.entry().size_bytes(),
-        })
+        self.inner
+            .authorize_media_download(path)
+            .map(Into::into)
+            .map_err(Into::into)
     }
-
     fn complete_media_download(
         &mut self,
         operation_id: u64,
-        actual_size: u64,
+        size: u64,
     ) -> Result<MobileNovatekMediaEntryDto, MobileNovatekMediaDownloadCompletionError> {
-        let entry = self
-            .media_downloads
-            .consume_id(operation_id)
-            .ok_or(MobileNovatekMediaDownloadCompletionError::StaleOperation)?;
-        let entry = entry.entry();
-        if actual_size != entry.size_bytes() {
-            return Err(MobileNovatekMediaDownloadCompletionError::SizeMismatch {
-                expected: entry.size_bytes(),
-                actual: actual_size,
-            });
-        }
-        Ok(MobileNovatekMediaEntryDto {
-            name: entry.name().to_owned(),
-            path: entry.path().to_owned(),
-            size_bytes: entry.size_bytes(),
-            timecode: entry.timecode(),
-            time: entry.time().to_owned(),
-            attributes: entry.attributes(),
-        })
+        self.inner
+            .complete_media_download(operation_id, size)
+            .map(Into::into)
+            .map_err(Into::into)
     }
-
     fn cancel_media_download(&mut self, operation_id: u64) -> bool {
-        self.media_downloads.cancel_id(operation_id)
+        self.inner.cancel_media_download(operation_id)
     }
-
     fn media_provenance_for_download(
         &self,
         operation_id: u64,
         association: &MobileNovatekMediaDownloadAssociationInput,
     ) -> Result<CoreCameraMediaProvenance, MobileNovatekMediaDownloadCompletionError> {
-        let entry = self
-            .media_downloads
-            .authorized_entry_id(operation_id)
-            .ok_or(MobileNovatekMediaDownloadCompletionError::StaleOperation)?;
-        CoreCameraMediaProvenance::new(
-            CoreCameraSourceKind::NovatekR3Pro,
-            entry.path(),
-            entry.size_bytes(),
-            entry.timecode(),
-            entry.time(),
-            &association.ride_capture_file_name,
-            CoreCameraMediaCaptureTiming {
-                captured_at_monotonic: MonotonicTimestamp::new(
-                    association.captured_at_monotonic_ms,
-                ),
-                captured_at_wall_clock: WallClockUnixTimestamp::new(
-                    association.captured_at_wall_clock_ms,
-                ),
-                clock_uncertainty: association.clock_uncertainty.into(),
-            },
-        )
-        .map_err(|_| MobileNovatekMediaDownloadCompletionError::InvalidProvenance)
+        self.inner
+            .media_provenance_for_download(
+                operation_id,
+                &cutout_application::camera::CameraMediaAssociation {
+                    ride_capture_file_name: association.ride_capture_file_name.clone(),
+                    captured_at_monotonic_ms: association.captured_at_monotonic_ms,
+                    captured_at_wall_clock_ms: association.captured_at_wall_clock_ms,
+                    clock_uncertainty: association.clock_uncertainty.into(),
+                },
+            )
+            .map_err(Into::into)
     }
-
     fn media_thumbnail_target(
         &self,
         path: &str,
-        size_bytes: u64,
+        size: u64,
     ) -> Result<String, MobileNovatekThumbnailTargetError> {
-        if !self.media_is_current(path, size_bytes) {
-            return Err(MobileNovatekThumbnailTargetError::MediaNotCurrent);
+        self.inner
+            .media_thumbnail_target(path, size)
+            .map_err(Into::into)
+    }
+}
+
+impl From<cutout_application::camera::CameraHttpOrigin> for MobileNovatekHttpOriginDto {
+    fn from(value: cutout_application::camera::CameraHttpOrigin) -> Self {
+        Self {
+            address: value.address,
+            port: value.port,
         }
-        self.profile()
-            .ok_or(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)?
-            .media_thumbnail_target(path)
-            .map(|target| target.as_str().to_owned())
-            .map_err(|error| match error {
-                NovatekMediaThumbnailError::Capability(_) => {
-                    MobileNovatekThumbnailTargetError::CapabilityNotAdvertised
-                }
-                NovatekMediaThumbnailError::Path(_) => {
-                    MobileNovatekThumbnailTargetError::InvalidPath
-                }
-            })
+    }
+}
+impl From<MobileNovatekHttpOriginDto> for cutout_application::camera::CameraHttpOrigin {
+    fn from(value: MobileNovatekHttpOriginDto) -> Self {
+        Self {
+            address: value.address,
+            port: value.port,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraCommandRequest> for MobileNovatekCommandRequestDto {
+    fn from(value: cutout_application::camera::CameraCommandRequest) -> Self {
+        Self {
+            origin: value.origin.into(),
+            target: value.target,
+            command: value.command.into(),
+            session_generation: value.session_generation,
+            camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
+        }
+    }
+}
+impl From<MobileNovatekCommandRequestDto> for cutout_application::camera::CameraCommandRequest {
+    fn from(value: MobileNovatekCommandRequestDto) -> Self {
+        Self {
+            origin: value.origin.into(),
+            target: value.target,
+            command: value.command.into(),
+            session_generation: value.session_generation,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraMediaEntry> for MobileNovatekMediaEntryDto {
+    fn from(value: cutout_application::camera::CameraMediaEntry) -> Self {
+        Self {
+            name: value.name,
+            path: value.path,
+            size_bytes: value.size_bytes,
+            timecode: value.timecode,
+            time: value.time,
+            attributes: value.attributes,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraMediaDownloadRequest>
+    for MobileNovatekMediaDownloadRequestDto
+{
+    fn from(value: cutout_application::camera::CameraMediaDownloadRequest) -> Self {
+        Self {
+            operation_id: value.operation_id,
+            target: value.target,
+            size_bytes: value.size_bytes,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraCommand> for MobileNovatekCommandDto {
+    fn from(value: cutout_application::camera::CameraCommand) -> Self {
+        match value {
+            cutout_application::camera::CameraCommand::StartRecording => Self::StartRecording,
+            cutout_application::camera::CameraCommand::StopRecording => Self::StopRecording,
+            cutout_application::camera::CameraCommand::StillCapture => Self::StillCapture,
+        }
+    }
+}
+impl From<MobileNovatekCommandDto> for cutout_application::camera::CameraCommand {
+    fn from(value: MobileNovatekCommandDto) -> Self {
+        match value {
+            MobileNovatekCommandDto::StartRecording => Self::StartRecording,
+            MobileNovatekCommandDto::StopRecording => Self::StopRecording,
+            MobileNovatekCommandDto::StillCapture => Self::StillCapture,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraCommandAuthorizationError>
+    for MobileNovatekCommandAuthorizationError
+{
+    fn from(value: cutout_application::camera::CameraCommandAuthorizationError) -> Self {
+        match value {
+            cutout_application::camera::CameraCommandAuthorizationError::Unsupported => {
+                Self::Unsupported
+            }
+            cutout_application::camera::CameraCommandAuthorizationError::OriginMismatch => {
+                Self::OriginMismatch
+            }
+        }
+    }
+}
+impl From<cutout_application::camera::CameraCommandCompletionError>
+    for MobileNovatekCommandCompletionError
+{
+    fn from(value: cutout_application::camera::CameraCommandCompletionError) -> Self {
+        match value {
+            cutout_application::camera::CameraCommandCompletionError::StaleSession => {
+                Self::StaleSession
+            }
+        }
+    }
+}
+impl From<cutout_application::camera::CameraCommandOutcome> for MobileNovatekCommandOutcomeDto {
+    fn from(value: cutout_application::camera::CameraCommandOutcome) -> Self {
+        match value {
+            cutout_application::camera::CameraCommandOutcome::Acknowledged => Self::Acknowledged,
+            cutout_application::camera::CameraCommandOutcome::Refused => Self::Refused,
+            cutout_application::camera::CameraCommandOutcome::Unknown => Self::Unknown,
+        }
+    }
+}
+impl From<cutout_application::camera::CameraMediaDownloadAuthorizationError>
+    for MobileNovatekMediaDownloadAuthorizationError
+{
+    fn from(value: cutout_application::camera::CameraMediaDownloadAuthorizationError) -> Self {
+        match value {
+        cutout_application::camera::CameraMediaDownloadAuthorizationError::SessionUnavailable => Self::SessionUnavailable,
+        cutout_application::camera::CameraMediaDownloadAuthorizationError::MediaNotRetained => Self::MediaNotRetained,
+        cutout_application::camera::CameraMediaDownloadAuthorizationError::InvalidPath => Self::InvalidPath,
+        cutout_application::camera::CameraMediaDownloadAuthorizationError::OperationIdExhausted => Self::OperationIdExhausted,
+    }
+    }
+}
+impl From<cutout_application::camera::CameraMediaDownloadCompletionError>
+    for MobileNovatekMediaDownloadCompletionError
+{
+    fn from(value: cutout_application::camera::CameraMediaDownloadCompletionError) -> Self {
+        match value {
+        cutout_application::camera::CameraMediaDownloadCompletionError::StaleOperation => Self::StaleOperation,
+        cutout_application::camera::CameraMediaDownloadCompletionError::SizeMismatch { expected, actual } => Self::SizeMismatch { expected, actual },
+        cutout_application::camera::CameraMediaDownloadCompletionError::StaleCaptureGeneration => Self::StaleCaptureGeneration,
+        cutout_application::camera::CameraMediaDownloadCompletionError::InvalidProvenance => Self::InvalidProvenance,
+    }
+    }
+}
+impl From<cutout_application::camera::CameraThumbnailTargetError>
+    for MobileNovatekThumbnailTargetError
+{
+    fn from(value: cutout_application::camera::CameraThumbnailTargetError) -> Self {
+        match value {
+            cutout_application::camera::CameraThumbnailTargetError::CapabilityNotAdvertised => {
+                Self::CapabilityNotAdvertised
+            }
+            cutout_application::camera::CameraThumbnailTargetError::MediaNotCurrent => {
+                Self::MediaNotCurrent
+            }
+            cutout_application::camera::CameraThumbnailTargetError::InvalidPath => {
+                Self::InvalidPath
+            }
+        }
     }
 }
 
@@ -2316,7 +2320,7 @@ struct MobilePhoneAlarmState {
     alarms: CorePhoneAlarmManager,
     capability: MobilePhoneAlarmDeliveryCapabilityDto,
     activation_error: Option<MobilePhoneAlarmError>,
-    actions: MobilePhoneAlarmActionsDto,
+    actions: cutout_application::alarms::PhoneAlarmEffectQueue,
     database: Option<persistence::RideDatabase>,
 }
 
@@ -2383,7 +2387,7 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
 }
 
 impl DiscoverySnapshot {
-    fn from_owner(owner: &cutout_protocols::DeviceConnectionSession) -> Self {
+    fn from_owner(owner: &MobileSessionState) -> Self {
         let discovery = owner.session_state().discovery();
         Self {
             observations: discovery
@@ -2562,10 +2566,9 @@ impl CutoutSessionStateHandle {
             .map(GattFingerprint::from)
             .collect::<Vec<_>>();
         let mut state = self.lock_inner();
-        state.observe_gatt_unscoped(&fingerprints).map_or_else(
-            || state.detector().resolution(state.session_state()).into(),
-            Into::into,
-        )
+        state
+            .observe_gatt_unscoped(&fingerprints)
+            .map_or_else(|| state.detector_resolution().into(), Into::into)
     }
 
     pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
@@ -2625,10 +2628,7 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeName,
             })
-            .map_or_else(
-                || state.detector().resolution(state.session_state()).into(),
-                Into::into,
-            )
+            .map_or_else(|| state.detector_resolution().into(), Into::into)
     }
     pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -2636,10 +2636,7 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeFirmware,
             })
-            .map_or_else(
-                || state.detector().resolution(state.session_state()).into(),
-                Into::into,
-            )
+            .map_or_else(|| state.detector_resolution().into(), Into::into)
     }
     pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -2647,10 +2644,7 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeImu,
             })
-            .map_or_else(
-                || state.detector().resolution(state.session_state()).into(),
-                Into::into,
-            )
+            .map_or_else(|| state.detector_resolution().into(), Into::into)
     }
     pub fn expire_begode_probe_responses(
         &self,
@@ -2664,15 +2658,11 @@ impl CutoutSessionStateHandle {
     }
     pub fn reset_device_detection(&self) {
         let mut state = self.lock_inner();
-        if state.reset_detector_unscoped() {
-            state.session_state_mut().reset_device_identity();
-        }
+        state.reset_device_identity_and_detector_unscoped();
     }
     pub fn reset_device_detection_link(&self) {
         let mut state = self.lock_inner();
-        if state.reset_detector_unscoped() {
-            state.session_state_mut().identity_mut().reset_link_probes();
-        }
+        state.reset_link_probes_unscoped();
     }
 
     /// Allows discovery-only evidence before a connection attempt is admitted.
@@ -2824,9 +2814,7 @@ impl CutoutSessionStateHandle {
     /// Observes one mobile discovery advertisement.
     pub fn observe_discovery(&self, observation: DiscoveryObservation) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state
-            .session_state_mut()
-            .observe_discovery(observation.into_core());
+        state.observe_discovery(observation.into_core());
         DiscoverySnapshot::from_owner(&state)
     }
 
@@ -2838,9 +2826,7 @@ impl CutoutSessionStateHandle {
         }
         self.lock_phone_alarm().activation_error = activation_error;
         let mut state = self.lock_inner();
-        state
-            .session_state_mut()
-            .select_discovered_platform(platform_identifier);
+        state.select_discovered_platform(platform_identifier);
         DiscoverySnapshot::from_owner(&state)
     }
 
@@ -2996,7 +2982,6 @@ impl CutoutSessionStateHandle {
                 let provenance = MobileCameraMediaProvenanceDto::from(&record);
                 if !self
                     .lock_inner()
-                    .session_state_mut()
                     .record_camera_media_provenance(association.capture_generation.into(), record)
                 {
                     return Err(MobileNovatekMediaDownloadCompletionError::StaleCaptureGeneration);
@@ -3125,10 +3110,7 @@ impl CutoutSessionStateHandle {
 
     /// Retires pending camera discovery after a native path observation.
     pub fn advance_camera_discovery_generation(&self) {
-        self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .advance_discovery_generation();
+        self.lock_inner().advance_camera_discovery_generation();
     }
 
     /// Captures an identity for asynchronous foreground preview work.
@@ -3152,16 +3134,13 @@ impl CutoutSessionStateHandle {
 
     /// Retires preview work without invalidating unrelated camera operations.
     pub fn advance_camera_preview_generation(&self) {
-        self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .advance_preview_generation();
+        self.lock_inner().advance_camera_preview_generation();
     }
 
     /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
     pub fn invalidate_camera_lifecycle(&self) {
         let mut inner = self.lock_inner();
-        inner.session_state_mut().camera_mut().invalidate();
+        inner.invalidate_camera_lifecycle();
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3170,10 +3149,7 @@ impl CutoutSessionStateHandle {
 
     /// Records a foreground preview observation without changing recording truth.
     pub fn observe_camera_preview(&self, preview: MobileCameraPreviewStateDto) {
-        self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .observe_preview(preview.into());
+        self.lock_inner().observe_camera_preview(preview.into());
     }
 
     /// Reduces one platform preview lifecycle event into Rust-owned state.
@@ -3185,10 +3161,7 @@ impl CutoutSessionStateHandle {
             MobileCameraPreviewEventDto::Stopped => CoreCameraPreviewState::Stopped,
             MobileCameraPreviewEventDto::Unavailable => CoreCameraPreviewState::Unavailable,
         };
-        self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .observe_preview(preview);
+        self.lock_inner().observe_camera_preview(preview);
     }
 
     /// Records authoritative onboard recording truth without changing preview state.
@@ -3197,9 +3170,7 @@ impl CutoutSessionStateHandle {
         onboard_recording: MobileCameraOnboardRecordingStateDto,
     ) {
         self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .observe_onboard_recording(onboard_recording.into());
+            .observe_camera_onboard_recording(onboard_recording.into());
     }
 
     /// Records bounded camera-media provenance without copying video bytes into
@@ -3219,10 +3190,7 @@ impl CutoutSessionStateHandle {
         let generation = input.capture_generation.into();
         let record = input.into_core()?;
         let mut inner = self.lock_inner();
-        if inner
-            .session_state_mut()
-            .record_camera_media_provenance(generation, record)
-        {
+        if inner.record_camera_media_provenance(generation, record) {
             Ok(())
         } else {
             Err(MobileCameraMediaProvenanceError::StaleCaptureGeneration)
@@ -3243,10 +3211,7 @@ impl CutoutSessionStateHandle {
 
     /// Clears camera-media provenance for the next ride capture.
     pub fn clear_camera_media_provenance(&self) {
-        self.lock_inner()
-            .session_state_mut()
-            .camera_provenance
-            .clear();
+        self.lock_inner().clear_camera_media_provenance();
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -3261,9 +3226,8 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionInputError> {
         let input = input.try_into()?;
         let mut mobile = self.lock_inner();
-        let decision = mobile.session_state().ride_session.transition(input);
-        let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        mobile.session_state_mut().ride_session = state;
+        let decision = mobile.transition_ride_session(input);
+        let (_, output) = MobileRideSessionDecisionDto::from_core(decision);
         Ok(output)
     }
 
@@ -3315,23 +3279,12 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionMarkerError> {
         let marker = CoreRideSessionMarker::decode(&marker)?;
         let mut mobile = self.lock_inner();
-        let current = &mobile.session_state().ride_session;
-        // Recovery cannot replace a live identity or bypass pending terminal cleanup.
-        // This also makes matching-marker retries idempotent during startup callbacks.
-        if current.marker().is_some() {
-            return Ok(MobileRideSessionDecisionDto {
-                snapshot: current.into(),
-                effect: MobileRideSessionEffectDto::None,
-            });
-        }
-        let decision = CoreRideSessionLifecycle::recover(
-            marker,
-            restored_platform_identifier.as_deref(),
-            current.app_presence(),
-        );
-        let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        mobile.session_state_mut().ride_session = state;
-        Ok(output)
+        let recovery =
+            mobile.recover_ride_session_marker(marker, restored_platform_identifier.as_deref());
+        Ok(MobileRideSessionDecisionDto {
+            snapshot: (&recovery.state).into(),
+            effect: recovery.effect.into(),
+        })
     }
 
     /// Returns the current Rust-owned ride-session snapshot.
@@ -3390,7 +3343,7 @@ impl CutoutSessionStateHandle {
         state.alarms.clear_active_device();
         state.activation_error = None;
         let cancel_request_ids = state.alarms.take_cancelled_request_ids();
-        state.discard_queued_schedules(&cancel_request_ids);
+        state.actions.discard_queued_schedules(&cancel_request_ids);
         MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
     }
 
@@ -3468,7 +3421,7 @@ impl CutoutSessionStateHandle {
         } else {
             state.alarms.invalidate_deliveries()
         };
-        state.discard_queued_schedules(&cancel_request_ids);
+        state.actions.discard_queued_schedules(&cancel_request_ids);
         state.capability = capability;
         MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
     }
@@ -3491,10 +3444,14 @@ impl CutoutSessionStateHandle {
     /// Drains every alarm delivery and cancellation queued by session ingest.
     pub fn drain_phone_alarm_actions(&self) -> MobilePhoneAlarmActionsDto {
         let mut state = self.lock_phone_alarm();
-        let cancellations =
-            MobilePhoneAlarmActionsDto::cancellations(state.alarms.take_cancelled_request_ids());
-        state.enqueue_actions(cancellations);
-        std::mem::take(&mut state.actions)
+        let cancel_request_ids = state.alarms.take_cancelled_request_ids();
+        state
+            .actions
+            .enqueue(cutout_application::alarms::PhoneAlarmEffects {
+                schedule: Vec::new(),
+                cancel_request_ids,
+            });
+        phone_alarm_effects_to_dto(state.actions.drain())
     }
 }
 
@@ -3521,19 +3478,18 @@ impl CutoutSessionStateHandle {
             .transpose()
             .map_err(|_| MobilePhoneAlarmError::StorageFailure)?
             .flatten();
-        if let Some(record) = record {
-            let preferences =
+        let preferences = record
+            .map(|record| {
                 CorePhoneAlarmPreferences::new(record.enabled(), record.pwm_duty_percent())
-                    .map_err(MobilePhoneAlarmError::from)?;
-            state
-                .alarms
-                .restore_preferences(identity.to_owned(), preferences)
-                .map_err(MobilePhoneAlarmError::from)?;
-        }
-        state
-            .alarms
-            .activate_device(identity.to_owned())
-            .map_err(MobilePhoneAlarmError::from)
+                    .map_err(MobilePhoneAlarmError::from)
+            })
+            .transpose()?;
+        cutout_application::alarms::activate_device(
+            &mut state.alarms,
+            identity.to_owned(),
+            preferences,
+        )
+        .map_err(MobilePhoneAlarmError::from)
     }
 
     fn save_phone_alarm_preferences(
@@ -3560,12 +3516,14 @@ impl CutoutSessionStateHandle {
                 .save_phone_alarm_preferences(&identity, record)
                 .map_err(|_| MobilePhoneAlarmError::StorageFailure)?;
         }
-        state
-            .alarms
-            .restore_preferences(identity, preferences)
-            .map_err(MobilePhoneAlarmError::from)?;
+        cutout_application::alarms::replace_active_preferences(
+            &mut state.alarms,
+            &identity,
+            preferences,
+        )
+        .map_err(MobilePhoneAlarmError::from)?;
         let cancel_request_ids = state.alarms.take_cancelled_request_ids();
-        state.discard_queued_schedules(&cancel_request_ids);
+        state.actions.discard_queued_schedules(&cancel_request_ids);
         Ok(MobilePhoneAlarmActionsDto::cancellations(
             cancel_request_ids,
         ))
@@ -3578,71 +3536,46 @@ impl CutoutSessionStateHandle {
         include_controller_conditions: bool,
     ) {
         let mut state = self.lock_phone_alarm();
-        let actions = if state.capability.can_schedule {
-            let evidence = phone_alarm_evidence(input, snapshot, include_controller_conditions);
-            MobilePhoneAlarmActionsDto::from_core(
-                state
-                    .alarms
-                    .evaluate(evidence, input.monotonic_ms.into_core()),
-                state.capability.plays_sound,
-            )
-        } else {
-            MobilePhoneAlarmActionsDto::cancellations(state.alarms.invalidate_deliveries())
+        let observation = cutout_application::alarms::PhoneAlarmObservation {
+            link_down: input.kind == MobileSessionInputKindDto::LinkDown,
+            now: input.monotonic_ms.into_core(),
+            observed_at: snapshot.at_ms.map(MobileMonotonicMillisDto::into_core),
+            pwm_duty: snapshot
+                .pwm
+                .map(|duty| CoreDutyCycle::from_permille(duty.permille)),
+            controller_warning: snapshot.vesc_warning.map(Into::into),
+            controller_stop: snapshot.vesc_stop_reason.map(Into::into),
         };
-        state.enqueue_actions(actions);
+        let capability = cutout_application::alarms::PhoneAlarmDeliveryCapability {
+            can_schedule: state.capability.can_schedule,
+            plays_sound: state.capability.plays_sound,
+        };
+        let effects = cutout_application::alarms::evaluate(
+            &mut state.alarms,
+            capability,
+            observation,
+            include_controller_conditions,
+        );
+        state.actions.enqueue(effects);
     }
 }
 
-impl MobilePhoneAlarmState {
-    fn enqueue_actions(&mut self, mut actions: MobilePhoneAlarmActionsDto) {
-        self.discard_queued_schedules(&actions.cancel_request_ids);
-        self.actions.schedule.append(&mut actions.schedule);
-        for request_id in actions.cancel_request_ids {
-            if !self.actions.cancel_request_ids.contains(&request_id) {
-                self.actions.cancel_request_ids.push(request_id);
-            }
-        }
-    }
-
-    fn discard_queued_schedules(&mut self, request_ids: &[u64]) {
-        self.actions
+fn phone_alarm_effects_to_dto(
+    effects: cutout_application::alarms::PhoneAlarmEffects,
+) -> MobilePhoneAlarmActionsDto {
+    MobilePhoneAlarmActionsDto {
+        schedule: effects
             .schedule
-            .retain(|request| !request_ids.contains(&request.id));
+            .into_iter()
+            .map(|delivery| {
+                MobilePhoneAlarmDeliveryRequestDto::from_core(
+                    delivery.request,
+                    delivery.plays_sound,
+                )
+            })
+            .collect(),
+        cancel_request_ids: effects.cancel_request_ids,
     }
-}
-
-fn phone_alarm_evidence(
-    input: &MobileSessionInputDto,
-    snapshot: &MobileTelemetrySnapshotDto,
-    include_controller_conditions: bool,
-) -> CorePhoneAlarmEvidence {
-    if input.kind == MobileSessionInputKindDto::LinkDown {
-        return CorePhoneAlarmEvidence::unavailable();
-    }
-    let Some(observed_at) = snapshot.at_ms else {
-        return CorePhoneAlarmEvidence::unavailable();
-    };
-    if input
-        .monotonic_ms
-        .milliseconds
-        .saturating_sub(observed_at.milliseconds)
-        > RIDE_SESSION_STALE_AFTER.as_milliseconds()
-    {
-        return CorePhoneAlarmEvidence::stale();
-    }
-    CorePhoneAlarmEvidence::fresh(
-        snapshot
-            .pwm
-            .map(|duty| CoreDutyCycle::from_permille(duty.permille)),
-        include_controller_conditions
-            .then_some(snapshot.vesc_warning)
-            .flatten()
-            .map(Into::into),
-        include_controller_conditions
-            .then_some(snapshot.vesc_stop_reason)
-            .flatten()
-            .map(Into::into),
-    )
 }
 
 /// Device-detection resolution exposed across the `UniFFI` boundary.
@@ -3965,18 +3898,14 @@ impl CutoutSessionStateHandle {
     pub fn next_begode_probe_expiry(&self, timeout_ms: u64) -> Option<u64> {
         let state = self.lock_inner();
         state
-            .detector()
-            .next_probe_expiry(
-                state.session_state(),
-                CoreDuration::from_milliseconds(timeout_ms),
-            )
+            .next_probe_expiry(CoreDuration::from_milliseconds(timeout_ms))
             .map(MonotonicTimestamp::as_milliseconds)
     }
 
     /// Returns the current detection resolution.
     pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
         let state = self.lock_inner();
-        state.detector().resolution(state.session_state()).into()
+        state.detector_resolution().into()
     }
 
     /// Clears device-specific detection state while preserving discovery observations.
@@ -3984,23 +3913,13 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
     ) -> bool {
-        let mut state = self.lock_inner();
-        if !state
-            .session_state()
-            .connection
-            .is_current(&token.clone().into())
-        {
-            return false;
-        }
-        state.session_state_mut().reset_device_identity();
-        state.reset_detector(&token.into())
+        self.lock_inner()
+            .reset_device_identity_and_detector(&token.into())
     }
 
     /// Sets the purpose of the selected connection across transport attempts.
     pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
-        self.lock_inner()
-            .session_state_mut()
-            .device_connection_intent = intent.into();
+        self.lock_inner().set_connection_intent(intent.into());
     }
 
     /// Whether unresolved identification should retry rather than capture-only.
@@ -4015,16 +3934,8 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
     ) -> bool {
-        let mut state = self.lock_inner();
-        if !state
-            .session_state()
-            .connection
-            .is_current(&token.clone().into())
-        {
-            return false;
-        }
-        state.session_state_mut().identity_mut().reset_link_probes();
-        state.reset_detector(&token.into())
+        self.lock_inner()
+            .reset_link_probes_and_detector(&token.into())
     }
 }
 
@@ -5881,58 +5792,54 @@ pub struct MobilePhoneLocationSampleDto {
     pub course_accuracy_degrees: Option<f64>,
 }
 
+impl From<MobilePhoneLocationSampleDto> for cutout_application::location::PhoneLocationSample {
+    fn from(value: MobilePhoneLocationSampleDto) -> Self {
+        Self {
+            wall_clock_unix_ms: value.wall_clock_unix_ms,
+            source_timestamp_unix_seconds: value.source_timestamp_unix_seconds,
+            latitude_degrees: value.latitude_degrees,
+            longitude_degrees: value.longitude_degrees,
+            altitude_meters: value.altitude_meters,
+            horizontal_accuracy_meters: value.horizontal_accuracy_meters,
+            vertical_accuracy_meters: value.vertical_accuracy_meters,
+            speed_meters_per_second: value.speed_meters_per_second,
+            speed_accuracy_meters_per_second: value.speed_accuracy_meters_per_second,
+            course_degrees: value.course_degrees,
+            course_accuracy_degrees: value.course_accuracy_degrees,
+        }
+    }
+}
+
+impl From<cutout_application::location::PhoneLocationSample> for MobilePhoneLocationSampleDto {
+    fn from(value: cutout_application::location::PhoneLocationSample) -> Self {
+        Self {
+            wall_clock_unix_ms: value.wall_clock_unix_ms,
+            source_timestamp_unix_seconds: value.source_timestamp_unix_seconds,
+            latitude_degrees: value.latitude_degrees,
+            longitude_degrees: value.longitude_degrees,
+            altitude_meters: value.altitude_meters,
+            horizontal_accuracy_meters: value.horizontal_accuracy_meters,
+            vertical_accuracy_meters: value.vertical_accuracy_meters,
+            speed_meters_per_second: value.speed_meters_per_second,
+            speed_accuracy_meters_per_second: value.speed_accuracy_meters_per_second,
+            course_degrees: value.course_degrees,
+            course_accuracy_degrees: value.course_accuracy_degrees,
+        }
+    }
+}
+
 impl MobilePhoneLocationSampleDto {
-    /// Normalizes Core Location sentinel values into typed absence.
     fn canonical(self) -> Option<Self> {
-        let location = PevcapPhoneLocation {
-            wall_clock_unix_ms: self.normalized_wall_clock_unix_ms(),
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
-        }
-        .canonical()
-        .ok()?;
-        Some(Self {
-            wall_clock_unix_ms: location.wall_clock_unix_ms,
-            source_timestamp_unix_seconds: self.source_timestamp_unix_seconds,
-            latitude_degrees: location.latitude_degrees,
-            longitude_degrees: location.longitude_degrees,
-            altitude_meters: location.altitude_meters,
-            horizontal_accuracy_meters: location.horizontal_accuracy_meters,
-            vertical_accuracy_meters: location.vertical_accuracy_meters,
-            speed_meters_per_second: location.speed_meters_per_second,
-            speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
-            course_degrees: location.course_degrees,
-            course_accuracy_degrees: location.course_accuracy_degrees,
-        })
+        cutout_application::location::PhoneLocationSample::from(self)
+            .canonical()
+            .map(Into::into)
     }
-
     fn pevcap_location(self) -> PevcapPhoneLocation {
-        PevcapPhoneLocation {
-            wall_clock_unix_ms: self.normalized_wall_clock_unix_ms(),
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
-        }
+        cutout_application::location::PhoneLocationSample::from(self).pevcap_location()
     }
-
     fn normalized_wall_clock_unix_ms(self) -> u64 {
-        self.source_timestamp_unix_seconds
-            .map_or(self.wall_clock_unix_ms, |seconds| {
-                unix_milliseconds_from_seconds(seconds).unwrap_or_default()
-            })
+        cutout_application::location::PhoneLocationSample::from(self)
+            .normalized_wall_clock_unix_ms()
     }
 }
 
@@ -6451,13 +6358,7 @@ fn mobile_music_event_dtos(
 /// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobilePhoneLocationState {
-    latest: Mutex<MobilePhoneLocationStateValue>,
-}
-
-#[derive(Debug, Default)]
-struct MobilePhoneLocationStateValue {
-    latest_sample: Option<MobilePhoneLocationSampleDto>,
-    received_at_monotonic_ms: Option<u64>,
+    inner: cutout_application::location::PhoneLocationState,
 }
 
 /// Source of a Rust-owned canonical ride.
@@ -8514,8 +8415,7 @@ fn core_music_event(
 #[derive(Debug, uniffi::Object)]
 pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
-    pending_bms_writes: Mutex<PendingBmsVoltageWrites>,
-    marker_writer: persistence::RideSessionMarkerWriter,
+    application: cutout_application::database::RideDatabaseApplication,
     charging_sync_lock: tokio::sync::Mutex<()>,
 }
 
@@ -8540,21 +8440,6 @@ impl From<persistence::RideSessionMarkerWriteStatus> for MobileRideSessionMarker
             }
         }
     }
-}
-
-const MAX_PENDING_BMS_WRITES: usize = 64;
-const MAX_BMS_SAMPLES_PER_BATCH: usize = 256;
-
-#[derive(Debug)]
-struct PendingBmsVoltageWrites {
-    next_request_id: u64,
-    writes: VecDeque<PendingMobileBmsVoltageWrite>,
-}
-
-#[derive(Debug)]
-struct PendingMobileBmsVoltageWrite {
-    request_id: u64,
-    write: persistence::PendingBmsVoltageWrite,
 }
 
 /// Cooperative cancellation for one durable route projection.
@@ -8639,13 +8524,11 @@ pub fn open_ride_database(
     persistence::RideDatabase::open(Path::new(&path))
         .map(|inner| {
             Arc::new(RideDatabaseHandle {
-                marker_writer: persistence::RideSessionMarkerWriter::new(inner.clone()),
+                application: cutout_application::database::RideDatabaseApplication::new(
+                    inner.clone(),
+                ),
                 inner,
                 charging_sync_lock: tokio::sync::Mutex::new(()),
-                pending_bms_writes: Mutex::new(PendingBmsVoltageWrites {
-                    next_request_id: 1,
-                    writes: VecDeque::new(),
-                }),
             })
         })
         .map_err(map_ride_database_error)
@@ -8744,7 +8627,7 @@ impl RideDatabaseHandle {
         samples: Vec<MobileStoredBmsVoltageSampleDto>,
     ) -> Result<(), MobileRideDatabaseError> {
         let samples = stored_bms_voltage_samples(&device_identity, samples)?;
-        self.inner
+        self.application
             .record_bms_voltage_samples(&samples)
             .map_err(map_ride_database_error)
     }
@@ -8767,57 +8650,38 @@ impl RideDatabaseHandle {
         device_identity: String,
         samples: Vec<MobileStoredBmsVoltageSampleDto>,
     ) -> Result<Option<u64>, MobileRideDatabaseError> {
-        if samples.len() > MAX_BMS_SAMPLES_PER_BATCH {
+        if samples.len() > cutout_application::database::MAX_BMS_SAMPLES_PER_BATCH {
             return Err(MobileRideDatabaseError::BmsBatchTooLarge);
         }
         let samples = stored_bms_voltage_samples(&device_identity, samples)?;
-        if samples.is_empty() {
-            return Ok(None);
-        }
-
-        let mut pending = self
-            .pending_bms_writes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if pending.writes.len() >= MAX_PENDING_BMS_WRITES {
-            return Err(MobileRideDatabaseError::QueueFull);
-        }
-        let next_request_id = pending
-            .next_request_id
-            .checked_add(1)
-            .ok_or(MobileRideDatabaseError::StorageFailure)?;
-        let write = self
-            .inner
+        self.application
             .queue_bms_voltage_samples(samples)
-            .map_err(map_ride_database_error)?;
-        let request_id = pending.next_request_id;
-        pending.next_request_id = next_request_id;
-        pending
-            .writes
-            .push_back(PendingMobileBmsVoltageWrite { request_id, write });
-        Ok(Some(request_id))
+            .map_err(|error| match error {
+                cutout_application::database::BmsVoltageWriteAdmissionError::BatchTooLarge => {
+                    MobileRideDatabaseError::BmsBatchTooLarge
+                }
+                cutout_application::database::BmsVoltageWriteAdmissionError::RequestIdExhausted => {
+                    MobileRideDatabaseError::StorageFailure
+                }
+                cutout_application::database::BmsVoltageWriteAdmissionError::PendingQueueFull => {
+                    MobileRideDatabaseError::QueueFull
+                }
+                cutout_application::database::BmsVoltageWriteAdmissionError::Storage(error) => {
+                    map_ride_database_error(error)
+                }
+            })
     }
 
     /// Returns completed BMS batches without waiting for SQLite.
     pub fn poll_bms_voltage_writes(&self) -> Vec<MobileBmsVoltageWriteOutcomeDto> {
-        let mut pending = self
-            .pending_bms_writes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut completed = Vec::new();
-        let mut remaining = VecDeque::with_capacity(pending.writes.len());
-        while let Some(mut item) = pending.writes.pop_front() {
-            if let Some(result) = item.write.try_result() {
-                completed.push(MobileBmsVoltageWriteOutcomeDto {
-                    request_id: item.request_id,
-                    error: result.err().map(map_ride_database_error),
-                });
-            } else {
-                remaining.push_back(item);
-            }
-        }
-        pending.writes = remaining;
-        completed
+        self.application
+            .poll_bms_voltage_writes()
+            .into_iter()
+            .map(|outcome| MobileBmsVoltageWriteOutcomeDto {
+                request_id: outcome.request_id,
+                error: outcome.result.err().map(map_ride_database_error),
+            })
+            .collect()
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
@@ -9593,12 +9457,14 @@ impl RideDatabaseHandle {
         marker: Option<Vec<u8>>,
         now_ms: u64,
     ) -> MobileRideSessionMarkerWriteStatusDto {
-        self.marker_writer.request(marker, now_ms).into()
+        self.application
+            .request_ride_session_marker(marker, now_ms)
+            .into()
     }
 
     /// Polls durable acknowledgement and retry; worker recovery belongs off the UI executor.
     pub fn poll_ride_session_marker(&self, now_ms: u64) -> MobileRideSessionMarkerWriteStatusDto {
-        self.marker_writer.poll(now_ms).into()
+        self.application.poll_ride_session_marker(now_ms).into()
     }
 
     /// Fences older preference migration behind all current-process marker intent.
@@ -9607,17 +9473,19 @@ impl RideDatabaseHandle {
         marker: Option<Vec<u8>>,
         now_ms: u64,
     ) -> MobileRideSessionMarkerWriteStatusDto {
-        self.marker_writer.migrate(marker, now_ms).into()
+        self.application
+            .migrate_ride_session_marker(marker, now_ms)
+            .into()
     }
 
     /// Reads acknowledgement state without opening or waiting for storage.
     pub fn ride_session_marker_write_status(&self) -> MobileRideSessionMarkerWriteStatusDto {
-        self.marker_writer.status().into()
+        self.application.ride_session_marker_write_status().into()
     }
 
     /// Returns only successfully acknowledged opaque bytes without a worker request.
     pub fn acknowledged_ride_session_marker(&self) -> Option<Vec<u8>> {
-        self.marker_writer.acknowledged_marker()
+        self.application.acknowledged_ride_session_marker()
     }
 
     /// Creates a draft ride and returns its Rust-created identifier.
@@ -15291,6 +15159,15 @@ fn map_storage_core_error(error: persistence::StorageError) -> MobileRideMapCore
     map_core_error(map_ride_database_error(error))
 }
 
+impl From<cutout_application::location::PhoneLocationSnapshot> for MobilePhoneLocationSnapshotDto {
+    fn from(value: cutout_application::location::PhoneLocationSnapshot) -> Self {
+        Self {
+            latest_sample: value.latest_sample.map(Into::into),
+            gps_speed: value.gps_speed.map(Into::into),
+        }
+    }
+}
+
 #[uniffi::export]
 impl MobilePhoneLocationState {
     #[uniffi::constructor]
@@ -15299,19 +15176,13 @@ impl MobilePhoneLocationState {
         Arc::new(Self::default())
     }
 
-    /// Clears the latest sample so a new capture cannot inherit an older location context.
+    /// Clears the context so a new capture cannot inherit older location evidence.
     pub fn clear(&self) {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
-            MobilePhoneLocationStateValue::default();
+        self.inner.clear();
     }
 
     pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
-            MobilePhoneLocationStateValue {
-                latest_sample: Some(sample),
-                received_at_monotonic_ms: None,
-            };
-        phone_location_snapshot(Some(sample))
+        self.inner.ingest(sample.into(), None).into()
     }
 
     /// Ingests the source sample with its separate native monotonic receipt time.
@@ -15320,41 +15191,30 @@ impl MobilePhoneLocationState {
         sample: MobilePhoneLocationSampleDto,
         received_at_monotonic_ms: u64,
     ) -> MobilePhoneLocationSnapshotDto {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) =
-            MobilePhoneLocationStateValue {
-                latest_sample: Some(sample),
-                received_at_monotonic_ms: Some(received_at_monotonic_ms),
-            };
-        phone_location_snapshot(Some(sample))
+        self.inner
+            .ingest(sample.into(), Some(received_at_monotonic_ms))
+            .into()
     }
 
     #[must_use]
     pub fn current_snapshot(&self) -> MobilePhoneLocationSnapshotDto {
-        let latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
-        phone_location_snapshot(latest.latest_sample)
+        self.inner.current_snapshot().into()
     }
 
-    /// Returns a fresh/stale decision using the shared ride-map telemetry window.
     #[must_use]
     pub fn current_readback_at(&self, now_monotonic_ms: u64) -> MobilePhoneLocationReadbackDto {
-        let latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
-        let snapshot = phone_location_snapshot(latest.latest_sample);
-        let received_at_monotonic_ms = snapshot.gps_speed.and(latest.received_at_monotonic_ms);
-        let freshness = match ride_maps::telemetry_freshness(
-            received_at_monotonic_ms.map(ride_maps::MonotonicMilliseconds::new),
-            ride_maps::MonotonicMilliseconds::new(now_monotonic_ms),
-        ) {
-            ride_maps::TelemetryFreshness::Unavailable => {
-                MobilePhoneLocationFreshnessDto::Unavailable
-            }
-            ride_maps::TelemetryFreshness::Fresh => MobilePhoneLocationFreshnessDto::Fresh,
-            ride_maps::TelemetryFreshness::Stale => MobilePhoneLocationFreshnessDto::Stale,
-        };
+        let value = self.inner.current_readback_at(now_monotonic_ms);
         MobilePhoneLocationReadbackDto {
-            snapshot,
-            received_at_monotonic_ms,
-            freshness,
-            stale_after_ms: ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS,
+            snapshot: value.snapshot.into(),
+            received_at_monotonic_ms: value.received_at_monotonic_ms,
+            freshness: match value.freshness {
+                ride_maps::TelemetryFreshness::Unavailable => {
+                    MobilePhoneLocationFreshnessDto::Unavailable
+                }
+                ride_maps::TelemetryFreshness::Fresh => MobilePhoneLocationFreshnessDto::Fresh,
+                ride_maps::TelemetryFreshness::Stale => MobilePhoneLocationFreshnessDto::Stale,
+            },
+            stale_after_ms: value.stale_after_ms,
         }
     }
 }
@@ -16720,54 +16580,7 @@ impl From<MobilePevcapWriteDispositionDto> for cutout_core::PevcapWriteDispositi
 /// persisting them.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
-    wall_clock_start_unix_ms: WallClockUnixTimestamp,
-    platform_id: String,
-    write_limit: Option<TransportWriteLimit>,
-    advertised_services: Mutex<Vec<GattChannel>>,
-    gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
-    resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
-    annotations: Mutex<cutout_core::CaptureAnnotations>,
-    writer: Mutex<CaptureWriterSlot>,
-    writer_finish_lock: Mutex<()>,
-    writer_ingress: Mutex<Option<persistence::CaptureWriterIngress>>,
-    writer_state: Mutex<Option<CaptureWriterMonitor>>,
-    database: Mutex<Option<Arc<RideDatabaseHandle>>>,
-    capture_start_monotonic_ms: Mutex<Option<u64>>,
-    recording_policy: Mutex<persistence::CaptureRecordingPolicy>,
-    settings_observations: Mutex<Vec<cutout_core::CaptureSettingsObservation>>,
-    settings_observation_save_lock: Mutex<()>,
-    #[cfg(test)]
-    settings_observation_acknowledgement_gate: Mutex<
-        Option<(
-            std::sync::mpsc::SyncSender<()>,
-            std::sync::mpsc::Receiver<()>,
-        )>,
-    >,
-}
-
-#[derive(Debug, Default)]
-enum CaptureWriterSlot {
-    #[default]
-    Ready,
-    Recording(CaptureWriter),
-    Finalizing,
-    Complete(Result<CaptureWriterFinish, String>),
-}
-
-impl CaptureWriterSlot {
-    fn as_ref(&self) -> Option<&CaptureWriter> {
-        match self {
-            Self::Recording(writer) => Some(writer),
-            Self::Ready | Self::Finalizing | Self::Complete(_) => None,
-        }
-    }
-
-    fn stopped_write_outcome(&self) -> Option<MobileCaptureWriteOutcomeDto> {
-        match self {
-            Self::Finalizing | Self::Complete(_) => Some(MobileCaptureWriteOutcomeDto::Failed),
-            Self::Ready | Self::Recording(_) => None,
-        }
-    }
+    writer: Arc<cutout_application::capture_writer::CaptureWriterService>,
 }
 
 /// Rust-generated identity for one capture, not a device ID or a filename.
@@ -16801,73 +16614,26 @@ impl From<SavedCaptureArtifact> for MobileSavedCaptureArtifactDto {
 }
 
 fn completed_saved_capture(builder: &MobilePevcapCaptureBuilder) -> Option<SavedCaptureArtifact> {
-    let slot = builder
-        .writer
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let CaptureWriterSlot::Complete(Ok(finish)) = &*slot else {
-        return None;
-    };
-    match finish {
-        CaptureWriterFinish::FileSaved(artifact)
-        | CaptureWriterFinish::DatabaseFinished {
-            jsonl_export: CaptureJsonlExport::Available(artifact),
-            ..
-        } => Some((**artifact).clone()),
-        CaptureWriterFinish::DatabaseFinished { .. } => None,
-    }
+    builder.writer.completed_artifact()
 }
 
-#[derive(Clone, Copy)]
-enum CaptureCompletionExportPolicy {
-    Requested,
-    Deferred,
-}
-
-fn finish_writer_outcome(
-    builder: &MobilePevcapCaptureBuilder,
-    policy: CaptureCompletionExportPolicy,
+fn capture_finish_state_to_dto(
+    state: cutout_application::capture_writer::CaptureFinishState,
 ) -> MobileCaptureFinishOutcomeDto {
-    let writer = {
-        let mut slot = builder
-            .writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        match &*slot {
-            CaptureWriterSlot::Complete(result) => {
-                return match result.clone() {
-                    Ok(finish) => finish.into(),
-                    Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
-                };
-            }
-            CaptureWriterSlot::Ready => return MobileCaptureFinishOutcomeDto::NotStarted,
-            CaptureWriterSlot::Finalizing => {
-                return MobileCaptureFinishOutcomeDto::Finalizing;
-            }
-            CaptureWriterSlot::Recording(_) => {}
+    match state {
+        cutout_application::capture_writer::CaptureFinishState::NotStarted => {
+            MobileCaptureFinishOutcomeDto::NotStarted
         }
-        match std::mem::replace(&mut *slot, CaptureWriterSlot::Finalizing) {
-            CaptureWriterSlot::Recording(writer) => writer,
-            _ => unreachable!("recording state was checked while holding the lock"),
+        cutout_application::capture_writer::CaptureFinishState::Finalizing => {
+            MobileCaptureFinishOutcomeDto::Finalizing
         }
-    };
-    *builder
-        .writer_ingress
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = None;
-    let result = match policy {
-        CaptureCompletionExportPolicy::Requested => writer.finish(),
-        CaptureCompletionExportPolicy::Deferred => writer.finish_without_export(),
-    };
-    let outcome = match result.clone() {
-        Ok(finish) => finish.into(),
-        Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
-    };
-    *builder
-        .writer
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner) = CaptureWriterSlot::Complete(result);
-    outcome
+        cutout_application::capture_writer::CaptureFinishState::Complete(Ok(finish)) => {
+            finish.into()
+        }
+        cutout_application::capture_writer::CaptureFinishState::Complete(Err(message)) => {
+            MobileCaptureFinishOutcomeDto::Failed { message }
+        }
+    }
 }
 
 impl MobilePevcapCaptureBuilder {
@@ -16878,48 +16644,28 @@ impl MobilePevcapCaptureBuilder {
             &mut cutout_core::CaptureAnnotations,
         ) -> Result<(), cutout_core::CaptureAnnotationCapacityReached>,
     ) -> Result<Vec<MobileCaptureLabelDto>, MobileCaptureAnnotationError> {
-        // Lock order matches startup and metadata publication. Holding writer ownership
-        // across admission prevents finalization or another update from splitting a batch.
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Recording(_) => {}
-            CaptureWriterSlot::Ready if !recording_required => {}
-            CaptureWriterSlot::Ready
-            | CaptureWriterSlot::Finalizing
-            | CaptureWriterSlot::Complete(_) => {
-                return Err(MobileCaptureAnnotationError::NotRecording);
-            }
-        }
-        let mut metadata = self.metadata();
-        let mut annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut candidate = annotations.clone();
-        update(&mut candidate).map_err(|_| MobileCaptureAnnotationError::CapacityReached)?;
-        let active = candidate
-            .active_labels()
-            .iter()
-            .copied()
-            .map(Into::into)
-            .collect();
-        if candidate.entries() == annotations.entries() {
-            return Ok(active);
-        }
-        metadata.annotations = candidate.entries().to_vec();
-        if let Some(writer) = writer.as_ref() {
-            match writer.update_metadata(metadata) {
-                CaptureWriteOutcome::Accepted => {}
-                CaptureWriteOutcome::AdmissionLost { dropped_messages } => {
-                    return Err(MobileCaptureAnnotationError::AdmissionLost { dropped_messages });
+        self.writer
+            .update_annotations(recording_required, update)
+            .map(|labels| labels.into_iter().map(Into::into).collect())
+            .map_err(|error| match error {
+                cutout_application::capture_writer::CaptureAnnotationError::NotRecording => {
+                    MobileCaptureAnnotationError::NotRecording
                 }
-                CaptureWriteOutcome::Failed => {
-                    return Err(MobileCaptureAnnotationError::WriterFailed);
+                cutout_application::capture_writer::CaptureAnnotationError::CapacityReached => {
+                    MobileCaptureAnnotationError::CapacityReached
                 }
-            }
-        }
-        *annotations = candidate;
-        Ok(active)
+                cutout_application::capture_writer::CaptureAnnotationError::AdmissionLost {
+                    dropped_messages,
+                } => MobileCaptureAnnotationError::AdmissionLost { dropped_messages },
+                cutout_application::capture_writer::CaptureAnnotationError::WriterFailed => {
+                    MobileCaptureAnnotationError::WriterFailed
+                }
+            })
+    }
+
+    #[cfg(test)]
+    fn metadata(&self) -> CaptureMetadata {
+        self.writer.metadata_snapshot()
     }
 }
 
@@ -16927,30 +16673,17 @@ fn capture_relative_timestamp(
     builder: &MobilePevcapCaptureBuilder,
     monotonic_ms: MobileMonotonicMillisDto,
 ) -> Result<MonotonicTimestamp, MobileCaptureWriteOutcomeDto> {
-    let writer = builder
+    builder
         .writer
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    match &*writer {
-        CaptureWriterSlot::Recording(_) => {}
-        slot => {
-            return Err(slot
-                .stopped_write_outcome()
-                .unwrap_or(MobileCaptureWriteOutcomeDto::Failed));
-        }
-    }
-    drop(writer);
-
-    let started_at_ms = (*builder
-        .capture_start_monotonic_ms
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner))
-    .ok_or(MobileCaptureWriteOutcomeDto::Failed)?;
-    let elapsed_ms = monotonic_ms
-        .milliseconds
-        .checked_sub(started_at_ms)
-        .ok_or(MobileCaptureWriteOutcomeDto::Rejected)?;
-    Ok(MonotonicTimestamp::new(elapsed_ms))
+        .relative_timestamp(monotonic_ms.milliseconds)
+        .map_err(|error| match error {
+            cutout_application::capture_writer::CaptureTimestampError::NotRecording => {
+                MobileCaptureWriteOutcomeDto::Failed
+            }
+            cutout_application::capture_writer::CaptureTimestampError::BeforeStart => {
+                MobileCaptureWriteOutcomeDto::Rejected
+            }
+        })
 }
 
 #[uniffi::export]
@@ -16964,97 +16697,37 @@ impl MobilePevcapCaptureBuilder {
         draft: MobileCaptureSettingsDraftDto,
         monotonic_ms: u64,
     ) -> Result<MobileCaptureSettingsObservationDto, MobileCaptureResearchError> {
-        let _save = self
-            .settings_observation_save_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let recorded_at_ms = capture_relative_timestamp(
-            self,
-            MobileMonotonicMillisDto {
-                milliseconds: monotonic_ms,
-            },
-        )
-        .map_err(|outcome| match outcome {
-            MobileCaptureWriteOutcomeDto::Rejected => {
-                MobileCaptureResearchError::InvalidObservation {
-                    reason: "Capture time is before recording started".into(),
+        let observation = self
+            .writer
+            .record_settings_observation(
+                cutout_application::capture_writer::CaptureSettingsDraft {
+                    profile: draft.profile.into(),
+                    observed_at_ms: draft.observed_at_ms,
+                    source: draft.source.into(),
+                    values: draft.values.into_iter().map(Into::into).collect(),
+                    note: draft.note,
+                },
+                monotonic_ms,
+            )
+            .map_err(|error| match error {
+                cutout_application::capture_writer::CaptureSettingsError::CapacityReached => {
+                    MobileCaptureResearchError::InvalidObservation {
+                        reason: "Settings observation limit reached".into(),
+                    }
                 }
-            }
-            _ => MobileCaptureResearchError::NotRecording,
-        })?
-        .get();
-        if self
-            .settings_observations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
-            >= cutout_core::MAX_CAPTURE_SETTINGS_OBSERVATIONS
-        {
-            return Err(MobileCaptureResearchError::InvalidObservation {
-                reason: "Settings observation limit reached".into(),
-            });
-        }
-        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let writer = slot
-            .as_ref()
-            .ok_or(MobileCaptureResearchError::NotRecording)?;
-        let mut profile: cutout_core::CaptureResearchProfile = draft.profile.into();
-        // A worksheet selection is a manual report, never resolver authority.
-        profile.selection = cutout_core::CaptureResearchProfileSelection::Manual;
-        let observation = cutout_core::CaptureSettingsObservation {
-            capture_id: writer.capture_identity(),
-            profile,
-            observed_at_ms: draft.observed_at_ms.unwrap_or(recorded_at_ms),
-            recorded_at_ms,
-            source: draft.source.into(),
-            values: draft.values.into_iter().map(Into::into).collect(),
-            note: draft.note,
-        };
-        observation
-            .validate()
-            .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                reason: error.to_string(),
+                cutout_application::capture_writer::CaptureSettingsError::NotRecording => {
+                    MobileCaptureResearchError::NotRecording
+                }
+                cutout_application::capture_writer::CaptureSettingsError::Invalid { reason } => {
+                    MobileCaptureResearchError::InvalidObservation { reason }
+                }
+                cutout_application::capture_writer::CaptureSettingsError::AdmissionLost => {
+                    MobileCaptureResearchError::AdmissionLost
+                }
+                cutout_application::capture_writer::CaptureSettingsError::WriterFailed => {
+                    MobileCaptureResearchError::WriterFailed
+                }
             })?;
-        cutout_protocols::validate_capture_research_observation(&observation).map_err(|error| {
-            MobileCaptureResearchError::InvalidObservation {
-                reason: error.to_string(),
-            }
-        })?;
-        let receipt = match writer
-            .begin_settings_observation(observation.clone())
-            .map_err(|error| MobileCaptureResearchError::InvalidObservation {
-                reason: error.to_string(),
-            })? {
-            persistence::CaptureSettingsObservationAdmission::Accepted(receipt) => receipt,
-            persistence::CaptureSettingsObservationAdmission::AdmissionLost { .. } => {
-                return Err(MobileCaptureResearchError::AdmissionLost);
-            }
-            persistence::CaptureSettingsObservationAdmission::Failed => {
-                return Err(MobileCaptureResearchError::WriterFailed);
-            }
-        };
-        drop(slot);
-        #[cfg(test)]
-        if let Some((entered, release)) = self
-            .settings_observation_acknowledgement_gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
-            entered
-                .send(())
-                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-            release
-                .recv()
-                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-        }
-        receipt
-            .wait()
-            .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-        self.settings_observations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(observation.clone());
         Ok(observation.into())
     }
 
@@ -17066,10 +16739,11 @@ impl MobilePevcapCaptureBuilder {
         &self,
     ) -> Result<Vec<MobileCaptureSettingsObservationDto>, MobileCaptureResearchError> {
         Ok(self
-            .settings_observations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner))
-        .map(|observations| observations.iter().cloned().map(Into::into).collect())
+            .writer
+            .settings_observations()
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     /// Decodes the acknowledged active recording at the selected capture time.
@@ -17102,15 +16776,7 @@ impl MobilePevcapCaptureBuilder {
         requests: Vec<MobileCaptureResearchReadbackRequestDto>,
     ) -> Result<Vec<MobileCaptureResearchReadbackDto>, MobileCaptureResearchError> {
         readback_batch(requests, |observe| {
-            let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-            let writer = slot
-                .as_ref()
-                .ok_or(MobileCaptureResearchError::NotRecording)?;
-            let receipt = writer
-                .begin_transport_read()
-                .map_err(|_| MobileCaptureResearchError::WriterFailed)?;
-            drop(slot);
-            receipt
+            self.writer
                 .visit_transport_records(observe)
                 .map_err(|_| MobileCaptureResearchError::WriterFailed)
         })
@@ -17125,59 +16791,37 @@ impl MobilePevcapCaptureBuilder {
         write_limit: Option<MobileTransportWriteLimitDto>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            wall_clock_start_unix_ms: wall_clock_start_unix_ms.into_core(),
-            platform_id,
-            write_limit: write_limit.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
-            advertised_services: Mutex::new(Vec::new()),
-            gatt_fingerprints: Mutex::new(Vec::new()),
-            resolved_identity: Mutex::new(None),
-            annotations: Mutex::new(cutout_core::CaptureAnnotations::default()),
-            writer: Mutex::new(CaptureWriterSlot::Ready),
-            writer_finish_lock: Mutex::new(()),
-            writer_ingress: Mutex::new(None),
-            writer_state: Mutex::new(None),
-            database: Mutex::new(None),
-            capture_start_monotonic_ms: Mutex::new(None),
-            recording_policy: Mutex::new(persistence::CaptureRecordingPolicy::EveryObservation),
-            settings_observations: Mutex::new(Vec::new()),
-            settings_observation_save_lock: Mutex::new(()),
-            #[cfg(test)]
-            settings_observation_acknowledgement_gate: Mutex::new(None),
+            writer: Arc::new(
+                cutout_application::capture_writer::CaptureWriterService::new(
+                    wall_clock_start_unix_ms.into_core(),
+                    platform_id,
+                    write_limit.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
+                ),
+            ),
         })
     }
 
     /// Adds an advertised service UUID observed by the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value)]
+    #[must_use]
     pub fn add_advertised_service(&self, service: Vec<u8>) -> MobileCaptureWriteOutcomeDto {
-        let mut services = self
-            .advertised_services
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if services.len() < cutout_core::PEVCAP_MAX_ADVERTISED_SERVICES {
-            services.push(mobile_gatt_channel(&service));
-        }
-        drop(services);
-        self.send_metadata_update()
+        self.writer
+            .add_advertised_service(mobile_gatt_channel(&service))
+            .into()
     }
 
     /// Adds an observed GATT service/characteristic fingerprint.
+    #[must_use]
     pub fn add_gatt_fingerprint(
         &self,
         fingerprint: MobileGattFingerprintDto,
     ) -> MobileCaptureWriteOutcomeDto {
-        let mut fingerprints = self
-            .gatt_fingerprints
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if fingerprints.len() < cutout_core::PEVCAP_MAX_GATT_FINGERPRINTS {
-            fingerprints.push(fingerprint.into());
-        }
-        drop(fingerprints);
-        self.send_metadata_update()
+        self.writer.add_gatt_fingerprint(fingerprint.into()).into()
     }
 
     /// Adds a capture annotation, reserving space for every active label's closure.
     /// Rejection leaves the prior metadata intact.
+    #[must_use]
     pub fn add_annotation(&self, annotation: String) -> MobileCaptureWriteOutcomeDto {
         match self.update_annotations(false, |annotations| annotations.try_append([annotation])) {
             Ok(_) => MobileCaptureWriteOutcomeDto::Accepted,
@@ -17208,164 +16852,43 @@ impl MobilePevcapCaptureBuilder {
     /// Starts the Rust-owned streaming writer after its immutable monotonic capture origin is set.
     ///
     /// Returns `false` if the path already exists, preserving the existing capture.
+    #[must_use]
     pub fn start_writer(&self, path: String) -> bool {
-        let _finish = self
-            .writer_finish_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let CaptureWriterSlot::Ready = *slot else {
-            return false;
-        };
-        if self
-            .capture_start_monotonic_ms
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_none()
-        {
-            return false;
-        }
-        let metadata = self.metadata();
-        let database = self
-            .database
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map(|database| database.inner.clone());
-        let path = PathBuf::from(path);
-        let start = if let Some(database) = database {
-            CaptureWriter::start_with_database_and_policy(
-                path,
-                self.wall_clock_start_unix_ms,
-                &self.platform_id,
-                self.write_limit,
-                &metadata,
-                database,
-                *self
-                    .recording_policy
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner),
-            )
-        } else {
-            CaptureWriter::start(
-                path,
-                self.wall_clock_start_unix_ms,
-                &self.platform_id,
-                self.write_limit,
-                &metadata,
-            )
-        };
-        let writer = match start {
-            Ok(writer) => writer,
-            Err(error) => {
-                let state = CaptureWriterMonitor::failed(error.clone());
-                *slot = CaptureWriterSlot::Complete(Err(error));
-                *self
-                    .writer_state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(state);
-                return false;
-            }
-        };
-        *self
-            .writer_ingress
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(writer.ingress());
-        *self
-            .writer_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(writer.monitor());
-        *slot = CaptureWriterSlot::Recording(writer);
-        true
+        self.writer.start(PathBuf::from(path))
     }
 
     /// Sets recording semantics before the immutable writer is started.
+    #[must_use]
     pub fn set_recording_origin(&self, origin: MobileCaptureOriginDto) -> bool {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Ready => {}
-            _ => return false,
-        }
-        let policy = match origin {
-            MobileCaptureOriginDto::Automatic => {
-                persistence::CaptureRecordingPolicy::MaterialChanges
-            }
-            MobileCaptureOriginDto::Manual => persistence::CaptureRecordingPolicy::EveryObservation,
-        };
-        let mut annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut candidate = cutout_core::CaptureAnnotations::default();
-        let entries = annotations
-            .entries()
-            .iter()
-            .filter(|annotation| !annotation.starts_with("capture_recording_policy="))
-            .cloned();
-        if candidate.try_append(entries).is_err() {
-            return false;
-        }
-        if policy == persistence::CaptureRecordingPolicy::MaterialChanges
-            && candidate
-                .try_append(["capture_recording_policy=material_changes".to_owned()])
-                .is_err()
-        {
-            return false;
-        }
-        *annotations = candidate;
-        *self
-            .recording_policy
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = policy;
-        true
+        self.writer.set_origin(origin.into())
     }
 
     /// Routes active capture events through the existing Rust-owned database worker.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns object arguments"
+    )]
     pub fn set_database(&self, database: Arc<RideDatabaseHandle>) -> bool {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Ready => {}
-            _ => return false,
-        }
-        *self.database.lock().unwrap_or_else(PoisonError::into_inner) = Some(database);
-        true
+        self.writer.set_database(database.inner.clone())
     }
 
     /// Returns the durable flush receipt, healthy rejection, or fatal writer cause.
+    #[must_use]
     pub fn flush_writer_outcome(&self) -> MobileCaptureFlushOutcomeDto {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(writer) = writer.as_ref() {
-            return writer.flush_outcome().into();
-        }
-        let status = self
-            .writer_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map(CaptureWriterMonitor::status);
-        match status {
-            Some(status) if status.failed => MobileCaptureFlushOutcomeDto::Failed {
-                message: status
-                    .last_error
-                    .unwrap_or_else(|| "capture writer failed".into()),
-            },
-            _ => MobileCaptureFlushOutcomeDto::Rejected,
-        }
+        self.writer.flush().into()
     }
 
     /// Finishes the Rust-owned writer and reports durability separately from file export.
+    #[must_use]
     pub fn finish_writer(&self) -> bool {
         self.finish_writer_outcome().has_exported_artifact()
     }
 
     /// Returns the correlated terminal writer result, including durable SQLite captures without
     /// an exported file.
+    #[must_use]
     pub fn finish_writer_outcome(&self) -> MobileCaptureFinishOutcomeDto {
-        let _finish = self
-            .writer_finish_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        finish_writer_outcome(self, CaptureCompletionExportPolicy::Requested)
+        capture_finish_state_to_dto(self.writer.finish(true))
     }
 
     /// Completes the canonical database capture and retains provenance without compulsory
@@ -17373,70 +16896,24 @@ impl MobilePevcapCaptureBuilder {
     ///
     /// The native adapter supplies platform-derived provenance and wall-clock time, but it does
     /// not sequence writer completion and database publication as separate operations.
+    #[must_use]
     pub fn finish_writer_and_publish_capture(
         &self,
         publication: Option<MobileCaptureHistoryPublicationDto>,
     ) -> MobileCaptureCompletionDto {
-        let _finish = self
-            .writer_finish_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let finish = finish_writer_outcome(self, CaptureCompletionExportPolicy::Deferred);
-        let artifact = completed_saved_capture(self);
-        let database_receipt = {
-            let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-            match &*slot {
-                CaptureWriterSlot::Complete(Ok(CaptureWriterFinish::DatabaseFinished {
-                    receipt,
-                    ..
-                })) => Some((**receipt).clone()),
-                _ => None,
+        let publication = publication.map(|publication| {
+            cutout_application::capture_writer::CaptureHistoryPublication {
+                origin: publication.origin.into(),
+                advertised_name: publication.advertised_name,
+                published_at_unix_ms: publication
+                    .published_at_unix_ms
+                    .map(MobileWallClockUnixMillisDto::into_core),
             }
-        };
-        let database = self
-            .database
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        let database_publication_succeeded = match (publication, database) {
-            (None, _) => None,
-            (Some(_), None) => Some(false),
-            (Some(publication), Some(database)) => {
-                if database_receipt.is_none() && artifact.is_none() {
-                    None
-                } else {
-                    Some(publication.published_at_unix_ms.is_some_and(|time| {
-                        time.milliseconds > 0
-                            && if let Some(receipt) = database_receipt.as_ref() {
-                                database
-                                    .inner
-                                    .retain_finished_database_capture(
-                                        receipt,
-                                        publication.origin.into(),
-                                        publication.advertised_name.as_deref(),
-                                        time.into_core(),
-                                    )
-                                    .is_ok()
-                            } else if let Some(artifact) = artifact.as_ref() {
-                                database
-                                    .inner
-                                    .retain_finished_capture(
-                                        artifact,
-                                        publication.origin.into(),
-                                        publication.advertised_name.as_deref(),
-                                        time.into_core(),
-                                    )
-                                    .is_ok()
-                            } else {
-                                false
-                            }
-                    }))
-                }
-            }
-        };
+        });
+        let result = self.writer.finish_and_publish(publication);
         MobileCaptureCompletionDto {
-            finish,
-            database_publication_succeeded,
+            finish: capture_finish_state_to_dto(result.finish),
+            database_publication_succeeded: result.database_publication_succeeded,
         }
     }
 
@@ -17447,47 +16924,19 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Sets the absolute monotonic origin before starting the writer; it cannot later change.
+    #[must_use]
     pub fn set_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        match &*writer {
-            CaptureWriterSlot::Ready => {}
-            CaptureWriterSlot::Recording(_)
-            | CaptureWriterSlot::Finalizing
-            | CaptureWriterSlot::Complete(_) => return false,
-        }
-
-        let mut started_at_ms = self
-            .capture_start_monotonic_ms
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if started_at_ms.is_some() {
-            return false;
-        }
-        *started_at_ms = Some(monotonic_ms);
-        true
+        self.writer.set_start_monotonic_ms(monotonic_ms)
     }
 
     /// Returns bounded writer queue instrumentation.
     #[must_use]
     pub fn writer_status(&self) -> MobileCaptureWriterStatusDto {
-        if let Some(writer) = self
-            .writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
-            return writer.monitor().status().into();
-        }
-        self.writer_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map_or_else(MobileCaptureWriterStatusDto::default, |state| {
-                state.status().into()
-            })
+        self.writer.status().into()
     }
 
     /// Records a link-up lifecycle event.
+    #[must_use]
     pub fn record_link_up(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17504,6 +16953,7 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records a link-down lifecycle event.
+    #[must_use]
     pub fn record_link_down(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17517,6 +16967,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records outbound write-without-response bytes.
     #[allow(clippy::needless_pass_by_value)]
+    #[must_use]
     pub fn record_write_without_response(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17542,6 +16993,7 @@ impl MobilePevcapCaptureBuilder {
     /// acknowledgement. A true return means capture enqueue succeeded; use
     /// `flush_writer` or `finish_writer` to wait for durability.
     #[allow(clippy::needless_pass_by_value)]
+    #[must_use]
     pub fn record_write_without_response_receipt(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17569,6 +17021,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records inbound notification bytes.
     #[allow(clippy::needless_pass_by_value)]
+    #[must_use]
     pub fn record_notification(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17590,6 +17043,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records an inbound notification with Rust-decoded telemetry and phone location context.
     #[allow(clippy::needless_pass_by_value)]
+    #[must_use]
     pub fn record_notification_with_context(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17613,6 +17067,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records a notification with its Rust-produced semantic telemetry snapshot.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+    #[must_use]
     pub fn record_notification_with_context_and_semantic_telemetry(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17637,6 +17092,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records decoded telemetry with evidence from the verified Rust session step.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+    #[must_use]
     pub fn record_decoded_notification(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
@@ -17707,39 +17163,36 @@ impl MobilePevcapCaptureBuilder {
             record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
         }
         if let Some(mut snapshot) = semantic_telemetry {
-            let Some(capture_start_ms) = *self
-                .capture_start_monotonic_ms
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-            else {
-                return MobileCaptureWriteOutcomeDto::Failed;
-            };
             snapshot.at_ms = snapshot.at_ms.and_then(|timestamp| {
-                timestamp
-                    .milliseconds
-                    .checked_sub(capture_start_ms)
-                    .map(|milliseconds| MobileMonotonicMillisDto { milliseconds })
+                capture_relative_timestamp(self, timestamp)
+                    .ok()
+                    .map(|relative| MobileMonotonicMillisDto {
+                        milliseconds: relative.get(),
+                    })
             });
             snapshot.speed_observed_at_ms = snapshot.speed_observed_at_ms.and_then(|timestamp| {
-                timestamp
-                    .milliseconds
-                    .checked_sub(capture_start_ms)
-                    .map(|milliseconds| MobileMonotonicMillisDto { milliseconds })
+                capture_relative_timestamp(self, timestamp)
+                    .ok()
+                    .map(|relative| MobileMonotonicMillisDto {
+                        milliseconds: relative.get(),
+                    })
             });
             snapshot.battery_current_observed_at_ms = snapshot
                 .battery_current_observed_at_ms
                 .and_then(|timestamp| {
-                    timestamp
-                        .milliseconds
-                        .checked_sub(capture_start_ms)
-                        .map(|milliseconds| MobileMonotonicMillisDto { milliseconds })
+                    capture_relative_timestamp(self, timestamp)
+                        .ok()
+                        .map(|relative| MobileMonotonicMillisDto {
+                            milliseconds: relative.get(),
+                        })
                 });
             snapshot.voltage_observed_at_ms =
                 snapshot.voltage_observed_at_ms.and_then(|timestamp| {
-                    timestamp
-                        .milliseconds
-                        .checked_sub(capture_start_ms)
-                        .map(|milliseconds| MobileMonotonicMillisDto { milliseconds })
+                    capture_relative_timestamp(self, timestamp)
+                        .ok()
+                        .map(|relative| MobileMonotonicMillisDto {
+                            milliseconds: relative.get(),
+                        })
                 });
             let Ok(snapshot_json) = serde_json::to_string(&snapshot) else {
                 return MobileCaptureWriteOutcomeDto::Failed;
@@ -17763,6 +17216,7 @@ impl MobilePevcapCaptureBuilder {
     /// The sample is kept separate from transport records so it remains available even when no
     /// BLE notification is received at the same instant. The writer queue is bounded; `false`
     /// means the sample could not be queued; invalid source values remain capture evidence.
+    #[must_use]
     pub fn record_location_sample(
         &self,
         receipt_monotonic_ms: MobileMonotonicMillisDto,
@@ -17770,9 +17224,6 @@ impl MobilePevcapCaptureBuilder {
         simulated: Option<bool>,
         produced_by_accessory: Option<bool>,
     ) -> MobileCaptureWriteOutcomeDto {
-        if let Some(outcome) = self.stopped_write_outcome() {
-            return outcome;
-        }
         let receipt_monotonic_ms = match capture_relative_timestamp(self, receipt_monotonic_ms) {
             Ok(timestamp) => timestamp,
             Err(outcome) => return outcome,
@@ -17784,7 +17235,7 @@ impl MobilePevcapCaptureBuilder {
             produced_by_accessory,
         )
         .with_source_timestamp_unix_seconds(sample.source_timestamp_unix_seconds);
-        self.send_location(location)
+        self.writer.record_location(location).into()
     }
 
     /// Admits one Core Location callback batch as independent, ordered capture events.
@@ -17792,6 +17243,7 @@ impl MobilePevcapCaptureBuilder {
     /// Callback time is absolute in the same monotonic domain as the capture start; Rust
     /// converts it to capture-relative time. The batch is admitted through a cloneable
     /// bounded writer ingress, so native callbacks never wait for flush or finalization.
+    #[must_use]
     pub fn record_location_samples(
         &self,
         receipt_monotonic_ms: MobileMonotonicMillisDto,
@@ -17801,25 +17253,14 @@ impl MobilePevcapCaptureBuilder {
         if samples.is_empty() {
             return MobileCaptureWriteOutcomeDto::Accepted;
         }
-        let Some(started_at_ms) = *self
-            .capture_start_monotonic_ms
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-        else {
+        let Some(started_at_ms) = self.writer.start_monotonic_ms() else {
             return MobileCaptureWriteOutcomeDto::Failed;
         };
         let Some(elapsed_ms) = receipt_monotonic_ms.milliseconds.checked_sub(started_at_ms) else {
             return MobileCaptureWriteOutcomeDto::Rejected;
         };
         if samples.len() > persistence::CAPTURE_LOCATION_BATCH_CAPACITY {
-            let ingress = self
-                .writer_ingress
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
-            return ingress.map_or(MobileCaptureWriteOutcomeDto::Failed, |ingress| {
-                ingress.reject_location_batch(samples.len()).into()
-            });
+            return self.writer.reject_location_batch(samples.len()).into();
         }
         let receipt_monotonic_absolute_ms = receipt_monotonic_ms.milliseconds;
         let receipt_monotonic_ms = MonotonicTimestamp::new(elapsed_ms);
@@ -17843,63 +17284,11 @@ impl MobilePevcapCaptureBuilder {
                 .with_source_timestamp_unix_seconds(sample.source_timestamp_unix_seconds)
             })
             .collect::<Vec<_>>();
-        let ingress = self
-            .writer_ingress
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        ingress.map_or(MobileCaptureWriteOutcomeDto::Failed, |ingress| {
-            ingress.record_location_batch(&locations).into()
-        })
+        self.writer.record_location_batch(&locations).into()
     }
 }
 
 impl MobilePevcapCaptureBuilder {
-    fn metadata(&self) -> CaptureMetadata {
-        CaptureMetadata {
-            advertised_services: self
-                .advertised_services
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
-            gatt_fingerprints: self
-                .gatt_fingerprints
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
-            resolved_identity: self
-                .resolved_identity
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
-            annotations: self
-                .annotations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entries()
-                .to_vec(),
-        }
-    }
-
-    fn send_metadata_update(&self) -> MobileCaptureWriteOutcomeDto {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let metadata = self.metadata();
-        match &*writer {
-            CaptureWriterSlot::Ready => MobileCaptureWriteOutcomeDto::Accepted,
-            CaptureWriterSlot::Recording(writer) => writer.update_metadata(metadata).into(),
-            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => writer
-                .stopped_write_outcome()
-                .unwrap_or(MobileCaptureWriteOutcomeDto::Failed),
-        }
-    }
-
-    fn stopped_write_outcome(&self) -> Option<MobileCaptureWriteOutcomeDto> {
-        self.writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stopped_write_outcome()
-    }
-
     fn send_record(&self, record: PevcapRecord) -> MobileCaptureWriteOutcomeDto {
         self.send_record_with_admission(
             record,
@@ -17912,30 +17301,7 @@ impl MobilePevcapCaptureBuilder {
         record: PevcapRecord,
         admission: persistence::CaptureRecordAdmission,
     ) -> MobileCaptureWriteOutcomeDto {
-        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        slot.as_ref().map_or_else(
-            || {
-                slot.stopped_write_outcome()
-                    .unwrap_or(MobileCaptureWriteOutcomeDto::Failed)
-            },
-            |writer| {
-                writer
-                    .ingress()
-                    .try_send_record_with_admission(record, admission)
-                    .into()
-            },
-        )
-    }
-
-    fn send_location(&self, location: PevcapLocationSample) -> MobileCaptureWriteOutcomeDto {
-        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        slot.as_ref().map_or_else(
-            || {
-                slot.stopped_write_outcome()
-                    .unwrap_or(MobileCaptureWriteOutcomeDto::Failed)
-            },
-            |writer| writer.record_location(location).into(),
-        )
+        self.writer.record(record, admission).into()
     }
 }
 
@@ -18257,44 +17623,6 @@ impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
 
 fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
-}
-
-fn phone_location_snapshot(
-    sample: Option<MobilePhoneLocationSampleDto>,
-) -> MobilePhoneLocationSnapshotDto {
-    let sample = sample.and_then(MobilePhoneLocationSampleDto::canonical);
-    MobilePhoneLocationSnapshotDto {
-        latest_sample: sample,
-        gps_speed: sample.and_then(phone_location_speed),
-    }
-}
-
-fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedReading> {
-    let reported = sample.speed_meters_per_second.is_some();
-    let speed = sample.speed_meters_per_second.unwrap_or(0.0);
-    if !speed.is_finite() || speed < 0.0 {
-        return None;
-    }
-    Some(SpeedReading {
-        value: Speed {
-            value: round_f64_to_i32(speed * 1_000.0),
-        },
-        source: if reported {
-            MobileValueSourceDto::Reported
-        } else {
-            MobileValueSourceDto::Estimated
-        },
-        quality: if reported {
-            MobileValueQualityDto::Known
-        } else {
-            MobileValueQualityDto::Inferred
-        },
-        verification: if reported {
-            MobileVerificationStatusDto::SourceVerified
-        } else {
-            MobileVerificationStatusDto::Inferred
-        },
-    })
 }
 
 fn round_f64_to_i32(value: f64) -> i32 {
@@ -21300,10 +20628,12 @@ mod tests {
             pack_observation_index: Some(0),
             voltage: Voltage { value: 4_193 },
         };
+        let mut malformed = sample.clone();
+        malformed.session_identifier.clear();
         assert_eq!(
             database.queue_bms_voltage_samples(
                 "wheel-a".to_owned(),
-                vec![sample.clone(); MAX_BMS_SAMPLES_PER_BATCH + 1]
+                vec![malformed; cutout_application::database::MAX_BMS_SAMPLES_PER_BATCH + 1],
             ),
             Err(MobileRideDatabaseError::BmsBatchTooLarge)
         );
