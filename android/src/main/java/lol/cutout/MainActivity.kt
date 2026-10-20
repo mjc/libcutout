@@ -53,6 +53,7 @@ class MainActivity : Activity() {
     private var soundCloud: AndroidSoundCloudPanel? = null
     private var debug: VescDebugPanel? = null
     private var captures: DiagnosticCapturePanel? = null
+    private var captureImageResult: ((List<Uri>) -> Unit)? = null
     private var setup: SetupPanel? = null
     private var camera: CameraPanel? = null
     private var phoneAlarms: PhoneAlarmPanel? = null
@@ -160,7 +161,21 @@ class MainActivity : Activity() {
         if (page == R.string.devices) scanned = false
         hostStarted = false; map?.onHostStop(); super.onStop()
     }
+    @Deprecated("The capture picker uses the Activity document result contract")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 7401) return
+        val callback = captureImageResult
+        captureImageResult = null
+        if (resultCode == RESULT_OK) {
+            val images = data?.clipData?.let { clips -> (0 until clips.itemCount).map { clips.getItemAt(it).uri } }
+                ?: listOfNotNull(data?.data)
+            callback?.invoke(images)
+        }
+    }
+
     override fun onDestroy() {
+        captureImageResult = null
         observations.forEach { it.close() }; observations.clear()
         map?.onHostDestroy()
         if (lighting != null) app.lighting.observe(null)
@@ -279,7 +294,14 @@ class MainActivity : Activity() {
             R.string.pack -> { val panel = PackPanel(this); pack = panel; panel.render(latest); addPanel(id, panel) }
             R.string.vesc_debug -> { val panel = VescDebugPanel(this); debug = panel; panel.render(latest); addPanel(id, panel) }
             R.string.captures -> {
-                val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission)
+                val panel = DiagnosticCapturePanel(this, client, ::shareCapture, ::scanOrRequestPermission,
+                    charging = app.charging, pickScreenshots = { callback ->
+                        captureImageResult = callback
+                        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE)
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        }, 7401)
+                    })
                 captures = panel; addPanel(id, panel)
             }
             R.string.phone_alarm_title -> {

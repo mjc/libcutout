@@ -6,9 +6,10 @@ use super::{
 };
 use crate::CaptureArtifactId;
 use cutout_core::{
-    CaptureSubmissionCategories, CaptureSubmissionIntegrity, CaptureSubmissionMetadata,
-    CaptureSubmissionProvenance, CaptureSubmissionReceipt, CaptureSubmissionTransformation,
-    PevcapEncoding, validate_capture_submission,
+    CaptureAttachments, CaptureEvidenceError, CaptureEvidenceManifest, CaptureSubmissionCategories,
+    CaptureSubmissionIntegrity, CaptureSubmissionMetadata, CaptureSubmissionProvenance,
+    CaptureSubmissionReceipt, CaptureSubmissionTransformation, PevcapEncoding,
+    validate_capture_submission,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,9 @@ pub enum CaptureSubmissionTransferError {
 /// Admission and persistence failures, independent of native presentation.
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureSubmissionError {
+    /// User-entered context violates its portable limits.
+    #[error(transparent)]
+    InvalidEvidence(#[from] CaptureEvidenceError),
     /// The source or operation does not exist.
     #[error("capture submission was not found")]
     NotFound,
@@ -197,6 +201,9 @@ pub struct CaptureSubmissionPayload {
     read_bytes: u64,
     digest_state: sha2::Sha256,
     complete: bool,
+    raw_complete: bool,
+    expected_digest: String,
+    evidence: Cursor<Vec<u8>>,
 }
 
 impl std::fmt::Debug for CaptureSubmissionPayload {
@@ -233,6 +240,25 @@ impl Read for CaptureSubmissionPayload {
                 self.digest_state.update(&buffer[..count]);
                 return Ok(count);
             }
+            if self.raw_complete {
+                let count = self.evidence.read(buffer)?;
+                if count != 0 {
+                    self.read_bytes = self
+                        .read_bytes
+                        .checked_add(count as u64)
+                        .filter(|n| *n <= self.bytes)
+                        .ok_or_else(|| io::Error::other("capture snapshot length changed"))?;
+                    self.digest_state.update(&buffer[..count]);
+                    return Ok(count);
+                }
+                if self.read_bytes != self.bytes
+                    || hex::encode(self.digest_state.clone().finalize()) != self.expected_digest
+                {
+                    return Err(io::Error::other("capture snapshot integrity failed"));
+                }
+                self.complete = true;
+                return Ok(0);
+            }
             let chunk = self
                 .database
                 .pevcap_capture_chunk(&self.digest, self.sequence)
@@ -244,13 +270,7 @@ impl Read for CaptureSubmissionPayload {
                     .ok_or_else(|| io::Error::other("capture snapshot sequence overflow"))?;
                 self.current = Cursor::new(chunk);
             } else {
-                if self.read_bytes != self.bytes
-                    || hex::encode(self.digest_state.clone().finalize()) != self.digest
-                {
-                    return Err(io::Error::other("capture snapshot integrity failed"));
-                }
-                self.complete = true;
-                return Ok(0);
+                self.raw_complete = true;
             }
         }
     }
@@ -261,10 +281,15 @@ CREATE TABLE IF NOT EXISTS capture_submissions (
     source_artifact_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_artifact_id) = 36),
     operation_id TEXT NOT NULL UNIQUE CHECK(length(operation_id) = 36),
     snapshot_digest TEXT NOT NULL REFERENCES pevcap_imports(artifact_digest),
+    evidence_json TEXT,
     status_json TEXT NOT NULL CHECK(json_valid(status_json))
         CHECK(json_extract(status_json, '$.operation_id') = operation_id)
-        CHECK(json_extract(status_json, '$.metadata.sha256') = snapshot_digest)
+        CHECK(coalesce(json_extract(status_json, '$.metadata.evidence.capture_sha256'), json_extract(status_json, '$.metadata.sha256')) = snapshot_digest)
         CHECK(json_extract(status_json, '$.metadata.provenance.source_artifact_id') = source_artifact_id)
+);
+CREATE TABLE IF NOT EXISTS capture_evidence (
+    source_artifact_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_artifact_id) = 36),
+    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json))
 );";
 
 pub(super) enum SourceRecord {
@@ -301,6 +326,15 @@ pub(super) enum Action {
 }
 
 pub(super) enum Command {
+    Evidence {
+        source: CaptureSubmissionSource,
+        save: Option<CaptureAttachments>,
+        reply: Reply<Result<CaptureAttachments, CaptureSubmissionError>>,
+    },
+    SnapshotEvidence {
+        operation_id: String,
+        reply: Reply<Vec<u8>>,
+    },
     Source {
         source: CaptureSubmissionSource,
         reply: Reply<Option<SourceRecord>>,
@@ -315,6 +349,7 @@ pub(super) enum Command {
     },
     Insert {
         status: Box<CaptureSubmissionStatus>,
+        evidence_json: Option<String>,
         reply: Reply<CaptureSubmissionStatus>,
     },
     Apply {
@@ -357,6 +392,40 @@ impl RideDatabase {
         .map_err(Into::into)
     }
 
+    /// Reads saved notes/screenshots, or the frozen context for an existing Send.
+    /// # Errors
+    /// Returns missing source or storage failures.
+    pub fn capture_evidence(
+        &self,
+        source: CaptureSubmissionSource,
+    ) -> Result<CaptureAttachments, CaptureSubmissionError> {
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::Evidence {
+                source,
+                save: None,
+                reply,
+            })
+        })?
+    }
+
+    /// Saves context for one recording without altering the raw original.
+    /// # Errors
+    /// Rejects invalid context or edits to an authorized immutable Send.
+    pub fn save_capture_evidence(
+        &self,
+        source: CaptureSubmissionSource,
+        evidence: CaptureAttachments,
+    ) -> Result<CaptureAttachments, CaptureSubmissionError> {
+        evidence.validate()?;
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::Evidence {
+                source,
+                save: Some(evidence),
+                reply,
+            })
+        })?
+    }
+
     /// Freezes and validates one durable recording locally, without network effects.
     /// The private original is preserved; the snapshot reuses the canonical PEVCAP store.
     /// Call off native callback and UI threads.
@@ -383,7 +452,17 @@ impl RideDatabase {
             encoding,
         )
         .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
-        let metadata = CaptureSubmissionMetadata {
+        let evidence = self.capture_evidence(source)?;
+        let evidence_json = if evidence.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&evidence)
+                    .map_err(|_| CaptureSubmissionError::InvalidCapture)?,
+            )
+        };
+        let mut metadata = CaptureSubmissionMetadata {
+            evidence: None,
             sha256: summary.sha256,
             bytes: summary.bytes,
             encoding,
@@ -408,10 +487,39 @@ impl RideDatabase {
             super::ride_write::wall_clock_now_milliseconds()?,
             &CapturePublication::SubmissionSnapshot,
         )?;
+        if let Some(json) = &evidence_json {
+            use sha2::Digest;
+            let mut digest = sha2::Sha256::new();
+            let mut raw = std::fs::File::open(&snapshot).map_err(StorageError::from)?;
+            let mut buffer = [0; 64 * 1024];
+            loop {
+                let count = raw.read(&mut buffer).map_err(StorageError::from)?;
+                if count == 0 {
+                    break;
+                }
+                digest.update(&buffer[..count]);
+            }
+            digest.update(json.as_bytes());
+            metadata.evidence = Some(CaptureEvidenceManifest::new(
+                metadata.sha256.clone(),
+                metadata.bytes,
+                &evidence,
+            )?);
+            metadata.sha256 = hex::encode(digest.finalize());
+            metadata.bytes = metadata
+                .bytes
+                .checked_add(json.len() as u64)
+                .ok_or(CaptureSubmissionError::InvalidCapture)?;
+            metadata
+                .validate()
+                .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        }
+        let mut categories = summary.categories;
+        categories.notes |= !evidence.note.is_empty();
         let status = CaptureSubmissionStatus {
             operation_id: Uuid::new_v4().to_string(),
             metadata,
-            categories: summary.categories,
+            categories,
             phase: CaptureSubmissionPhase::Prepared,
             account_id: None,
             receipt: None,
@@ -421,6 +529,7 @@ impl RideDatabase {
         self.request(|reply| {
             super::Command::CaptureSubmission(Command::Insert {
                 status: Box::new(status),
+                evidence_json,
                 reply,
             })
         })
@@ -525,18 +634,30 @@ impl RideDatabase {
         .ok_or(CaptureSubmissionError::NotFound)
     }
 
-    fn submission_payload(&self, status: &CaptureSubmissionStatus) -> CaptureSubmissionPayload {
+    fn submission_payload(
+        &self,
+        status: &CaptureSubmissionStatus,
+    ) -> Result<CaptureSubmissionPayload, CaptureSubmissionError> {
         use sha2::Digest;
-        CaptureSubmissionPayload {
+        let evidence = self.request(|reply| {
+            super::Command::CaptureSubmission(Command::SnapshotEvidence {
+                operation_id: status.operation_id.clone(),
+                reply,
+            })
+        })?;
+        Ok(CaptureSubmissionPayload {
             database: self.clone(),
-            digest: status.metadata.sha256.clone(),
+            digest: status.metadata.capture_sha256().to_owned(),
             bytes: status.metadata.bytes,
             sequence: 0,
             current: Cursor::new(Vec::new()),
             read_bytes: 0,
             digest_state: sha2::Sha256::new(),
             complete: false,
-        }
+            raw_complete: false,
+            expected_digest: status.metadata.sha256.clone(),
+            evidence: Cursor::new(evidence),
+        })
     }
 
     /// Runs only the selected user-authorized transfer. Every retry first recovers a lost receipt.
@@ -573,7 +694,7 @@ impl RideDatabase {
                         operation_id,
                         token,
                         &status.metadata,
-                        self.submission_payload(&status),
+                        self.submission_payload(&status)?,
                     )
                     .await
             }
@@ -738,6 +859,7 @@ fn persist_status(
 fn insert_status(
     connection: &Connection,
     status: &CaptureSubmissionStatus,
+    evidence_json: Option<&str>,
 ) -> Result<CaptureSubmissionStatus, StorageError> {
     if let Some(existing) = lookup_status(
         connection,
@@ -747,8 +869,29 @@ fn insert_status(
         return Ok(existing);
     }
     let json = serde_json::to_string(status).map_err(|_| invalid_status())?;
-    connection.execute("INSERT INTO capture_submissions (source_artifact_id, operation_id, snapshot_digest, status_json) VALUES (?1, ?2, ?3, ?4)",
-        params![status.metadata.provenance.source_artifact_id, status.operation_id, status.metadata.sha256, json])?;
+    let current: Option<String> = connection
+        .query_row(
+            "SELECT evidence_json FROM capture_evidence WHERE source_artifact_id=?1",
+            [&status.metadata.provenance.source_artifact_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let current_evidence: CaptureAttachments = current
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|_| invalid_status())?
+        .unwrap_or_default();
+    let expected: CaptureAttachments = evidence_json
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|_| invalid_status())?
+        .unwrap_or_default();
+    if current_evidence != expected {
+        return Err(invalid_status());
+    }
+    connection.execute("INSERT INTO capture_submissions (source_artifact_id, operation_id, snapshot_digest, status_json, evidence_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![status.metadata.provenance.source_artifact_id, status.operation_id, status.metadata.capture_sha256(), json, evidence_json])?;
     Ok(status.clone())
 }
 
@@ -897,6 +1040,20 @@ pub(super) fn recover(connection: &Connection) -> Result<(), StorageError> {
 
 pub(super) fn dispatch(connection: &mut Connection, command: Command) {
     match command {
+        Command::Evidence {
+            source,
+            save,
+            reply,
+        } => {
+            let _ = reply.send(Ok(evidence_command(connection, source, save)));
+        }
+        Command::SnapshotEvidence {
+            operation_id,
+            reply,
+        } => {
+            let result = connection.query_row("SELECT coalesce(evidence_json, '') FROM capture_submissions WHERE operation_id=?1", [operation_id], |row| row.get::<_, String>(0)).map(String::into_bytes).map_err(Into::into);
+            let _ = reply.send(result);
+        }
         Command::Source { source, reply } => {
             let _ = reply.send(source_record(connection, source));
         }
@@ -909,8 +1066,12 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
         } => {
             let _ = reply.send(lookup_status(connection, None, Some(&operation_id)));
         }
-        Command::Insert { status, reply } => {
-            let _ = reply.send(insert_status(connection, &status));
+        Command::Insert {
+            status,
+            evidence_json,
+            reply,
+        } => {
+            let _ = reply.send(insert_status(connection, &status, evidence_json.as_deref()));
         }
         Command::Apply {
             operation_id,
@@ -924,3 +1085,68 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
 
 #[cfg(test)]
 mod tests;
+
+fn evidence_command(
+    connection: &mut Connection,
+    source: CaptureSubmissionSource,
+    save: Option<CaptureAttachments>,
+) -> Result<CaptureAttachments, CaptureSubmissionError> {
+    let record = source_record(connection, source)?.ok_or(CaptureSubmissionError::NotFound)?;
+    let artifact = match record {
+        SourceRecord::Live(entry) => entry.recording.map(|r| r.artifact_id),
+        SourceRecord::File(entry) => entry.recording.map(|r| r.artifact_id),
+    }
+    .ok_or(CaptureSubmissionError::ProvenanceUnavailable)?
+    .to_string();
+    let transaction = connection.transaction().map_err(StorageError::from)?;
+    if let Some(evidence) = save {
+        evidence.validate()?;
+        if let Some(status) = lookup_status(&transaction, Some(&artifact), None)? {
+            match status.phase {
+                CaptureSubmissionPhase::Prepared
+                | CaptureSubmissionPhase::Cancelled
+                | CaptureSubmissionPhase::Deleted => {
+                    transaction
+                        .execute(
+                            "DELETE FROM capture_submissions WHERE source_artifact_id=?1",
+                            [&artifact],
+                        )
+                        .map_err(StorageError::from)?;
+                }
+                _ => return Err(CaptureSubmissionError::InvalidState),
+            }
+        }
+        let json = serde_json::to_string(&evidence).map_err(|_| invalid_status())?;
+        transaction.execute("INSERT INTO capture_evidence(source_artifact_id,evidence_json) VALUES(?1,?2) ON CONFLICT(source_artifact_id) DO UPDATE SET evidence_json=excluded.evidence_json", params![artifact,json]).map_err(StorageError::from)?;
+        transaction.commit().map_err(StorageError::from)?;
+        return Ok(evidence);
+    }
+    let json: Option<String> = transaction
+        .query_row(
+            "SELECT evidence_json FROM capture_submissions WHERE source_artifact_id=?1",
+            [&artifact],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)?
+        .flatten();
+    let json = match json {
+        Some(json) => Some(json),
+        None => transaction
+            .query_row(
+                "SELECT evidence_json FROM capture_evidence WHERE source_artifact_id=?1",
+                [&artifact],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)?,
+    };
+    let evidence: CaptureAttachments = json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|_| invalid_status())?
+        .unwrap_or_default();
+    evidence.validate()?;
+    Ok(evidence)
+}

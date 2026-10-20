@@ -583,6 +583,7 @@ mod tests {
             .await
             .expect("review capability");
         let metadata = CaptureSubmissionMetadata {
+            evidence: None,
             sha256: "a".repeat(64),
             bytes: 42,
             encoding: cutout_core::PevcapEncoding::Jsonl,

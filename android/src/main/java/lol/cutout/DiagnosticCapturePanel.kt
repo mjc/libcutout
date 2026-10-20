@@ -19,6 +19,8 @@ class DiagnosticCapturePanel(
     private val bluetooth: AndroidBleClient,
     private val onShare: (File) -> Unit,
     private val onRequestBluetooth: () -> Unit = {},
+    private val charging: AndroidChargingClient? = null,
+    private val pickScreenshots: (((List<android.net.Uri>) -> Unit) -> Unit)? = null,
 ) : ScrollView(context) {
     private val ui = CutoutUi(context)
     private val content = ui.column()
@@ -211,6 +213,11 @@ class DiagnosticCapturePanel(
                 }
             }
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
+        charging?.let { community ->
+            row.addView(ui.action("Notes and private Send") {
+                CaptureEvidenceDialog(context, community, MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId), pickScreenshots).show()
+            }.apply { tag = "captures.history.${entry.liveCaptureId}.notes" })
+        }
         row.addView(buttons)
         return row
     }

@@ -71,11 +71,23 @@ impl CaptureSubmissionMetadata {
         {
             return Err(InvalidMetadata);
         }
+        if let Some(evidence) = &self.evidence {
+            if !digest_is_valid(&evidence.capture_sha256)
+                || evidence.capture_bytes == 0
+                || evidence.capture_bytes >= self.bytes
+                || self.bytes - evidence.capture_bytes > crate::MAX_CAPTURE_EVIDENCE_BYTES as u64
+                || evidence.note_bytes > crate::MAX_CAPTURE_NOTE_BYTES as u32
+                || evidence.screenshots > crate::MAX_CAPTURE_SCREENSHOTS as u32
+                || (evidence.note_bytes == 0 && evidence.screenshots == 0)
+            {
+                return Err(InvalidMetadata);
+            }
+        }
         let source = self.provenance.source_sha256.as_deref();
         let valid = match self.provenance.transformation {
-            CaptureSubmissionTransformation::Unmodified => source == Some(self.sha256.as_str()),
+            CaptureSubmissionTransformation::Unmodified => source == Some(self.capture_sha256()),
             CaptureSubmissionTransformation::MusicRemoved => {
-                source.is_some_and(|s| s != self.sha256)
+                source.is_some_and(|s| s != self.capture_sha256())
             }
             CaptureSubmissionTransformation::DatabaseExportMusicExcluded => {
                 self.provenance.live_capture_id.is_some() && source.is_none()
@@ -83,6 +95,75 @@ impl CaptureSubmissionMetadata {
         };
         if valid { Ok(()) } else { Err(InvalidMetadata) }
     }
+
+    /// Digest of the unchanged PEVCAP prefix, independent of added context.
+    #[must_use]
+    pub fn capture_sha256(&self) -> &str {
+        self.evidence
+            .as_ref()
+            .map_or(self.sha256.as_str(), |e| e.capture_sha256.as_str())
+    }
+
+    /// Length of the unchanged PEVCAP prefix.
+    #[must_use]
+    pub fn capture_bytes(&self) -> u64 {
+        self.evidence
+            .as_ref()
+            .map_or(self.bytes, |e| e.capture_bytes)
+    }
+}
+
+/// Validates one atomic private upload: raw PEVCAP and optional attachment JSON.
+/// # Errors
+/// Rejects malformed, oversized, mismatched or music-bearing evidence.
+pub fn validate_capture_submission_payload<R: Read>(
+    source: R,
+    metadata: &CaptureSubmissionMetadata,
+) -> Result<CaptureSubmissionPayloadSummary, CaptureSubmissionValidationError> {
+    metadata.validate()?;
+    let Some(manifest) = &metadata.evidence else {
+        return validate_capture_submission(source, metadata.encoding);
+    };
+    let counter = Rc::new(RefCell::new(ByteCounter::default()));
+    let mut input = CountedReader {
+        inner: source,
+        counter: Rc::clone(&counter),
+    };
+    let mut raw = (&mut input).take(manifest.capture_bytes);
+    let mut summary = validate_capture_submission(&mut raw, metadata.encoding)?;
+    if raw.limit() != 0
+        || summary.sha256 != manifest.capture_sha256
+        || summary.bytes != manifest.capture_bytes
+    {
+        return Err(CaptureSubmissionValidationError::InvalidMetadata);
+    }
+    let mut context = Vec::new();
+    input
+        .take(crate::MAX_CAPTURE_EVIDENCE_BYTES as u64 + 1)
+        .read_to_end(&mut context)
+        .map_err(|_| CaptureSubmissionValidationError::ReadFailure)?;
+    if context.len() > crate::MAX_CAPTURE_EVIDENCE_BYTES {
+        return Err(CaptureSubmissionValidationError::TooLarge);
+    }
+    let evidence: crate::CaptureAttachments = serde_json::from_slice(&context)
+        .map_err(|_| CaptureSubmissionValidationError::InvalidMetadata)?;
+    evidence
+        .validate()
+        .map_err(|_| CaptureSubmissionValidationError::InvalidMetadata)?;
+    if crate::CaptureEvidenceManifest::new(summary.sha256.clone(), summary.bytes, &evidence)
+        .map_err(|_| CaptureSubmissionValidationError::InvalidMetadata)?
+        != *manifest
+    {
+        return Err(CaptureSubmissionValidationError::InvalidMetadata);
+    }
+    summary.categories.notes |= !evidence.note.is_empty();
+    let counter = counter.borrow();
+    summary.sha256 = format!("{:x}", counter.digest.clone().finalize());
+    summary.bytes = counter.bytes;
+    if summary.sha256 != metadata.sha256 || summary.bytes != metadata.bytes {
+        return Err(CaptureSubmissionValidationError::InvalidMetadata);
+    }
+    Ok(summary)
 }
 
 impl CaptureSubmissionReceipt {

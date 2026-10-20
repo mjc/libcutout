@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 49;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 50;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -72,6 +72,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         46 => migrate_v46_to_v47(connection)?,
         47 => migrate_v47_to_v48(connection)?,
         48 => migrate_v48_to_v49(connection)?,
+        49 => migrate_v49_to_v50(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -117,6 +118,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 48 {
             migrate_v48_to_v49(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 49 {
+            migrate_v49_to_v50(connection)?;
         }
     }
     Ok(())
@@ -1354,7 +1358,18 @@ fn migrate_v47_to_v48(connection: &mut Connection) -> Result<(), StorageError> {
 fn migrate_v48_to_v49(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::capture_submission::SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&schema_pragmas(49))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v49_to_v50(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction
+        .execute_batch("ALTER TABLE capture_submissions RENAME TO capture_submissions_v49;")?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    transaction.execute_batch("INSERT INTO capture_submissions(source_artifact_id,operation_id,snapshot_digest,status_json) SELECT source_artifact_id,operation_id,snapshot_digest,status_json FROM capture_submissions_v49; DROP TABLE capture_submissions_v49;")?;
+    transaction.execute_batch(&schema_pragmas(50))?;
     transaction.commit()?;
     Ok(())
 }
@@ -1939,6 +1954,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
         "capture_submissions",
+        "capture_evidence",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
