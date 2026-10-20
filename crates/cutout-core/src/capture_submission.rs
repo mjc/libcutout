@@ -7,7 +7,10 @@ use crate::{CaptureOrigin, PevcapEncoding};
 use serde::{Deserialize, Serialize};
 
 mod validation;
-pub use validation::{CaptureSubmissionValidationError, validate_capture_submission};
+pub use validation::{
+    CaptureSubmissionValidationError, validate_capture_submission,
+    validate_capture_submission_payload,
+};
 
 /// Maximum submitted body length supported by the public service's ingress.
 pub const MAX_CAPTURE_SUBMISSION_BYTES: u64 = 100_000_000;
@@ -59,6 +62,9 @@ pub struct CaptureSubmissionProvenance {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSubmissionMetadata {
+    /// Optional user-selected context; raw PEVCAP remains the unchanged prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<crate::CaptureEvidenceManifest>,
     /// Lowercase SHA-256 of the exact submitted bytes.
     pub sha256: String,
     /// Exact submitted byte length.

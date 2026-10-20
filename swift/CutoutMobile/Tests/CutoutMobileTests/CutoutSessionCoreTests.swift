@@ -2370,6 +2370,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             ))
         XCTAssertEqual(
             try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOn)), [.lowBeamOn])
+        var acceptedNotes = 0
+        for index in 0..<256 {
+            guard core.annotateCapture(key: "note", value: "padding-\(index)") else { break }
+            acceptedNotes += 1
+        }
+        XCTAssertGreaterThan(acceptedNotes, 8)
         XCTAssertFalse(core.annotateCapture(key: "note", value: "no room"))
         XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOff))) {
             error in

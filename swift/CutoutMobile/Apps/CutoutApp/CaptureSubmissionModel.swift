@@ -125,7 +125,7 @@ final class CaptureSubmissionModel {
         return try CaptureSubmissionClientHandle(database: database)
     }
 
-    private static func message(for error: Error) -> String {
+    static func message(for error: Error) -> String {
         guard let error = error as? MobileCaptureSubmissionError else {
             if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
                 return "The account cannot authorize this transfer. A remote copy has not been confirmed removed."
@@ -133,6 +133,10 @@ final class CaptureSubmissionModel {
             return "The private transfer could not be completed. Your original recording is still on this device."
         }
         switch error {
+        case .NoteTooLong: return "The note must be 1,024 bytes or less."
+        case .TooManyScreenshots: return "Choose up to four screenshots."
+        case .ScreenshotTooLarge: return "Each screenshot must be 5 MiB or less."
+        case .InvalidScreenshot: return "The screenshot could not be read."
         case .InvalidSource: return "This recording has no verified source for private Send."
         case .NotReady: return "This recording is not ready for private Send."
         case .Unavailable: return "Private Send is unavailable. Try again later."

@@ -55,6 +55,7 @@ fn location() -> PevcapPhoneLocation {
 
 fn metadata() -> CaptureSubmissionMetadata {
     CaptureSubmissionMetadata {
+        evidence: None,
         sha256: "a".repeat(64),
         bytes: 123,
         encoding: PevcapEncoding::Jsonl,
@@ -607,4 +608,49 @@ fn capture_submission_settings_disclosure_matches_retained_note_fields_and_heade
             assert_eq!(decoded.encode(encoding).unwrap(), bytes);
         }
     }
+}
+
+#[test]
+fn capture_submission_validates_complete_note_and_screenshot_envelope() {
+    let raw = capture(&[
+        "capture_label=powered_on_stationary_start",
+        "capture_label=powered_on_stationary_stop",
+    ])
+    .to_jsonl()
+    .unwrap()
+    .into_bytes();
+    let evidence = crate::CaptureAttachments {
+        note: "é".repeat(512),
+        screenshots: vec![
+            crate::CaptureScreenshot {
+                jpeg: vec![0xff, 0xd8, 0xff, 0xd9]
+            };
+            4
+        ],
+    };
+    let mut bytes = raw.clone();
+    bytes.extend(serde_json::to_vec(&evidence).unwrap());
+    let mut metadata = metadata();
+    metadata.sha256 = crate::capture_evidence_digest(&bytes);
+    metadata.bytes = bytes.len() as u64;
+    metadata.evidence = Some(
+        crate::CaptureEvidenceManifest::new(
+            crate::capture_evidence_digest(&raw),
+            raw.len() as u64,
+            &evidence,
+        )
+        .unwrap(),
+    );
+    let summary = validate_capture_submission_payload(bytes.as_slice(), &metadata).unwrap();
+    assert_eq!(summary.bytes, metadata.bytes);
+    assert_eq!(summary.sha256, metadata.sha256);
+    assert!(summary.categories.notes);
+    assert_eq!(summary.annotation_count, 2);
+    let tail: crate::CaptureAttachments = serde_json::from_slice(&bytes[raw.len()..]).unwrap();
+    assert_eq!(tail, evidence);
+    let mut changed = bytes.clone();
+    changed.pop();
+    assert!(validate_capture_submission_payload(changed.as_slice(), &metadata).is_err());
+    metadata.evidence.as_mut().unwrap().screenshots = 3;
+    assert!(validate_capture_submission_payload(bytes.as_slice(), &metadata).is_err());
 }

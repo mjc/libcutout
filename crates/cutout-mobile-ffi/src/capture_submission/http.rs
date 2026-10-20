@@ -99,9 +99,13 @@ impl CaptureSubmissionTransport for HttpCaptureTransport {
             if metadata_header.len() > MAX_METADATA_BYTES || !metadata_header.is_ascii() {
                 return Err(CaptureSubmissionTransferError::Rejected);
             }
-            let content_type = match metadata.encoding {
-                PevcapEncoding::Jsonl => "application/x-ndjson",
-                PevcapEncoding::Binary => "application/octet-stream",
+            let content_type = if metadata.evidence.is_some() {
+                "application/vnd.cutout.capture-evidence"
+            } else {
+                match metadata.encoding {
+                    PevcapEncoding::Jsonl => "application/x-ndjson",
+                    PevcapEncoding::Binary => "application/octet-stream",
+                }
             };
             let length = payload.byte_count();
             let stream = futures_util::stream::try_unfold(payload, |mut payload| async move {

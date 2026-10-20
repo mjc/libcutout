@@ -975,3 +975,115 @@ fn capture_submission_freezes_and_sends_reported_settings_after_relaunch() {
 
     assert_eq!(sent.metadata, prepared.metadata);
 }
+
+#[test]
+fn capture_notes_screenshots_survive_save_reopen_and_exact_send() {
+    use cutout_core::{
+        CaptureAttachments, CaptureEvidenceError, CaptureScreenshot,
+        validate_capture_submission_payload,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let writer = recording(&database, directory.path());
+    let (id, receipt) = finished(writer);
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let evidence = CaptureAttachments {
+        note: "é".repeat(512),
+        screenshots: vec![
+            CaptureScreenshot {
+                jpeg: vec![0xff, 0xd8, 0xff, 0xd9]
+            };
+            4
+        ],
+    };
+    assert_eq!(
+        database
+            .save_capture_evidence(source, evidence.clone())
+            .unwrap(),
+        evidence
+    );
+    let mut excessive = evidence.clone();
+    excessive.note.push('a');
+    assert!(matches!(
+        database.save_capture_evidence(source, excessive),
+        Err(CaptureSubmissionError::InvalidEvidence(
+            CaptureEvidenceError::NoteTooLong
+        ))
+    ));
+    assert_eq!(database.capture_evidence(source).unwrap(), evidence);
+    drop(database);
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(database.capture_evidence(source).unwrap(), evidence);
+    let first = database.prepare_capture_submission(source).unwrap();
+    let mut edited = evidence.clone();
+    edited.note = "saved correction".into();
+    database
+        .save_capture_evidence(source, edited.clone())
+        .unwrap();
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert_ne!(prepared.operation_id, first.operation_id);
+    assert_eq!(prepared.metadata.evidence.as_ref().unwrap().screenshots, 4);
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert!(matches!(
+        database.save_capture_evidence(source, evidence),
+        Err(CaptureSubmissionError::InvalidState)
+    ));
+    let uploaded = transport.uploads.lock().unwrap();
+    let bytes = &uploaded[0].1;
+    let summary = validate_capture_submission_payload(bytes.as_slice(), &sent.metadata).unwrap();
+    assert_eq!(summary.sha256, sent.receipt.unwrap().sha256);
+    let raw_length = usize::try_from(sent.metadata.capture_bytes()).unwrap();
+    assert_eq!(
+        cutout_core::capture_evidence_digest(&bytes[..raw_length]),
+        sent.metadata.capture_sha256()
+    );
+    let decoded: CaptureAttachments = serde_json::from_slice(&bytes[raw_length..]).unwrap();
+    assert_eq!(decoded, edited);
+    assert_eq!(database.capture_evidence(source).unwrap(), edited);
+}
+
+#[test]
+fn capture_evidence_v49_migration_preserves_existing_receipt_and_raw_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &Transport::default(),
+    ))
+    .unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("BEGIN; ALTER TABLE capture_submissions RENAME TO current_submissions; CREATE TABLE capture_submissions(source_artifact_id TEXT PRIMARY KEY NOT NULL, operation_id TEXT NOT NULL UNIQUE, snapshot_digest TEXT NOT NULL REFERENCES pevcap_imports(artifact_digest), status_json TEXT NOT NULL CHECK(json_valid(status_json)) CHECK(json_extract(status_json, '$.metadata.sha256') = snapshot_digest)); INSERT INTO capture_submissions SELECT source_artifact_id,operation_id,snapshot_digest,status_json FROM current_submissions; DROP TABLE current_submissions; DROP TABLE capture_evidence; PRAGMA user_version=49; COMMIT;").unwrap();
+    drop(connection);
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(reopened.capture_submission(source).unwrap().unwrap(), sent);
+    assert_eq!(
+        reopened.capture_evidence(source).unwrap(),
+        CaptureAttachments::default()
+    );
+    let raw = directory.path().join("original.jsonl");
+    reopened
+        .export_pevcap_capture(&sent.metadata.sha256, &raw)
+        .unwrap();
+    assert_eq!(
+        cutout_core::capture_evidence_digest(&std::fs::read(raw).unwrap()),
+        sent.metadata.sha256
+    );
+}

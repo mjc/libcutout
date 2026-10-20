@@ -106,6 +106,35 @@ impl From<cutout_core::CaptureSubmissionCategories> for MobileCaptureSubmissionC
     }
 }
 
+/// Saved user context for one recording, separate from raw Bluetooth bytes.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureEvidenceDto {
+    /// Exact user-entered note.
+    pub note: String,
+    /// Explicitly selected JPEG screenshots in display order.
+    pub screenshots: Vec<Vec<u8>>,
+    /// Portable UTF-8 note budget.
+    pub note_limit_bytes: u32,
+    /// Portable image count limit.
+    pub screenshot_limit: u32,
+    /// Portable encoded JPEG byte limit.
+    pub screenshot_limit_bytes: u64,
+}
+
+impl From<cutout_core::CaptureAttachments> for MobileCaptureEvidenceDto {
+    fn from(evidence: cutout_core::CaptureAttachments) -> Self {
+        Self {
+            note: evidence.note,
+            screenshots: evidence.screenshots.into_iter().map(|s| s.jpeg).collect(),
+            note_limit_bytes: u32::try_from(cutout_core::MAX_CAPTURE_NOTE_BYTES)
+                .unwrap_or(u32::MAX),
+            screenshot_limit: u32::try_from(cutout_core::MAX_CAPTURE_SCREENSHOTS)
+                .unwrap_or(u32::MAX),
+            screenshot_limit_bytes: cutout_core::MAX_CAPTURE_SCREENSHOT_BYTES as u64,
+        }
+    }
+}
+
 /// A receipt already validated and committed by the Rust operation owner.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCaptureSubmissionReceiptDto {
@@ -219,6 +248,18 @@ impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatu
 /// Admission or local storage failure; transfer failures remain in persisted status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileCaptureSubmissionError {
+    /// Note exceeds the shared UTF-8 budget.
+    #[error("The note must be 1,024 bytes or less.")]
+    NoteTooLong,
+    /// Too many screenshots were selected.
+    #[error("Choose up to four screenshots.")]
+    TooManyScreenshots,
+    /// One encoded screenshot is too large.
+    #[error("Each screenshot must be 5 MiB or less.")]
+    ScreenshotTooLarge,
+    /// The picker did not produce a supported image.
+    #[error("The screenshot could not be read.")]
+    InvalidScreenshot,
     /// The supplied source is absent or is not a capture UUID.
     #[error("capture source is invalid")]
     InvalidSource,
@@ -255,6 +296,12 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
     fn from(error: persistence::CaptureSubmissionError) -> Self {
         use persistence::CaptureSubmissionError as Error;
         match error {
+            Error::InvalidEvidence(e) => match e {
+                cutout_core::CaptureEvidenceError::NoteTooLong => Self::NoteTooLong,
+                cutout_core::CaptureEvidenceError::TooManyScreenshots => Self::TooManyScreenshots,
+                cutout_core::CaptureEvidenceError::ScreenshotTooLarge => Self::ScreenshotTooLarge,
+                cutout_core::CaptureEvidenceError::InvalidScreenshot => Self::InvalidScreenshot,
+            },
             Error::NotFound => Self::InvalidSource,
             Error::NotFinished | Error::ProvenanceUnavailable | Error::InvalidState => {
                 Self::NotReady
@@ -301,6 +348,47 @@ impl CaptureSubmissionClientHandle {
             database: database.inner.clone(),
             transport,
         }))
+    }
+
+    /// Reads saved context without transmission or original-file changes.
+    /// # Errors
+    /// Returns source or storage failures.
+    pub async fn evidence(
+        &self,
+        source: MobileCaptureSubmissionSourceDto,
+    ) -> Result<MobileCaptureEvidenceDto, MobileCaptureSubmissionError> {
+        let source = source.try_into()?;
+        let database = self.database.clone();
+        tokio::task::spawn_blocking(move || database.capture_evidence(source))
+            .await
+            .map_err(|_| MobileCaptureSubmissionError::StorageFailure)?
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    /// Saves a bounded note and selected screenshots for this recording.
+    /// # Errors
+    /// Rejects invalid context or edits to an already authorized snapshot.
+    pub async fn save_evidence(
+        &self,
+        source: MobileCaptureSubmissionSourceDto,
+        note: String,
+        screenshots: Vec<Vec<u8>>,
+    ) -> Result<MobileCaptureEvidenceDto, MobileCaptureSubmissionError> {
+        let source = source.try_into()?;
+        let database = self.database.clone();
+        let evidence = cutout_core::CaptureAttachments {
+            note,
+            screenshots: screenshots
+                .into_iter()
+                .map(|jpeg| cutout_core::CaptureScreenshot { jpeg })
+                .collect(),
+        };
+        tokio::task::spawn_blocking(move || database.save_capture_evidence(source, evidence))
+            .await
+            .map_err(|_| MobileCaptureSubmissionError::StorageFailure)?
+            .map(Into::into)
+            .map_err(Into::into)
     }
 
     /// Reads only persisted local status. Relaunch does not resume an upload.

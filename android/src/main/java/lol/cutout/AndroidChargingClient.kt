@@ -253,6 +253,15 @@ class AndroidChargingClient(
         }, completed)
     }
 
+    /** Only an explicit capture Send may obtain or provision this existing private identity. */
+    internal suspend fun captureCredential(): MobileChargingIdentityDto = credentialForExplicitAction()
+
+    internal fun existingCaptureCredential(): MobileChargingIdentityDto? = when (val stored = credentials.load()) {
+        is ChargingCredentialRecord.Ready -> MobileChargingIdentityDto(stored.identityId, stored.token)
+        is ChargingCredentialRecord.DeletionPending -> MobileChargingIdentityDto(stored.identityId, stored.token)
+        else -> null
+    }
+
     private suspend fun credentialForExplicitAction(): MobileChargingIdentityDto {
         val stored = credentials.load()
         return when (mobileChargingRegistrationAdmission(credentialState(stored), false)) {

@@ -31,6 +31,10 @@ pub use capture_annotations::*;
 mod capture_submission;
 #[cfg(feature = "serde")]
 pub use capture_submission::*;
+#[cfg(feature = "serde")]
+mod capture_evidence;
+#[cfg(feature = "serde")]
+pub use capture_evidence::*;
 mod battery_current;
 pub use battery_current::*;
 mod battery_page;

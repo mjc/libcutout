@@ -15,7 +15,7 @@ use axum::{
 };
 use cutout_core::{
     CaptureSubmissionMetadata, CaptureSubmissionReceipt, CaptureSubmissionValidationError,
-    MAX_CAPTURE_SUBMISSION_BYTES, PevcapEncoding, validate_capture_submission,
+    MAX_CAPTURE_SUBMISSION_BYTES, PevcapEncoding, validate_capture_submission_payload,
 };
 use serde::Deserialize;
 use std::{
@@ -119,9 +119,13 @@ fn metadata(headers: &HeaderMap) -> Result<CaptureSubmissionMetadata, Error> {
         .ok_or(Error::Invalid)?
         .to_str()
         .map_err(|_| Error::Invalid)?;
-    let expected = match metadata.encoding {
-        PevcapEncoding::Jsonl => "application/x-ndjson",
-        PevcapEncoding::Binary => "application/octet-stream",
+    let expected = if metadata.evidence.is_some() {
+        "application/vnd.cutout.capture-evidence"
+    } else {
+        match metadata.encoding {
+            PevcapEncoding::Jsonl => "application/x-ndjson",
+            PevcapEncoding::Binary => "application/octet-stream",
+        }
     };
     if content_types.next().is_some()
         || !content_type
@@ -192,10 +196,11 @@ async fn upload(
     }
     file.flush().await.map_err(|_| Error::Unavailable)?;
     drop(file);
-    let encoding = metadata.encoding;
+    let validated_metadata = metadata.clone();
     let (stage, summary) = tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(&stage.path).map_err(|_| Error::Unavailable)?;
-        let summary = validate_capture_submission(file, encoding).map_err(validation)?;
+        let summary =
+            validate_capture_submission_payload(file, &validated_metadata).map_err(validation)?;
         Ok::<_, Error>((stage, summary))
     })
     .await
@@ -270,9 +275,21 @@ async fn content(
     let actor = actor(&store, &headers).await?;
     let operation = id(&operation)?;
     store.capture_read_budget(actor.clone()).await?;
-    let total = store
-        .capture_content_size(actor.clone(), operation.clone())
+    let metadata = store
+        .capture_content_metadata(actor.clone(), operation.clone())
         .await?;
+    let total = metadata.bytes;
+    let (content_type, disposition) = if metadata.evidence.is_some() {
+        (
+            "application/vnd.cutout.capture-evidence",
+            "attachment; filename=\"bluetooth-capture.capture-evidence\"",
+        )
+    } else {
+        (
+            "application/octet-stream",
+            "attachment; filename=\"bluetooth-capture.pevcap\"",
+        )
+    };
     let permit = store.capture_transfer(&actor)?;
     let lease = DownloadLease::new(permit);
     let stream = futures_util::stream::unfold(
@@ -307,11 +324,8 @@ async fn content(
     );
     Ok((
         [
-            (header::CONTENT_TYPE, "application/octet-stream"),
-            (
-                header::CONTENT_DISPOSITION,
-                "attachment; filename=\"bluetooth-capture.pevcap\"",
-            ),
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         Body::from_stream(stream),
     )
@@ -349,6 +363,7 @@ mod tests {
             .expect("identity");
         let digest = crate::store::hash(&bytes);
         let metadata = CaptureSubmissionMetadata {
+            evidence: None,
             sha256: digest.clone(),
             bytes: u64::try_from(bytes.len()).expect("size"),
             encoding: PevcapEncoding::Jsonl,
@@ -408,6 +423,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn private_note_and_four_screenshots_commit_and_read_back_atomically() {
+        use cutout_core::{CaptureAttachments, CaptureEvidenceManifest, CaptureScreenshot};
+        let (_directory, store, mut headers, _original, raw) = stored_capture().await;
+        let evidence = CaptureAttachments {
+            note: "Stationary by the workbench — é".into(),
+            screenshots: vec![
+                CaptureScreenshot {
+                    jpeg: vec![0xff, 0xd8, 0xff, 0xd9]
+                };
+                4
+            ],
+        };
+        let mut body = raw.clone();
+        body.extend(serde_json::to_vec(&evidence).unwrap());
+        let mut metadata: CaptureSubmissionMetadata =
+            serde_json::from_slice(headers["x-cutout-capture"].as_bytes()).unwrap();
+        metadata.evidence = Some(
+            CaptureEvidenceManifest::new(crate::store::hash(&raw), raw.len() as u64, &evidence)
+                .unwrap(),
+        );
+        metadata.sha256 = crate::store::hash(&body);
+        metadata.bytes = body.len() as u64;
+        headers.insert(
+            "x-cutout-capture",
+            serde_json::to_string(&metadata).unwrap().parse().unwrap(),
+        );
+        headers.insert(
+            header::CONTENT_TYPE,
+            "application/vnd.cutout.capture-evidence".parse().unwrap(),
+        );
+        let operation = Uuid::new_v4().to_string();
+        let (status, Json(received)) = upload(
+            State(store.clone()),
+            Path(operation.clone()),
+            headers.clone(),
+            Body::from(body.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(received.sha256, metadata.sha256);
+        let reviewer = reviewer_headers(&store, &headers).await;
+        let response = content(State(store.clone()), Path(operation.clone()), reviewer)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/vnd.cutout.capture-evidence"
+        );
+        assert_eq!(
+            response.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"bluetooth-capture.capture-evidence\""
+        );
+        let downloaded = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        assert_eq!(downloaded.as_ref(), body);
+        let readback: CaptureAttachments =
+            serde_json::from_slice(&downloaded[raw.len()..]).unwrap();
+        assert_eq!(readback, evidence);
+        let failed = Uuid::new_v4().to_string();
+        let mut incomplete = body.clone();
+        incomplete.pop();
+        assert!(
+            upload(
+                State(store.clone()),
+                Path(failed.clone()),
+                headers.clone(),
+                Body::from(incomplete)
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            receipt(State(store.clone()), Path(failed), headers.clone())
+                .await
+                .is_err()
+        );
+        delete(
+            State(store.clone()),
+            Path(operation.clone()),
+            headers.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            content(State(store), Path(operation), headers)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn private_downloads_share_transfer_slots_and_release_on_body_drop_or_eof() {
         let (_directory, store, headers, operation, bytes) = stored_capture().await;
         let third_headers = reviewer_headers(&store, &headers).await;
@@ -419,6 +527,14 @@ mod tests {
         )
         .await
         .expect("first download");
+        assert_eq!(
+            first.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
+        assert_eq!(
+            first.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"bluetooth-capture.pevcap\""
+        );
         assert_eq!(
             content(
                 State(store.clone()),

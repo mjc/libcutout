@@ -286,21 +286,22 @@ impl Store {
         }).await
     }
 
-    pub(crate) async fn capture_content_size(
+    pub(crate) async fn capture_content_metadata(
         &self,
         actor: Actor,
         operation: String,
-    ) -> Result<u64, Error> {
+    ) -> Result<CaptureSubmissionMetadata, Error> {
         self.call(move |connection| {
             let transaction = connection.transaction().map_err(db_error)?;
             authorize_content(&transaction, &actor, &operation)?;
-            transaction
+            let metadata: String = transaction
                 .query_row(
-                    "SELECT bytes FROM capture_submissions WHERE operation_id=?1",
+                    "SELECT metadata FROM capture_submissions WHERE operation_id=?1",
                     [operation],
                     |row| row.get(0),
                 )
-                .map_err(db_error)
+                .map_err(db_error)?;
+            decode(&metadata)
         })
         .await
     }
@@ -583,6 +584,7 @@ mod tests {
             .await
             .expect("review capability");
         let metadata = CaptureSubmissionMetadata {
+            evidence: None,
             sha256: "a".repeat(64),
             bytes: 42,
             encoding: cutout_core::PevcapEncoding::Jsonl,
