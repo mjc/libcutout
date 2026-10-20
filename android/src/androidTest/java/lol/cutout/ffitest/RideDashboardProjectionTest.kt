@@ -313,7 +313,12 @@ open class RideDashboardProjectionTest {
         val session = checkNotNull(session)
         val identity = checkNotNull(session.identity).copy(
             protocol = MobileProtocolFamilyDto.VESC,
-            vehicleKind = MobileVehicleKindDto.BOARD,
+            vehicleKind = MobileVehicleKindDto.ONEWHEEL,
+            classificationProvenance = MobileVehicleClassificationProvenanceDto.PROTOCOL,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.RESOLVED,
+            vescApplication = MobileVescApplicationDiscoveryDto.REFLOAT,
+            vescApplicationQuery = null,
+            model = null,
         )
         return copy(
             session = session.copy(identity = identity),
