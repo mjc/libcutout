@@ -149,58 +149,55 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
     prepare_swift_ffi(root, &lock, &checker)?;
     let mut build = command("/usr/bin/xcrun");
     build.current_dir(root).arg(tool).args(args);
-    handoff_apple_client(&mut build, &lock)
+    handoff_apple_client(build, &lock)
 }
 
 #[cfg(unix)]
-fn handoff_apple_client(build: &mut Command, lock: &fs::File) -> Result<()> {
+fn handoff_apple_client(mut build: Command, lock: &fs::File) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
-    let inherited_lock = attach_lock_handle(build, lock)?;
+    attach_lock_handle(&mut build, lock)?;
     // Replace this coordinator so signals to its PID reach the native tool.
     let error = build.exec();
-    drop(inherited_lock);
+    drop(build);
     Err(error).context("failed to build Apple client")
 }
 
 #[cfg(not(unix))]
-fn handoff_apple_client(_build: &mut Command, _lock: &fs::File) -> Result<()> {
+fn handoff_apple_client(_build: Command, _lock: &fs::File) -> Result<()> {
     bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 #[cfg(unix)]
-fn run_waited_apple_client(build: &mut Command, lock: &fs::File, description: &str) -> Result<()> {
-    let _inherited_lock = attach_lock_handle(build, lock)?;
-    run(build, description)
+fn run_waited_apple_client(mut build: Command, lock: &fs::File, description: &str) -> Result<()> {
+    attach_lock_handle(&mut build, lock)?;
+    run(&mut build, description)
 }
 
 #[cfg(not(unix))]
-fn run_waited_apple_client(
-    _build: &mut Command,
-    _lock: &fs::File,
-    _description: &str,
-) -> Result<()> {
+fn run_waited_apple_client(_build: Command, _lock: &fs::File, _description: &str) -> Result<()> {
     bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File> {
+fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<()> {
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
 
     let inherited_lock = lock.try_clone()?;
-    let lock_fd = inherited_lock.as_raw_fd();
-    // SAFETY: fcntl is async-signal-safe. The owned clone remains open across
-    // exec so the native tool keeps the lock, and closes normally if exec fails.
+    // SAFETY: the callback owns the File for as long as the Command can invoke
+    // it. Reading its descriptor and calling async-signal-safe fcntl need no
+    // allocation or locks. Successful exec preserves the native tool's handle.
     unsafe {
         command.pre_exec(move || {
+            let lock_fd = inherited_lock.as_raw_fd();
             if libc::fcntl(lock_fd, libc::F_SETFD, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
         });
     }
-    Ok(inherited_lock)
+    Ok(())
 }
 
 fn run_aero_settings_simulator() -> Result<()> {
@@ -703,7 +700,7 @@ fn deploy_ios(root: &Path, launch_intent: IosLaunchIntent) -> Result<()> {
     build.args(ios_signing_arguments(Some(&team), bundle_id.as_deref())?);
     build.arg(format!("SPOTIFY_CLIENT_ID={spotify_client_id}"));
     build.arg("build");
-    run_waited_apple_client(&mut build, &lock, "build signed iPhone app")?;
+    run_waited_apple_client(build, &lock, "build signed iPhone app")?;
     drop(lock);
     ensure!(
         product.is_dir(),
@@ -1473,6 +1470,18 @@ fn ensure_success(status: ExitStatus, description: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    struct ReapedChild(std::process::Child);
+
+    #[cfg(unix)]
+    impl Drop for ReapedChild {
+        fn drop(&mut self) {
+            self.0.stdin.take();
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 
     #[cfg(unix)]
     #[test]
@@ -2571,7 +2580,7 @@ mod tests {
             let _unrelated = fs::File::create(root.join("unrelated")).unwrap();
             let lock = lock_swift_ffi(&root).unwrap();
             let error =
-                handoff_apple_client(&mut Command::new(root.join("missing")), &lock).unwrap_err();
+                handoff_apple_client(Command::new(root.join("missing")), &lock).unwrap_err();
             assert!(error.to_string().contains("build Apple client"));
             assert_eq!(
                 error.downcast_ref::<std::io::Error>().unwrap().kind(),
@@ -2597,6 +2606,43 @@ mod tests {
             .output()
             .unwrap();
         assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(unix)]
+    fn spawn_blocked_lock_contender(
+        root: &Path,
+    ) -> (ReapedChild, std::sync::mpsc::Receiver<String>) {
+        use std::{io::BufRead, process::Stdio, sync::mpsc, time::Duration};
+
+        let mut child = ReapedChild(
+            Command::new(env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::waited_native_client_returns_and_failed_spawn_releases_inherited_handle",
+                    "--nocapture",
+                ])
+                .env("CUTOUT_WAITED_LOCK_CONTENDER_ROOT", root)
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let output = child.0.stdout.take().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(output).lines() {
+                let Ok(line) = line else { break };
+                if let Some((_, event)) = line.split_once("lock-contender:")
+                    && sender.send(event.to_owned()).is_err()
+                {
+                    break;
+                }
+            }
+        });
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(10)).unwrap(),
+            "ready"
+        );
+        (child, receiver)
     }
 
     #[cfg(unix)]
@@ -2637,15 +2683,6 @@ mod tests {
             time::{Duration, Instant},
         };
 
-        struct ReapedChild(std::process::Child);
-        impl Drop for ReapedChild {
-            fn drop(&mut self) {
-                self.0.stdin.take();
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-
         let test = if signal == "INT" {
             "tests::terminal_native_handoff_preserves_pid_lock_and_interrupt_exit"
         } else {
@@ -2664,7 +2701,7 @@ mod tests {
             let mut replacement = Command::new(env::current_exe().unwrap());
             replacement.args(["--exact", test, "--nocapture"]);
             replacement.env("CUTOUT_HANDOFF_REPLACEMENT", "1");
-            handoff_apple_client(&mut replacement, &lock).unwrap();
+            handoff_apple_client(replacement, &lock).unwrap();
             return;
         }
 
@@ -2809,7 +2846,7 @@ mod tests {
             let lock = lock_swift_ffi(&root).unwrap();
             let mut child = Command::new("sh");
             child.args(["-c", "echo $$; exec sleep 30"]);
-            run_waited_apple_client(&mut child, &lock, "wait for disposable native child").unwrap();
+            run_waited_apple_client(child, &lock, "wait for disposable native child").unwrap();
             return;
         }
 
@@ -2867,17 +2904,72 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn waited_native_client_returns_and_failed_spawn_releases_inherited_handle() {
+    fn native_command_owns_its_lock_across_repeated_launches() {
         let root = tempfile::tempdir().unwrap();
         let lock = lock_swift_ffi(root.path()).unwrap();
-        run_waited_apple_client(
-            Command::new("sh").args(["-c", "exit 0"]),
-            &lock,
-            "wait for disposable successful child",
-        )
-        .unwrap();
+        let mut native = Command::new("sh");
+        native.args(["-c", "exit 0"]);
+        attach_lock_handle(&mut native, &lock).unwrap();
+        drop(lock);
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(
+            matches!(contender.try_lock(), Err(fs::TryLockError::WouldBlock)),
+            "the command must own the descriptor used by its retained callback"
+        );
+        let (mut waiter, events) = spawn_blocked_lock_contender(root.path());
+        run(&mut native, "launch native command once").unwrap();
+        run(&mut native, "reuse native command").unwrap();
+        assert!(matches!(
+            events.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        drop(native);
+        assert_eq!(
+            events
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap(),
+            "acquired"
+        );
+        assert!(waiter.0.wait().unwrap().success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn waited_native_client_returns_and_failed_spawn_releases_inherited_handle() {
+        use std::{io::Write, sync::mpsc::TryRecvError, time::Duration};
+
+        if let Some(root) = env::var_os("CUTOUT_WAITED_LOCK_CONTENDER_ROOT") {
+            let root = PathBuf::from(root);
+            let contender = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join(SWIFT_FFI_LOCK))
+                .unwrap();
+            assert!(matches!(
+                contender.try_lock(),
+                Err(fs::TryLockError::WouldBlock)
+            ));
+            drop(contender);
+            println!("lock-contender:ready");
+            std::io::stdout().flush().unwrap();
+            let _lock = lock_swift_ffi(&root).unwrap();
+            println!("lock-contender:acquired");
+            std::io::stdout().flush().unwrap();
+            return;
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let lock = lock_swift_ffi(root.path()).unwrap();
+        let (mut waiter, events) = spawn_blocked_lock_contender(root.path());
+        let mut native = Command::new("sh");
+        native.args(["-c", "exit 0"]);
+        run_waited_apple_client(native, &lock, "wait for disposable successful child").unwrap();
         let error = run_waited_apple_client(
-            &mut Command::new(root.path().join("missing-native-tool")),
+            Command::new(root.path().join("missing-native-tool")),
             &lock,
             "start missing native tool",
         )
@@ -2892,9 +2984,14 @@ mod tests {
             contender.try_lock(),
             Err(fs::TryLockError::WouldBlock)
         ));
+        assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
         drop(lock);
-        contender
-            .try_lock()
-            .expect("failed spawn must not leave an inherited lock handle");
+        assert_eq!(
+            events
+                .recv_timeout(Duration::from_secs(10))
+                .expect("helper completion must release every inherited lock handle"),
+            "acquired"
+        );
+        assert!(waiter.0.wait().unwrap().success());
     }
 }
