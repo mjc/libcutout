@@ -311,6 +311,10 @@ fn request(
     let mut url = Url::parse(&format!("https://api.spotify.com/v1/me/player{path}"))
         .map_err(|_| SpotifyPlaybackError::Unavailable)?;
     url.query_pairs_mut().append_pair(key, value);
+    // Foundation decodes percent escapes but does not treat form-style '+' as a
+    // space. A literal plus is already %2B, so this preserves both native clients.
+    let query = url.query().unwrap_or_default().replace('+', "%20");
+    url.set_query(Some(&query));
     Ok(SpotifyHttpRequest {
         url: url.into(),
         method: method.to_owned(),

@@ -117,13 +117,13 @@ final class SpotifyPlaybackAPITests: XCTestCase {
                 XCTAssertEqual(request.url?.path, "/v1/me/player/\(path)")
                 XCTAssertEqual(
                     URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems,
-                    [URLQueryItem(name: "device_id", value: "phone&space value")])
+                    [URLQueryItem(name: "device_id", value: "phone&space +%/?#value")])
                 XCTAssertNil(request.httpBody)
                 return (
                     Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!
                 )
             }
-            try await api.perform(command, accessToken: "test-token", deviceID: "phone&space value")
+            try await api.perform(command, accessToken: "test-token", deviceID: "phone&space +%/?#value")
         }
     }
 
