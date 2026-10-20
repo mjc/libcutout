@@ -906,6 +906,9 @@ fn source_inputs(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
             }
         }
     }
+    // Local dependency patches are source inputs too, and must travel with the
+    // immutable snapshot rather than resolving against a mutable checkout.
+    collect_files(root, Path::new("vendor"), &mut files)?;
     collect_config_referenced_inputs(root, &mut files)?;
 
     files
@@ -1379,6 +1382,28 @@ mod tests {
         fs::write(root.join("crates/fixture/src/lib.rs"), "original").unwrap();
         let reused = FfiSourceSnapshot::capture(&root, &expected).unwrap();
         assert_eq!(reused.path, snapshot.path);
+        fs::remove_dir_all(snapshot.path.parent().unwrap()).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_source_snapshot_carries_and_fingerprints_vendored_dependencies() {
+        let root = env::temp_dir().join(format!("cutout-ffi-vendor-{}", std::process::id()));
+        fixture_sources(&root);
+        let input = Path::new("vendor/dependency/src/lib.rs");
+        fs::create_dir_all(root.join(input.parent().unwrap())).unwrap();
+        fs::write(root.join("vendor/dependency/Cargo.toml"), "manifest").unwrap();
+        fs::write(root.join(input), "original dependency").unwrap();
+        let identity = source_fingerprint(&root).unwrap();
+        let snapshot = FfiSourceSnapshot::capture(&root, &identity).unwrap();
+        assert_eq!(
+            fs::read_to_string(snapshot.path.join(input)).unwrap(),
+            "original dependency"
+        );
+        fs::write(root.join(input), "patched dependency").unwrap();
+        assert_ne!(source_fingerprint(&root).unwrap(), identity);
+        assert_eq!(source_fingerprint(&snapshot.path).unwrap(), identity);
+        assert!(FfiSourceSnapshot::capture(&root, &identity).is_err());
         fs::remove_dir_all(snapshot.path.parent().unwrap()).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

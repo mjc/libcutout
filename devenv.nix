@@ -97,6 +97,8 @@ in
 
   treefmt = {
     enable = true;
+    # Keep pinned third-party sources comparable with their upstream release.
+    config.settings.excludes = [ "vendor/**" ];
     config.programs = {
       nixfmt.enable = true;
       rustfmt = {
