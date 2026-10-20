@@ -1,3 +1,4 @@
+import CutoutMobile
 import CutoutMobileFFI
 import ImageIO
 import Observation
@@ -245,6 +246,10 @@ final class CaptureEvidenceEditorModel {
 
     func importScreenshots(_ items: [PhotosPickerItem]) async {
         guard !isWorking else { return }
+        guard items.count <= screenshotLimit - screenshots.count else {
+            error = CaptureSubmissionModel.message(for: MobileCaptureSubmissionError.TooManyScreenshots)
+            return
+        }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -266,7 +271,7 @@ final class CaptureEvidenceEditorModel {
     }
 }
 
-private func captureScreenshotJPEG(_ data: Data) throws -> Data {
+func captureScreenshotJPEG(_ data: Data) throws -> Data {
     guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
         let image = CGImageSourceCreateThumbnailAtIndex(
             source, 0,
