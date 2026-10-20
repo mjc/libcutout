@@ -4,10 +4,11 @@ import SwiftUI
 /// Presentation only: values and PWM applicability come from the existing ride projection.
 struct EucRideInstruments: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
     @State private var showsReadings = false
 
-    private let portraitSpeedPointSize: CGFloat = 100
-    private let portraitGaugeWidth: CGFloat = 180
+    private let portraitSpeedPointSize: CGFloat = 110
+    private let portraitGaugeWidth: CGFloat = 260
 
     let title: String
     let subtitle: String
@@ -23,13 +24,21 @@ struct EucRideInstruments: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let landscape = verticalSizeClass == .compact
+            let bounds = geometry.frame(in: .global)
+            // The native floating accessory can cover content without changing its proposal.
+            // Read only its intersection with this viewport; do not subtract safe-area insets again.
+            let obstruction = musicCompactPlayerFrame?.intersection(bounds)
+            let visibleHeight =
+                obstruction.map {
+                    $0.isNull || $0.isEmpty ? geometry.size.height : max(0, $0.minY - bounds.minY - 12)
+                } ?? geometry.size.height
+            let landscape =
+                verticalSizeClass == .compact
                 || (verticalSizeClass == nil && geometry.size.width > geometry.size.height)
-            let constrainedScale = geometry.size.height < 535
-                ? max(0.72, min(1, (geometry.size.height - 265) / 269)) : 1
+            let constrainedScale = max(0.45, min(1, (visibleHeight - 344) / 256))
             let speedPointSize = portraitSpeedPointSize * constrainedScale
             let gaugeWidth = min(portraitGaugeWidth, max(0, geometry.size.width - 48)) * constrainedScale
-            VStack(spacing: 8) {
+            VStack(spacing: 12) {
                 header
                 if landscape {
                     HStack(spacing: 24) {
@@ -47,15 +56,18 @@ struct EucRideInstruments: View {
                     primaryInstruments(
                         landscape: false, speedPointSize: speedPointSize, gaugeWidth: gaugeWidth
                     )
-                    energyReadings
-                    secondaryReadings
+                    .frame(maxHeight: .infinity)
+                    VStack(spacing: 10) {
+                        energyReadings
+                        secondaryReadings
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 24)
             .padding(.top, landscape ? 8 : 0)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.bottom, 28)
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            .padding(.bottom, 12)
+            .frame(width: geometry.size.width, height: visibleHeight, alignment: .top)
             .foregroundStyle(PevColors.primaryText)
         }
         .background(PevColors.pageBackground)

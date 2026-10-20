@@ -98,7 +98,7 @@ final class EucRideInstrumentTests: XCTestCase {
     }
 
     #if os(macOS)
-        func testPopulatedDashboardFitsA600PointViewport() throws {
+        func testDashboardReadingsUseTheBottomOfTheOfferedViewport() throws {
             for height: CGFloat in [600, 700] {
                 let image = try XCTUnwrap(renderedDashboard(height: height, playerFrame: nil))
                 let fullImage = CGRect(x: 0, y: 0, width: image.width, height: image.height)
@@ -106,12 +106,15 @@ final class EucRideInstrumentTests: XCTestCase {
                 let lastForegroundRow = try XCTUnwrap(
                     lastForegroundRow(in: pixels, width: image.width, height: image.height)
                 )
-                XCTAssertLessThan(lastForegroundRow, 1_000, "Ride content should end before the 500pt mark at \(height)pt")
+                XCTAssertGreaterThan(
+                    lastForegroundRow, Int((height - 40) * 2), "Readings must not leave a large unused footer")
+                XCTAssertLessThan(lastForegroundRow, Int((height - 8) * 2), "Readings need bottom clearance")
+                _ = pngArtifactPath(for: image, name: "cutout-ride-filled-\(Int(height)).png")
             }
         }
 
         func testDashboardLeavesCompactPlayerFrameUncovered() throws {
-            let playerFrame = CGRect(x: 0, y: 510, width: 393, height: 84)
+            let playerFrame = CGRect(x: 0, y: 620, width: 393, height: 64)
             let image = try XCTUnwrap(renderedDashboard(height: 700, playerFrame: playerFrame))
             let fullImage = CGRect(x: 0, y: 0, width: image.width, height: image.height)
             let pixels = try normalizedPixels(in: image, region: fullImage)
@@ -122,24 +125,45 @@ final class EucRideInstrumentTests: XCTestCase {
                 lastForegroundRow, Int(playerFrame.minY * 2),
                 "The dashboard must end before the compact player begins at \(playerFrame.minY)pt"
             )
+            XCTAssertGreaterThan(
+                lastForegroundRow, Int((playerFrame.minY - 50) * 2), "Readings must stay near the player")
+            _ = pngArtifactPath(for: image, name: "cutout-ride-filled-with-music.png")
+        }
+
+        func testConstrainedDashboardKeepsReadingsAboveThePlayer() throws {
+            let playerFrame = CGRect(x: 0, y: 510, width: 393, height: 74)
+            let image = try XCTUnwrap(renderedDashboard(height: 600, playerFrame: playerFrame))
+            let pixels = try normalizedPixels(
+                in: image, region: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bottom = try XCTUnwrap(lastForegroundRow(in: pixels, width: image.width, height: image.height))
+            XCTAssertLessThan(bottom, Int((playerFrame.minY - 12) * 2))
+            XCTAssertGreaterThan(bottom, Int((playerFrame.minY - 50) * 2))
+            _ = pngArtifactPath(for: image, name: "cutout-ride-filled-compact.png")
         }
 
         func testDashboardInstrumentLayoutIsStableAcrossPlayerFramesAndViewportHeights() throws {
             let viewportHeights: [CGFloat] = [600, 650, 700]
-            let playerFrames: [CGRect?] = [
-                nil,
-                CGRect(x: 0, y: 510, width: 393, height: 74),
-                CGRect(x: 0, y: 560, width: 393, height: 92),
-            ]
-
             let baseline = try XCTUnwrap(renderedDashboard(height: 600, playerFrame: nil))
-            let commonDashboardRegion = CGRect(x: 0, y: 0, width: baseline.width, height: 1_180)
+            // Instruments may move to balance available space, but must retain their rendered sizes.
+            let baselineBounds = try instrumentBounds(in: baseline)
+            let commonDashboardRegion = CGRect(x: 0, y: 0, width: baseline.width, height: 100)
             let baselinePixels = try normalizedPixels(in: baseline, region: commonDashboardRegion)
             let baselinePath = pngArtifactPath(for: baseline, name: "cutout-ride-layout-baseline.png")
 
             for height in viewportHeights {
+                let playerFrames: [CGRect?] = [
+                    nil,
+                    CGRect(x: 0, y: max(612, height - 90), width: 393, height: 74),
+                    CGRect(x: 0, y: max(622, height - 80), width: 393, height: 64),
+                    CGRect(x: 500, y: 300, width: 393, height: 74),
+                ]
                 for (frameIndex, playerFrame) in playerFrames.enumerated() {
                     let image = try XCTUnwrap(renderedDashboard(height: height, playerFrame: playerFrame))
+                    let bounds = try instrumentBounds(in: image)
+                    for index in baselineBounds.indices {
+                        XCTAssertEqual(bounds[index].width, baselineBounds[index].width, accuracy: 1)
+                        XCTAssertEqual(bounds[index].height, baselineBounds[index].height, accuracy: 1)
+                    }
                     let pixels = try normalizedPixels(in: image, region: commonDashboardRegion)
                     guard !pixelsMatchWithinOneChannelStep(baselinePixels, pixels) else { continue }
                     let imagePath = pngArtifactPath(
@@ -214,7 +238,8 @@ final class EucRideInstrumentTests: XCTestCase {
                 disconnect: {}
             )
             let renderer = ImageRenderer(
-                content: dashboard
+                content:
+                    dashboard
                     .environment(\.musicCompactPlayerFrame, playerFrame)
                     .environment(\.dynamicTypeSize, .large)
                     .environment(\.colorScheme, .dark)
@@ -241,13 +266,43 @@ final class EucRideInstrumentTests: XCTestCase {
             return Data(bytes: try XCTUnwrap(context.data), count: bytesPerRow * height)
         }
 
+        private func instrumentBounds(in image: CGImage) throws -> [CGRect] {
+            let pixels = [UInt8](
+                try normalizedPixels(in: image, region: CGRect(x: 0, y: 0, width: image.width, height: image.height)))
+            var gauge = CGRect.null
+            var whiteRun = CGRect.null
+            var hero: CGRect?
+            for y in 0..<image.height {
+                var whiteRow = CGRect.null
+                for x in 0..<image.width {
+                    let offset = (y * image.width + x) * 4
+                    let red = Int(pixels[offset])
+                    let green = Int(pixels[offset + 1])
+                    let blue = Int(pixels[offset + 2])
+                    let point = CGRect(x: x, y: y, width: 1, height: 1)
+                    if red > 180 && green > 130 && blue < 100 { gauge = gauge.union(point) }
+                    if red > 120 && abs(red - green) < 10 && abs(green - blue) < 10 {
+                        whiteRow = whiteRow.union(point)
+                    }
+                }
+                if whiteRow.isNull {
+                    if hero == nil && !whiteRun.isNull && whiteRun.height > 60 { hero = whiteRun }
+                    whiteRun = .null
+                } else {
+                    whiteRun = whiteRun.union(whiteRow)
+                }
+            }
+            XCTAssertFalse(gauge.isNull, "The rendered gauge must be present")
+            return [try XCTUnwrap(hero, "The rendered speed must be present"), gauge]
+        }
+
         private func lastForegroundRow(in pixels: Data, width: Int, height: Int) -> Int? {
             pixels.withUnsafeBytes { buffer in
                 guard let bytes = buffer.bindMemory(to: UInt8.self).baseAddress else { return nil }
                 let backgroundOffset = 0
                 let background = (bytes[backgroundOffset], bytes[backgroundOffset + 1], bytes[backgroundOffset + 2])
                 for y in stride(from: height - 1, through: 0, by: -1) {
-                    for x in 0 ..< width {
+                    for x in 0..<width {
                         let offset = (y * width + x) * 4
                         if abs(Int(bytes[offset]) - Int(background.0)) > 10
                             || abs(Int(bytes[offset + 1]) - Int(background.1)) > 10
@@ -274,7 +329,7 @@ final class EucRideInstrumentTests: XCTestCase {
             var maxY = -1
             var firstPixel: (x: Int, y: Int, delta: Int, baseline: [UInt8], actual: [UInt8])?
             for offset in stride(from: 0, to: left.count, by: 4) {
-                let maximumDelta = (0 ..< 4).map { abs(Int(left[offset + $0]) - Int(right[offset + $0])) }.max() ?? 0
+                let maximumDelta = (0..<4).map { abs(Int(left[offset + $0]) - Int(right[offset + $0])) }.max() ?? 0
                 guard maximumDelta > 1 else { continue }
                 let pixel = offset / 4
                 let x = pixel % width
@@ -286,7 +341,7 @@ final class EucRideInstrumentTests: XCTestCase {
                 maxY = max(maxY, y)
                 if firstPixel == nil {
                     firstPixel = (
-                        x, y, maximumDelta, Array(left[offset ..< offset + 4]), Array(right[offset ..< offset + 4])
+                        x, y, maximumDelta, Array(left[offset..<offset + 4]), Array(right[offset..<offset + 4])
                     )
                 }
             }
