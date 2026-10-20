@@ -83,6 +83,7 @@ internal class CaptureEvidenceDialog(
         save.isEnabled = loaded && !working && editable() && dirty && bytes <= noteLimit
         send.isEnabled = loaded && !working && !dirty && status?.phase !in setOf(
             MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
+            MobileCaptureSubmissionPhaseDto.REJECTED, MobileCaptureSubmissionPhaseDto.CANCELLING,
             MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)
         remove.visibility = if (status == null || status?.phase in setOf(MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)) android.view.View.GONE else android.view.View.VISIBLE
         remove.text = if (status?.phase in setOf(MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING)) "Delete sent copy" else "Cancel Send"
