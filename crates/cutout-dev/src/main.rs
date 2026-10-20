@@ -5,6 +5,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
@@ -140,8 +141,9 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
         }),
         "the FFI build pipeline requires a build; skip-build cannot verify the executable"
     );
+    let checker = CheckerSnapshot::capture(&env::current_exe()?)?;
     let lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root, &lock)?;
+    prepare_swift_ffi(root, &lock, &checker)?;
     let mut build = command("/usr/bin/xcrun");
     build.current_dir(root).arg(tool).args(args);
     handoff_apple_client(&mut build, &lock)
@@ -310,19 +312,49 @@ fn workspace_root_from_context(manifest_dir: Option<&Path>, current_dir: &Path) 
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
+    let checker = CheckerSnapshot::capture(&env::current_exe()?)?;
     let lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root, &lock)
+    prepare_swift_ffi(root, &lock, &checker)
 }
 
-fn prepare_swift_ffi(root: &Path, lock: &fs::File) -> Result<()> {
+struct CheckerSnapshot {
+    bytes: Vec<u8>,
+    permissions: fs::Permissions,
+}
+
+impl CheckerSnapshot {
+    fn capture(path: &Path) -> Result<Self> {
+        // Cargo may replace the shared executable while this invocation waits
+        // for the FFI lock or compiles. Retain its bytes and mode before either.
+        let mut executable = fs::File::open(path).context("open FFI checker executable")?;
+        let permissions = executable.metadata()?.permissions();
+        let mut bytes = Vec::new();
+        executable.read_to_end(&mut bytes)?;
+        ensure!(!bytes.is_empty(), "empty FFI checker executable");
+        Ok(Self { bytes, permissions })
+    }
+
+    fn write_to(&self, destination: &Path) -> Result<()> {
+        fs::write(destination, &self.bytes)?;
+        fs::set_permissions(destination, self.permissions.clone())?;
+        Ok(())
+    }
+}
+
+fn prepare_swift_ffi(root: &Path, lock: &fs::File, checker: &CheckerSnapshot) -> Result<()> {
     let expected = source_fingerprint(root)?;
     // Always ask Cargo. A second source/environment cache cannot reproduce its
     // dependency, profile, build-script and toolchain invalidation rules.
-    regenerate_swift_ffi(root, &expected, lock)?;
+    regenerate_swift_ffi(root, &expected, lock, checker)?;
     Ok(())
 }
 
-fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<()> {
+fn regenerate_swift_ffi(
+    root: &Path,
+    expected: &str,
+    lock: &fs::File,
+    checker: &CheckerSnapshot,
+) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "Swift FFI artifact is stale or missing; regenerate it on macOS with `cargo cutout swift-ffi` before using Swift builds on this host"
@@ -381,7 +413,7 @@ fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<
     }
     sort_xcframework_plist(&cargo_package)?;
     trim_generated_sources(&cargo_package)?;
-    seal_swift_ffi(root, &cargo_package, expected)?;
+    seal_swift_ffi(root, &cargo_package, expected, checker)?;
     publish_swift_ffi(root, &cargo_package, expected, lock)?;
     Ok(())
 }
@@ -452,12 +484,17 @@ fn install_swift_bindings(package: &Path, generated: &Path) -> Result<()> {
     Ok(())
 }
 
-fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
+fn seal_swift_ffi(
+    root: &Path,
+    package: &Path,
+    expected: &str,
+    checker: &CheckerSnapshot,
+) -> Result<()> {
     ensure!(
         source_fingerprint(root)? == expected,
         "Rust inputs changed during Swift FFI generation; refusing to publish a mixed build"
     );
-    fs::copy(env::current_exe()?, package.join(FFI_CHECKER))?;
+    checker.write_to(&package.join(FFI_CHECKER))?;
     // A Rust implementation-only change must also change a Swift compilation input.
     fs::write(
         package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
@@ -618,8 +655,9 @@ fn deploy_ios(root: &Path, launch_intent: IosLaunchIntent) -> Result<()> {
         cfg!(target_os = "macos"),
         "iPhone deployment requires macOS"
     );
+    let checker = CheckerSnapshot::capture(&env::current_exe()?)?;
     let lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root, &lock)?;
+    prepare_swift_ffi(root, &lock, &checker)?;
 
     let device = match env::var("CUTOUT_IOS_DEVICE_UDID") {
         Ok(device) => device,
@@ -1414,6 +1452,31 @@ fn ensure_success(status: ExitStatus, description: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn checker_snapshot_survives_replacement_of_the_shared_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("cutout-dev");
+        fs::write(&executable, b"original coordinator").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let checker = CheckerSnapshot::capture(&executable).unwrap();
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"another checkout's coordinator").unwrap();
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::rename(&replacement, &executable).unwrap();
+        let destination = root.path().join(FFI_CHECKER);
+        checker.write_to(&destination).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"original coordinator");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
 
     fn workspace_fixture(root: &Path) -> PathBuf {
         let manifest_dir = root.join("crates/cutout-dev");
