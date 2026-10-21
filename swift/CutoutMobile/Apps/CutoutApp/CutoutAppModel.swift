@@ -1664,6 +1664,8 @@ final class CutoutAppModel {
         guard
             previousSnapshot == nil
                 || snapshot.connectionState != previousSnapshot?.connectionState
+                || snapshot.showsCompactPwmBar != previousSnapshot?.showsCompactPwmBar
+                || snapshot.headroomSeverity != previousSnapshot?.headroomSeverity
                 || lastLiveActivityUpdate.map({
                     now.elapsed(since: $0).rawValue >= core.rideSessionStateHandle.rideSessionSnapshot().staleAfterMs
                         / 2

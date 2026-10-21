@@ -2760,7 +2760,8 @@ public final class CutoutSessionCore: NSObject {
         #endif
         let started = captureRecorder.start(
             generation: generation,
-            platformIdentifier: advertisement?.peripheralIdentifier.rawValue ?? "ios",
+            platformIdentifier: connectionSnapshot.token?.platformIdentifier
+                ?? advertisement?.peripheralIdentifier.rawValue ?? "ios",
             advertisedServices: advertisement?.advertisedServiceUuids ?? [],
             directory: directory,
             reason: reason,

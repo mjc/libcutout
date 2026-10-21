@@ -4020,6 +4020,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             return try XCTUnwrap(object["header"] as? [String: Any])
         }
         let firstHeader = try header(files[0])
+        XCTAssertEqual(firstHeader["platform_id"] as? String, identifier)
         let emptyHeader = try header(files[1])
         let freshHeader = try header(files[2])
         let firstIdentity = try XCTUnwrap(firstHeader["resolved_identity"] as? [String: Any])
@@ -4159,6 +4160,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
             }
             let header = try XCTUnwrap(objects.first?["header"] as? [String: Any])
+            XCTAssertEqual(header["platform_id"] as? String, identifier)
             let identity = try XCTUnwrap(header["resolved_identity"] as? [String: Any])
             XCTAssertEqual(identity["protocol_family"] as? String, "Vesc")
             XCTAssertTrue(identity["model"] is NSNull)
@@ -4239,6 +4241,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
             }
             let header = try XCTUnwrap(objects.first?["header"] as? [String: Any])
+            XCTAssertEqual(header["platform_id"] as? String, identifier)
             let identity = try XCTUnwrap(header["resolved_identity"] as? [String: Any])
             if invalidatesIdentity {
                 XCTAssertTrue(identity["protocol_family"] is NSNull)

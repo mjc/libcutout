@@ -849,6 +849,22 @@ final class CutoutAppModelTests: XCTestCase {
                     snapshot.presented(isStale: true).minimalAccessibilitySummary.contains("Reduce acceleration"))
             }
         }
+
+        let unchangedTime = driver.nowValue
+        for application in [MobileVescApplicationDiscoveryDto.pending, .refloat, .absent] {
+            let expectsBalanceInstruments = application == .refloat
+            driver.onDeviceSessionSnapshotChange?(
+                MobileDeviceSessionSnapshotDto(
+                    connection: driver.rideSessionStateHandle.connectionAttemptSnapshot(),
+                    identity: MobileDeviceIdentityDto(
+                        protocol: .vesc, vehicleKind: .board, vescApplication: application, model: nil)))
+            await Self.waitUntil("application evidence bypasses telemetry throttling") {
+                let snapshot = await manager.lastUpdatedSnapshot
+                return snapshot?.showsCompactPwmBar == expectsBalanceInstruments
+                    && (snapshot?.headroomSeverity == .reduceAcceleration) == expectsBalanceInstruments
+            }
+            XCTAssertEqual(driver.nowValue, unchangedTime, "Evidence changes need no new telemetry or elapsed time")
+        }
     }
 
     @MainActor
