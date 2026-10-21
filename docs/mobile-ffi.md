@@ -141,17 +141,17 @@ devenv tasks run build:swift-ffi-package
 
 The standalone ensure command is `devenv shell -- cargo cutout swift-ffi`.
 
-Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
-manifest, so the generated binary package uses compatible iOS 18 and macOS 15
-floors. The app package and Xcode targets still require iOS 27 and macOS 27.
+The generated FFI package and native products require iOS 27 and macOS 27.
+The shared prepare step selects Swift tools 6.4 and passes version 27 deployment
+targets to Rust and C build scripts as well as Cargo Swift's package metadata.
 Every supported prepare operation invokes `cargo swift`, including when the
 source hash and selected generation are unchanged. Cargo Swift compiles and
 bundles the ARM64 archives. Before sealing the package, the shared prepare step
 runs `cutout-uniffi-bindgen` from the same immutable workspace snapshot against
 the packaged macOS archive, then installs its Swift wrapper and matching headers
 and module maps in every slice. This uses the workspace's locked UniFFI version
-for both Swift and Kotlin; Cargo Swift 0.11.1 embeds an older generator whose
-callback pointers fail Swift 6 concurrency checking. No consumer edits or
+for both Swift and Kotlin. The Nix Cargo Swift package patches its metadata
+reader to the same UniFFI 0.32.2 version. No consumer edits or
 separate preparation command are needed. Cargo owns incremental
 compilation and configuration freshness; the project has no separate Cargo
 environment resolver or source-fingerprint early reuse shortcut.
