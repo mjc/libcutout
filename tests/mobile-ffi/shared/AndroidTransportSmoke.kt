@@ -102,6 +102,7 @@ fun checkNativeGattQueue() {
 
 fun checkProductionSessionReplay() {
     checkApplicationQueryReceipts()
+    checkSettingDeadlinesUnderBackpressure()
     CutoutSessionStateHandle().use { state ->
         var clock = 0UL
         val token = checkNotNull(state.beginConnectionAttempt("production-adapter", clock).token)
@@ -244,5 +245,62 @@ private fun checkApplicationQueryReceipts() {
         check(fixture.publications.size == publications)
         check(!fixture.state.applicationQueryTransportIsCurrent(fixture.token,
             checkNotNull(query.applicationQuery).queryId, 2UL))
+    }
+}
+
+private fun checkSettingDeadlinesUnderBackpressure() {
+    for (submitted in listOf(true, false)) CutoutSessionStateHandle().use { state ->
+        var clock = 1UL
+        val token = checkNotNull(state.beginConnectionAttempt("NF2557", 0UL).token)
+        state.connectionLinkEstablished(token)
+        val outputs = mutableListOf<MobileSessionOutputDto>()
+        var publication: MobileSettingsDto? = null
+        val session = PevSession(state, token, { clock }, { outputs += it }) { _, _, settings ->
+            publication = settings
+        }
+        // Same validated stationary NF2557 frame as the Rust settings-owner fixture.
+        val frame = ByteArray(42)
+        byteArrayOf(0xdc.toByte(), 0x5a, 0x5c, 38).copyInto(frame)
+        frame[28] = (43_000 ushr 8).toByte()
+        frame[29] = 43_000.toByte()
+        state.observeConnectionNotification(token, frame)
+        session.identify()
+        check(state.deviceSessionSnapshot().identity?.model == "NOSFET Aero")
+        val channel = eucReplayInputs().first {
+            it.kind == MobileSessionInputKindDto.NOTIFICATION
+        }.channel
+        clock = 2UL
+        session.notification(channel, frame)
+        clock = 3UL
+        session.submit(MobileSettingIdDto.VOLTAGE_CORRECTION, MobileSettingValueDto.Number(10))
+        val write = outputs.single { it.kind == MobileSessionOutputKindDto.WRITE && it.operationId != null }
+        val queue = GattOperationQueue({ session.isCurrent }, ManualTimer(), { error(it) })
+        if (!submitted) queue.enqueue(GattOperationQueue.Operation("blocked", { NativeStart.PENDING }))
+        var nativeWrites = 0
+        val chunks = attChunks(write.bytes, 20)
+        session.enqueueWrite(queue, "setting", chunks, write.operationId, null,
+            { nativeWrites++; NativeStart.PENDING })
+        if (submitted) repeat(chunks.size - 1) { check(queue.complete("setting", true)) }
+        val expectedWrites = if (submitted) chunks.size else 0
+        check(nativeWrites == expectedWrites)
+        check(!queue.isIdle)
+        val deadline = checkNotNull(session.nextWakeup(canPoll = false))
+        check(deadline == 2_003UL)
+        val outputCount = outputs.size
+        clock = deadline
+        session.tick(canPoll = false)
+        val expected = if (submitted) MobileSettingStatusDto.TIMED_OUT else MobileSettingStatusDto.FAILED
+        val setting = state.settings().settings.single { it.id == MobileSettingIdDto.VOLTAGE_CORRECTION }
+        check(setting.status == expected) {
+            "Blocked Android transport must advance ${if (submitted) "submitted confirmation" else "queued authorization"} deadline: ${setting.status}"
+        }
+        check(checkNotNull(publication).settings.single {
+            it.id == MobileSettingIdDto.VOLTAGE_CORRECTION
+        }.status == expected)
+        check(session.nextWakeup(canPoll = false) == null) {
+            "An expired setting deadline must not keep rearming the blocked transport timer"
+        }
+        check(outputs.size == outputCount && nativeWrites == expectedWrites)
+        queue.close()
     }
 }

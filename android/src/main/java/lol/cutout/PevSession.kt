@@ -64,7 +64,9 @@ class PevSession(
     fun tick(canPoll: Boolean = true) {
         if (!isCurrent) return
         if (protocolLinked) {
-            state.tickApplicationQueryTransport(token, now())
+            val at = now()
+            state.tickSettingTransport(token, at)
+            state.tickApplicationQueryTransport(token, at)
             if (canPoll) input(MobileSessionInputKindDto.TICK) else publish()
         } else identify()
     }
