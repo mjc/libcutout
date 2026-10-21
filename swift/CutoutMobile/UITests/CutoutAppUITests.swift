@@ -4299,6 +4299,127 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(energy.label, "Pack voltage")
     }
 
+    func testMusicPlayerPausedStandardEskateRideKeepsControlsReachableInLandscape() throws {
+        executionTimeAllowance = 360
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let (_, _, energy) = try launchStandardEskateRide(pausedMusic: true)
+        XCTAssertEqual(energy.label, "Pack voltage")
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue((speed.value as? String ?? "").localizedCaseInsensitiveContains("unavailable"))
+        XCTAssertFalse(app.descendants(matching: .any)["euc.ride.headroom"].exists)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        assertStandardEskateLandscapeGeometry(playerIsHidden: false)
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        player.buttons["Play"].tap()
+        XCTAssertTrue(player.buttons["Pause"].waitForExistence(timeout: 5), app.debugDescription)
+        player.buttons["Pause"].tap()
+        XCTAssertTrue(player.buttons["Play"].waitForExistence(timeout: 5), app.debugDescription)
+        player.buttons["Next track"].tap()
+        let nextTitle = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "Everything In Its Right Place 2"),
+            object: app.buttons["music.expand"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [nextTitle], timeout: 5), .completed, app.debugDescription)
+
+        energy.tap()
+        let readings = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(readings.waitForExistence(timeout: 5), app.debugDescription)
+        assertReachableSheetDone("ride.readings.done").tap()
+        XCTAssertTrue(readings.waitForNonExistence(timeout: 5), app.debugDescription)
+        app.buttons["vesc.drivetrain.open"].tap()
+        let editor = app.descendants(matching: .any)["vesc.drivetrain.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
+        assertReachableSheetDone("vesc.drivetrain.done").tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), app.debugDescription)
+
+        app.buttons["music.expand"].tap()
+        XCTAssertTrue(app.buttons["music.done"].waitForExistence(timeout: 5), app.debugDescription)
+        let hide = app.buttons["music.hide"]
+        scrollElementFrameIntoViewport(hide, in: app, maxScrolls: 8)
+        hide.tap()
+        assertStandardEskateLandscapeGeometry(playerIsHidden: true)
+        energy.tap()
+        XCTAssertTrue(readings.waitForExistence(timeout: 5), app.debugDescription)
+        assertReachableSheetDone("ride.readings.done").tap()
+        XCTAssertTrue(readings.waitForNonExistence(timeout: 5), app.debugDescription)
+
+        tapNavigationTab("more", title: "More")
+        let restore = app.buttons["music.restore"]
+        scrollElementFrameIntoViewport(
+            restore, in: app.descendants(matching: .any)["more.screen"], maxScrolls: 8,
+            occludedBy: app.tabBars.firstMatch
+        )
+        restore.tap()
+        tapNavigationTab("ride", title: "Ride")
+        assertStandardEskateLandscapeGeometry(playerIsHidden: false)
+        app.buttons["dashboard.disconnect"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 10))
+    }
+
+    private func assertStandardEskateLandscapeGeometry(playerIsHidden: Bool) {
+        let window = app.windows.firstMatch
+        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        let tabs = app.tabBars.firstMatch
+        assertRideWindowHasSettled(ride, landscape: true)
+        XCTAssertLessThanOrEqual(window.frame.height, 500, "Use a short phone landscape viewport")
+        let controls = [
+            app.buttons["ride.readings.open"], app.buttons["vesc.drivetrain.open"], app.buttons["dashboard.disconnect"],
+        ]
+        let identifiers = [
+            "ride.hero.speed", "ride.hero.status", "vesc.ride.tripDistance", "vesc.ride.rideDuration",
+            "vesc.ride.batteryCurrent", "vesc.ride.controller", "vesc.ride.motorTemperature",
+        ]
+        let content = controls + identifiers.map { ride.descendants(matching: .any)[$0] }
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                guard ride.exists, tabs.exists, playerIsHidden ? !player.exists : player.exists else { return false }
+                if !playerIsHidden {
+                    guard window.frame.contains(player.frame), player.frame.maxY <= tabs.frame.minY + 2 else {
+                        return false
+                    }
+                }
+                let viewport = self.unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
+                return content.allSatisfy {
+                    $0.exists && $0.isHittable && viewport.insetBy(dx: -2, dy: -2).contains($0.frame)
+                }
+            }, object: app
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
+        XCTAssertEqual(app.buttons.matching(identifier: "dashboard.disconnect").count, 1)
+        XCTAssertEqual(ride.scrollViews.count, 0, app.debugDescription)
+        let viewport = unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
+        for element in content {
+            XCTAssertTrue(element.isHittable, "Unreachable \(element.identifier): \(app.debugDescription)")
+            XCTAssertTrue(
+                viewport.insetBy(dx: -2, dy: -2).contains(element.frame),
+                "Clipped \(element.identifier): \(element.frame), viewport=\(viewport)"
+            )
+        }
+        for control in controls {
+            assertMinimumControlDimension(control.frame.width)
+            assertMinimumControlDimension(control.frame.height)
+        }
+        if !playerIsHidden {
+            let musicControls = [app.buttons["music.expand"], player.buttons["Play"], player.buttons["Next track"]]
+            for (index, control) in musicControls.enumerated() {
+                XCTAssertTrue(control.isHittable, app.debugDescription)
+                assertMinimumControlDimension(control.frame.width)
+                assertMinimumControlDimension(control.frame.height)
+                XCTAssertTrue(player.frame.insetBy(dx: -2, dy: -2).contains(control.frame), app.debugDescription)
+                for other in musicControls.dropFirst(index + 1) {
+                    XCTAssertFalse(control.frame.intersects(other.frame), app.debugDescription)
+                }
+            }
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "standard-eskate-landscape-player-\(playerIsHidden ? "hidden" : "shown")"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testStandardVescVehicleTypeRemainsEditableFromTuneAndRestoresItsNewChoice() throws {
         let (_, _, energy) = try launchStandardEskateRide()
         tapNavigationTab("tune", title: "Tune")
@@ -4455,7 +4576,9 @@ final class CutoutAppUITests: XCTestCase {
         }
     }
 
-    private func launchStandardEskateRide(textSize: String = "UICTContentSizeCategoryL") throws -> (
+    private func launchStandardEskateRide(
+        textSize: String = "UICTContentSizeCategoryL", pausedMusic: Bool = false
+    ) throws -> (
         XCUIElement, XCUIElement, XCUIElement
     ) {
         #if !targetEnvironment(simulator)
@@ -4465,8 +4588,15 @@ final class CutoutAppUITests: XCTestCase {
         app.launchArguments = [
             "-CUTOUT_UI_TEST_FIXTURE", "eskate",
             "-UIPreferredContentSizeCategoryName", textSize,
-            "-io.cutout.music.monitoring.enabled", "NO", "-CUTOUT_UI_TEST_MUSIC", "silent",
+            "-io.cutout.music.monitoring.enabled", pausedMusic ? "YES" : "NO",
+            "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
         ]
+        if pausedMusic {
+            app.launchArguments += [
+                "-io.cutout.music.provider.selected", "apple_music",
+                "-io.cutout.music.compact-player.hidden", "NO",
+            ]
+        }
         app.launchEnvironment = [
             "CUTOUT_UI_TEST_FIXTURE": "eskate",
             "CUTOUT_UI_TEST_RIDE_DATABASE_ID": UUID().uuidString,
