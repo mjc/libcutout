@@ -4373,21 +4373,72 @@ final class CutoutAppUITests: XCTestCase {
             "vesc.ride.batteryCurrent", "vesc.ride.controller", "vesc.ride.motorTemperature",
         ]
         let content = controls + identifiers.map { ride.descendants(matching: .any)[$0] }
+        let contentIdentifiers = ["ride.readings.open", "vesc.drivetrain.open", "dashboard.disconnect"] + identifiers
+        var geometryEvaluations: [String] = []
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
-                guard ride.exists, tabs.exists, playerIsHidden ? !player.exists : player.exists else { return false }
+                let started = ProcessInfo.processInfo.systemUptime
+                var condition = "all geometry conditions passed"
+                defer {
+                    let elapsed = ProcessInfo.processInfo.systemUptime - started
+                    geometryEvaluations.append("elapsed=\(elapsed)s; \(condition)")
+                }
+                guard ride.exists else {
+                    condition = "dashboard.screen.vescRide does not exist"
+                    return false
+                }
+                guard tabs.exists else {
+                    condition = "TabBar does not exist"
+                    return false
+                }
+                let playerExists = player.exists
+                guard playerIsHidden ? !playerExists : playerExists else {
+                    condition = "player hidden=\(playerIsHidden), exists=\(playerExists)"
+                    return false
+                }
+                let windowFrame = window.frame
+                let tabFrame = tabs.frame
+                var obstructionFrame = tabFrame
                 if !playerIsHidden {
-                    guard window.frame.contains(player.frame), player.frame.maxY <= tabs.frame.minY + 2 else {
+                    let playerFrame = player.frame
+                    guard windowFrame.contains(playerFrame), playerFrame.maxY <= tabFrame.minY + 2 else {
+                        condition = "player=\(playerFrame), window=\(windowFrame), tabs=\(tabFrame)"
+                        return false
+                    }
+                    obstructionFrame = playerFrame
+                }
+                let rideFrame = ride.frame
+                let viewport = CGRect(
+                    x: rideFrame.minX, y: rideFrame.minY, width: rideFrame.width,
+                    height: max(0, min(rideFrame.maxY, obstructionFrame.minY) - rideFrame.minY)
+                )
+                for (identifier, element) in zip(contentIdentifiers, content) {
+                    guard element.exists else {
+                        condition = "\(identifier) does not exist; viewport=\(viewport)"
+                        return false
+                    }
+                    guard element.isHittable else {
+                        condition = "\(identifier) is not hittable; viewport=\(viewport)"
+                        return false
+                    }
+                    let frame = element.frame
+                    guard viewport.insetBy(dx: -2, dy: -2).contains(frame) else {
+                        condition = "\(identifier) frame=\(frame) outside viewport=\(viewport)"
                         return false
                     }
                 }
-                let viewport = self.unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
-                return content.allSatisfy {
-                    $0.exists && $0.isHittable && viewport.insetBy(dx: -2, dy: -2).contains($0.frame)
-                }
+                return true
             }, object: app
         )
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
+        let settledResult = XCTWaiter.wait(for: [settled], timeout: 5)
+        let diagnostic = XCTAttachment(string: geometryEvaluations.joined(separator: "\n"))
+        diagnostic.name = "standard-eskate-landscape-geometry-player-\(playerIsHidden ? "hidden" : "shown")"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+        XCTAssertEqual(
+            settledResult, .completed,
+            "Latest geometry evaluation: \(geometryEvaluations.last ?? "not evaluated"). \(app.debugDescription)"
+        )
         XCTAssertEqual(app.buttons.matching(identifier: "dashboard.disconnect").count, 1)
         XCTAssertEqual(ride.scrollViews.count, 0, app.debugDescription)
         let viewport = unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
