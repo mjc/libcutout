@@ -7,6 +7,17 @@ import lol.cutout.ChargeEstimateRuntime
 import lol.cutout.CutoutUi
 import lol.cutout.RideDashboardView
 import org.junit.Test
+import uniffi.cutout_mobile_ffi.BatteryLevel
+import uniffi.cutout_mobile_ffi.BatteryLevelReading
+import uniffi.cutout_mobile_ffi.MobileChargeCapacitySourceDto
+import uniffi.cutout_mobile_ffi.MobileChargeModeDto
+import uniffi.cutout_mobile_ffi.MobileChargeModeReadingDto
+import uniffi.cutout_mobile_ffi.MobileChargeProfileDto
+import uniffi.cutout_mobile_ffi.MobileRiderDashboardMetricDescriptorDto
+import uniffi.cutout_mobile_ffi.MobileValueQualityDto
+import uniffi.cutout_mobile_ffi.MobileValueSourceDto
+import uniffi.cutout_mobile_ffi.MobileVerificationStatusDto
+import uniffi.cutout_mobile_ffi.mobileRiderDashboardProjection
 import uniffi.cutout_mobile_ffi.MobileChargeEstimateUnavailableReasonDto
 import uniffi.cutout_mobile_ffi.MobileChargeEstimateStateKindDto
 import uniffi.cutout_mobile_ffi.MobileConnectionReadinessDto
@@ -46,6 +57,68 @@ open class ChargeEstimateRuntimeTest {
             check(hasText(dashboard, expected)) { "Dashboard did not display the Rust charge state $expected" }
         } finally {
             runtime.close()
+        }
+    }
+
+    @Test
+    fun fullSnapshotsClearAndRestoreEstimatedBatteryAndChargeProjection() {
+        val replay = productionReplayPresentation()
+        val original = checkNotNull(replay.session)
+        val session = original.copy(connection = original.connection.copy(
+            readiness = MobileConnectionReadinessDto.VERIFIED,
+        ))
+        val profile = MobileChargeProfileDto(
+            sessionId = 1UL,
+            profileId = 1U,
+            capacityMilliampHours = 10_000U,
+            capacitySource = MobileChargeCapacitySourceDto.PROTOCOL_PROFILE,
+            verification = MobileVerificationStatusDto.SOURCE_VERIFIED,
+            chargeFlowVerification = MobileVerificationStatusDto.SOURCE_VERIFIED,
+        )
+        val settings = checkNotNull(replay.settings).copy(
+            connection = session.connection,
+            defaultChargeProfile = profile,
+        )
+        val snapshot = checkNotNull(replay.telemetry).copy(
+            atMs = null,
+            speed = null,
+            batteryCurrent = null,
+            batteryTemperature = null,
+            operatingState = RideOperatingState.CHARGING,
+            chargeMode = MobileChargeModeReadingDto(
+                MobileChargeModeDto.CHARGING,
+                MobileValueSourceDto.REPORTED,
+                MobileValueQualityDto.KNOWN,
+                MobileVerificationStatusDto.SOURCE_VERIFIED,
+            ),
+            batteryLevelReported = null,
+        )
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val dashboard = RideDashboardView(context, {}, {})
+        ChargeEstimateRuntime().use { runtime ->
+            for (percent in listOf(71, null, 63)) {
+                val level = percent?.let {
+                    BatteryLevelReading(BatteryLevel(it.toUByte()), MobileValueSourceDto.ESTIMATED,
+                        MobileValueQualityDto.INFERRED, MobileVerificationStatusDto.INFERRED)
+                }
+                val current = snapshot.copy(batteryLevelEstimated = level)
+                val presentation = replay.copy(session = session, settings = settings, telemetry = current)
+                val state = checkNotNull(runtime.observe(session, settings, current))
+                dashboard.render(presentation, state)
+                val battery = mobileRiderDashboardProjection(current).dashboardMetrics
+                    .filterIsInstance<MobileRiderDashboardMetricDescriptorDto.BatteryLevel>()
+                    .firstOrNull()?.reading
+                check(battery == level)
+                if (percent == null) {
+                    check(state.kind == MobileChargeEstimateStateKindDto.UNAVAILABLE)
+                    check(state.unavailableReason == MobileChargeEstimateUnavailableReasonDto.BATTERY_LEVEL_MISSING)
+                    check(!hasText(dashboard, "≈71")) { "The dashboard retained the previous estimate" }
+                } else {
+                    check(state.kind == MobileChargeEstimateStateKindDto.COLLECTING_SAMPLES)
+                    check(state.unavailableReason == null)
+                    check(hasText(dashboard, "≈$percent")) { "The dashboard did not replace the battery estimate" }
+                }
+            }
         }
     }
 

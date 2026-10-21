@@ -16,9 +16,10 @@ final class CaptureSubmissionModel {
     typealias ExistingCredential = @MainActor () async throws -> ChargingCommunityCredential?
     typealias Send = @MainActor (String, ChargingCommunityCredential) async throws -> MobileCaptureSubmissionStatusDto
     typealias Progress = @MainActor @Sendable (MobileCaptureSubmissionProgressDto) -> Void
-    typealias SendWithProgress = @MainActor (
-        String, ChargingCommunityCredential, @escaping Progress
-    ) async throws -> MobileCaptureSubmissionStatusDto
+    typealias SendWithProgress =
+        @MainActor (
+            String, ChargingCommunityCredential, @escaping Progress
+        ) async throws -> MobileCaptureSubmissionStatusDto
     typealias Cancel =
         @MainActor (String, ChargingCommunityCredential?) async throws ->
         MobileCaptureSubmissionStatusDto

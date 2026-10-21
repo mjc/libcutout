@@ -3909,6 +3909,39 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(43))
     }
 
+    func testCanonicalBatterySnapshotReplacementClearsAndRestoresNativeProjection() {
+        let core = CutoutSessionCore()
+        let levels: [BatteryLevel?] = [batteryLevelValue(71), nil, batteryLevelValue(63)]
+
+        for (index, level) in levels.enumerated() {
+            let at = MonotonicMilliseconds(UInt64(index + 1))
+            let snapshot = TelemetrySnapshot(
+                at: at,
+                voltage: voltageValue(117_600),
+                batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000),
+                voltageObservedAt: MonotonicMilliseconds(1),
+                voltageSag: VoltageDelta(value: 4_800),
+                batteryLevelEstimated: level
+            )
+            core.applyNotificationStep(
+                CoreBluetoothSessionStep(operations: [], snapshot: snapshot),
+                receivedAt: at
+            )
+
+            XCTAssertNotNil(core.displayState.telemetry)
+            XCTAssertEqual(core.displayState.telemetry?.batteryLevelEstimated, level)
+            XCTAssertNil(core.displayState.telemetry?.batteryLevelReported)
+            XCTAssertEqual(core.displayState.telemetry?.voltage, voltageValue(117_600))
+            XCTAssertEqual(core.displayState.telemetry?.voltageObservedAt, MonotonicMilliseconds(1))
+            let ride = EucRideScreenState(phase: core.phase, displayState: core.displayState)
+            XCTAssertEqual(ride.controllerOnlyEstimatePercent, level)
+            if level != nil {
+                XCTAssertEqual(ride.controllerOnlyEstimateDetail, .recentSag)
+                XCTAssertEqual(ride.controllerOnlyConfidence, .medium)
+            }
+        }
+    }
+
     func testNotificationWithoutSnapshotAdvancesLastUpdate() {
         let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
