@@ -564,6 +564,73 @@ mod tests {
     }
 
     #[test]
+    fn captured_geometry_replay_new_attempt_with_invalid_geometry_retires_partial_frame() {
+        let mut host = host(VescReplayGeometryPolicy::Captured);
+        let mut start = record(90_000, 283, 1, 1, 100);
+        start.bytes = start.bytes.slice(..7);
+        assert_eq!(ingest(&mut host, &start).telemetry.speed, None);
+        let mut replacement = record(100_000, 283, 1, 2, 110);
+        replacement.bytes = bytes::Bytes::new();
+        assert_eq!(
+            ingest(&mut host, &replacement).disposition,
+            VescReplayRecordDisposition::Accepted
+        );
+        let mut suffix = record(90_000, 283, 1, 2, 120);
+        suffix.bytes = suffix.bytes.slice(7..);
+        assert_eq!(ingest(&mut host, &suffix).telemetry.speed, None);
+    }
+
+    #[test]
+    fn captured_geometry_replay_invalid_geometry_preserves_revision_fences() {
+        let mut host = host(VescReplayGeometryPolicy::Captured);
+        ingest(&mut host, &record(90_000, 283, 2, 1, 100));
+        assert_eq!(
+            ingest(&mut host, &record(100_000, 283, 2, 1, 110))
+                .telemetry
+                .speed,
+            None
+        );
+        assert_eq!(
+            ingest(&mut host, &record(100_000, 314, 2, 1, 120)).disposition,
+            VescReplayRecordDisposition::Ignored(VescReplayRejection::ConflictingRevision)
+        );
+
+        ingest(&mut host, &record(100_000, 283, 3, 1, 130));
+        assert_eq!(
+            ingest(&mut host, &record(90_000, 283, 2, 1, 150)).disposition,
+            VescReplayRecordDisposition::Ignored(VescReplayRejection::StaleRevision)
+        );
+        let current = ingest(&mut host, &record(100_000, 314, 3, 1, 140));
+        assert_eq!(current.disposition, VescReplayRecordDisposition::Accepted);
+        assert!(current.telemetry.speed.is_some());
+    }
+
+    #[test]
+    fn captured_geometry_replay_invalid_scope_preserves_partial_frame_and_watermark() {
+        for (revision, generation, platform) in [(0, 1, "board-a"), (1, 0, "board-a"), (1, 1, " ")]
+        {
+            let mut host = host(VescReplayGeometryPolicy::Captured);
+            let mut start = record(90_000, 283, 1, 1, 100);
+            let mut finish = record(90_000, 283, 1, 1, 110);
+            start.bytes = start.bytes.slice(..7);
+            finish.bytes = finish.bytes.slice(7..);
+            let before = ingest(&mut host, &start);
+            let rejected = ingest(
+                &mut host,
+                &record_on_platform(platform, 90_000, 283, revision, generation, 300),
+            );
+            assert_eq!(
+                rejected.disposition,
+                VescReplayRecordDisposition::Ignored(VescReplayRejection::InvalidContext)
+            );
+            assert_eq!(rejected.telemetry, before.telemetry);
+            let completed = ingest(&mut host, &finish);
+            assert_eq!(completed.disposition, VescReplayRecordDisposition::Accepted);
+            assert!(completed.telemetry.speed.is_some());
+        }
+    }
+
+    #[test]
     fn captured_geometry_replay_rejects_nonlocal_context_with_malformed_geometry() {
         for policy in [
             VescReplayGeometryPolicy::Captured,
