@@ -760,6 +760,7 @@ impl VescBoardProfile {
     #[must_use]
     pub fn battery_level_from_voltage(self, voltage: Voltage) -> Option<BatteryLevel> {
         self.battery_profile
+            .filter(|profile| profile.series_cells.get() > 0)
             .map(|profile| profile.estimate_level_from_pack_voltage(voltage))
     }
 }
@@ -2009,6 +2010,26 @@ mod tests {
                 .battery_level_from_voltage(Voltage::from_millivolts(84_000)),
             Some(BatteryLevel::from_percent(100))
         );
+    }
+
+    #[test]
+    fn motor_config_with_zero_cells_keeps_raw_facts_without_battery_estimate() {
+        for motor_poles in [0, 30] {
+            let frame = motor_config_frame(motor_poles, 1.0, 0.280, 0);
+            let VescReadOnlyReply::MotorConfig(config) =
+                VescReadOnlyCodec::decode_reply(&frame).unwrap()
+            else {
+                panic!("expected motor config");
+            };
+            assert_eq!(config.battery_cells, SeriesCount::new(0));
+            assert_eq!(config.battery_type, VescBatteryType::LiIon);
+            assert_eq!(config.speed_geometry.is_some(), motor_poles != 0);
+            assert_eq!(
+                VescBoardProfile::from_motor_config(&config)
+                    .battery_level_from_voltage(Voltage::from_millivolts(84_000)),
+                None
+            );
+        }
     }
 
     #[test]
