@@ -731,14 +731,7 @@ impl VescBoardProfile {
     /// Calculates signed road speed from eRPM.
     #[must_use]
     pub fn speed_from_erpm(self, erpm: RotationalSpeed) -> Option<Speed> {
-        if !self.calculates_speed {
-            return None;
-        }
-        let geometry = VescSpeedGeometry::new(
-            self.motor_pole_pairs,
-            self.gear_ratio_denominator,
-            self.wheel_circumference,
-        )?;
+        let geometry = self.speed_geometry()?;
         let denominator = i128::from(geometry.motor_pole_pairs.get())
             * i128::from(geometry.gear_ratio_denominator.as_milli())
             * 60;
@@ -2324,6 +2317,50 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn vesc_speed_geometry_preserves_signed_extrema_and_half_ties() {
+        let profile = |ratio, circumference| {
+            VescBoardProfile::new(
+                MotorPolePairs::new(1),
+                GearRatioDenominator::from_milli(ratio).unwrap(),
+                Distance::from_millimetres(circumference),
+            )
+        };
+        for erpm in [0, i32::MIN, i32::MAX] {
+            assert_eq!(
+                profile(1_000, 60).speed_from_erpm(RotationalSpeed::from_erpm(erpm)),
+                Some(Speed::from_millimetres_per_second(erpm))
+            );
+        }
+        for (erpm, expected) in [(24, 0), (25, 1), (26, 1), (-24, 0), (-25, -1), (-26, -1)] {
+            assert_eq!(
+                profile(2_500, 3).speed_from_erpm(RotationalSpeed::from_erpm(erpm)),
+                Some(Speed::from_millimetres_per_second(expected))
+            );
+        }
+        for (erpm, expected) in [
+            (1_073_741_823, Some(i32::MAX - 1)),
+            (1_073_741_824, None),
+            (-1_073_741_824, Some(i32::MIN)),
+            (-1_073_741_825, None),
+        ] {
+            assert_eq!(
+                profile(1_000, 120)
+                    .speed_from_erpm(RotationalSpeed::from_erpm(erpm))
+                    .map(Speed::as_millimetres_per_second),
+                expected
+            );
+        }
+        assert_eq!(
+            profile(1_000, u64::MAX / 2).speed_from_erpm(RotationalSpeed::from_erpm(0)),
+            Some(Speed::from_millimetres_per_second(0))
+        );
+        assert_eq!(
+            profile(1_000, u64::MAX / 2 + 1).speed_from_erpm(RotationalSpeed::from_erpm(0)),
+            None
+        );
     }
 
     #[test]

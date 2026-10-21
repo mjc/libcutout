@@ -150,7 +150,7 @@ impl VescDrivetrain {
     /// Parses the three user fields without admitting nonfinite or rounded ratios.
     ///
     /// # Errors
-    /// Returns the first invalid field, including unsupported precision or range.
+    /// Returns an invalid field, including unsupported precision or range.
     pub fn parse(
         diameter_mm: &str,
         pole_pairs: &str,
@@ -439,6 +439,43 @@ mod tests {
         assert_eq!(value.diameter_micrometres, 90_000);
         assert_eq!(value.geometry.gear_ratio_denominator.as_milli(), 2_500);
         assert_eq!(value.geometry.wheel_circumference.as_millimetres(), 283);
+    }
+
+    #[test]
+    fn user_drivetrain_editor_text_roundtrips_canonical_boundaries() {
+        for diameter in [160, 1_000, 90_000, 100_001, u32::MAX] {
+            for poles in [1, 7, u8::MAX] {
+                for ratio in [1, 2_500, u32::MAX] {
+                    let value = VescDrivetrain::from_parts(diameter, poles, ratio).unwrap();
+                    assert_eq!(
+                        VescDrivetrain::parse(
+                            &value.diameter_text(),
+                            &value.pole_pairs_text(),
+                            &value.reduction_text(),
+                        ),
+                        Ok(value),
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            VescDrivetrain::parse("00090.000", "007", "02.500")
+                .unwrap()
+                .diameter_text(),
+            "90"
+        );
+        assert_eq!(
+            VescDrivetrain::from_parts(159, 7, 2_500),
+            Err(VescDrivetrainError::WheelDiameter)
+        );
+        assert_eq!(
+            VescDrivetrain::from_parts(160, 7, 2_500)
+                .unwrap()
+                .geometry()
+                .wheel_circumference
+                .as_millimetres(),
+            1
+        );
     }
 
     #[test]
