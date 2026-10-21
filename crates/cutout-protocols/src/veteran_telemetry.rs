@@ -630,7 +630,9 @@ impl VeteranTelemetry {
                 self.trip_distance.as_millimetres(),
             ))),
             pitch: Some(Measured::reported(self.pitch)),
-            battery_level_estimated: Some(Measured::estimated(self.battery_level_estimated)),
+            battery_level_estimated: cutout_core::TelemetryFieldUpdate::Set(Measured::estimated(
+                self.battery_level_estimated,
+            )),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1582,7 +1584,9 @@ mod tests {
         );
         assert_eq!(
             delta.battery_level_estimated,
-            Some(Measured::estimated(BatteryLevel::from_percent(47)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::estimated(
+                BatteryLevel::from_percent(47)
+            ))
         );
         assert_eq!(
             delta.charge_mode,

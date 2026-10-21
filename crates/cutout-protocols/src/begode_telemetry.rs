@@ -1005,7 +1005,9 @@ impl BegodeLiveATelemetry {
             ))),
             controller_temperature: Some(source_reported(self.imu_temperature)),
             distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
-            battery_level_estimated: Some(source_estimated(self.battery_level)),
+            battery_level_estimated: cutout_core::TelemetryFieldUpdate::Set(source_estimated(
+                self.battery_level,
+            )),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1474,7 +1476,7 @@ mod tests {
                 distance: Some(source_reported(cutout_core::Distance::from_millimetres(
                     750_000
                 ))),
-                battery_level_estimated: Some(source_estimated(
+                battery_level_estimated: cutout_core::TelemetryFieldUpdate::Set(source_estimated(
                     cutout_core::BatteryLevel::from_percent(50)
                 )),
                 ..TelemetryDelta::empty(ms(42))

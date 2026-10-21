@@ -7077,7 +7077,7 @@ mod tests {
             pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(-1_000)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
-            battery_level_estimated: Some(level_estimated(47)),
+            battery_level_estimated: cutout_core::TelemetryFieldUpdate::Set(level_estimated(47)),
             ..cutout_core::TelemetryDelta::empty(ms(42))
         });
 

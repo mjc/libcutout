@@ -2061,10 +2061,11 @@ impl fmt::Display for TelemetryDeltaLog {
                 "V",
             )?;
         }
-        if let Some(percent) = delta
-            .battery_level_reported
-            .or(delta.battery_level_estimated)
-        {
+        let estimated = match delta.battery_level_estimated {
+            TelemetryFieldUpdate::Set(value) => Some(value),
+            TelemetryFieldUpdate::Unchanged | TelemetryFieldUpdate::Invalid => None,
+        };
+        if let Some(percent) = delta.battery_level_reported.or(estimated) {
             fields.write("battery", percent.value, "%")?;
         }
         if let Some(current) = delta.battery_current {
@@ -4323,7 +4324,7 @@ mod tests {
             pwm: TelemetryFieldUpdate::Set(duty_cycle_permille(0)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
-            battery_level_estimated: Some(level_estimated(47)),
+            battery_level_estimated: TelemetryFieldUpdate::Set(level_estimated(47)),
             ..TelemetryDelta::empty(ms(42))
         };
 
@@ -5314,7 +5315,7 @@ mod tests {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage: Some(voltage(117_600)),
-                    battery_level_estimated: Some(level_estimated(78)),
+                    battery_level_estimated: TelemetryFieldUpdate::Set(level_estimated(78)),
                     ..TelemetryDelta::empty(ms(7))
                 },
             }],
@@ -5550,7 +5551,7 @@ mod tests {
         let delta = TelemetryDelta {
             speed: Some(speed(4_470)),
             voltage: Some(voltage(118_400)),
-            battery_level_estimated: Some(level_estimated(78)),
+            battery_level_estimated: TelemetryFieldUpdate::Set(level_estimated(78)),
             battery_current: Some(battery_current(-12_400)),
             power: Some(power(-1_468_160)),
             motor_temperature: Some(temperature(44_600)),
@@ -5866,7 +5867,7 @@ mod tests {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage: Some(voltage(108_760)),
-                    battery_level_estimated: Some(level_estimated(47)),
+                    battery_level_estimated: TelemetryFieldUpdate::Set(level_estimated(47)),
                     ..TelemetryDelta::empty(ms(7))
                 },
             }],
@@ -6005,7 +6006,7 @@ mod tests {
         let telemetry = TelemetryDelta {
             speed: Some(speed(4_470)),
             voltage: Some(voltage(108_760)),
-            battery_level_estimated: Some(level_estimated(47)),
+            battery_level_estimated: TelemetryFieldUpdate::Set(level_estimated(47)),
             ..TelemetryDelta::empty(ms(42))
         };
         let report = SessionBridgeReport {

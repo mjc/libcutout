@@ -3295,8 +3295,8 @@ pub struct TelemetryDeltaDto {
     /// Battery level reported by the device.
     pub battery_level_reported: Option<BatteryLevelReadingDto>,
 
-    /// Battery level estimated by Cutout.
-    pub battery_level_estimated: Option<BatteryLevelReadingDto>,
+    /// Estimated battery update, including invalidation of a previous estimate.
+    pub battery_level_estimated: crate::TelemetryFieldUpdate<BatteryLevelReadingDto>,
 }
 
 impl From<TelemetryDelta> for TelemetryDeltaDto {

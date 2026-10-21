@@ -3122,7 +3122,9 @@ impl ProtocolSession for BridgeSession {
                     TelemetryDelta {
                         speed: Some(speed(1_200)),
                         voltage: Some(voltage(84_200)),
-                        battery_level_estimated: Some(battery_level_estimated(61)),
+                        battery_level_estimated: cutout_core::TelemetryFieldUpdate::Set(
+                            battery_level_estimated(61),
+                        ),
                         ..TelemetryDelta::empty(ms(0))
                     },
                 )));

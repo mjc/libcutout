@@ -877,6 +877,12 @@ pub struct VescNotificationDecoder {
 }
 
 impl VescNotificationDecoder {
+    fn battery_estimation_profile(&self) -> Option<crate::vesc_codec::VescBatteryProfile> {
+        self.board_profile()
+            .and_then(|profile| profile.battery_profile)
+            .filter(|profile| profile.series_cells.get() > 0)
+    }
+
     fn board_profile(&self) -> Option<VescBoardProfile> {
         let reported = self.configured_board_profile.or(self.learned_board_profile);
         match (self.refloat_discovery.application(), self.user_drivetrain) {
@@ -1784,13 +1790,24 @@ impl VescNotificationDecoder {
                 if malformed_frames && report_errors {
                     push_parser_error(ParserError::MalformedFrame, output);
                 }
-                let event_count = replies
+                let mut event_count = replies
                     .iter()
                     .fold(SemanticEventCount::default(), |count, reply| {
                         count.saturating_add(vesc_reply_event_count(reply))
                     });
                 for reply in &replies {
+                    let battery_profile = self.battery_estimation_profile();
                     self.observe_vesc_reply(reply, monotonic_ms);
+                    if battery_profile != self.battery_estimation_profile() {
+                        output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                            cutout_core::TelemetryDelta {
+                                battery_level_estimated: cutout_core::TelemetryFieldUpdate::Invalid,
+                                ..cutout_core::TelemetryDelta::empty(monotonic_ms)
+                            },
+                        )));
+                        event_count =
+                            event_count.saturating_add(SemanticEventCount::from_events(1));
+                    }
                     let geometry =
                         push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
                     #[cfg(feature = "capture-replay")]
@@ -1993,14 +2010,15 @@ fn vesc_values_to_delta(
             .present_fields
             .contains(VescValuesMask::VOLTAGE_IN)
             .then_some(Measured::reported(values.voltage)),
-        battery_level_estimated: values
-            .present_fields
-            .contains(VescValuesMask::VOLTAGE_IN)
-            .then_some(values.voltage)
-            .and_then(|voltage| {
-                board_profile.and_then(|profile| profile.battery_level_from_voltage(voltage))
-            })
-            .map(Measured::estimated),
+        battery_level_estimated: if values.present_fields.contains(VescValuesMask::VOLTAGE_IN) {
+            board_profile
+                .and_then(|profile| profile.battery_level_from_voltage(values.voltage))
+                .map_or(cutout_core::TelemetryFieldUpdate::Invalid, |value| {
+                    cutout_core::TelemetryFieldUpdate::Set(Measured::estimated(value))
+                })
+        } else {
+            cutout_core::TelemetryFieldUpdate::Unchanged
+        },
         battery_current: values
             .present_fields
             .contains(VescValuesMask::AVG_CURRENT_INPUT)
@@ -3771,6 +3789,300 @@ mod tests {
             2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
             0, 20, 45, 58, 3,
         ]
+    }
+
+    fn vesc_battery_motor_config_frame(battery_type: u8, cells: u8) -> Vec<u8> {
+        let mut payload = vec![14];
+        payload.extend_from_slice(&1_470_992_211_u32.to_be_bytes());
+        payload.resize(453, 0);
+        payload.push(14);
+        payload.extend_from_slice(&1.0_f32.to_bits().to_be_bytes());
+        payload.extend_from_slice(&0.090_f32.to_bits().to_be_bytes());
+        payload.extend_from_slice(&[battery_type, cells]);
+        vesc_test_frame(&payload)
+    }
+
+    fn vesc_test_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = if let Ok(len) = u8::try_from(payload.len()) {
+            vec![2, len]
+        } else {
+            let mut header = vec![3];
+            header.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_be_bytes());
+            header
+        };
+        frame.extend_from_slice(payload);
+        frame.extend_from_slice(&crate::wire_crc::crc16_xmodem(payload).to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
+    #[test]
+    fn vesc_host_discards_estimated_battery_when_series_becomes_unknown() {
+        let mut host =
+            cutout_core::HostSession::new(ReadOnlySession::<VescGenericModel>::default());
+        host.ingest_link_up(LinkInfo {
+            monotonic_ms: ms(0),
+            max_write_len: None,
+        });
+        for (at, bytes) in [
+            (1, vesc_battery_motor_config_frame(0, 10)),
+            (2, vesc_selective_values_frame().to_vec()),
+        ] {
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, bytes, ms(at));
+        }
+        let before = host.current_snapshot();
+        assert!(before.battery_level_estimated.is_some());
+        assert!(before.voltage.is_some());
+        host.ingest_notification_owned(
+            VESC_NOTIFY_CHANNEL,
+            vesc_battery_motor_config_frame(0, 0),
+            ms(3),
+        );
+        let after = host.current_snapshot();
+        assert_eq!(
+            after.battery_level_estimated, None,
+            "unknown series must retire the previous estimate immediately"
+        );
+        assert_eq!(after.voltage, before.voltage);
+        assert_eq!(after.battery_level_reported, before.battery_level_reported);
+    }
+
+    fn vesc_battery_host() -> cutout_core::HostSession<ReadOnlySession<VescGenericModel>> {
+        let mut host =
+            cutout_core::HostSession::new(ReadOnlySession::<VescGenericModel>::default());
+        host.ingest_link_up(LinkInfo {
+            monotonic_ms: ms(0),
+            max_write_len: None,
+        });
+        host.ingest_notification_owned(
+            VESC_NOTIFY_CHANNEL,
+            vesc_battery_motor_config_frame(0, 10),
+            ms(1),
+        );
+        host.ingest_notification_owned(
+            VESC_NOTIFY_CHANNEL,
+            vesc_selective_values_frame().to_vec(),
+            ms(2),
+        );
+        assert!(host.current_snapshot().battery_level_estimated.is_some());
+        let _ = host.drain_outputs();
+        host
+    }
+
+    fn vesc_motor_setup_frame() -> Vec<u8> {
+        let mut payload = vec![91];
+        payload.resize(41, 0);
+        payload.push(14);
+        payload.extend_from_slice(&1.0_f32.to_bits().to_be_bytes());
+        payload.extend_from_slice(&0.090_f32.to_bits().to_be_bytes());
+        vesc_test_frame(&payload)
+    }
+
+    #[test]
+    fn vesc_host_invalidates_estimate_only_when_effective_battery_basis_changes() {
+        for replacement in [
+            vesc_battery_motor_config_frame(0, 0),
+            vesc_battery_motor_config_frame(99, 10),
+            vesc_battery_motor_config_frame(0, 12),
+            vesc_motor_setup_frame(),
+        ] {
+            let mut host = vesc_battery_host();
+            let before = host.current_snapshot();
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, replacement, ms(3));
+            let after = host.current_snapshot();
+            assert_eq!(after.battery_level_estimated, None);
+            assert_eq!(after.voltage, before.voltage);
+            assert_eq!(after.speed, before.speed);
+            assert_eq!(after.speed_observed_at_ms, before.speed_observed_at_ms);
+            assert_eq!(after.battery_level_reported, before.battery_level_reported);
+            assert_eq!(telemetry_events(&host.drain_outputs()).len(), 1);
+        }
+        let mut host = vesc_battery_host();
+        let before = host.current_snapshot();
+        host.ingest_notification_owned(
+            VESC_NOTIFY_CHANNEL,
+            vesc_battery_motor_config_frame(0, 10),
+            ms(3),
+        );
+        assert_eq!(host.current_snapshot(), before);
+        assert_eq!(telemetry_events(&host.drain_outputs()), []);
+    }
+
+    #[test]
+    fn vesc_host_estimate_invalidation_respects_coalesced_reply_order() {
+        let values = vesc_selective_values_frame();
+        let changed = vesc_battery_motor_config_frame(0, 12);
+        for (first, second, estimate_expected) in [
+            (values.to_vec(), changed.clone(), false),
+            (changed, values.to_vec(), true),
+            (
+                vesc_battery_motor_config_frame(0, 0),
+                values.to_vec(),
+                false,
+            ),
+            (
+                values.to_vec(),
+                vesc_battery_motor_config_frame(0, 0),
+                false,
+            ),
+        ] {
+            let mut host = vesc_battery_host();
+            let mut batch = first;
+            batch.extend_from_slice(&second);
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, batch, ms(3));
+            assert_eq!(
+                host.current_snapshot().battery_level_estimated.is_some(),
+                estimate_expected
+            );
+            assert_eq!(
+                host.current_snapshot().voltage,
+                Some(Measured::reported(Voltage::from_millivolts(37_500)))
+            );
+            let outputs = host.drain_outputs();
+            assert_eq!(telemetry_events(&outputs).len(), 2);
+            let events =
+                outputs.iter().fold(
+                    SemanticEventCount::default(),
+                    |count, output| match output {
+                        SessionOutput::NotificationIngest(
+                            NotificationIngestOutcome::SemanticEvents { event_count, .. },
+                        ) => count.saturating_add(*event_count),
+                        _ => count,
+                    },
+                );
+            assert_eq!(events, SemanticEventCount::from_events(4));
+        }
+    }
+
+    #[test]
+    fn vesc_host_configured_battery_basis_survives_learned_config_changes() {
+        let profile = VescBoardProfile::without_geometry()
+            .with_vesc_battery_type(crate::VescBatteryType::LiIon, SeriesCount::new(10));
+        let mut host =
+            cutout_core::HostSession::new(ReadOnlySession::<VescGenericModel>::with_decoder(
+                VescNotificationDecoder::with_board_profile(profile),
+            ));
+        host.ingest_link_up(LinkInfo {
+            monotonic_ms: ms(0),
+            max_write_len: None,
+        });
+        host.ingest_notification_owned(
+            VESC_NOTIFY_CHANNEL,
+            vesc_selective_values_frame().to_vec(),
+            ms(1),
+        );
+        let before = host.current_snapshot();
+        assert!(before.battery_level_estimated.is_some());
+        let _ = host.drain_outputs();
+        for replacement in [
+            vesc_battery_motor_config_frame(0, 0),
+            vesc_motor_setup_frame(),
+        ] {
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, replacement, ms(2));
+            assert_eq!(host.current_snapshot(), before);
+            assert_eq!(telemetry_events(&host.drain_outputs()), []);
+        }
+    }
+
+    #[test]
+    fn vesc_host_controller_change_without_voltage_retires_battery_estimate() {
+        let mut host = vesc_battery_host();
+        let before = host.current_snapshot();
+        let mut payload = vec![50];
+        payload.extend_from_slice(&VescValuesMask::CONTROLLER_ID.bits().to_be_bytes());
+        payload.push(21);
+        host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, vesc_test_frame(&payload), ms(3));
+        let after = host.current_snapshot();
+        assert_eq!(after.battery_level_estimated, None);
+        assert_eq!(after.voltage, before.voltage);
+        assert_eq!(after.speed_observed_at_ms, before.speed_observed_at_ms);
+    }
+
+    fn assert_vesc_battery_projection(
+        snapshot: cutout_core::TelemetrySnapshot,
+        before: cutout_core::TelemetrySnapshot,
+        voltage_at: u64,
+        speed_at: u64,
+    ) {
+        assert_eq!(snapshot.voltage_observed_at_ms, Some(ms(voltage_at)));
+        assert_eq!(snapshot.speed_observed_at_ms, Some(ms(speed_at)));
+        assert_eq!(
+            snapshot.battery_current_observed_at_ms,
+            before.battery_current_observed_at_ms
+        );
+        assert_eq!(
+            snapshot.battery_level_reported,
+            before.battery_level_reported
+        );
+        assert_eq!(
+            cutout_core::TelemetrySnapshotDto::from(snapshot).battery_level_estimated,
+            snapshot.battery_level_estimated.map(Into::into)
+        );
+    }
+
+    #[test]
+    fn vesc_host_masked_values_preserve_estimate_and_unknown_voltage_clears_it() {
+        let mut payload = vec![50];
+        payload.extend_from_slice(&VescValuesMask::RPM.bits().to_be_bytes());
+        payload.extend_from_slice(&6_000_i32.to_be_bytes());
+        let omitted_voltage = vesc_test_frame(&payload);
+        let mut payload = vec![50];
+        payload.extend_from_slice(&VescValuesMask::VOLTAGE_IN.bits().to_be_bytes());
+        payload.extend_from_slice(&400_i16.to_be_bytes());
+        let voltage = vesc_test_frame(&payload);
+
+        for (battery_type, cells) in [(0, 0), (99, 10)] {
+            let mut host = vesc_battery_host();
+            let before = host.current_snapshot();
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, omitted_voltage.clone(), ms(3));
+            let snapshot = host.current_snapshot();
+            assert_eq!(
+                snapshot.battery_level_estimated,
+                before.battery_level_estimated
+            );
+            assert_vesc_battery_projection(snapshot, before, 2, 3);
+            let delta = telemetry_events(&host.drain_outputs())[0];
+            assert_eq!(
+                delta.battery_level_estimated,
+                cutout_core::TelemetryFieldUpdate::Unchanged
+            );
+
+            for (at, bytes, voltage_at, speed_at) in [
+                (
+                    4,
+                    vesc_battery_motor_config_frame(battery_type, cells),
+                    2,
+                    3,
+                ),
+                (5, omitted_voltage.clone(), 2, 5),
+                (6, voltage.clone(), 6, 5),
+                (7, vesc_battery_motor_config_frame(0, 10), 6, 5),
+            ] {
+                host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, bytes, ms(at));
+                let snapshot = host.current_snapshot();
+                assert_eq!(snapshot.battery_level_estimated, None);
+                assert_vesc_battery_projection(snapshot, before, voltage_at, speed_at);
+            }
+            let invalidated = host.current_snapshot();
+            assert_eq!(
+                invalidated.voltage,
+                Some(Measured::reported(Voltage::from_millivolts(40_000)))
+            );
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, voltage.clone(), ms(8));
+            let restored = host.current_snapshot();
+            assert!(restored.battery_level_estimated.is_some());
+            assert_eq!(restored.voltage, invalidated.voltage);
+            assert_vesc_battery_projection(restored, before, 8, 5);
+
+            host.ingest_notification_owned(VESC_NOTIFY_CHANNEL, omitted_voltage.clone(), ms(9));
+            let after = host.current_snapshot();
+            assert_eq!(
+                after.battery_level_estimated,
+                restored.battery_level_estimated
+            );
+            assert_eq!(after.voltage, restored.voltage);
+            assert_vesc_battery_projection(after, before, 8, 9);
+        }
     }
 
     fn vesc_stats_frame() -> [u8; 54] {
@@ -5904,7 +6216,10 @@ mod tests {
             values.input_current = cutout_core::ReportedBatteryCurrent::from_milliamps(raw);
             let delta = vesc_values_to_delta(&values, ms(42), None);
             assert_eq!(delta.battery_current, Some(Measured::reported(expected)));
-            assert_eq!(delta.battery_level_estimated, None);
+            assert_eq!(
+                delta.battery_level_estimated,
+                cutout_core::TelemetryFieldUpdate::Unchanged
+            );
             assert_eq!(delta.speed, None);
         }
         values.present_fields = VescValuesMask::RPM;
@@ -5993,7 +6308,7 @@ mod tests {
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(
             delta.battery_level_estimated,
-            Some(Measured::estimated(
+            cutout_core::TelemetryFieldUpdate::Set(Measured::estimated(
                 SAMSUNG_50S_PROFILE.estimate_level_from_pack_voltage(
                     Voltage::from_millivolts(37_500),
                     SeriesCount::new(10),
@@ -6333,7 +6648,7 @@ mod tests {
     fn nosfet_aero_session_emits_estimated_battery_level_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().battery_level_estimated,
-            Some(Measured::estimated(
+            cutout_core::TelemetryFieldUpdate::Set(Measured::estimated(
                 cutout_core::BatteryLevel::from_percent(47)
             ))
         );

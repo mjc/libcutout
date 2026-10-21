@@ -7397,8 +7397,8 @@ pub struct TelemetryDelta {
     /// Battery level reported by the device.
     pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Battery level estimated by Cutout.
-    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
+    /// Estimated battery update; invalidated estimates clear the previous value.
+    pub battery_level_estimated: TelemetryFieldUpdate<Measured<BatteryLevel>>,
 }
 
 impl TelemetryDelta {
@@ -7428,7 +7428,7 @@ impl TelemetryDelta {
             roll: None,
             footpad: None,
             battery_level_reported: None,
-            battery_level_estimated: None,
+            battery_level_estimated: TelemetryFieldUpdate::Unchanged,
         }
     }
 }
@@ -7632,8 +7632,10 @@ impl TelemetrySnapshot {
         if delta.battery_level_reported.is_some() {
             self.battery_level_reported = delta.battery_level_reported;
         }
-        if delta.battery_level_estimated.is_some() {
-            self.battery_level_estimated = delta.battery_level_estimated;
+        match delta.battery_level_estimated {
+            TelemetryFieldUpdate::Unchanged => {}
+            TelemetryFieldUpdate::Set(value) => self.battery_level_estimated = Some(value),
+            TelemetryFieldUpdate::Invalid => self.battery_level_estimated = None,
         }
     }
 }
@@ -8781,8 +8783,9 @@ mod tests {
         GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
         PeakCurrent, PhaseCurrent, Power, ProtocolSession, SETTING_WRITE_CONFIRMATION_TIMEOUT,
         SeriesCount, SessionInput, SessionOutput, SettingState, Speed, TelemetryDelta,
-        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        TelemetryDeltaDto, TelemetryFieldUpdate, TelemetrySnapshot, Temperature, TransportAction,
+        UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+        WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -9912,7 +9915,7 @@ mod tests {
             motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
             battery_temperature: Some(Measured::reported(Temperature::from_millicelsius(31_000))),
             battery_level_reported: Some(Measured::reported(BatteryLevel::from_percent(80))),
-            battery_level_estimated: Some(estimated_level),
+            battery_level_estimated: TelemetryFieldUpdate::Set(estimated_level),
             ..TelemetryDelta::empty(ms(300))
         });
 
@@ -9946,6 +9949,62 @@ mod tests {
                 .battery_level_estimated
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
+        );
+    }
+
+    #[test]
+    fn estimated_battery_invalidation_preserves_reported_battery_and_voltage() {
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(TelemetryDelta {
+            battery_level_estimated: TelemetryFieldUpdate::Set(Measured::estimated(
+                BatteryLevel::from_percent(45),
+            )),
+            battery_level_reported: Some(Measured::reported(BatteryLevel::from_percent(50))),
+            voltage: Some(Measured::reported(Voltage::from_millivolts(37_500))),
+            ..TelemetryDelta::empty(ms(1))
+        });
+        let before = snapshot;
+        snapshot.apply_delta(TelemetryDelta::empty(ms(2)));
+        assert_eq!(
+            snapshot.battery_level_estimated,
+            before.battery_level_estimated
+        );
+        let invalid = TelemetryDelta {
+            battery_level_estimated: TelemetryFieldUpdate::Invalid,
+            ..TelemetryDelta::empty(ms(3))
+        };
+        let dto = TelemetryDeltaDto::from(invalid);
+        assert_eq!(dto.battery_level_estimated, TelemetryFieldUpdate::Invalid);
+        snapshot.apply_delta(invalid);
+        assert_eq!(snapshot.battery_level_estimated, None);
+        assert_eq!(
+            snapshot.battery_level_reported,
+            before.battery_level_reported
+        );
+        assert_eq!(snapshot.voltage, before.voltage);
+        let zero = Measured::estimated(BatteryLevel::from_percent(0));
+        let restored = TelemetryDelta {
+            battery_level_estimated: TelemetryFieldUpdate::Set(zero),
+            ..TelemetryDelta::empty(ms(4))
+        };
+        assert_eq!(
+            TelemetryDeltaDto::from(restored).battery_level_estimated,
+            TelemetryFieldUpdate::Set(zero.into())
+        );
+        snapshot.apply_delta(restored);
+        assert_eq!(snapshot.battery_level_estimated, Some(zero));
+        assert_eq!(
+            crate::TelemetrySnapshotDto::from(snapshot).battery_level_estimated,
+            Some(zero.into())
+        );
+        assert_eq!(
+            snapshot.battery_level_reported,
+            before.battery_level_reported
+        );
+        assert_eq!(snapshot.voltage, before.voltage);
+        assert_eq!(
+            snapshot.voltage_observed_at_ms,
+            before.voltage_observed_at_ms
         );
     }
 
