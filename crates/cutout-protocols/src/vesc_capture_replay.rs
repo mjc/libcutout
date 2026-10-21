@@ -2,10 +2,11 @@
 
 use crate::{ReadOnlySession, VescGenericModel};
 use cutout_core::{
-    CapturedVescDrivetrainContext, CapturedVescDrivetrainEvidence, HostSession, LinkInfo,
-    MonotonicTimestamp, PevcapDirection, PevcapRecord, PevcapReplayRecord, PevcapSemanticTelemetry,
-    PevcapTelemetryProvenance, ProtocolSession, SessionInput, SessionOutput, TelemetrySnapshot,
-    VescDrivetrain, VescSpeedGeometry,
+    CapturedVescDrivetrainContext, CapturedVescDrivetrainError, CapturedVescDrivetrainEvidence,
+    CapturedVescDrivetrainScope, HostSession, LinkInfo, MonotonicTimestamp, PevcapDirection,
+    PevcapRecord, PevcapReplayRecord, PevcapSemanticTelemetry, PevcapTelemetryProvenance,
+    ProtocolSession, SessionInput, SessionOutput, TelemetrySnapshot, VescDrivetrain,
+    VescSpeedGeometry,
 };
 
 /// An offline calculation choice, never a live device profile or control grant.
@@ -52,6 +53,8 @@ impl VescReplayGeometryBasis {
 pub enum VescReplayRejection {
     /// A local replay cannot attribute another controller's bytes.
     UnsupportedTarget,
+    /// Present context cannot establish its claimed historical connection scope.
+    InvalidContext,
     /// The characteristic belongs to a different input stream.
     WrongCharacteristic,
     /// The recorded service belongs to a different input stream.
@@ -124,9 +127,15 @@ pub struct VescCaptureReplaySession {
     geometry: VescReplayGeometryBasis,
     captured_geometry: CapturedVescDrivetrainEvidence,
     original: Option<PevcapSemanticTelemetry>,
-    scope: Option<CapturedVescDrivetrainContext>,
+    scope: Option<VescReplayScope>,
     last_receipt: Option<MonotonicTimestamp>,
     disposition: VescReplayRecordDisposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VescReplayScope {
+    identity: CapturedVescDrivetrainScope,
+    geometry: Option<VescDrivetrain>,
 }
 
 impl VescCaptureReplaySession {
@@ -157,6 +166,7 @@ impl VescCaptureReplaySession {
         &self,
         record: &PevcapRecord,
         evidence: &CapturedVescDrivetrainEvidence,
+        scope: &Result<Option<CapturedVescDrivetrainScope>, CapturedVescDrivetrainError>,
     ) -> Option<VescReplayRejection> {
         if record.characteristic != crate::VESC_NOTIFY_CHANNEL {
             return Some(VescReplayRejection::WrongCharacteristic);
@@ -175,35 +185,43 @@ impl VescCaptureReplaySession {
         {
             return Some(VescReplayRejection::OutOfOrder);
         }
-        match evidence {
-            CapturedVescDrivetrainEvidence::UnsupportedTarget => {
+        match scope {
+            Err(CapturedVescDrivetrainError::UnsupportedTarget) => {
                 Some(VescReplayRejection::UnsupportedTarget)
             }
-            CapturedVescDrivetrainEvidence::Local(context) => self.reject_context(context),
-            CapturedVescDrivetrainEvidence::Missing
-            | CapturedVescDrivetrainEvidence::Invalid(_) => None,
+            Err(_) => Some(VescReplayRejection::InvalidContext),
+            Ok(Some(scope)) => self.reject_context(scope, evidence),
+            Ok(None) => None,
         }
     }
 
     fn reject_context(
         &self,
-        context: &CapturedVescDrivetrainContext,
+        scope: &CapturedVescDrivetrainScope,
+        evidence: &CapturedVescDrivetrainEvidence,
     ) -> Option<VescReplayRejection> {
         let previous = self.scope.as_ref()?;
-        if previous.attempt().platform_identifier() != context.attempt().platform_identifier() {
+        if previous.identity.attempt().platform_identifier()
+            != scope.attempt().platform_identifier()
+        {
             return Some(VescReplayRejection::UnsupportedTarget);
         }
-        if previous.attempt() != context.attempt() {
-            return (context.attempt().generation() <= previous.attempt().generation())
+        if previous.identity.attempt() != scope.attempt() {
+            return (scope.attempt().generation() <= previous.identity.attempt().generation())
                 .then_some(VescReplayRejection::RetiredAttempt);
         }
-        let current = context.profile();
-        let previous = previous.profile();
-        if current.revision() < previous.revision() {
+        if scope.revision() < previous.identity.revision() {
             return Some(VescReplayRejection::StaleRevision);
         }
-        (current.revision() == previous.revision() && current.value() != previous.value())
-            .then_some(VescReplayRejection::ConflictingRevision)
+        if scope.revision() == previous.identity.revision()
+            && let CapturedVescDrivetrainEvidence::Local(context) = evidence
+            && previous
+                .geometry
+                .is_some_and(|value| value != context.profile().value())
+        {
+            return Some(VescReplayRejection::ConflictingRevision);
+        }
+        None
     }
 
     fn prepare_record(record: &PevcapRecord, host: &mut HostSession<Self>) {
@@ -224,19 +242,20 @@ impl VescCaptureReplaySession {
             PevcapDirection::Inbound => {}
         }
         let evidence = record.captured_vesc_drivetrain();
-        if let Some(reason) = host.protocol_session().reject(record, &evidence) {
+        let scope = record.captured_vesc_drivetrain_scope();
+        if let Some(reason) = host.protocol_session().reject(record, &evidence, &scope) {
             let session = host.protocol_session_mut();
             session.disposition = VescReplayRecordDisposition::Ignored(reason);
             session.captured_geometry = evidence;
             session.original.clone_from(&record.semantic_telemetry);
             return;
         }
-        if let CapturedVescDrivetrainEvidence::Local(context) = &evidence {
+        if let Ok(Some(identity)) = scope {
             if host
                 .protocol_session()
                 .scope
                 .as_ref()
-                .is_some_and(|previous| previous.attempt() != context.attempt())
+                .is_some_and(|previous| previous.identity.attempt() != identity.attempt())
             {
                 *host = HostSession::new(Self::new(host.protocol_session().policy));
                 host.ingest_link_up(LinkInfo {
@@ -244,7 +263,16 @@ impl VescCaptureReplaySession {
                     max_write_len: None,
                 });
             }
-            host.protocol_session_mut().scope = Some(context.clone());
+            let geometry = match &evidence {
+                CapturedVescDrivetrainEvidence::Local(context) => Some(context.profile().value()),
+                _ => host
+                    .protocol_session()
+                    .scope
+                    .as_ref()
+                    .filter(|previous| previous.identity == identity)
+                    .and_then(|previous| previous.geometry),
+            };
+            host.protocol_session_mut().scope = Some(VescReplayScope { identity, geometry });
         }
         let session = host.protocol_session_mut();
         let geometry = match (&evidence, session.policy) {
@@ -493,6 +521,70 @@ mod tests {
             invalid.captured_geometry,
             CapturedVescDrivetrainEvidence::Invalid(_)
         ));
+    }
+
+    #[test]
+    fn captured_geometry_replay_invalid_geometry_cannot_hide_foreign_or_retired_scope() {
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            for foreign in [false, true] {
+                let mut host = host(policy);
+                let current = ingest(&mut host, &record(100_000, 314, 2, 2, 200));
+                let mut invalid = record(100_000, 283, 1, 1, 300);
+                let rejection = if foreign {
+                    let semantic = invalid.semantic_telemetry.as_mut().unwrap();
+                    let mut snapshot: serde_json::Value =
+                        serde_json::from_str(&semantic.snapshot_json).unwrap();
+                    snapshot["vesc_drivetrain_context"]["connection_attempt"]["platform_identifier"] =
+                        serde_json::json!("foreign-controller");
+                    semantic.snapshot_json = snapshot.to_string();
+                    VescReplayRejection::UnsupportedTarget
+                } else {
+                    VescReplayRejection::RetiredAttempt
+                };
+                let original = invalid.clone();
+                let rejected = ingest(&mut host, &invalid);
+                assert_eq!(
+                    rejected.disposition,
+                    VescReplayRecordDisposition::Ignored(rejection)
+                );
+                assert_eq!(rejected.telemetry, current.telemetry);
+                assert_eq!(rejected.geometry, current.geometry);
+                assert_eq!(invalid, original);
+                let next = ingest(&mut host, &record(100_000, 314, 2, 2, 250));
+                assert_eq!(next.disposition, VescReplayRecordDisposition::Accepted);
+            }
+        }
+    }
+
+    #[test]
+    fn captured_geometry_replay_rejects_nonlocal_context_with_malformed_geometry() {
+        for policy in [
+            VescReplayGeometryPolicy::Captured,
+            VescReplayGeometryPolicy::Explicit(VescDrivetrain::parse("100", "7", "2.5").unwrap()),
+        ] {
+            let mut host = host(policy);
+            let current = ingest(&mut host, &record(90_000, 283, 1, 1, 100));
+            let mut secondary = record(90_000, 283, 1, 1, 200);
+            let semantic = secondary.semantic_telemetry.as_mut().unwrap();
+            let mut snapshot: serde_json::Value =
+                serde_json::from_str(&semantic.snapshot_json).unwrap();
+            snapshot["vesc_drivetrain_context"]["target"] =
+                serde_json::json!({"can": {"controller_id": 3}});
+            snapshot["vesc_drivetrain_context"]["revision"] = serde_json::json!("bad");
+            semantic.snapshot_json = snapshot.to_string();
+            let original = secondary.clone();
+            let result = ingest(&mut host, &secondary);
+            assert_eq!(
+                result.disposition,
+                VescReplayRecordDisposition::Ignored(VescReplayRejection::UnsupportedTarget)
+            );
+            assert_eq!(result.telemetry, current.telemetry);
+            assert_eq!(result.geometry, current.geometry);
+            assert_eq!(secondary, original);
+        }
     }
 
     #[test]

@@ -5,6 +5,28 @@ use crate::{
     VescDrivetrainError, VescDrivetrainProfile, VescDrivetrainRevision,
 };
 use serde::{Deserialize, Deserializer};
+use serde_json::value::RawValue;
+
+/// Historical attribution retained independently of usable speed geometry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapturedVescDrivetrainScope {
+    attempt: ConnectionAttemptToken,
+    revision: VescDrivetrainRevision,
+}
+
+impl CapturedVescDrivetrainScope {
+    /// Device and generation that produced the original observation.
+    #[must_use]
+    pub const fn attempt(&self) -> &ConnectionAttemptToken {
+        &self.attempt
+    }
+
+    /// Persisted profile revision asserted by the original observation.
+    #[must_use]
+    pub const fn revision(&self) -> VescDrivetrainRevision {
+        self.revision
+    }
+}
 
 /// Geometry evidence from one original record; absence never inherits another record's profile.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +72,9 @@ impl CapturedVescDrivetrainContext {
 /// Why a present captured geometry assertion is unusable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CapturedVescDrivetrainError {
+    /// A nonlocal or unknown target cannot supply directly connected controller input.
+    #[error("unsupported captured VESC controller target")]
+    UnsupportedTarget,
     /// JSON syntax, shape, field types, or duplicate contract fields are invalid.
     #[error("invalid captured VESC snapshot JSON")]
     MalformedSnapshot,
@@ -81,50 +106,146 @@ impl PevcapRecord {
     /// connected controller. No current device database is read.
     #[must_use]
     pub fn captured_vesc_drivetrain(&self) -> CapturedVescDrivetrainEvidence {
-        if let Some(RequestTarget::VescCanController { .. }) = self.target {
-            return CapturedVescDrivetrainEvidence::UnsupportedTarget;
-        }
-        let Some(semantic) = self.semantic_telemetry.as_ref() else {
-            return CapturedVescDrivetrainEvidence::Missing;
-        };
-        let Ok(snapshot) = serde_json::from_str::<CapturedSnapshot>(&semantic.snapshot_json) else {
-            return CapturedVescDrivetrainEvidence::Invalid(
-                CapturedVescDrivetrainError::MalformedSnapshot,
-            );
-        };
-        let Some(context) = snapshot.vesc_drivetrain_context else {
-            return CapturedVescDrivetrainEvidence::Missing;
-        };
-        if semantic.snapshot_schema_version != 2 {
-            return CapturedVescDrivetrainEvidence::Invalid(
-                CapturedVescDrivetrainError::UnsupportedSnapshotSchema(
-                    semantic.snapshot_schema_version,
-                ),
-            );
-        }
-        if context.target == CapturedTarget::Unsupported {
-            return CapturedVescDrivetrainEvidence::UnsupportedTarget;
-        }
-        match context.check(semantic.provenance) {
-            Ok(context) => CapturedVescDrivetrainEvidence::Local(context),
+        match self.captured_vesc_context_input() {
+            Ok(None) => CapturedVescDrivetrainEvidence::Missing,
+            Ok(Some(input)) => match input.geometry() {
+                Ok(context) => CapturedVescDrivetrainEvidence::Local(context),
+                Err(error) => CapturedVescDrivetrainEvidence::Invalid(error),
+            },
+            Err(CapturedVescDrivetrainError::UnsupportedTarget) => {
+                CapturedVescDrivetrainEvidence::UnsupportedTarget
+            }
             Err(error) => CapturedVescDrivetrainEvidence::Invalid(error),
         }
     }
+
+    /// Checks record attribution before geometry can erase identity evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsupported targets, schemas and malformed or invalid scope fields.
+    pub fn captured_vesc_drivetrain_scope(
+        &self,
+    ) -> Result<Option<CapturedVescDrivetrainScope>, CapturedVescDrivetrainError> {
+        Ok(self.captured_vesc_context_input()?.map(|input| input.scope))
+    }
+
+    fn captured_vesc_context_input(
+        &self,
+    ) -> Result<Option<CapturedContextInput<'_>>, CapturedVescDrivetrainError> {
+        if let Some(RequestTarget::VescCanController { .. }) = self.target {
+            return Err(CapturedVescDrivetrainError::UnsupportedTarget);
+        }
+        let Some(semantic) = self.semantic_telemetry.as_ref() else {
+            return Ok(None);
+        };
+        let JsonObject(snapshot) =
+            serde_json::from_str::<JsonObject<CapturedSnapshot<'_>>>(&semantic.snapshot_json)
+                .map_err(|_| CapturedVescDrivetrainError::MalformedSnapshot)?;
+        let Some(context) = snapshot.vesc_drivetrain_context else {
+            return Ok(None);
+        };
+        let JsonObject(header) =
+            serde_json::from_str::<JsonObject<CapturedScopeJson<'_>>>(context.get())
+                .map_err(|_| CapturedVescDrivetrainError::MalformedSnapshot)?;
+        if header.target == CapturedTarget::Unsupported {
+            return Err(CapturedVescDrivetrainError::UnsupportedTarget);
+        }
+        if semantic.snapshot_schema_version != 2 {
+            return Err(CapturedVescDrivetrainError::UnsupportedSnapshotSchema(
+                semantic.snapshot_schema_version,
+            ));
+        }
+        Ok(Some(CapturedContextInput {
+            json: context,
+            scope: header.check()?,
+            provenance: semantic.provenance,
+        }))
+    }
 }
 
-// Deserialize the contract fields directly rather than using a JSON Value map: serde rejects
-// duplicate known fields instead of silently choosing a geometry or connection identity.
+// Borrow original fragments so target and identity survive malformed geometry, while
+// derived map deserializers still reject duplicate fields rather than choosing a value.
 #[derive(Deserialize)]
-struct CapturedSnapshot {
-    vesc_drivetrain_context: Option<CapturedContextJson>,
+struct CapturedSnapshot<'a> {
+    #[serde(borrow)]
+    vesc_drivetrain_context: Option<&'a RawValue>,
+}
+
+#[derive(Deserialize)]
+struct CapturedScopeJson<'a> {
+    #[serde(default)]
+    target: CapturedTarget,
+    #[serde(borrow)]
+    connection_attempt: Option<&'a RawValue>,
+    #[serde(borrow)]
+    revision: Option<&'a RawValue>,
+}
+
+impl CapturedScopeJson<'_> {
+    fn check(self) -> Result<CapturedVescDrivetrainScope, CapturedVescDrivetrainError> {
+        let revision = serde_json::from_str(required(self.revision)?.get())
+            .map_err(|_| CapturedVescDrivetrainError::MalformedSnapshot)?;
+        let revision = VescDrivetrainRevision::new(revision)
+            .ok_or(CapturedVescDrivetrainError::InvalidRevision)?;
+        let JsonObject(attempt) = serde_json::from_str::<JsonObject<CapturedAttemptJson>>(
+            required(self.connection_attempt)?.get(),
+        )
+        .map_err(|_| CapturedVescDrivetrainError::MalformedSnapshot)?;
+        if attempt.generation == 0
+            || attempt.platform_identifier.trim().is_empty()
+            || attempt.platform_identifier.len() > 512
+        {
+            return Err(CapturedVescDrivetrainError::InvalidAttempt);
+        }
+        Ok(CapturedVescDrivetrainScope {
+            attempt: ConnectionAttemptToken::new(attempt.generation, attempt.platform_identifier),
+            revision,
+        })
+    }
+}
+
+struct CapturedContextInput<'a> {
+    json: &'a RawValue,
+    scope: CapturedVescDrivetrainScope,
+    provenance: PevcapTelemetryProvenance,
+}
+
+impl CapturedContextInput<'_> {
+    fn geometry(self) -> Result<CapturedVescDrivetrainContext, CapturedVescDrivetrainError> {
+        let JsonObject(context) =
+            serde_json::from_str::<JsonObject<CapturedContextJson>>(self.json.get())
+                .map_err(|_| CapturedVescDrivetrainError::MalformedSnapshot)?;
+        context.check(self.scope, self.provenance)
+    }
+}
+
+/// Named JSON contract objects never accept Serde's positional struct representation.
+struct JsonObject<T>(T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for JsonObject<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for ObjectVisitor<T> {
+            type Value = JsonObject<T>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                T::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(JsonObject)
+            }
+        }
+        deserializer.deserialize_map(ObjectVisitor(std::marker::PhantomData))
+    }
 }
 
 #[derive(Deserialize)]
 struct CapturedContextJson {
-    #[serde(default)]
-    target: CapturedTarget,
-    connection_attempt: Option<CapturedAttemptJson>,
-    revision: Option<u64>,
     source: Option<String>,
     wheel_diameter_micrometres: Option<u32>,
     wheel_circumference_mm: Option<u64>,
@@ -160,19 +281,11 @@ impl<'de> Deserialize<'de> for CapturedTarget {
 impl CapturedContextJson {
     fn check(
         self,
+        scope: CapturedVescDrivetrainScope,
         provenance: PevcapTelemetryProvenance,
     ) -> Result<CapturedVescDrivetrainContext, CapturedVescDrivetrainError> {
         if required(self.source)? != "user_configured" {
             return Err(CapturedVescDrivetrainError::UnsupportedSource);
-        }
-        let revision = VescDrivetrainRevision::new(required(self.revision)?)
-            .ok_or(CapturedVescDrivetrainError::InvalidRevision)?;
-        let attempt = required(self.connection_attempt)?;
-        if attempt.generation == 0
-            || attempt.platform_identifier.trim().is_empty()
-            || attempt.platform_identifier.len() > 512
-        {
-            return Err(CapturedVescDrivetrainError::InvalidAttempt);
         }
         let value = VescDrivetrain::from_parts(
             required(self.wheel_diameter_micrometres)?,
@@ -186,8 +299,8 @@ impl CapturedContextJson {
             return Err(CapturedVescDrivetrainError::InconsistentCircumference);
         }
         Ok(CapturedVescDrivetrainContext {
-            profile: VescDrivetrainProfile::user_configured(value, revision),
-            attempt: ConnectionAttemptToken::new(attempt.generation, attempt.platform_identifier),
+            profile: VescDrivetrainProfile::user_configured(value, scope.revision),
+            attempt: scope.attempt,
             provenance,
         })
     }
@@ -447,6 +560,62 @@ mod tests {
                 )
             );
             assert_eq!(record, original);
+        }
+    }
+
+    #[test]
+    fn captured_vesc_context_requires_named_json_objects() {
+        let positional_context = json!([
+            "local",
+            [7, "controller-a"],
+            3,
+            "user_configured",
+            90_000,
+            283,
+            7,
+            2_500
+        ]);
+        let mut positional_attempt = context();
+        positional_attempt["connection_attempt"] = json!([7, "controller-a"]);
+        for snapshot in [
+            json!([context()]),
+            json!({"vesc_drivetrain_context": positional_context}),
+            json!({"vesc_drivetrain_context": positional_attempt}),
+        ] {
+            let record = record(&snapshot);
+            let original = record.clone();
+            assert_eq!(
+                record.captured_vesc_drivetrain(),
+                CapturedVescDrivetrainEvidence::Invalid(
+                    CapturedVescDrivetrainError::MalformedSnapshot
+                ),
+                "{snapshot}"
+            );
+            assert_eq!(record, original);
+        }
+    }
+
+    #[test]
+    fn captured_vesc_context_preserves_nonlocal_target_before_geometry_validation() {
+        for malformed in [
+            json!({"revision": "bad"}),
+            json!({"connection_attempt": false}),
+            json!({"motor_pole_pairs": -1}),
+        ] {
+            for target in [json!({"can": {"controller_id": 3}}), json!("future")] {
+                let mut context = context();
+                context["target"] = target;
+                for (key, value) in malformed.as_object().unwrap() {
+                    context[key] = value.clone();
+                }
+                let record = record(&json!({"vesc_drivetrain_context": context}));
+                let original = record.clone();
+                assert_eq!(
+                    record.captured_vesc_drivetrain(),
+                    CapturedVescDrivetrainEvidence::UnsupportedTarget
+                );
+                assert_eq!(record, original);
+            }
         }
     }
 }
