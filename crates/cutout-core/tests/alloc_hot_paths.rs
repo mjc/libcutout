@@ -1,11 +1,10 @@
 #![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![allow(unsafe_code)]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+#[path = "../../../tests/support/allocation_counter.rs"]
+mod allocation_counter;
+
+use allocation_counter::assert_no_allocations;
 
 use cutout_core::{
     BatteryCurrent, BatteryLevel, BatteryLevelBasis, Capacity, CapacitySource, CaptureRecord,
@@ -25,8 +24,6 @@ const fn ms(value: u64) -> MonotonicTimestamp {
 const fn write_len(value: u16) -> TransportWriteLimit {
     TransportWriteLimit::from_bytes(value)
 }
-
-struct CountingAllocator;
 
 const CATALOG_GATT: [cutout_core::GattFingerprint; 1] = [cutout_core::GattFingerprint {
     service: GattChannel::from_bytes([0x11; 16]),
@@ -60,40 +57,6 @@ static CATALOG_ENTRIES: [ModelCatalogEntry; 1] = [ModelCatalogEntry {
         session: Some(SessionKey::new("nosfet-aero-read-only")),
     },
 }];
-
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static ALLOCATION_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
-
-// SAFETY: this wrapper only increments atomic counters and delegates all
-// allocation operations to `System` with the original pointers and layouts.
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        REALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
 
 #[derive(Default)]
 struct NoOpSession;
@@ -130,41 +93,15 @@ impl ProtocolSession for NoOpSession {
     }
 }
 
-fn reset_counts() {
-    ALLOCATIONS.store(0, Ordering::SeqCst);
-    REALLOCATIONS.store(0, Ordering::SeqCst);
-}
-
-fn with_allocation_lock(action: impl FnOnce()) {
-    let _guard = ALLOCATION_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    action();
-}
-
-fn assert_no_allocations(label: &str, action: impl FnOnce()) {
-    reset_counts();
-    action();
-
-    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0, "{label} allocated");
-    assert_eq!(
-        REALLOCATIONS.load(Ordering::SeqCst),
-        0,
-        "{label} reallocated"
-    );
-}
-
 #[test]
 fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
-    with_allocation_lock(|| {
-        hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked();
-        large_catalog_lookup_does_not_allocate_after_setup_locked();
-        charge_estimator_update_does_not_allocate_locked();
-        voltage_sag_estimator_update_does_not_allocate_locked();
-    });
+    borrowed_or_bounded_inputs_do_not_allocate();
+    large_catalog_lookup_does_not_allocate_after_setup();
+    charge_estimator_update_does_not_allocate();
+    voltage_sag_estimator_update_does_not_allocate();
 }
 
-fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
+fn borrowed_or_bounded_inputs_do_not_allocate() {
     let mut link_up_host = HostSession::new(NoOpSession);
     assert_no_allocations("host link-up", || {
         link_up_host.ingest_link_up(LinkInfo {
@@ -279,7 +216,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     });
 }
 
-fn charge_estimator_update_does_not_allocate_locked() {
+fn charge_estimator_update_does_not_allocate() {
     let mut estimator = ChargeEstimator::new();
     let capacity = UsablePackCapacity::new(
         Capacity::from_milliamp_hours(10_000),
@@ -321,7 +258,7 @@ fn charge_estimator_update_does_not_allocate_locked() {
     });
 }
 
-fn voltage_sag_estimator_update_does_not_allocate_locked() {
+fn voltage_sag_estimator_update_does_not_allocate() {
     let mut estimator = VoltageSagEstimator::new();
     let update = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
         estimator.update(VoltageSagInput {
@@ -341,7 +278,7 @@ fn voltage_sag_estimator_update_does_not_allocate_locked() {
     });
 }
 
-fn large_catalog_lookup_does_not_allocate_after_setup_locked() {
+fn large_catalog_lookup_does_not_allocate_after_setup() {
     let large_catalog_entries: Vec<_> = (0..1_000).map(synthetic_catalog_entry).collect();
 
     assert_no_allocations("large model catalog borrowed lookup", || {

@@ -1,11 +1,10 @@
 #![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![allow(unsafe_code)]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+#[path = "../../../tests/support/allocation_counter.rs"]
+mod allocation_counter;
+
+use allocation_counter::assert_no_allocations;
 
 use cutout_core::{
     CommandKind, DeviceEvent, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput,
@@ -24,48 +23,12 @@ const REFLOAT_IDS_FRAME: &[u8] = &[
     117, 46, 114, 111, 108, 108, 1, 8, 115, 101, 116, 112, 111, 105, 110, 116, 88, 149, 3,
 ];
 
-struct CountingAllocator;
-
 const fn ms(value: u64) -> MonotonicTimestamp {
     MonotonicTimestamp::new(value)
 }
 
 const fn write_len(value: u16) -> TransportWriteLimit {
     TransportWriteLimit::from_bytes(value)
-}
-
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static ALLOCATION_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
-
-// SAFETY: this wrapper only increments process-wide atomic counters and delegates all
-// allocation operations to `System` with the original pointers and layouts.
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        REALLOCATIONS.fetch_add(1, Ordering::SeqCst);
-        // SAFETY: delegate to the system allocator.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
 }
 
 const LIVE_AERO_SELECTOR_0: [u8; 87] = hex_literal::hex!(
@@ -82,23 +45,6 @@ const VESC_VALUES: [u8; 28] = [
     45, 58, 3,
 ];
 
-fn reset_counts() {
-    ALLOCATIONS.store(0, Ordering::SeqCst);
-    REALLOCATIONS.store(0, Ordering::SeqCst);
-}
-
-fn assert_no_allocations(label: &str, action: impl FnOnce()) {
-    reset_counts();
-    action();
-
-    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0, "{label} allocated");
-    assert_eq!(
-        REALLOCATIONS.load(Ordering::SeqCst),
-        0,
-        "{label} reallocated"
-    );
-}
-
 fn linked_session<M>() -> (ReadOnlySession<M>, Vec<SessionOutput>)
 where
     M: Default + ReadOnlyModelSpec,
@@ -114,15 +60,11 @@ where
         &mut output,
     );
     output.clear();
-    reset_counts();
     (session, output)
 }
 
 #[test]
 fn allocation_hot_paths_do_not_allocate() {
-    let _guard = ALLOCATION_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     veteran_parser_owned_results_do_not_allocate();
     fragmented_coalesced_aero_responses_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
@@ -316,10 +258,6 @@ fn vesc_parser_owned_results_do_not_allocate() {
 
 #[test]
 fn configured_sessions_do_not_allocate() {
-    let _guard = ALLOCATION_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
     let mut vesc =
         ReadOnlySession::<VescGenericModel>::with_decoder(VescNotificationDecoder::default());
     let mut vesc_output = Vec::with_capacity(8);
