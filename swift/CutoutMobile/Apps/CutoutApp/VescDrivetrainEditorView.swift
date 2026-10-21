@@ -222,9 +222,16 @@ struct VescDrivetrainEditorView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(localizedAppText("vesc.drivetrain.done")) { dismiss() }
-                        .disabled(editor.isSaving)
-                        .accessibilityIdentifier("vesc.drivetrain.done")
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text(localizedAppText("vesc.drivetrain.done"))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(editor.isSaving)
+                    .accessibilityIdentifier("vesc.drivetrain.done")
                 }
             }
             .task { await editor.load() }

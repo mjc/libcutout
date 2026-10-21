@@ -4414,7 +4414,7 @@ final class CutoutAppUITests: XCTestCase {
                 }
             }
         }
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "standard-eskate-landscape-player-\(playerIsHidden ? "hidden" : "shown")"
         screenshot.lifetime = .keepAlways
         add(screenshot)
