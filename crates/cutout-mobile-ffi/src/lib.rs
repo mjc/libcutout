@@ -31951,16 +31951,22 @@ mod tests {
         let core = restored_database_core(database.clone());
         let active = core.start_gps_only(1_000).unwrap();
         let sql = rusqlite::Connection::open(&path).unwrap();
-        sql.execute_batch("BEGIN IMMEDIATE;").unwrap();
-        let command = core
-            .begin_lifecycle_command(
-                MobileRideEventDto::Pause,
-                active.command_token.clone().unwrap(),
-                2_000,
-            )
-            .unwrap();
-        {
+        let command = {
             let mut state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let command_id = state.next_lifecycle_command_id;
+            let next_command_id = command_id.checked_add(1).unwrap();
+            let (command, admission) =
+                MobileRideMapLifecycleCommand::prepare(Arc::clone(&core), command_id).unwrap();
+            let pending = state
+                .prepare_lifecycle_transition(
+                    MobileRideEventDto::Pause,
+                    active.command_token.as_ref().unwrap(),
+                    2_000,
+                    command_id,
+                )
+                .unwrap();
+            state.next_lifecycle_command_id = next_command_id;
+            // SQL may commit, but settlement cannot project until this guard is released.
             let projection = &mut state.recorder;
             let transition = projection
                 .state()
@@ -31970,8 +31976,13 @@ mod tests {
             projection
                 .apply_transition_at(transition, ride_maps::MonotonicMilliseconds::new(1_500))
                 .unwrap();
-        }
-        sql.execute_batch("COMMIT;").unwrap();
+            assert!(
+                admission
+                    .send(PendingMobileRideCommand::Transition(pending))
+                    .is_ok()
+            );
+            command
+        };
         assert_eq!(
             command.wait_result(),
             Err(MobileRideMapCoreErrorDto::InvalidTransition)
