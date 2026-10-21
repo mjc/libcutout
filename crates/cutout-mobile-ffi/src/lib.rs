@@ -21940,6 +21940,28 @@ mod tests {
         }
     }
 
+    fn wait_for_location_write_outcome(
+        state: &MobileRideMapCore,
+        at_milliseconds: u64,
+        request_id: u64,
+    ) -> MobileRideMapCoreOutcomeDto {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(outcome) = state
+                .poll_location_write_outcomes(at_milliseconds)
+                .into_iter()
+                .find(|outcome| outcome.request_id == Some(request_id))
+            {
+                return outcome;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "queued location request {request_id} did not complete in time"
+            );
+            thread::yield_now();
+        }
+    }
+
     fn discovery_service(uuid: CoreBluetoothServiceUuid) -> DiscoveryServiceUuid {
         DiscoveryServiceUuid {
             bytes: uuid.as_bytes().to_vec(),
@@ -28033,16 +28055,9 @@ mod tests {
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
 
-        let accepted = (0..10_000).find_map(|_| {
-            state
-                .poll_location_writes()
-                .into_iter()
-                .find(|decision| matches!(decision, MobileRideMapCoreDecisionDto::Accepted { .. }))
-                .or_else(|| {
-                    thread::yield_now();
-                    None
-                })
-        });
+        let accepted = drain_location_writes(&state)
+            .into_iter()
+            .find(|decision| matches!(decision, MobileRideMapCoreDecisionDto::Accepted { .. }));
         assert!(
             accepted.is_some(),
             "queued location should eventually settle"
@@ -28095,19 +28110,10 @@ mod tests {
         ));
         assert_eq!(pending.snapshot.summary.moving_time, pre_write_projection);
 
-        let terminal = (0..10_000).find_map(|_| {
-            state
-                .poll_location_write_outcomes(1_002)
-                .into_iter()
-                .find(|outcome| outcome.request_id == Some(request_id))
-                .or_else(|| {
-                    thread::yield_now();
-                    None
-                })
-        });
+        let terminal = wait_for_location_write_outcome(&state, 1_002, request_id);
         assert!(matches!(
-            terminal.map(|outcome| outcome.decision),
-            Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+            terminal.decision,
+            MobileRideMapCoreDecisionDto::Accepted { .. }
         ));
 
         let projected = state
@@ -28678,19 +28684,10 @@ mod tests {
             "fresh wheel zero takes precedence over moving phone GPS"
         );
 
-        let terminal = (0..10_000).find_map(|_| {
-            state
-                .poll_location_write_outcomes(2_004)
-                .into_iter()
-                .find(|outcome| outcome.request_id == Some(request_id))
-                .or_else(|| {
-                    thread::yield_now();
-                    None
-                })
-        });
+        let terminal = wait_for_location_write_outcome(&state, 2_004, request_id);
         assert!(matches!(
-            terminal.map(|outcome| outcome.decision),
-            Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+            terminal.decision,
+            MobileRideMapCoreDecisionDto::Accepted { .. }
         ));
         assert!(
             moving_time_counts(
@@ -28827,19 +28824,10 @@ mod tests {
                 panic!("one sample yields one queued outcome");
             };
             let request_id = pending.request_id.expect("queued sample has a request ID");
-            let terminal = (0..10_000).find_map(|_| {
-                state
-                    .poll_location_write_outcomes(at_ms + 1)
-                    .into_iter()
-                    .find(|outcome| outcome.request_id == Some(request_id))
-                    .or_else(|| {
-                        thread::yield_now();
-                        None
-                    })
-            });
+            let terminal = wait_for_location_write_outcome(&state, at_ms + 1, request_id);
             assert!(matches!(
-                terminal.map(|outcome| outcome.decision),
-                Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+                terminal.decision,
+                MobileRideMapCoreDecisionDto::Accepted { .. }
             ));
         }
         let before_restore = state
@@ -28953,17 +28941,7 @@ mod tests {
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
 
-        let terminal = (0..10_000).find_map(|_| {
-            state
-                .poll_location_write_outcomes(1_002)
-                .into_iter()
-                .find(|outcome| outcome.request_id == Some(request_id))
-                .or_else(|| {
-                    thread::yield_now();
-                    None
-                })
-        });
-        let terminal = terminal.expect("queued sample eventually settles");
+        let terminal = wait_for_location_write_outcome(&state, 1_002, request_id);
         assert_eq!(terminal.ride_id, started.ride_id);
         assert_eq!(terminal.snapshot.ride_id, pending.snapshot.ride_id);
         assert!(terminal.snapshot.revision > pending.snapshot.revision);
@@ -31464,6 +31442,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one real SQLite stall must preserve music receipt and durable Stop ordering"
+    )]
     fn ride_invariant_music_sql_receipt_precedes_durable_stop() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -31493,8 +31475,17 @@ mod tests {
             )
             .unwrap()
             .unwrap();
+        let marker = database.inner.ride_session_marker().unwrap();
         let sql = rusqlite::Connection::open(&path).unwrap();
         sql.execute_batch("BEGIN IMMEDIATE").unwrap();
+        // Queue admission establishes FIFO ordering before music's deferred
+        // transaction; this write-only marker command waits for SQLite's lock.
+        let mut marker_write = database.inner.queue_ride_session_marker(marker).unwrap();
+        let marker_pending = marker_write.try_result();
+        assert!(
+            marker_pending.is_none(),
+            "marker write must remain pending under the SQL lock: {marker_pending:?}"
+        );
         let music = core
             .begin_record_music_observation(Arc::clone(&lease))
             .unwrap();
@@ -31521,6 +31512,18 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::MusicObservationIncomplete)
         );
         sql.execute_batch("COMMIT").unwrap();
+        let marker_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(result) = marker_write.try_result() {
+                result.unwrap();
+                break;
+            }
+            assert!(
+                Instant::now() < marker_deadline,
+                "marker write did not settle"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
         let deadline = Instant::now() + Duration::from_secs(5);
         let receipt = loop {
             match music.poll().unwrap() {
