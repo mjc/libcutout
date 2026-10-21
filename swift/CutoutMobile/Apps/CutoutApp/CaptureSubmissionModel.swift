@@ -14,6 +14,10 @@ final class CaptureSubmissionModel {
     typealias Credential = @MainActor () async throws -> ChargingCommunityCredential
     typealias ExistingCredential = @MainActor () async throws -> ChargingCommunityCredential?
     typealias Send = @MainActor (String, ChargingCommunityCredential) async throws -> MobileCaptureSubmissionStatusDto
+    typealias Progress = @MainActor @Sendable (MobileCaptureSubmissionProgressDto) -> Void
+    typealias SendWithProgress = @MainActor (
+        String, ChargingCommunityCredential, @escaping Progress
+    ) async throws -> MobileCaptureSubmissionStatusDto
     typealias Cancel = @MainActor (String, ChargingCommunityCredential?) async throws ->
         MobileCaptureSubmissionStatusDto
 
@@ -21,13 +25,14 @@ final class CaptureSubmissionModel {
     private(set) var status: MobileCaptureSubmissionStatusDto?
     private(set) var isWorking = false
     private(set) var isSending = false
+    private(set) var progress: MobileCaptureSubmissionProgressDto?
     private(set) var isCancelling = false
     private(set) var error: String?
     @ObservationIgnored private let loadStatus: LoadStatus
     @ObservationIgnored private let prepareOperation: Prepare
     @ObservationIgnored private let credential: Credential
     @ObservationIgnored private let existingCredential: ExistingCredential
-    @ObservationIgnored private let sendOperation: Send
+    @ObservationIgnored private let sendOperation: SendWithProgress
     @ObservationIgnored private let cancelOperation: Cancel
     @ObservationIgnored private let deleteOperation: Send
     @ObservationIgnored private var publicationGeneration: UInt64 = 0
@@ -40,7 +45,7 @@ final class CaptureSubmissionModel {
         existingCredential: @escaping ExistingCredential = {
             try await ChargingCommunitySync.shared.existingCredentialForCaptureSubmission()
         },
-        send: @escaping Send = sendSnapshot,
+        send: @escaping SendWithProgress = sendSnapshot,
         cancel: @escaping Cancel = cancelSubmission,
         delete: @escaping Send = deleteSubmission
     ) {
@@ -68,16 +73,34 @@ final class CaptureSubmissionModel {
     func send() async {
         guard !isWorking, !isSending, let operationID = status?.operationId else { return }
         isSending = true
-        defer { isSending = false }
+        progress = nil
+        defer {
+            isSending = false
+            progress = nil
+        }
         await perform(readBackOnFailure: true) {
+            let generation = self.publicationGeneration
             let credential = try await self.credential()
-            return try await self.sendOperation(operationID, credential)
+            return try await self.sendOperation(operationID, credential) { [weak self] progress in
+                guard let self, self.isSending, generation == self.publicationGeneration,
+                    progress.operationId == operationID
+                else { return }
+                // Main-actor deliveries can be queued; never move the display backwards.
+                if let previous = self.progress {
+                    guard progress.attemptId == previous.attemptId,
+                        progress.bytesSent >= previous.bytesSent,
+                        previous.phase != .verifyingReceipt || progress.phase == .verifyingReceipt
+                    else { return }
+                }
+                self.progress = progress
+            }
         }
     }
 
     func cancel() async {
         guard !isCancelling, !isWorking || isSending, let operationID = status?.operationId else { return }
         isCancelling = true
+        progress = nil
         defer { isCancelling = false }
         // Cancellation can interrupt the native await for Send. Its Rust result
         // owns the new presentation; a late Send callback cannot replace it.
@@ -184,10 +207,12 @@ final class CaptureSubmissionModel {
         try await client().prepare(source: source)
     }
 
-    private static func sendSnapshot(_ operationID: String, _ credential: ChargingCommunityCredential) async throws
-        -> MobileCaptureSubmissionStatusDto
-    {
-        try await client().send(operationId: operationID, accountId: credential.identityID, token: credential.token)
+    private static func sendSnapshot(
+        _ operationID: String, _ credential: ChargingCommunityCredential, _ progress: @escaping Progress
+    ) async throws -> MobileCaptureSubmissionStatusDto {
+        try await client().sendWithProgress(
+            operationId: operationID, accountId: credential.identityID, token: credential.token,
+            listener: CaptureSendProgressListener(update: progress))
     }
 
     private static func cancelSubmission(_ operationID: String, _ credential: ChargingCommunityCredential?) async throws
@@ -200,5 +225,16 @@ final class CaptureSubmissionModel {
         -> MobileCaptureSubmissionStatusDto
     {
         try await client().delete(operationId: operationID, accountId: credential.identityID, token: credential.token)
+    }
+}
+
+/// UniFFI invokes the listener from the Rust transport executor.
+private final class CaptureSendProgressListener: MobileCaptureSubmissionProgressListener, Sendable {
+    let update: CaptureSubmissionModel.Progress
+
+    init(update: @escaping CaptureSubmissionModel.Progress) { self.update = update }
+
+    func onProgress(progress: MobileCaptureSubmissionProgressDto) {
+        Task { @MainActor [update] in update(progress) }
     }
 }

@@ -116,6 +116,7 @@ impl CaptureSubmissionTransport for HttpCaptureTransport {
                         return Ok::<_, io::Error>(None);
                     }
                     chunk.truncate(count);
+                    payload.report_upload_progress();
                     Ok(Some((chunk, payload)))
                 })
                 .await

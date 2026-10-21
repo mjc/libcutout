@@ -38,7 +38,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
                 credentials += 1
                 return credential
             },
-            send: { operation, receivedCredential in
+            send: { operation, receivedCredential, _ in
                 XCTAssertEqual(receivedCredential, credential)
                 operations.append(operation)
                 return operations.count == 1 ? failed : sent
@@ -70,7 +70,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
                 credentials += 1
                 throw TestFailure.unavailable
             },
-            send: { _, _ in
+            send: { _, _, _ in
                 sends += 1
                 throw TestFailure.unavailable
             },
@@ -79,6 +79,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         )
         await model.refresh()
         XCTAssertEqual(model.status, stored)
+        XCTAssertNil(model.progress, "Relaunch does not imply that an upload resumes")
         XCTAssertEqual(sends, 0)
         XCTAssertEqual(credentials, 0)
     }
@@ -98,7 +99,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
                 throw TestFailure.unavailable
             },
             existingCredential: { nil },
-            send: { _, _ in throw TestFailure.unavailable },
+            send: { _, _, _ in throw TestFailure.unavailable },
             cancel: { operation, credential in
                 XCTAssertEqual(operation, prepared.operationId)
                 XCTAssertNil(credential)
@@ -135,7 +136,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
             prepare: { _ in prepared },
             credential: { credential },
             existingCredential: { credential },
-            send: { _, _ in
+            send: { _, _, _ in
                 sends += 1
                 await gate.suspend()
                 return lateSent
@@ -183,7 +184,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
                 credentials += 1
                 throw TestFailure.unavailable
             },
-            send: { _, _ in
+            send: { _, _, _ in
                 sends += 1
                 throw TestFailure.unavailable
             },
@@ -199,6 +200,96 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertEqual(preparations, 1)
         XCTAssertEqual(credentials, 0, "Consent preparation is local and must not register an identity")
         XCTAssertEqual(sends, 0, "Only the confirmed Send action may upload")
+    }
+
+    func testUploadProgressWaitsForTheDurableReceipt() async {
+        let prepared = status(.prepared)
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let uploading = expectation(description: "Partial upload")
+        let verifying = expectation(description: "Body uploaded; receipt pending")
+        let uploadGate = CaptureSubmissionSendGate(entered: uploading)
+        let receiptGate = CaptureSubmissionSendGate(entered: verifying)
+        let sent = status(.sent)
+        let model = CaptureSubmissionModel(
+            source: .liveCapture(id: UUID().uuidString), loadStatus: { _ in prepared },
+            credential: { credential },
+            send: { operation, _, progress in
+                progress(.init(operationId: operation, attemptId: 1, bytesSent: 25, totalBytes: 100, phase: .uploading))
+                await uploadGate.suspend()
+                progress(
+                    .init(
+                        operationId: operation, attemptId: 1, bytesSent: 100, totalBytes: 100, phase: .verifyingReceipt)
+                )
+                await receiptGate.suspend()
+                return sent
+            })
+        await model.refresh()
+        let sending = Task { await model.send() }
+        await fulfillment(of: [uploading], timeout: 2)
+        XCTAssertEqual(model.progress?.bytesSent, 25)
+        XCTAssertEqual(model.progress?.phase, .uploading)
+        XCTAssertNotEqual(model.status?.phase, .sent)
+        await uploadGate.release()
+        await fulfillment(of: [verifying], timeout: 2)
+        XCTAssertEqual(model.progress?.bytesSent, 100)
+        XCTAssertEqual(model.progress?.phase, .verifyingReceipt)
+        XCTAssertNotEqual(model.status?.phase, .sent, "An uploaded body is not a durable receipt")
+        await receiptGate.release()
+        await sending.value
+        XCTAssertEqual(model.status?.phase, .sent)
+        XCTAssertNil(model.progress)
+    }
+
+    func testRetryAndCancellationDiscardOldProgress() async {
+        let prepared = status(.prepared)
+        let failed = status(.failed)
+        let cancelled = status(.cancelled)
+        let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
+        let entered = expectation(description: "Retry uploading")
+        let gate = CaptureSubmissionSendGate(entered: entered)
+        var callbacks: [CaptureSubmissionModel.Progress] = []
+        let model = CaptureSubmissionModel(
+            source: .liveCapture(id: UUID().uuidString), loadStatus: { _ in prepared },
+            credential: { credential }, existingCredential: { credential },
+            send: { operation, _, progress in
+                callbacks.append(progress)
+                XCTAssertEqual(operation, prepared.operationId)
+                if callbacks.count == 1 {
+                    progress(
+                        .init(operationId: operation, attemptId: 1, bytesSent: 75, totalBytes: 100, phase: .uploading))
+                    return failed
+                }
+                progress(.init(operationId: operation, attemptId: 2, bytesSent: 0, totalBytes: 100, phase: .uploading))
+                await gate.suspend()
+                return failed
+            }, cancel: { _, _ in cancelled })
+        await model.refresh()
+        await model.send()
+        XCTAssertNil(model.progress, "Failure must clear the old byte count")
+        let retry = Task { await model.send() }
+        await fulfillment(of: [entered], timeout: 2)
+        XCTAssertEqual(model.progress?.bytesSent, 0, "Retry uploads the snapshot from the beginning")
+        callbacks[0](
+            .init(operationId: prepared.operationId, attemptId: 1, bytesSent: 99, totalBytes: 100, phase: .uploading))
+        callbacks[1](
+            .init(operationId: "another-operation", attemptId: 2, bytesSent: 99, totalBytes: 100, phase: .uploading))
+        XCTAssertEqual(model.progress?.bytesSent, 0)
+        callbacks[1](
+            .init(operationId: prepared.operationId, attemptId: 2, bytesSent: 50, totalBytes: 100, phase: .uploading))
+        callbacks[1](
+            .init(operationId: prepared.operationId, attemptId: 2, bytesSent: 25, totalBytes: 100, phase: .uploading))
+        XCTAssertEqual(model.progress?.bytesSent, 50, "Queued callbacks cannot regress progress")
+        await model.cancel()
+        XCTAssertNil(model.progress)
+        callbacks[1](
+            .init(
+                operationId: prepared.operationId, attemptId: 2, bytesSent: 100, totalBytes: 100,
+                phase: .verifyingReceipt))
+        XCTAssertNil(model.progress)
+        await gate.release()
+        await retry.value
+        XCTAssertEqual(model.status?.phase, .cancelled)
+        XCTAssertNil(model.progress)
     }
 
     func testSharingAnExportHasNoSubmissionOrCredentialEffect() async {

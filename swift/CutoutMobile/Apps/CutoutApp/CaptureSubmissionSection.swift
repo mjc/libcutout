@@ -73,7 +73,11 @@ struct CaptureSubmissionSection: View {
                 .disabled(model.isWorking || !evidence.isLoaded || evidence.isWorking || evidence.isDirty)
                 .accessibilityIdentifier("captures.send.review")
             }
-            if model.isWorking { ProgressView(model.isSending ? "Sending privately…" : "Preparing…") }
+            if model.isSending, let progress = model.progress {
+                CaptureSendProgressView(progress: progress)
+            } else if model.isWorking {
+                ProgressView(model.isSending ? "Sending privately…" : "Preparing…")
+            }
             if let error = model.error {
                 Text(error).foregroundStyle(PevColors.warningText)
                     .accessibilityIdentifier("captures.send.error")
@@ -362,6 +366,41 @@ private struct CaptureEvidenceSection: View {
                 await model.importScreenshots(items)
                 selectedItems = []
             }
+        }
+    }
+}
+
+struct CaptureSendProgressView: View {
+    let progress: MobileCaptureSubmissionProgressDto
+
+    private var fraction: Double {
+        guard progress.totalBytes > 0 else { return 0 }
+        return min(1, Double(progress.bytesSent) / Double(progress.totalBytes))
+    }
+
+    private var percentage: String { "\(Int((fraction * 100).rounded(.down)))%" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if progress.phase == .verifyingReceipt {
+                ProgressView("Verifying receipt…")
+                    .accessibilityIdentifier("captures.send.verifying")
+            } else {
+                HStack {
+                    Text("Sending privately…")
+                    Spacer()
+                    Text(percentage)
+                        .monospacedDigit()
+                }
+            }
+            ProgressView(value: fraction)
+                .accessibilityLabel("Capture upload")
+                .accessibilityValue(percentage)
+                .accessibilityIdentifier("captures.send.progress")
+            Text("\(progress.bytesSent.formatted()) / \(progress.totalBytes.formatted()) bytes")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("captures.send.bytes")
         }
     }
 }
