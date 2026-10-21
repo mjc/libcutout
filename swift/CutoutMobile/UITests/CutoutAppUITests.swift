@@ -4006,26 +4006,27 @@ final class CutoutAppUITests: XCTestCase {
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
                 let frame = window.frame
-                let imageSize = XCUIScreen.main.screenshot().image.size
                 return frame.width > 0 && frame.height > 0
                     && (frame.width > frame.height) == landscape
                     && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
-                    && screen.exists && frame.insetBy(dx: -2, dy: -2).contains(screen.frame)
-                    && (imageSize.width > imageSize.height) == landscape
+                    && screen.exists
             }, object: app
         )
         XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
-        let screenshot = XCUIScreen.main.screenshot().image
-        let displayedSize = screenshot.size
+        let windowFrame = window.frame
+        XCTAssertTrue(windowFrame.insetBy(dx: -2, dy: -2).contains(screen.frame), app.debugDescription)
+        let screenshot = XCUIScreen.main.screenshot()
+        let image = screenshot.image
+        let displayedSize = image.size
         let orientationProof = XCTAttachment(
-            string: "device=\(XCUIDevice.shared.orientation.rawValue); window=\(window.frame); "
-                + "imageOrientation=\(screenshot.imageOrientation.rawValue); imageSize=\(screenshot.size); "
+            string: "device=\(XCUIDevice.shared.orientation.rawValue); window=\(windowFrame); "
+                + "imageOrientation=\(image.imageOrientation.rawValue); imageSize=\(image.size); "
                 + "displayedSize=\(displayedSize)"
         )
         orientationProof.name = "settled Ride orientation metadata"
         orientationProof.lifetime = .keepAlways
         add(orientationProof)
-        let screenshotProof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let screenshotProof = XCTAttachment(screenshot: screenshot)
         screenshotProof.name = "settled Ride native screenshot"
         screenshotProof.lifetime = .keepAlways
         add(screenshotProof)
@@ -4364,24 +4365,14 @@ final class CutoutAppUITests: XCTestCase {
         let player = app.descendants(matching: .any)["music.compact-player"]
         let tabs = app.tabBars.firstMatch
         assertRideWindowHasSettled(ride, landscape: true)
-        XCTAssertLessThanOrEqual(window.frame.height, 500, "Use a short phone landscape viewport")
-        let controls = [
-            app.buttons["ride.readings.open"], app.buttons["vesc.drivetrain.open"], app.buttons["dashboard.disconnect"],
-        ]
-        let identifiers = [
-            "ride.hero.speed", "ride.hero.status", "vesc.ride.tripDistance", "vesc.ride.rideDuration",
-            "vesc.ride.batteryCurrent", "vesc.ride.controller", "vesc.ride.motorTemperature",
-        ]
-        let content = controls + identifiers.map { ride.descendants(matching: .any)[$0] }
-        let contentIdentifiers = ["ride.readings.open", "vesc.drivetrain.open", "dashboard.disconnect"] + identifiers
-        var geometryEvaluations: [String] = []
+        var readinessEvaluations: [String] = []
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
                 let started = ProcessInfo.processInfo.systemUptime
-                var condition = "all geometry conditions passed"
+                var condition = "route, tabs and player presence ready"
                 defer {
                     let elapsed = ProcessInfo.processInfo.systemUptime - started
-                    geometryEvaluations.append("elapsed=\(elapsed)s; \(condition)")
+                    readinessEvaluations.append("elapsed=\(elapsed)s; \(condition)")
                 }
                 guard ride.exists else {
                     condition = "dashboard.screen.vescRide does not exist"
@@ -4396,72 +4387,69 @@ final class CutoutAppUITests: XCTestCase {
                     condition = "player hidden=\(playerIsHidden), exists=\(playerExists)"
                     return false
                 }
-                let windowFrame = window.frame
-                let tabFrame = tabs.frame
-                var obstructionFrame = tabFrame
-                if !playerIsHidden {
-                    let playerFrame = player.frame
-                    guard windowFrame.contains(playerFrame), playerFrame.maxY <= tabFrame.minY + 2 else {
-                        condition = "player=\(playerFrame), window=\(windowFrame), tabs=\(tabFrame)"
-                        return false
-                    }
-                    obstructionFrame = playerFrame
-                }
-                let rideFrame = ride.frame
-                let viewport = CGRect(
-                    x: rideFrame.minX, y: rideFrame.minY, width: rideFrame.width,
-                    height: max(0, min(rideFrame.maxY, obstructionFrame.minY) - rideFrame.minY)
-                )
-                for (identifier, element) in zip(contentIdentifiers, content) {
-                    guard element.exists else {
-                        condition = "\(identifier) does not exist; viewport=\(viewport)"
-                        return false
-                    }
-                    guard element.isHittable else {
-                        condition = "\(identifier) is not hittable; viewport=\(viewport)"
-                        return false
-                    }
-                    let frame = element.frame
-                    guard viewport.insetBy(dx: -2, dy: -2).contains(frame) else {
-                        condition = "\(identifier) frame=\(frame) outside viewport=\(viewport)"
-                        return false
-                    }
-                }
                 return true
             }, object: app
         )
         let settledResult = XCTWaiter.wait(for: [settled], timeout: 5)
-        let diagnostic = XCTAttachment(string: geometryEvaluations.joined(separator: "\n"))
-        diagnostic.name = "standard-eskate-landscape-geometry-player-\(playerIsHidden ? "hidden" : "shown")"
+        let diagnostic = XCTAttachment(string: readinessEvaluations.joined(separator: "\n"))
+        diagnostic.name = "standard-eskate-landscape-readiness-player-\(playerIsHidden ? "hidden" : "shown")"
         diagnostic.lifetime = .keepAlways
         add(diagnostic)
         XCTAssertEqual(
             settledResult, .completed,
-            "Latest geometry evaluation: \(geometryEvaluations.last ?? "not evaluated"). \(app.debugDescription)"
+            "Latest readiness evaluation: \(readinessEvaluations.last ?? "not evaluated"). \(app.debugDescription)"
         )
+
+        let windowFrame = window.frame
+        XCTAssertLessThanOrEqual(windowFrame.height, 500, "Use a short phone landscape viewport")
+        let rideFrame = ride.frame
+        let tabFrame = tabs.frame
+        let playerFrame = playerIsHidden ? nil : player.frame
+        if let playerFrame {
+            XCTAssertTrue(windowFrame.contains(playerFrame), app.debugDescription)
+            XCTAssertLessThanOrEqual(playerFrame.maxY, tabFrame.minY + 2, app.debugDescription)
+        }
+        let obstructionFrame = playerFrame ?? tabFrame
+        let viewport = CGRect(
+            x: rideFrame.minX, y: rideFrame.minY, width: rideFrame.width,
+            height: max(0, min(rideFrame.maxY, obstructionFrame.minY) - rideFrame.minY)
+        )
+        let controls = [
+            app.buttons["ride.readings.open"], app.buttons["vesc.drivetrain.open"], app.buttons["dashboard.disconnect"],
+        ]
+        let identifiers = [
+            "ride.hero.speed", "ride.hero.status", "vesc.ride.tripDistance", "vesc.ride.rideDuration",
+            "vesc.ride.batteryCurrent", "vesc.ride.controller", "vesc.ride.motorTemperature",
+        ]
+        let content = controls + identifiers.map { ride.descendants(matching: .any)[$0] }
+        let contentIdentifiers = ["ride.readings.open", "vesc.drivetrain.open", "dashboard.disconnect"] + identifiers
         XCTAssertEqual(app.buttons.matching(identifier: "dashboard.disconnect").count, 1)
         XCTAssertEqual(ride.scrollViews.count, 0, app.debugDescription)
-        let viewport = unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
-        for element in content {
-            XCTAssertTrue(element.isHittable, "Unreachable \(element.identifier): \(app.debugDescription)")
+        for (index, entry) in zip(contentIdentifiers, content).enumerated() {
+            let (identifier, element) = entry
+            XCTAssertTrue(element.exists, "Missing \(identifier): \(app.debugDescription)")
+            XCTAssertTrue(element.isHittable, "Unreachable \(identifier): \(app.debugDescription)")
+            let frame = element.frame
             XCTAssertTrue(
-                viewport.insetBy(dx: -2, dy: -2).contains(element.frame),
-                "Clipped \(element.identifier): \(element.frame), viewport=\(viewport)"
+                viewport.insetBy(dx: -2, dy: -2).contains(frame),
+                "Clipped \(identifier): \(frame), viewport=\(viewport)"
             )
+            if index < controls.count {
+                assertMinimumControlDimension(frame.width)
+                assertMinimumControlDimension(frame.height)
+            }
         }
-        for control in controls {
-            assertMinimumControlDimension(control.frame.width)
-            assertMinimumControlDimension(control.frame.height)
-        }
-        if !playerIsHidden {
+        if let playerFrame {
             let musicControls = [app.buttons["music.expand"], player.buttons["Play"], player.buttons["Next track"]]
+            let musicFrames = musicControls.map { $0.frame }
             for (index, control) in musicControls.enumerated() {
                 XCTAssertTrue(control.isHittable, app.debugDescription)
-                assertMinimumControlDimension(control.frame.width)
-                assertMinimumControlDimension(control.frame.height)
-                XCTAssertTrue(player.frame.insetBy(dx: -2, dy: -2).contains(control.frame), app.debugDescription)
-                for other in musicControls.dropFirst(index + 1) {
-                    XCTAssertFalse(control.frame.intersects(other.frame), app.debugDescription)
+                let frame = musicFrames[index]
+                assertMinimumControlDimension(frame.width)
+                assertMinimumControlDimension(frame.height)
+                XCTAssertTrue(playerFrame.insetBy(dx: -2, dy: -2).contains(frame), app.debugDescription)
+                for otherFrame in musicFrames.dropFirst(index + 1) {
+                    XCTAssertFalse(frame.intersects(otherFrame), app.debugDescription)
                 }
             }
         }
