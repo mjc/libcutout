@@ -2191,6 +2191,7 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
 fn migrate_v50_to_v51(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::device_vehicle::SCHEMA)?;
+    super::device_vehicle::verify_schema(&transaction)?;
     transaction.execute_batch(&schema_pragmas(51))?;
     transaction.commit()?;
     Ok(())
@@ -2199,6 +2200,7 @@ fn migrate_v50_to_v51(connection: &mut Connection) -> Result<(), StorageError> {
 fn migrate_v51_to_v52(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::device_drivetrain::SCHEMA_V51)?;
+    super::device_drivetrain::verify_migration_schema(&transaction)?;
     transaction.execute_batch(&schema_pragmas(52))?;
     transaction.commit()?;
     Ok(())
@@ -2240,6 +2242,102 @@ fn migrate_v53_to_v54(connection: &mut Connection) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classification_migration_rejects_incompatible_existing_table_without_advancing() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection.execute_batch(
+            "DROP TABLE device_vesc_drivetrains;
+             DROP TABLE device_vehicle_classifications;
+             CREATE TABLE device_vehicle_classifications (
+                platform_identifier TEXT PRIMARY KEY NOT NULL,
+                kind INTEGER NOT NULL, provenance TEXT NOT NULL, updated_at_ms INTEGER NOT NULL
+             );
+             INSERT INTO device_vehicle_classifications VALUES ('controller-a',7,'user_provided',17);
+             PRAGMA user_version = 50;",
+        ).unwrap();
+        let schema: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name='device_vehicle_classifications'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(matches!(
+            migrate_v50_to_v51(&mut connection),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            50
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='device_vehicle_classifications'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            schema
+        );
+        assert_eq!(connection.query_row(
+            "SELECT kind,provenance,updated_at_ms FROM device_vehicle_classifications WHERE platform_identifier='controller-a'",
+            [], |row| Ok((row.get::<_, i64>(0)?,row.get::<_, String>(1)?,row.get::<_, i64>(2)?)),
+        ).unwrap(), (7, "user_provided".to_owned(), 17));
+    }
+
+    #[test]
+    fn drivetrain_migration_rejects_incompatible_existing_table_without_advancing() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE device_vesc_drivetrains;
+             CREATE TABLE device_vesc_drivetrains (
+                platform_identifier TEXT PRIMARY KEY NOT NULL,
+                diameter_micrometres TEXT NOT NULL, pole_pairs INTEGER NOT NULL,
+                ratio_milli INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+             );
+             INSERT INTO device_vesc_drivetrains VALUES ('controller-a','90000',7,2500,17);
+             PRAGMA user_version = 51;",
+            )
+            .unwrap();
+        let schema: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name='device_vesc_drivetrains'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(matches!(
+            migrate_v51_to_v52(&mut connection),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            51
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='device_vesc_drivetrains'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            schema
+        );
+        assert_eq!(connection.query_row(
+            "SELECT diameter_micrometres,pole_pairs,ratio_milli,updated_at_ms FROM device_vesc_drivetrains WHERE platform_identifier='controller-a'",
+            [], |row| Ok((row.get::<_, String>(0)?,row.get::<_, u8>(1)?,row.get::<_, u32>(2)?,row.get::<_, i64>(3)?)),
+        ).unwrap(), ("90000".to_owned(), 7, 2500, 17));
+    }
 
     #[test]
     fn drivetrain_revision_upgrade_preserves_existing_receipts_from_older_version_paths() {

@@ -233,12 +233,57 @@ fn load_target(
 }
 
 pub(super) fn verify_schema(connection: &Connection) -> Result<(), StorageError> {
-    verify_columns(connection, true)
+    verify_columns(connection, &[DrivetrainSchema::Targeted])
 }
 pub(super) fn verify_v52_schema(connection: &Connection) -> Result<(), StorageError> {
-    verify_columns(connection, false)
+    verify_columns(connection, &[DrivetrainSchema::Revisioned])
 }
-fn verify_columns(connection: &Connection, targeted: bool) -> Result<(), StorageError> {
+pub(super) fn verify_migration_schema(connection: &Connection) -> Result<(), StorageError> {
+    verify_columns(
+        connection,
+        &[
+            DrivetrainSchema::Legacy,
+            DrivetrainSchema::Revisioned,
+            DrivetrainSchema::Targeted,
+        ],
+    )
+}
+
+#[derive(Clone, Copy)]
+enum DrivetrainSchema {
+    Legacy,
+    Revisioned,
+    Targeted,
+}
+
+impl DrivetrainSchema {
+    fn columns(self) -> Vec<(String, String, i64, i64)> {
+        let mut columns = [
+            ("platform_identifier", "TEXT", 1, 1),
+            ("diameter_micrometres", "INTEGER", 1, 0),
+            ("pole_pairs", "INTEGER", 1, 0),
+            ("ratio_milli", "INTEGER", 1, 0),
+            ("updated_at_ms", "INTEGER", 1, 0),
+        ]
+        .map(|(name, kind, required, key)| (name.to_owned(), kind.to_owned(), required, key))
+        .to_vec();
+        match self {
+            Self::Legacy => {}
+            Self::Revisioned | Self::Targeted => {
+                columns.push(("revision".to_owned(), "INTEGER".to_owned(), 1, 0));
+            }
+        }
+        if let Self::Targeted = self {
+            columns.push(("target_key".to_owned(), "TEXT".to_owned(), 1, 2));
+        }
+        columns
+    }
+}
+
+fn verify_columns(
+    connection: &Connection,
+    accepted: &[DrivetrainSchema],
+) -> Result<(), StorageError> {
     let mut statement = connection.prepare("PRAGMA table_info(device_vesc_drivetrains)")?;
     let columns = statement
         .query_map([], |row| {
@@ -250,20 +295,7 @@ fn verify_columns(connection: &Connection, targeted: bool) -> Result<(), Storage
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut expected = [
-        ("platform_identifier", "TEXT", 1, 1),
-        ("diameter_micrometres", "INTEGER", 1, 0),
-        ("pole_pairs", "INTEGER", 1, 0),
-        ("ratio_milli", "INTEGER", 1, 0),
-        ("updated_at_ms", "INTEGER", 1, 0),
-        ("revision", "INTEGER", 1, 0),
-    ]
-    .map(|(name, kind, required, key)| (name.to_owned(), kind.to_owned(), required, key))
-    .to_vec();
-    if targeted {
-        expected.push(("target_key".to_owned(), "TEXT".to_owned(), 1, 2));
-    }
-    if columns != expected {
+    if !accepted.iter().any(|schema| columns == schema.columns()) {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
