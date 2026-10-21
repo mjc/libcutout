@@ -2068,6 +2068,7 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
+    capture_identity_owner_id: Uuid,
     inner: Mutex<MobileSessionState>,
     diagnostic_database: Option<persistence::RideDatabase>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
@@ -2795,6 +2796,7 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
+            capture_identity_owner_id: Uuid::new_v4(),
             inner: Mutex::new(MobileSessionState::default()),
             diagnostic_database: None,
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
@@ -2811,6 +2813,7 @@ impl CutoutSessionStateHandle {
     )]
     pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
         Arc::new(Self {
+            capture_identity_owner_id: Uuid::new_v4(),
             inner: Mutex::new(MobileSessionState::default()),
             diagnostic_database: Some(database.inner.clone()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState {
@@ -16713,6 +16716,12 @@ impl From<MobilePevcapWriteDispositionDto> for cutout_core::PevcapWriteDispositi
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct CaptureIdentityAdmission {
+    owner_id: Uuid,
+    token: cutout_core::ConnectionAttemptToken,
+}
+
 /// Mobile-facing builder for a PEVCAP capture export.
 ///
 /// Native callers provide absolute monotonic uptime in milliseconds. This Rust owner converts
@@ -16726,6 +16735,7 @@ pub struct MobilePevcapCaptureBuilder {
     advertised_services: Mutex<Vec<GattChannel>>,
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
+    capture_identity_admission: Mutex<Option<CaptureIdentityAdmission>>,
     annotations: Mutex<cutout_core::CaptureAnnotations>,
     writer: Mutex<CaptureWriterSlot>,
     writer_finish_lock: Mutex<()>,
@@ -17131,6 +17141,7 @@ impl MobilePevcapCaptureBuilder {
             advertised_services: Mutex::new(Vec::new()),
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
+            capture_identity_admission: Mutex::new(None),
             annotations: Mutex::new(cutout_core::CaptureAnnotations::default()),
             writer: Mutex::new(CaptureWriterSlot::Ready),
             writer_finish_lock: Mutex::new(()),

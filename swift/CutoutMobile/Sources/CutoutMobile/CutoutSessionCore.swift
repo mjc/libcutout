@@ -476,11 +476,6 @@ public final class CutoutSessionCore: NSObject {
     @MainActor private var lastLocationAcquisition: MobileRideMapLocationAcquisitionDto?
     @MainActor private var rideMapStorageStatus: (error: MobileRideMapError?, isReady: Bool) = (nil, false)
     private var storedProtocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-    private struct CaptureProtocolIdentityProof: Equatable {
-        let token: ConnectionAttemptToken
-        let candidate: DevicePickerDiscoveryCandidate
-    }
-    private var captureProtocolIdentityProof: CaptureProtocolIdentityProof?
     public var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? {
         onBleQueue { storedProtocolIdentityCandidate }
     }
@@ -497,6 +492,8 @@ public final class CutoutSessionCore: NSObject {
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPresentation) -> Void)?
     public var onConnectionSnapshotChange: ((ConnectionSnapshot) -> Void)?
+    public var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
+    private var publishedDeviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
@@ -1783,6 +1780,7 @@ public final class CutoutSessionCore: NSObject {
             displayUpdateKind
         )
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
+        publishDeviceSessionSnapshotIfChanged()
         publishDisplayState()
         publishPhoneAlarmActionsAvailable()
         return captureOutcomes
@@ -1823,7 +1821,7 @@ public final class CutoutSessionCore: NSObject {
             storedProtocolIdentityCandidate = pickerCandidate
             publishProtocolIdentityCandidate()
             record("protocol_identity=\(candidate.detail)")
-            return refreshCaptureIdentityProof(pickerCandidate)
+            return updateCaptureIdentity()
         case (.none, _), (_, .none):
             return nil
         }
@@ -1846,7 +1844,6 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func clearProtocolIdentityCandidate() {
-        captureProtocolIdentityProof = nil
         guard protocolIdentityCandidate != nil else {
             return
         }
@@ -1879,7 +1876,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         let pickerCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
-        if let outcome = refreshCaptureIdentityProof(pickerCandidate) {
+        if let outcome = updateCaptureIdentity() {
             _ = acceptCaptureWrite(outcome)
         }
         guard pickerCandidate != protocolIdentityCandidate else {
@@ -1929,10 +1926,23 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishConnectionSnapshot() {
-        let snapshot = connectionSnapshot
+        if let outcome = updateCaptureIdentity() { _ = acceptCaptureWrite(outcome) }
+        let sessionSnapshot = rustSessionState.deviceSessionSnapshot()
+        let snapshot = sessionSnapshot.connection
         publishOnMain { [weak self] in
             guard let self, self.connectionSnapshot.revision == snapshot.revision else { return }
             self.onConnectionSnapshotChange?(snapshot)
+        }
+        publishDeviceSessionSnapshotIfChanged(sessionSnapshot)
+    }
+
+    private func publishDeviceSessionSnapshotIfChanged(_ captured: MobileDeviceSessionSnapshotDto? = nil) {
+        let snapshot = captured ?? rustSessionState.deviceSessionSnapshot()
+        guard snapshot != publishedDeviceSessionSnapshot else { return }
+        publishedDeviceSessionSnapshot = snapshot
+        publishOnMain { [weak self] in
+            guard let self, self.rustSessionState.deviceSessionSnapshot() == snapshot else { return }
+            self.onDeviceSessionSnapshotChange?(snapshot)
         }
     }
 
@@ -2946,6 +2956,23 @@ public final class CutoutSessionCore: NSObject {
     }
 
     #if DEBUG
+        func publishConnectionSnapshotForTesting() {
+            onBleQueue { publishConnectionSnapshot() }
+        }
+
+        func deliverAcceptedNotificationForTesting(
+            token: ConnectionAttemptToken, channel: CBUUID, service: CBUUID, bytes: Data
+        ) {
+            onBleQueue {
+                guard rustSessionState.connectionAttemptIsCurrent(token: token),
+                    let uuid = BluetoothUuid(coreBluetoothUuid: channel)
+                else { return }
+                receiveAcceptedNotification(
+                    token: token, channel: uuid, characteristic: channel,
+                    service: service, value: bytes, notificationPeripheral: nil)
+            }
+        }
+
         func finishCaptureForTesting(priorWriteOutcome: MobileCaptureWriteOutcomeDto = .accepted) {
             onBleQueue {
                 self.finishCaptureWriter(priorWriteOutcome: priorWriteOutcome)
@@ -2966,34 +2993,11 @@ public final class CutoutSessionCore: NSObject {
     }
 
     /// Records only evidence admitted on this Rust connection attempt; picker identity may survive link loss.
-    private func refreshCaptureIdentityProof(_ candidate: DevicePickerDiscoveryCandidate)
-        -> MobileCaptureWriteOutcomeDto?
-    {
-        guard let token = connectionSnapshot.token,
-            rustSessionState.connectionAttemptIsCurrent(token: token)
-        else { return nil }
-        let proof = CaptureProtocolIdentityProof(token: token, candidate: candidate)
-        guard captureProtocolIdentityProof != proof else { return nil }
-        captureProtocolIdentityProof = proof
-        return updateCaptureIdentity()
-    }
-
-    private func updateCaptureIdentity() -> MobileCaptureWriteOutcomeDto? {
-        guard captureRecorder.hasWriter,
-            let proof = captureProtocolIdentityProof,
-            rustSessionState.connectionAttemptIsCurrent(token: proof.token),
-            let identity = captureResolvedIdentity(protocolIdentityCandidate: proof.candidate)
-        else { return nil }
-        let outcome = captureRecorder.setResolvedIdentity(
-            identity,
-            evidence: proof.candidate.evidence,
-            detail: proof.candidate.detail
-        )
-        if outcome != .accepted {
-            // A rejected metadata effect is not an acknowledgement; fresh evidence may retry.
-            captureProtocolIdentityProof = nil
-        }
-        return outcome
+    private func updateCaptureIdentity(
+        token capturedToken: ConnectionAttemptToken? = nil
+    ) -> MobileCaptureWriteOutcomeDto? {
+        guard let token = capturedToken ?? connectionSnapshot.token else { return nil }
+        return captureRecorder.updateIdentity(from: rustSessionState, token: token)
     }
 }
 
@@ -3440,18 +3444,43 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         guard let value = characteristic.value else {
             return
         }
-        let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
+        receiveAcceptedNotification(
+            token: connectionAttempt?.token ?? connectionSnapshot.token,
+            channel: channel, characteristic: characteristic.uuid,
+            service: characteristic.service?.uuid, value: value,
+            notificationPeripheral: characteristic.service?.peripheral)
+
+    }
+
+    private func receiveAcceptedNotification(
+        token: ConnectionAttemptToken?, channel: BluetoothUuid, characteristic: CBUUID,
+        service: CBUUID?, value: Data, notificationPeripheral: CBPeripheral?
+    ) {
+        let receivedAt = clock.now()
+        let detectionResolution = observeDetectionNotification(channel: channel, bytes: value, token: token)
+        var detectionCaptureOutcomes: [MobileCaptureWriteOutcomeDto] = []
+        if detectionResolution.protocolConflict,
+            let outcome = captureFrame(
+                direction: "notify", characteristic: characteristic, service: service,
+                bytes: value, receivedAt: receivedAt)
+        {
+            detectionCaptureOutcomes.append(outcome)
+        }
+        if let token, let outcome = updateCaptureIdentity(token: token) {
+            detectionCaptureOutcomes.append(outcome)
+        }
+        applyCaptureWriteOutcomes(detectionCaptureOutcomes)
         if detectionResolution.protocolConflict {
             setPhase(.failed(.identificationFailed(.conflictingEvidence)))
             finishCaptureAfterLinkDown()
             return
         }
         if isDetectingProtocol {
-            guard promoteProtocolDetectionIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
+            guard promoteProtocolDetectionIfResolved(detectionResolution, on: notificationPeripheral) else {
                 if let outcome = captureFrame(
                     direction: "notify",
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service?.uuid,
+                    characteristic: characteristic,
+                    service: service,
                     bytes: value
                 ) {
                     _ = acceptCaptureWrite(outcome)
@@ -3464,7 +3493,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 {
                     finishProtocolDetectionOrRecord(
                         detectionResolution,
-                        on: characteristic.service?.peripheral
+                        on: notificationPeripheral
                     )
                 }
                 return
@@ -3473,13 +3502,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         if isRecordOnly {
             if let outcome = captureFrame(
                 direction: "notify",
-                characteristic: characteristic.uuid,
-                service: characteristic.service?.uuid,
+                characteristic: characteristic,
+                service: service,
                 bytes: value
             ) {
                 _ = acceptCaptureWrite(outcome)
             }
-            record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+            record("record_only_notification=\(characteristic.uuidString) bytes=\(value.count)")
             publishCaptureProgress()
             return
         }
@@ -3500,15 +3529,15 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 : 0
             let captureOutcome = captureFrame(
                 direction: "notify",
-                characteristic: characteristic.uuid,
-                service: characteristic.service?.uuid,
+                characteristic: characteristic,
+                service: service,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last,
                 semanticTelemetry: step.semanticTelemetry,
                 captureNotificationEvidence: step.captureNotificationEvidence,
                 receivedAt: receivedAt
             )
-            record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+            record("notification=\(characteristic.uuidString) bytes=\(value.count)")
             publishCaptureProgress()
             record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
             record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
@@ -3736,10 +3765,12 @@ extension CutoutSessionCore {
     }
 
     @discardableResult
-    func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
+    func observeDetectionNotification(
+        channel: BluetoothUuid, bytes: Data, token capturedToken: ConnectionAttemptToken? = nil
+    ) -> DeviceDetectionResolution {
         let previous = deviceDetectionSession.resolution
         let current: DeviceDetectionResolution
-        if let token = connectionAttempt?.token,
+        if let token = capturedToken ?? connectionAttempt?.token,
             let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
         {
             current = DeviceDetectionResolution(resolution)

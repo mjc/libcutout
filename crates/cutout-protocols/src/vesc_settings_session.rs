@@ -207,6 +207,19 @@ impl VescSettingsSession {
         .min()
     }
 
+    pub(crate) fn application_discovery(&self) -> crate::VescApplicationDiscovery {
+        if self.identity_invalidated {
+            return crate::VescApplicationDiscovery::Pending;
+        }
+        match self.read_only.settings_evidence().package {
+            None => crate::VescApplicationDiscovery::Pending,
+            Some(package) if package.package_name.as_str() == "Refloat" => {
+                crate::VescApplicationDiscovery::Refloat
+            }
+            Some(_) => crate::VescApplicationDiscovery::Absent,
+        }
+    }
+
     pub(crate) fn control_profile(&self) -> DeviceControlProfile {
         let evidence = self.read_only.settings_evidence();
         if self.identity_invalidated || !supported_firmware_facts(&evidence) {

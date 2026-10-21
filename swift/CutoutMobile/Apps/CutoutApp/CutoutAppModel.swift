@@ -636,6 +636,10 @@ final class CutoutAppModel {
                 rideMapAvailability: { [weak self] availability in
                     self?.liveRide.setAvailability(availability)
                 },
+                deviceSession: { [weak self] snapshot in
+                    self?.device.deviceSessionSnapshot = snapshot
+                    self?.syncLiveActivity()
+                },
                 protocolIdentity: { [weak self] candidate in
                     self?.applyProtocolIdentityCandidate(candidate)
                 },
@@ -1602,6 +1606,7 @@ final class CutoutAppModel {
         return liveActivityIdentity.map {
             LiveActivityRideSnapshot(
                 identity: $0, glyph: liveActivityGlyph,
+                deviceIdentity: device.deviceSessionSnapshot?.identity,
                 rideState: EucRideScreenState(phase: phase, displayState: displayed),
                 now: core.now(),
                 rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },

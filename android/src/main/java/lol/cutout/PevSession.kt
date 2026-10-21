@@ -51,7 +51,7 @@ class PevSession(
         identify()
         val step = if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes, receivedAtMs = receivedAtMs) else null
         if (capture) onCaptureNotification(
-            channel.copyOf(), service.copyOf(), bytes.copyOf(), telemetry,
+            channel.copyOf(), service.copyOf(), bytes.copyOf(), step?.telemetry,
             step?.captureNotificationEvidence ?: MobileCaptureNotificationEvidenceDto.UNCLASSIFIED,
             receivedAtMs,
         )

@@ -50,7 +50,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         battery: LiveActivityRideValue = .available(label: "Battery", value: "81", unit: "%", source: .liveTelemetry)
     ) -> LiveActivityRideSnapshot {
         LiveActivityRideSnapshot(
-            identity: .device("Falcon"), connectionState: .connected,
+            identity: .model(.aero), connectionState: .connected,
             sessionStatus: .available(label: "Status", value: "Parked", unit: nil, source: .liveTelemetry),
             speed: .available(label: "Speed", value: "0.0", unit: "mph", source: .liveTelemetry),
             battery: battery,
@@ -754,6 +754,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         let snapshot = LiveActivityRideSnapshot(
             identity: .device("VESC BLE UART"),
             glyph: .floatwheelAtom,
+            deviceIdentity: vescIdentity(application: .refloat),
             rideState: liveRideState(
                 speed: 12_000,
                 telemetry: TelemetrySnapshot(
@@ -772,6 +773,97 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.pwmSeverity.accessibilityDescription, "critical PWM")
         XCTAssertTrue(PevLiveActivityCompactPwmBar.shouldPulse(severity: .critical, reduceMotion: false))
         XCTAssertFalse(PevLiveActivityCompactPwmBar.shouldPulse(severity: .critical, reduceMotion: true))
+    }
+
+    func testBalanceInstrumentsRequireApplicationEvidenceRegardlessOfPhysicalGlyph() throws {
+        let ride = liveRideState(
+            speed: 12_000,
+            telemetry: TelemetrySnapshot(
+                at: MonotonicMilliseconds(1_000), speed: Speed(value: 12_000),
+                operatingState: .riding, pwm: DutyCycle(permille: 800)))
+        for glyph in [LiveActivityRideGlyph.floatwheelAtom, .electricUnicycle] {
+            for application in [MobileVescApplicationDiscoveryDto?.none, .pending, .absent, .refloat] {
+                let snapshot = LiveActivityRideSnapshot(
+                    identity: .device("Controller"), glyph: glyph,
+                    deviceIdentity: vescIdentity(application: application),
+                    rideState: ride, now: MonotonicMilliseconds(1_100))
+                let eligible = application == .refloat
+                XCTAssertEqual(snapshot.showsCompactPwmBar, eligible)
+                XCTAssertEqual(snapshot.headroomSeverity == .reduceAcceleration, eligible)
+                XCTAssertEqual(snapshot.pwm.progressValue, 0.8)
+                XCTAssertEqual(snapshot.presented(isStale: true).showsCompactPwmBar, eligible)
+                let decoded = try JSONDecoder().decode(
+                    LiveActivityRideSnapshot.self, from: JSONEncoder().encode(snapshot))
+                XCTAssertEqual(decoded, snapshot)
+                if !eligible { try assertEncodedHeadroomNotApplicable(snapshot) }
+            }
+            let unknown = LiveActivityRideSnapshot(
+                identity: .device("Controller"), glyph: glyph, rideState: ride)
+            XCTAssertFalse(unknown.showsCompactPwmBar)
+            XCTAssertEqual(unknown.headroom.state, .notApplicable)
+            try assertEncodedHeadroomNotApplicable(unknown)
+        }
+        let euc = LiveActivityRideSnapshot(identity: .model(.aero), rideState: ride)
+        XCTAssertEqual(euc.headroomSeverity, .reduceAcceleration)
+        XCTAssertFalse(euc.showsCompactPwmBar)
+        let explicitEuc = LiveActivityRideSnapshot(
+            identity: .device("EUC"),
+            deviceIdentity: MobileDeviceIdentityDto(
+                protocol: .veteranLeaperkimNosfet, vehicleKind: .electricUnicycle,
+                vescApplication: nil, model: nil),
+            rideState: ride)
+        let decodedEuc = try JSONDecoder().decode(
+            LiveActivityRideSnapshot.self, from: JSONEncoder().encode(explicitEuc))
+        XCTAssertEqual(decodedEuc.headroomSeverity, .reduceAcceleration)
+        XCTAssertEqual(decodedEuc, explicitEuc)
+        var legacyEucPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(euc)) as? [String: Any])
+        legacyEucPayload.removeValue(forKey: "balanceInstrumentKind")
+        let legacyEuc = try JSONDecoder().decode(
+            LiveActivityRideSnapshot.self, from: JSONSerialization.data(withJSONObject: legacyEucPayload))
+        XCTAssertEqual(legacyEuc.headroomSeverity, .reduceAcceleration)
+    }
+
+    func testLegacySnapshotWithoutCompactApplicationEvidenceDecodesConservatively() throws {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .device("Controller"), glyph: .floatwheelAtom,
+            deviceIdentity: vescIdentity(application: .refloat),
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000), operatingState: .riding, pwm: DutyCycle(permille: 800))))
+        var payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+        payload.removeValue(forKey: "balanceInstrumentKind")
+        let legacy = try JSONDecoder().decode(
+            LiveActivityRideSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertFalse(legacy.showsCompactPwmBar)
+        XCTAssertEqual(legacy.pwm, snapshot.pwm)
+        XCTAssertEqual(legacy.headroom.state, .notApplicable)
+        XCTAssertEqual(legacy.headroomSeverity, .notApplicable)
+        XCTAssertFalse(legacy.minimalAccessibilitySummary.contains("Reduce acceleration"))
+        XCTAssertEqual(legacy.compactTrailingValue, legacy.battery)
+        XCTAssertFalse(legacy.presented(isStale: true).minimalAccessibilitySummary.contains("Reduce acceleration"))
+    }
+
+    private func vescIdentity(application: MobileVescApplicationDiscoveryDto?) -> MobileDeviceIdentityDto {
+        MobileDeviceIdentityDto(
+            protocol: .vesc, vehicleKind: .board, vescApplication: application,
+            model: nil)
+    }
+
+    private func assertEncodedHeadroomNotApplicable(
+        _ snapshot: LiveActivityRideSnapshot, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any],
+            file: file, line: line)
+        let headroom = try XCTUnwrap(payload["headroom"] as? [String: Any], file: file, line: line)
+        XCTAssertEqual(headroom["state"] as? String, "notApplicable", file: file, line: line)
+        XCTAssertEqual(payload["headroomSeverity"] as? String, "notApplicable", file: file, line: line)
+        XCTAssertNotEqual(headroom["value"] as? String, "Reduce acceleration", file: file, line: line)
+        let pwm = try XCTUnwrap(payload["pwm"] as? [String: Any], file: file, line: line)
+        XCTAssertEqual(pwm["normalizedProgress"] as? Double, 0.8, file: file, line: line)
     }
 
     func testCompactIslandPwmBarRequiresVescAndTypedPwmProgress() {

@@ -227,6 +227,56 @@ fn refloat_session(
     (owner, token)
 }
 
+#[test]
+fn vesc_application_discovery_requires_valid_info_and_resets_with_the_connection() {
+    use cutout_protocols::VescApplicationDiscovery;
+
+    for (name, expected) in [
+        ("Refloat", VescApplicationDiscovery::Refloat),
+        ("Other", VescApplicationDiscovery::Absent),
+    ] {
+        let (mut owner, token) = vesc_session();
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vesc_application,
+            Some(VescApplicationDiscovery::Pending)
+        );
+        let mut corrupted = refloat_info(name, 1, 3, 0);
+        let crc_index = corrupted.len() - 2;
+        corrupted[crc_index] ^= 1;
+        notification(&mut owner, &token, corrupted, 10);
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vesc_application,
+            Some(VescApplicationDiscovery::Pending)
+        );
+        notification(&mut owner, &token, refloat_info(name, 1, 3, 0), 11);
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vesc_application,
+            Some(expected)
+        );
+        owner.ingest(&token, &SessionInputDto::LinkDown).unwrap();
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vesc_application,
+            Some(VescApplicationDiscovery::Pending)
+        );
+    }
+}
+
+#[test]
+fn vesc_application_discovery_withdraws_changed_same_link_application_evidence() {
+    use cutout_protocols::VescApplicationDiscovery;
+    let (mut owner, token) = vesc_session();
+    notification(&mut owner, &token, refloat_info("Refloat", 1, 3, 0), 10);
+    assert_eq!(
+        owner.snapshot().identity.unwrap().vesc_application,
+        Some(VescApplicationDiscovery::Refloat)
+    );
+    notification(&mut owner, &token, refloat_info("Other", 1, 3, 0), 11);
+    assert_eq!(
+        owner.snapshot().identity.unwrap().vesc_application,
+        Some(VescApplicationDiscovery::Pending)
+    );
+}
+
 fn known_refloat_session() -> (DeviceConnectionSession, cutout_core::ConnectionAttemptToken) {
     let config = include_bytes!("fixtures/refloat-settings/refloat-1.3.0-default.bin");
     refloat_session(Some(("Refloat", 1, 3, 0)), (7, 0), Some(config))

@@ -792,6 +792,66 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveActivityRequiresValidatedRefloatRatherThanManualVehicleClass() async throws {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.emitPhase(.subscribing)
+        driver.emitPhase(.live)
+        await Self.waitUntil("initial activity") { await manager.lastStartedSnapshot != nil }
+
+        let cases: [(MobileVehicleKindDto, MobileVescApplicationDiscoveryDto?, Bool)] = [
+            (.board, .refloat, true), (.unknown, .absent, false),
+            (.board, .absent, false), (.board, .pending, false),
+            (.unknown, nil, false), (.board, .refloat, true),
+        ]
+        for (index, item) in cases.enumerated() {
+            let (kind, application, expectsBalanceInstruments) = item
+            let sessionSnapshot = MobileDeviceSessionSnapshotDto(
+                connection: driver.rideSessionStateHandle.connectionAttemptSnapshot(),
+                identity: application.map {
+                    MobileDeviceIdentityDto(
+                        protocol: .vesc, vehicleKind: kind, vescApplication: $0,
+                        model: nil)
+                })
+            driver.onDeviceSessionSnapshotChange?(sessionSnapshot)
+            driver.nowValue = UInt64((index + 1) * 2_000)
+            let telemetry = TelemetrySnapshot(
+                at: driver.now(), speed: Speed(value: Int32(8_000 + index * 2_000)),
+                operatingState: .riding, voltage: Voltage(value: 49_800), pwm: DutyCycle(permille: 800))
+            let displayed = RideDisplayState(
+                speed: SpeedReadout(millimetersPerSecond: Int32(8_000 + index * 2_000)),
+                telemetry: telemetry, lastUpdate: driver.now())
+            driver.onDisplayStateChange?(displayed)
+            let expectedSpeed = LiveActivityRideSnapshot(
+                identity: .device("VESC"),
+                rideState: EucRideScreenState(phase: .live, displayState: displayed), now: driver.now()
+            ).speed
+            await Self.waitUntil("activity application \(String(describing: application))") {
+                await manager.lastUpdatedSnapshot?.speed == expectedSpeed
+            }
+            let updated = await manager.lastUpdatedSnapshot
+            let snapshot = try XCTUnwrap(updated)
+            XCTAssertEqual(snapshot.pwm.progressValue, 0.8, "Raw measured duty remains visible")
+            XCTAssertEqual(snapshot.packVoltage.state, .available)
+            XCTAssertEqual(snapshot.showsCompactPwmBar, expectsBalanceInstruments)
+            XCTAssertEqual(snapshot.headroomSeverity == .reduceAcceleration, expectsBalanceInstruments)
+            XCTAssertEqual(
+                snapshot.minimalAccessibilitySummary.contains("Reduce acceleration"), expectsBalanceInstruments)
+            if !expectsBalanceInstruments {
+                XCTAssertEqual(snapshot.headroom.state, .notApplicable)
+                XCTAssertEqual(snapshot.compactTrailingValue, snapshot.battery)
+                XCTAssertFalse(snapshot.presented(isStale: true).showsCompactPwmBar)
+                XCTAssertFalse(
+                    snapshot.presented(isStale: true).minimalAccessibilitySummary.contains("Reduce acceleration"))
+            }
+        }
+    }
+
+    @MainActor
     func testBackgroundTelemetryUpdatesActivityWithoutMutatingHiddenRidePresentation() async throws {
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
@@ -3722,6 +3782,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
         didSet { recordCallbackRegistration("phoneAlarmActions") }
     }
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { didSet { recordCallbackRegistration("displayState") } }
     var onPhaseChange: ((SessionConnectionPresentation) -> Void)? { didSet { recordCallbackRegistration("phase") } }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? {

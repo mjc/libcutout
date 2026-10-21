@@ -72,7 +72,6 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 
     private(set) var notificationReceipts: [MonotonicMilliseconds] = []
     private(set) var notificationEvidence: [MobileCaptureNotificationEvidenceDto] = []
-    private(set) var resolvedIdentities: [MobileResolvedIdentityDto] = []
 
     func recordNotification(
         characteristic _: BluetoothUuid,
@@ -95,14 +94,10 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
     func recordLinkUp(maxWriteLength _: UInt16?) -> MobileCaptureWriteOutcomeDto { recordLinkUpResult }
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto { .accepted }
 
-    func setResolvedIdentity(
-        _ identity: MobileResolvedIdentityDto,
-        evidence _: String?,
-        detail _: String?
-    ) -> MobileCaptureWriteOutcomeDto {
-        resolvedIdentities.append(identity)
-        return .accepted
-    }
+    func updateIdentity(
+        from _: CutoutSessionStateHandle,
+        token _: ConnectionAttemptToken
+    ) -> MobileCaptureWriteOutcomeDto? { nil }
 
     func addGattFingerprint(_: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto { .accepted }
 
@@ -3976,6 +3971,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
             0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
         ])
+        var identityPublications = 0
+        core.onProtocolIdentityCandidateChange = { _ in identityPublications += 1 }
         let first = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
         _ = state.connectionLinkEstablished(token: first)
         XCTAssertTrue(core.recordOnly(platformIdentifier: identifier))
@@ -3985,7 +3982,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             state.resolveDeviceSession(token: first, identificationComplete: true, nowMs: 1).connection.readiness,
             .verified)
+        core.publishConnectionSnapshotForTesting()
         let remembered = try XCTUnwrap(core.protocolIdentityCandidate)
+        let firstPublications = identityPublications
         core.finishCaptureForTesting()
         await fulfillment(of: [completed[0]], timeout: 3)
         let firstBytes = try Data(contentsOf: files[0])
@@ -4006,6 +4005,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
         XCTAssertEqual(
             core.protocolIdentityCandidate, remembered, "Equal UI identity still carries fresh capture proof")
+        XCTAssertEqual(identityPublications, firstPublications, "Equal picker identity is not republished")
+        XCTAssertEqual(
+            state.resolveDeviceSession(token: third, identificationComplete: true, nowMs: 4).connection.readiness,
+            .verified)
+        core.publishConnectionSnapshotForTesting()
+        core.publishConnectionSnapshotForTesting()
         core.finishCaptureForTesting()
         await fulfillment(of: [completed[2]], timeout: 3)
 
@@ -4026,43 +4031,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse((emptyHeader["annotations"] as? [String] ?? []).contains { $0.hasPrefix("resolved_") })
         XCTAssertEqual(
             freshHeader["resolved_identity"] as? NSDictionary, firstHeader["resolved_identity"] as? NSDictionary)
-        XCTAssertTrue((freshHeader["annotations"] as? [String] ?? []).contains { $0.hasPrefix("resolved_evidence=") })
+        let annotations = freshHeader["annotations"] as? [String] ?? []
+        XCTAssertTrue(annotations.contains { $0.hasPrefix("resolved_evidence=") })
+        let identityAnnotations = annotations.filter { $0.hasPrefix("resolved_") }
+        XCTAssertEqual(
+            identityAnnotations.count, Set(identityAnnotations).count, "Repeated snapshots do not duplicate proof")
         XCTAssertEqual(try Data(contentsOf: files[0]), firstBytes, "A later attempt cannot rewrite the closed segment")
-    }
-
-    func testEqualFreshIdentityRefreshesCaptureWithoutRepublishingPickerCandidate() throws {
-        let capture = CaptureRecorderSpy()
-        let core = CutoutSessionCore(clock: MonotonicClock(), captureRecorder: capture)
-        let channel = BluetoothUuid.bluetooth16(0xffe1)
-        core.observeAdvertisement(
-            CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("same-falcon-proof"), localName: "Falcon",
-                advertisedServiceUuids: [.bluetooth16(0xffe0)]
-            ))
-        let state = core.rideSessionStateHandle
-        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "same-falcon-proof", nowMs: 0).token)
-        _ = state.connectionLinkEstablished(token: token)
-        var publications = 0
-        core.onProtocolIdentityCandidateChange = { _ in publications += 1 }
-        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
-        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
-        let first = try XCTUnwrap(capture.resolvedIdentities.last)
-        let count = capture.resolvedIdentities.count
-        let publicationCount = publications
-        let fresh = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "same-falcon-proof", nowMs: 1).token)
-        _ = state.connectionLinkEstablished(token: fresh)
-        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
-        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
-        XCTAssertEqual(
-            capture.resolvedIdentities.count, count + 1,
-            "Fresh proof belongs to the capture even when the picker row is unchanged")
-        XCTAssertEqual(capture.resolvedIdentities.last, first)
-        XCTAssertEqual(publications, publicationCount)
-        let refreshedCount = capture.resolvedIdentities.count
-        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
-        XCTAssertEqual(
-            capture.resolvedIdentities.count, refreshedCount,
-            "An unchanged proof on the same attempt adds no writer work")
     }
 
     func testPevcapIdentityUsesProtocolConfirmedCandidate() {
@@ -4078,6 +4052,218 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(identity?.protocolFamily, .veteranLeaperkimNosfet)
         XCTAssertEqual(identity?.model?.value, "NOSFET Aero")
         XCTAssertEqual(identity?.model?.verification, .hardwareVerified)
+    }
+
+    @MainActor
+    func testLiveNotificationsPublishAndWithdrawValidatedRefloatEvidence() async throws {
+        let reply = Data([
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+            38, 208, 3,
+        ])
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil,
+                protocolDetectionNotifications: [reply], appliesProtocolNotificationSteps: true,
+                connectionDelayMilliseconds: 0))
+        defer { core.disconnectAndScan() }
+        let live = expectation(description: "verified live VESC connection")
+        core.onPhaseChange = { if $0.phase == .live { live.fulfill() } }
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [live], timeout: 3)
+        let token = try XCTUnwrap(core.connectionSnapshot.token)
+        let refloat = expectation(description: "late INFO publishes Refloat evidence")
+        let withdrawn = expectation(description: "changed INFO withdraws Refloat evidence")
+        core.onDeviceSessionSnapshotChange = { snapshot in
+            switch snapshot.identity?.vescApplication {
+            case .refloat: refloat.fulfill()
+            case .pending: withdrawn.fulfill()
+            default: break
+            }
+        }
+        func info(_ name: String) -> Data {
+            var payload: [UInt8] = [36, 101, 0, 2, 0]
+            payload += Array(name.utf8) + Array(repeating: 0, count: 20 - name.utf8.count)
+            payload += [1, 3, 0] + Array(repeating: 0, count: 33)
+            var crc: UInt16 = 0
+            for byte in payload {
+                crc ^= UInt16(byte) << 8
+                for _ in 0..<8 { crc = crc & 0x8000 == 0 ? crc << 1 : (crc << 1) ^ 0x1021 }
+            }
+            return Data([2, UInt8(payload.count)] + payload + [UInt8(crc >> 8), UInt8(crc & 0xff), 3])
+        }
+        let channel = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+        let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+        core.deliverAcceptedNotificationForTesting(
+            token: token, channel: channel, service: service, bytes: info("Refloat"))
+        await fulfillment(of: [refloat], timeout: 3)
+        core.deliverAcceptedNotificationForTesting(
+            token: token, channel: channel, service: service, bytes: info("Other"))
+        await fulfillment(of: [withdrawn], timeout: 3)
+    }
+
+    @MainActor
+    func testVescCapturePublishesVerifiedProtocolBeforeTelemetryAndWhenWriterStartsLater() async throws {
+        let reply = Data([
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+            38, 208, 3,
+        ])
+        for identifyBeforeStart in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let core = CutoutSessionCore(
+                clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+                testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil)
+            )
+            core.captureDirectoryForTesting = directory
+            defer { core.disconnectAndScan() }
+            let identifier = scriptedVescCandidate.platformIdentifier
+            core.observeAdvertisement(
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier(identifier), localName: "VESC",
+                    advertisedServiceUuids: [.bluetooth16(0xffe0)]
+                ))
+            let state = core.rideSessionStateHandle
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            func identify() {
+                core.deliverAcceptedNotificationForTesting(
+                    token: token,
+                    channel: CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"),
+                    service: CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"),
+                    bytes: reply)
+                XCTAssertEqual(
+                    state.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 1)
+                        .connection.readiness, .verified)
+                core.publishConnectionSnapshotForTesting()
+            }
+            if identifyBeforeStart { identify() }
+            XCTAssertTrue(core.recordOnly(platformIdentifier: identifier))
+            if !identifyBeforeStart { identify() }
+            let finished = expectation(description: "VESC capture saved")
+            var file: URL?
+            core.onCaptureEvent = { event in
+                if case .finished(_, let url, _) = event {
+                    file = url
+                    finished.fulfill()
+                } else if case .failed = event {
+                    XCTFail("VESC capture failed")
+                }
+            }
+            core.finishCaptureForTesting()
+            await fulfillment(of: [finished], timeout: 3)
+            let lines = try String(contentsOf: XCTUnwrap(file), encoding: .utf8).split(separator: "\n")
+            let objects = try lines.map {
+                try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+            }
+            let header = try XCTUnwrap(objects.first?["header"] as? [String: Any])
+            let identity = try XCTUnwrap(header["resolved_identity"] as? [String: Any])
+            XCTAssertEqual(identity["protocol_family"] as? String, "Vesc")
+            XCTAssertTrue(identity["model"] is NSNull)
+            XCTAssertTrue(identity["firmware"] is NSNull)
+            if !identifyBeforeStart {
+                XCTAssertTrue(
+                    objects.contains {
+                        (($0["record"] as? [String: Any])?["bytes"] as? [Int]) == reply.map(Int.init)
+                    })
+            }
+        }
+    }
+
+    @MainActor
+    func testAcceptedVescCaptureNotificationClearsConflictedIdentityAndPreservesItsWireEvidence() async throws {
+        let reply = Data([
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+            38, 208, 3,
+        ])
+        var conflict = Data(repeating: 0, count: 24)
+        conflict.replaceSubrange(0..<2, with: [0x55, 0xaa])
+        conflict.replaceSubrange(18..<24, with: [0, 0x18, 0x5a, 0x5a, 0x5a, 0x5a])
+        let channel = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+        let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+        for invalidatesIdentity in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let now = Mutex<UInt64>(1_000)
+            let core = CutoutSessionCore(
+                clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) },
+                testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil))
+            core.captureDirectoryForTesting = directory
+            defer { core.disconnectAndScan() }
+            let state = core.rideSessionStateHandle
+            let identifier = scriptedVescCandidate.platformIdentifier
+            let stale = try XCTUnwrap(
+                state.beginConnectionAttempt(platformIdentifier: "old-controller", nowMs: 0).token)
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 1).token)
+            _ = state.connectionLinkEstablished(token: token)
+            XCTAssertTrue(
+                core.recordOnly(
+                    platformIdentifier: identifier,
+                    annotations: [
+                        "route=vesc", "protocol_detection_resolved=vesc",
+                    ]))
+            core.deliverAcceptedNotificationForTesting(
+                token: stale, channel: channel, service: service, bytes: conflict)
+            XCTAssertEqual(state.connectionAttemptSnapshot().token, token)
+            now.withLock { $0 = 1_010 }
+            core.deliverAcceptedNotificationForTesting(token: token, channel: channel, service: service, bytes: reply)
+            XCTAssertEqual(
+                state.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 1_010)
+                    .connection.readiness, .verified)
+            core.publishConnectionSnapshotForTesting()
+            let finished = expectation(description: "accepted notification capture saved")
+            var file: URL?
+            core.onCaptureEvent = { event in
+                if case .finished(_, let url, _) = event {
+                    file = url
+                    finished.fulfill()
+                } else if case .failed = event {
+                    XCTFail("Capture writer failed")
+                }
+            }
+            now.withLock { $0 = 1_020 }
+            if invalidatesIdentity {
+                core.deliverAcceptedNotificationForTesting(
+                    token: token, channel: channel, service: service, bytes: conflict)
+                XCTAssertEqual(state.connectionAttemptSnapshot().readiness, .conflicted)
+                XCTAssertNil(state.connectionAttemptSnapshot().token)
+            } else {
+                _ = state.connectionLinkDown(token: token)
+                core.handleTransportTermination(platformIdentifier: identifier, error: nil, reconnect: {})
+            }
+            await fulfillment(of: [finished], timeout: 3)
+            let objects = try String(contentsOf: XCTUnwrap(file), encoding: .utf8).split(separator: "\n").map {
+                try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+            }
+            let header = try XCTUnwrap(objects.first?["header"] as? [String: Any])
+            let identity = try XCTUnwrap(header["resolved_identity"] as? [String: Any])
+            if invalidatesIdentity {
+                XCTAssertTrue(identity["protocol_family"] is NSNull)
+                XCTAssertTrue(identity["model"] is NSNull)
+                XCTAssertTrue(identity["firmware"] is NSNull)
+            } else {
+                XCTAssertEqual(identity["protocol_family"] as? String, "Vesc", "Ordinary link loss retains proof")
+            }
+            let annotations = header["annotations"] as? [String] ?? []
+            XCTAssertTrue(annotations.contains("route=vesc"))
+            XCTAssertTrue(annotations.contains("protocol_detection_resolved=vesc"))
+            let records = objects.compactMap { $0["record"] as? [String: Any] }
+            XCTAssertEqual(records.filter { ($0["bytes"] as? [Int]) == reply.map(Int.init) }.count, 1)
+            let conflicts = records.filter { ($0["bytes"] as? [Int]) == conflict.map(Int.init) }
+            XCTAssertEqual(conflicts.count, invalidatesIdentity ? 1 : 0, "Stale callbacks never enter the writer")
+            if invalidatesIdentity {
+                let record = try XCTUnwrap(conflicts.first)
+                XCTAssertEqual(
+                    record["characteristic"] as? [Int], BluetoothUuid.vescNordicUartNotify.bytes.map(Int.init))
+                XCTAssertEqual(record["service"] as? [Int], BluetoothUuid.vescNordicUartService.bytes.map(Int.init))
+                XCTAssertEqual(record["monotonic_ms"] as? Int, 20)
+                XCTAssertNil(record["telemetry"])
+                XCTAssertNil(record["semantic_telemetry"])
+            }
+        }
     }
 
     func testPevcapAnnotationSanitizesDelimiterCharacters() {

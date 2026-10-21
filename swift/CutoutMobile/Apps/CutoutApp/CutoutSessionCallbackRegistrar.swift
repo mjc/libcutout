@@ -17,6 +17,7 @@ struct CutoutSessionCallbackRegistrar {
         let rideMapSnapshot: (MobileRideMapSnapshotDto) -> Void
         let rideMapError: (MobileRideMapErrorEvent) -> Void
         let rideMapAvailability: (MobileRideMapAvailability) -> Void
+        let deviceSession: (MobileDeviceSessionSnapshotDto) -> Void
         let protocolIdentity: (DevicePickerDiscoveryCandidate?) -> Void
         let bluetoothRestoration: (String?) -> Void
         let phoneAlarmActions: (MobilePhoneAlarmActionsDto) -> Void
@@ -42,6 +43,7 @@ struct CutoutSessionCallbackRegistrar {
         core.onRideMapSnapshotChange = handlers.rideMapSnapshot
         core.onRideMapErrorChange = handlers.rideMapError
         core.onRideMapAvailabilityChange = handlers.rideMapAvailability
+        core.onDeviceSessionSnapshotChange = handlers.deviceSession
         core.onProtocolIdentityCandidateChange = handlers.protocolIdentity
         core.onBluetoothRestorationResolved = handlers.bluetoothRestoration
         core.onCaptureEvent = handlers.captureEvent
