@@ -17,6 +17,10 @@ use std::{
     future::Future,
     io::{self, Cursor, Read},
     pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use uuid::Uuid;
 
@@ -71,6 +75,81 @@ pub struct CaptureSubmissionStatus {
     /// Classified last failure, without payload, notes or credentials.
     pub failure: Option<CaptureSubmissionTransferError>,
     revision: u64,
+}
+
+/// Transient transport progress for one admitted Send attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureSubmissionProgressPhase {
+    /// Payload bytes are being provided to the HTTP request body.
+    Uploading,
+    /// All payload bytes were provided; durable service receipt is still required.
+    VerifyingReceipt,
+}
+
+/// Progress is never persisted or interpreted as a remote completion receipt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureSubmissionProgress {
+    /// Stable operation for this immutable snapshot.
+    pub operation_id: String,
+    /// Durable revision fencing this specific admitted attempt.
+    pub attempt_id: u64,
+    /// Payload bytes consumed by the transport, without HTTP or TLS overhead.
+    pub bytes_sent: u64,
+    /// Exact full snapshot length, including optional note and screenshots.
+    pub total_bytes: u64,
+    /// Transport/receipt distinction for presentation.
+    pub phase: CaptureSubmissionProgressPhase,
+}
+
+/// Synchronous observer; implementations should dispatch presentation work promptly.
+pub type CaptureSubmissionProgressCallback = Arc<dyn Fn(CaptureSubmissionProgress) + Send + Sync>;
+
+#[derive(Clone)]
+struct CaptureSubmissionProgressReporter {
+    database: RideDatabase,
+    operation_id: String,
+    attempt_id: u64,
+    total_bytes: u64,
+    callback: CaptureSubmissionProgressCallback,
+    active: Arc<AtomicBool>,
+}
+
+impl CaptureSubmissionProgressReporter {
+    fn report(&self, bytes_sent: u64) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(current) = self.database.submission_operation(&self.operation_id) else {
+            return;
+        };
+        if current.revision != self.attempt_id
+            || current.phase != CaptureSubmissionPhase::Sending
+            || bytes_sent > self.total_bytes
+        {
+            return;
+        }
+        (self.callback)(CaptureSubmissionProgress {
+            operation_id: self.operation_id.clone(),
+            attempt_id: self.attempt_id,
+            bytes_sent,
+            total_bytes: self.total_bytes,
+            phase: if bytes_sent == self.total_bytes {
+                CaptureSubmissionProgressPhase::VerifyingReceipt
+            } else {
+                CaptureSubmissionProgressPhase::Uploading
+            },
+        });
+    }
+}
+
+struct CaptureSubmissionProgressGuard(Option<CaptureSubmissionProgressReporter>);
+
+impl Drop for CaptureSubmissionProgressGuard {
+    fn drop(&mut self) {
+        if let Some(progress) = &self.0 {
+            progress.active.store(false, Ordering::Release);
+        }
+    }
 }
 
 /// Classified transport failure used by Rust's operation policy.
@@ -204,6 +283,7 @@ pub struct CaptureSubmissionPayload {
     raw_complete: bool,
     expected_digest: String,
     evidence: Cursor<Vec<u8>>,
+    progress: Option<CaptureSubmissionProgressReporter>,
 }
 
 impl std::fmt::Debug for CaptureSubmissionPayload {
@@ -220,6 +300,14 @@ impl CaptureSubmissionPayload {
     #[must_use]
     pub const fn byte_count(&self) -> u64 {
         self.bytes
+    }
+
+    /// Reports bytes provided to the HTTP body, never remote receipt or a resumable offset.
+    /// Call only when the current read chunk is handed to the request body stream.
+    pub fn report_upload_progress(&self) {
+        if let Some(progress) = &self.progress {
+            progress.report(self.read_bytes);
+        }
     }
 }
 
@@ -657,6 +745,7 @@ impl RideDatabase {
             raw_complete: false,
             expected_digest: status.metadata.sha256.clone(),
             evidence: Cursor::new(evidence),
+            progress: None,
         })
     }
 
@@ -671,6 +760,18 @@ impl RideDatabase {
         token: &str,
         transport: &T,
     ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+        self.send_capture_submission_observed(operation_id, account_id, token, transport, None)
+            .await
+    }
+
+    async fn send_capture_submission_observed<T: CaptureSubmissionTransport>(
+        &self,
+        operation_id: &str,
+        account_id: &str,
+        token: &str,
+        transport: &T,
+        progress: Option<CaptureSubmissionProgressCallback>,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
         let status = self.submission_action(
             operation_id,
             Action::Start {
@@ -679,6 +780,18 @@ impl RideDatabase {
         )?;
         if status.phase == CaptureSubmissionPhase::Sent {
             return Ok(status);
+        }
+        let progress = progress.map(|callback| CaptureSubmissionProgressReporter {
+            database: self.clone(),
+            operation_id: status.operation_id.clone(),
+            attempt_id: status.revision,
+            total_bytes: status.metadata.bytes,
+            callback,
+            active: Arc::new(AtomicBool::new(true)),
+        });
+        let _progress_guard = CaptureSubmissionProgressGuard(progress.clone());
+        if let Some(progress) = &progress {
+            progress.report(0);
         }
         let result = match transport.receipt(operation_id, token).await {
             Ok(Some(receipt)) => Ok(receipt),
@@ -689,13 +802,10 @@ impl RideDatabase {
                 {
                     return Ok(current);
                 }
+                let mut payload = self.submission_payload(&status)?;
+                payload.progress = progress;
                 transport
-                    .upload(
-                        operation_id,
-                        token,
-                        &status.metadata,
-                        self.submission_payload(&status)?,
-                    )
+                    .upload(operation_id, token, &status.metadata, payload)
                     .await
             }
             Err(error) => Err(error),
@@ -724,6 +834,27 @@ impl RideDatabase {
                 },
             ),
         }
+    }
+
+    /// Runs an explicit transfer with transient progress for this attempt only.
+    /// # Errors
+    /// Returns the same admission, storage and transport results as ordinary Send.
+    pub async fn send_capture_submission_with_progress<T: CaptureSubmissionTransport>(
+        &self,
+        operation_id: &str,
+        account_id: &str,
+        token: &str,
+        transport: &T,
+        progress: CaptureSubmissionProgressCallback,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+        self.send_capture_submission_observed(
+            operation_id,
+            account_id,
+            token,
+            transport,
+            Some(progress),
+        )
+        .await
     }
 
     /// Cancels an explicit Send and confirms a service tombstone when transmission began.

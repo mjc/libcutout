@@ -8,7 +8,7 @@ use cutout_core::{
     WallClockUnixTimestamp,
 };
 use std::sync::{
-    Mutex,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::task::{Context, Poll, Waker};
@@ -43,9 +43,17 @@ impl CaptureSubmissionTransport for Transport {
     ) -> CaptureSubmissionFuture<'a, CaptureSubmissionReceipt> {
         Box::pin(async move {
             let mut bytes = Vec::new();
-            payload
-                .read_to_end(&mut bytes)
-                .map_err(|_| CaptureSubmissionTransferError::InvalidCapture)?;
+            loop {
+                let mut chunk = [0; 64];
+                let count = payload
+                    .read(&mut chunk)
+                    .map_err(|_| CaptureSubmissionTransferError::InvalidCapture)?;
+                if count == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..count]);
+                payload.report_upload_progress();
+            }
             self.uploads
                 .lock()
                 .unwrap()
@@ -1085,5 +1093,267 @@ fn capture_evidence_v49_migration_preserves_existing_receipt_and_raw_capture() {
     assert_eq!(
         cutout_core::capture_evidence_digest(&std::fs::read(raw).unwrap()),
         sent.metadata.sha256
+    );
+}
+
+#[test]
+fn capture_submission_progress_starts_at_zero_for_the_admitted_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    database
+        .save_capture_evidence(
+            source,
+            CaptureAttachments {
+                note: "Access note".into(),
+                screenshots: vec![
+                    cutout_core::CaptureScreenshot {
+                        jpeg: vec![0xff, 0xd8, 0xff, 0xd9]
+                    };
+                    4
+                ],
+            },
+        )
+        .unwrap();
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&progress);
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission_with_progress(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+        Arc::new(move |event| observed.lock().unwrap().push(event)),
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    let progress = progress.lock().unwrap();
+    let first = progress
+        .first()
+        .expect("admitted send must report initial progress");
+    assert_eq!(first.operation_id, prepared.operation_id);
+    assert_eq!(first.bytes_sent, 0);
+    assert_eq!(first.total_bytes, prepared.metadata.bytes);
+    assert_eq!(first.phase, CaptureSubmissionProgressPhase::Uploading);
+    assert!(first.attempt_id > prepared.revision);
+}
+
+#[test]
+fn capture_submission_progress_waits_for_receipt_and_retry_restarts_at_zero() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&events);
+    let callback: CaptureSubmissionProgressCallback =
+        Arc::new(move |progress| observed.lock().unwrap().push(progress));
+    let transport = Transport::default();
+    transport.pause.store(true, Ordering::Release);
+    *transport.failure.lock().unwrap() = Some(CaptureSubmissionTransferError::Network);
+    let mut send = Box::pin(database.send_capture_submission_with_progress(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+        Arc::clone(&callback),
+    ));
+    assert!(poll_once(send.as_mut()).is_pending());
+    let previous_attempt = {
+        let progress = events.lock().unwrap();
+        assert!(progress.len() > 2);
+        assert!(
+            progress
+                .windows(2)
+                .all(|pair| pair[0].bytes_sent < pair[1].bytes_sent)
+        );
+        let last = progress.last().unwrap();
+        assert_eq!(last.bytes_sent, prepared.metadata.bytes);
+        assert_eq!(last.phase, CaptureSubmissionProgressPhase::VerifyingReceipt);
+        last.attempt_id
+    };
+    let pending = database.capture_submission(source).unwrap().unwrap();
+    assert_eq!(pending.phase, CaptureSubmissionPhase::Sending);
+    assert!(pending.receipt.is_none(), "100% is not a durable receipt");
+    transport.pause.store(false, Ordering::Release);
+    assert_eq!(
+        ready(send).unwrap().phase,
+        CaptureSubmissionPhase::Retryable
+    );
+    events.lock().unwrap().clear();
+    let sent = ready(database.send_capture_submission_with_progress(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+        callback,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    let progress = events.lock().unwrap();
+    assert_eq!(
+        progress[0].bytes_sent, 0,
+        "retry never claims a resumable offset"
+    );
+    assert!(progress[0].attempt_id > previous_attempt);
+    assert!(
+        progress
+            .iter()
+            .all(|event| event.attempt_id == progress[0].attempt_id
+                && event.total_bytes == prepared.metadata.bytes)
+    );
+}
+
+#[test]
+fn capture_submission_progress_ignores_cancelled_retired_and_dropped_attempts() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    let sending = database
+        .submission_action(
+            &prepared.operation_id,
+            Action::Start {
+                account_id: ACCOUNT.into(),
+            },
+        )
+        .unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&events);
+    let reporter = CaptureSubmissionProgressReporter {
+        database: database.clone(),
+        operation_id: prepared.operation_id.clone(),
+        attempt_id: sending.revision,
+        total_bytes: prepared.metadata.bytes,
+        callback: Arc::new(move |event| observed.lock().unwrap().push(event)),
+        active: Arc::new(AtomicBool::new(true)),
+    };
+    reporter.report(0);
+    assert_eq!(events.lock().unwrap().len(), 1);
+    {
+        let _guard = CaptureSubmissionProgressGuard(Some(reporter.clone()));
+    }
+    reporter.report(10);
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "dropped future cannot report a later blocking chunk"
+    );
+    reporter.active.store(true, Ordering::Release);
+    database
+        .submission_action(
+            &prepared.operation_id,
+            Action::Failure {
+                revision: sending.revision,
+                failure: CaptureSubmissionTransferError::Network,
+            },
+        )
+        .unwrap();
+    reporter.report(20);
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "failed attempt cannot update progress"
+    );
+    let retry = database
+        .submission_action(
+            &prepared.operation_id,
+            Action::Start {
+                account_id: ACCOUNT.into(),
+            },
+        )
+        .unwrap();
+    reporter.report(30);
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "previous attempt cannot update a retry"
+    );
+    let current = CaptureSubmissionProgressReporter {
+        attempt_id: retry.revision,
+        ..reporter.clone()
+    };
+    database
+        .submission_action(
+            &prepared.operation_id,
+            Action::Removal {
+                account_id: Some(ACCOUNT.into()),
+                deleting: false,
+            },
+        )
+        .unwrap();
+    current.report(40);
+    assert_eq!(
+        events.lock().unwrap().len(),
+        1,
+        "cancelled attempt cannot update progress"
+    );
+}
+
+#[test]
+fn capture_submission_relaunch_retains_no_progress_and_receipt_recovery_needs_no_upload() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&events);
+    let transport = Transport::default();
+    transport.pause.store(true, Ordering::Release);
+    let mut send = Box::pin(database.send_capture_submission_with_progress(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+        Arc::new(move |event| observed.lock().unwrap().push(event)),
+    ));
+    assert!(poll_once(send.as_mut()).is_pending());
+    drop(send);
+    let count = events.lock().unwrap().len();
+    database.shutdown().unwrap();
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(events.lock().unwrap().len(), count);
+    assert_eq!(
+        reopened.capture_submission(source).unwrap().unwrap().phase,
+        CaptureSubmissionPhase::Retryable
+    );
+    let receipt = CaptureSubmissionReceipt {
+        operation_id: prepared.operation_id.clone(),
+        sha256: prepared.metadata.sha256.clone(),
+        bytes: prepared.metadata.bytes,
+        received_at_milliseconds: 123,
+    };
+    *transport.lookup.lock().unwrap() = Some(receipt);
+    events.lock().unwrap().clear();
+    let observed = Arc::clone(&events);
+    let sent = ready(reopened.send_capture_submission_with_progress(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+        Arc::new(move |event| observed.lock().unwrap().push(event)),
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(
+        transport.uploads.lock().unwrap().len(),
+        1,
+        "recovered receipt avoids a second upload"
+    );
+    let progress = events.lock().unwrap();
+    assert_eq!(progress.len(), 1);
+    assert_eq!(
+        progress[0].bytes_sent, 0,
+        "recovery does not invent uploaded bytes"
     );
 }

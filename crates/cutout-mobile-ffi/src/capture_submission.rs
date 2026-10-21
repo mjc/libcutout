@@ -245,6 +245,56 @@ impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatu
     }
 }
 
+/// Live transport state, distinct from durable receipt confirmation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureSubmissionProgressPhaseDto {
+    /// The HTTP body is consuming immutable snapshot bytes.
+    Uploading,
+    /// All bytes were provided; Rust is waiting for a matching durable receipt.
+    VerifyingReceipt,
+}
+
+/// Ephemeral progress for one admitted Send attempt; never restored on relaunch.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureSubmissionProgressDto {
+    /// Snapshot operation, stable across retries.
+    pub operation_id: String,
+    /// Rust-owned revision of this specific attempt.
+    pub attempt_id: u64,
+    /// Payload bytes supplied to the HTTP body, excluding HTTP/TLS overhead.
+    pub bytes_sent: u64,
+    /// Full immutable snapshot size, including note and screenshots.
+    pub total_bytes: u64,
+    /// Upload completion does not establish service receipt.
+    pub phase: MobileCaptureSubmissionProgressPhaseDto,
+}
+
+impl From<persistence::CaptureSubmissionProgress> for MobileCaptureSubmissionProgressDto {
+    fn from(progress: persistence::CaptureSubmissionProgress) -> Self {
+        Self {
+            operation_id: progress.operation_id,
+            attempt_id: progress.attempt_id,
+            bytes_sent: progress.bytes_sent,
+            total_bytes: progress.total_bytes,
+            phase: match progress.phase {
+                persistence::CaptureSubmissionProgressPhase::Uploading => {
+                    MobileCaptureSubmissionProgressPhaseDto::Uploading
+                }
+                persistence::CaptureSubmissionProgressPhase::VerifyingReceipt => {
+                    MobileCaptureSubmissionProgressPhaseDto::VerifyingReceipt
+                }
+            },
+        }
+    }
+}
+
+/// Receives bounded transient progress only while this Rust attempt is current.
+#[uniffi::export(callback_interface)]
+pub trait MobileCaptureSubmissionProgressListener: Send + Sync {
+    /// Dispatch native presentation promptly; callbacks may arrive off the main thread.
+    fn on_progress(&self, progress: MobileCaptureSubmissionProgressDto);
+}
+
 /// Admission or local storage failure; transfer failures remain in persisted status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileCaptureSubmissionError {
@@ -434,6 +484,29 @@ impl CaptureSubmissionClientHandle {
     ) -> Result<MobileCaptureSubmissionStatusDto, MobileCaptureSubmissionError> {
         self.database
             .send_capture_submission(&operation_id, &account_id, &token, &self.transport)
+            .await
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    /// Runs the explicit Send with byte progress fenced to its admitted attempt.
+    /// # Errors
+    /// Returns the same typed outcomes as Send. Only a matching committed receipt is Sent.
+    pub async fn send_with_progress(
+        &self,
+        operation_id: String,
+        account_id: String,
+        token: String,
+        listener: Box<dyn MobileCaptureSubmissionProgressListener>,
+    ) -> Result<MobileCaptureSubmissionStatusDto, MobileCaptureSubmissionError> {
+        self.database
+            .send_capture_submission_with_progress(
+                &operation_id,
+                &account_id,
+                &token,
+                &self.transport,
+                Arc::new(move |progress| listener.on_progress(progress.into())),
+            )
             .await
             .map(Into::into)
             .map_err(Into::into)
@@ -858,6 +931,136 @@ mod tests {
         );
         task.abort();
         database.inner.clone().shutdown()?;
+        Ok(())
+    }
+
+    struct ProgressListener(Arc<std::sync::Mutex<Vec<MobileCaptureSubmissionProgressDto>>>);
+
+    impl MobileCaptureSubmissionProgressListener for ProgressListener {
+        fn on_progress(&self, progress: MobileCaptureSubmissionProgressDto) {
+            self.0.lock().unwrap().push(progress);
+        }
+    }
+
+    #[tokio::test]
+    async fn ffi_progress_waits_for_matching_receipt_after_http_consumes_all_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use axum::{
+            Router,
+            body::Bytes,
+            http::{HeaderMap, StatusCode},
+            routing::get,
+        };
+        use std::sync::Mutex;
+        use tokio::sync::Notify;
+        for matching in [true, false] {
+            let directory = TestDirectory::new()?;
+            let (database, source) = finished_capture(&directory.0)?;
+            let received = Arc::new(Notify::new());
+            let release = Arc::new(Notify::new());
+            let handler_received = Arc::clone(&received);
+            let handler_release = Arc::clone(&release);
+            let router = Router::new().route(
+                "/v1/capture-submissions/{operation}",
+                get(|| async { StatusCode::NOT_FOUND }).put(
+                    move |axum::extract::Path(operation): axum::extract::Path<String>,
+                          headers: HeaderMap,
+                          body: Bytes| {
+                        let received = Arc::clone(&handler_received);
+                        let release = Arc::clone(&handler_release);
+                        async move {
+                            let metadata: cutout_core::CaptureSubmissionMetadata =
+                                serde_json::from_str(
+                                    headers.get("x-cutout-capture").unwrap().to_str().unwrap(),
+                                )
+                                .unwrap();
+                            let summary = cutout_core::validate_capture_submission_payload(
+                                body.as_ref(),
+                                &metadata,
+                            )
+                            .unwrap();
+                            assert_eq!(body.len() as u64, metadata.bytes);
+                            let receipt = CaptureSubmissionReceipt {
+                                operation_id: operation,
+                                sha256: if matching {
+                                    summary.sha256
+                                } else {
+                                    "a".repeat(64)
+                                },
+                                bytes: metadata.bytes,
+                                received_at_milliseconds: 123,
+                            };
+                            received.notify_one();
+                            release.notified().await;
+                            axum::Json(receipt)
+                        }
+                    },
+                ),
+            );
+            let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+            let base_url = format!("http://{}/", listener.local_addr()?);
+            let server = tokio::spawn(async move {
+                let _ = axum::serve(listener, router).await;
+            });
+            let client = CaptureSubmissionClientHandle {
+                database: database.inner.clone(),
+                transport: HttpCaptureTransport::loopback(&base_url)?,
+            };
+            client
+                .save_evidence(
+                    source.clone(),
+                    "Device access note".into(),
+                    vec![vec![0xff, 0xd8, 0xff, 0xd9]; 4],
+                )
+                .await?;
+            let prepared = client.prepare(source.clone()).await?;
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let send = client.send_with_progress(
+                prepared.operation_id.clone(),
+                Uuid::new_v4().to_string(),
+                "test-token".into(),
+                Box::new(ProgressListener(Arc::clone(&events))),
+            );
+            tokio::pin!(send);
+            tokio::select! {
+                () = received.notified() => {},
+                result = &mut send => return Err(format!("Send completed before receipt was released: {result:?}").into()),
+                () = tokio::time::sleep(std::time::Duration::from_secs(10)) => return Err("HTTP body was not received within the test deadline".into()),
+            }
+            let pending = client.status(source).await?.ok_or("status missing")?;
+            assert_eq!(pending.phase, MobileCaptureSubmissionPhaseDto::Sending);
+            assert!(pending.receipt.is_none());
+            {
+                let progress = events.lock().unwrap();
+                assert_eq!(progress[0].bytes_sent, 0);
+                assert!(
+                    progress
+                        .iter()
+                        .all(|event| event.operation_id == prepared.operation_id
+                            && event.total_bytes == prepared.byte_count
+                            && event.attempt_id == progress[0].attempt_id)
+                );
+                let last = progress.last().ok_or("progress missing")?;
+                assert_eq!(last.bytes_sent, prepared.byte_count);
+                assert_eq!(
+                    last.phase,
+                    MobileCaptureSubmissionProgressPhaseDto::VerifyingReceipt
+                );
+            }
+            release.notify_one();
+            let complete = tokio::time::timeout(std::time::Duration::from_secs(10), send).await??;
+            assert_eq!(
+                complete.phase,
+                if matching {
+                    MobileCaptureSubmissionPhaseDto::Sent
+                } else {
+                    MobileCaptureSubmissionPhaseDto::Rejected
+                }
+            );
+            assert_eq!(complete.receipt.is_some(), matching);
+            server.abort();
+            database.inner.clone().shutdown()?;
+        }
         Ok(())
     }
 }

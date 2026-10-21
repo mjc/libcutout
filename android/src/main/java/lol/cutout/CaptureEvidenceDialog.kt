@@ -28,6 +28,7 @@ internal class CaptureEvidenceDialog(
     private val count = ui.text("0 / 1024 bytes", 13f, color = ui.muted)
     private val images = ui.column()
     private val message = ui.text("", 14f, color = ui.muted)
+    private val sendProgress = CaptureSendProgressView(context)
     private var screenshots = listOf<ByteArray>()
     private var status: MobileCaptureSubmissionStatusDto? = null
     private var working = false
@@ -51,11 +52,15 @@ internal class CaptureEvidenceDialog(
     fun show() {
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(20))
         content.addView(note); content.addView(count); content.addView(images)
-        content.addView(add); content.addView(save); content.addView(send); content.addView(remove); content.addView(message)
+        content.addView(add); content.addView(save); content.addView(send); content.addView(sendProgress)
+        content.addView(remove); content.addView(message)
         val dialog = AlertDialog.Builder(context).setTitle("Recording notes")
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).create()
-        dialog.setOnDismissListener { dismissed = true }
+        dialog.setOnDismissListener {
+            dismissed = true
+            sendProgress.clear()
+        }
         dialog.show()
         note.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -105,11 +110,16 @@ internal class CaptureEvidenceDialog(
         }
     }
 
-    private fun <T> run(operation: suspend (RideDatabaseHandle) -> T, done: (T) -> Unit) {
+    private fun <T> run(
+        operation: suspend (RideDatabaseHandle) -> T,
+        onFinished: () -> Unit = {},
+        done: (T) -> Unit,
+    ) {
         if (working || dismissed) return
         working = true; update()
         charging.withDatabase(operation) { result ->
             if (dismissed) return@withDatabase
+            onFinished()
             result.onSuccess(done).onFailure { message.text = it.message ?: "The recording could not be updated." }
             working = false; renderImages(); update()
         }
@@ -152,9 +162,15 @@ internal class CaptureEvidenceDialog(
             .setMessage("Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. Your original recording stays on this device.")
             .setNegativeButton("Not now", null)
             .setPositiveButton("Send privately") { _, _ ->
+                message.text = ""
+                val listener = sendProgress.begin(prepared.operationId)
                 run({ database ->
                     val credential = charging.captureCredential()
-                    CaptureSubmissionClientHandle(database).use { it.send(prepared.operationId, credential.identityId, credential.token) }
+                    CaptureSubmissionClientHandle(database).use { client ->
+                        client.sendWithProgress(prepared.operationId, credential.identityId, credential.token, listener)
+                    }
+                }, onFinished = {
+                    sendProgress.clear()
                 }) { next ->
                     status = next
                     message.text = if (next.receipt != null) "Received privately · ${next.receipt!!.operationId}" else "Send has not completed. Retry to confirm its receipt."
