@@ -7,6 +7,7 @@ protocol CutoutSessionDriving: AnyObject {
     var rideSessionStateHandle: CutoutSessionStateHandle { get }
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? { get set }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPresentation) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
@@ -72,6 +73,10 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? {
+        get { nil }
+        set {}
+    }
 
     func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws {
         let state = rideSessionStateHandle

@@ -636,6 +636,10 @@ final class CutoutAppModel {
                 rideMapAvailability: { [weak self] availability in
                     self?.liveRide.setAvailability(availability)
                 },
+                deviceSession: { [weak self] snapshot in
+                    self?.device.deviceSessionSnapshot = snapshot
+                    self?.syncLiveActivity()
+                },
                 protocolIdentity: { [weak self] candidate in
                     self?.applyProtocolIdentityCandidate(candidate)
                 },
@@ -1602,6 +1606,7 @@ final class CutoutAppModel {
         return liveActivityIdentity.map {
             LiveActivityRideSnapshot(
                 identity: $0, glyph: liveActivityGlyph,
+                deviceIdentity: device.deviceSessionSnapshot?.identity,
                 rideState: EucRideScreenState(phase: phase, displayState: displayed),
                 now: core.now(),
                 rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
@@ -1659,6 +1664,8 @@ final class CutoutAppModel {
         guard
             previousSnapshot == nil
                 || snapshot.connectionState != previousSnapshot?.connectionState
+                || snapshot.showsCompactPwmBar != previousSnapshot?.showsCompactPwmBar
+                || snapshot.headroomSeverity != previousSnapshot?.headroomSeverity
                 || lastLiveActivityUpdate.map({
                     now.elapsed(since: $0).rawValue >= core.rideSessionStateHandle.rideSessionSnapshot().staleAfterMs
                         / 2

@@ -26,6 +26,7 @@ final class DevicePresentationModel {
     private var selectionRestored: Bool
 
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    var deviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
 
     init(
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),

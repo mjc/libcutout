@@ -546,6 +546,7 @@ class AndroidBleClient(
                 diagnostics.notification(token, channel, service, bytes, semantic, evidence, atMs)
             }) { snapshot, telemetry, settings ->
             if (current()) {
+                diagnostics.updateIdentity(token)
                 if (snapshot.connection.deadlineMs == null) {
                     cancelDeadline?.invoke(); cancelDeadline = null
                 }

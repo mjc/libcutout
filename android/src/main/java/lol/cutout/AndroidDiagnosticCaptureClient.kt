@@ -214,6 +214,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 return null
             }
             this.writer = writer
+            connectionToken?.let(::updateIdentity)
             publish(presentation.copy(
                 ready = true,
                 lifecycle = owner.captureLifecycleSnapshot(),
@@ -230,6 +231,12 @@ class AndroidDiagnosticCaptureClient internal constructor(
             Log.w(TAG, "Diagnostic capture writer could not start", error)
             update(lifecycle = owner.captureLifecycleSnapshot(), error = error.message ?: context.getString(R.string.capture_start_failed))
             return null
+        }
+    }
+
+    internal fun updateIdentity(token: MobileConnectionAttemptTokenDto) {
+        ownedWriter(token)?.let { active ->
+            state().updateCaptureIdentity(token, active.builder)?.let { applyWriteOutcome(active, it) }
         }
     }
 
@@ -279,6 +286,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 MobileMonotonicMillisDto(atMs), channel, service, bytes.copyOf(), null, semanticTelemetry, evidence,
             )
             applyWriteOutcome(active, outcome)
+            updateIdentity(token)
             if (outcome == MobileCaptureWriteOutcomeDto.Accepted) active.notificationCount++
             publish(presentation.copy(notificationCount = active.notificationCount))
         }

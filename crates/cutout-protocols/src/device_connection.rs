@@ -67,6 +67,17 @@ pub struct DeviceConnectionStep {
     pub diagnostics: ParserDiagnosticsDto,
 }
 
+/// Capture metadata reconciliation for an exact connection attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureIdentityUpdate {
+    /// The current attempt has no verified protocol; bind ownership without publishing proof.
+    Unresolved,
+    /// The current verified decoder established this identity.
+    Resolved(cutout_core::PevcapResolvedIdentity),
+    /// The attempt's previously verified protocol was contradicted by later wire evidence.
+    Invalidated,
+}
+
 /// Authoritative device connection, backed by the existing state and protocol owners.
 #[derive(Debug, Default)]
 pub struct DeviceConnectionSession {
@@ -81,6 +92,7 @@ pub struct DeviceConnectionSession {
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
     validation_grant: Option<ValidationGrant>,
+    invalidated_capture_attempt: Option<ConnectionAttemptToken>,
     setting_operations:
         std::collections::BTreeMap<cutout_core::SettingId, settings::SettingTransportOperation>,
 }
@@ -316,6 +328,7 @@ impl DeviceConnectionSession {
 
     fn reset_for_attempt(&mut self, platform_identifier: &str, at: MonotonicTimestamp) {
         self.retain_detection();
+        self.invalidated_capture_attempt = None;
         self.last_input_at = at;
         self.vesc_board_profile = None;
         self.validation_grant = None;
@@ -384,6 +397,7 @@ impl DeviceConnectionSession {
         if !self.state.connection.conflict(token) {
             return false;
         }
+        self.invalidated_capture_attempt = Some(token.clone());
         self.device = None;
         self.validation_grant = None;
         self.state.settings.disconnect();
@@ -593,6 +607,34 @@ impl DeviceConnectionSession {
                 .as_ref()
                 .map_or_else(Vec::new, |device| device.raw_settings_pages().to_vec()),
         }
+    }
+
+    /// Ordinary disconnect preserves historical proof; only contradictory evidence revokes it.
+    #[must_use]
+    pub fn capture_identity(
+        &self,
+        token: &ConnectionAttemptToken,
+    ) -> Option<CaptureIdentityUpdate> {
+        if self.invalidated_capture_attempt.as_ref() == Some(token) {
+            return Some(CaptureIdentityUpdate::Invalidated);
+        }
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        if !self.state.connection.is_verified(token) {
+            return Some(CaptureIdentityUpdate::Unresolved);
+        }
+        let identity = self.device.as_ref()?.identity();
+        Some(CaptureIdentityUpdate::Resolved(
+            cutout_core::PevcapResolvedIdentity {
+                protocol_family: Some(identity.protocol),
+                model: identity.model.map(|model| cutout_core::VerifiedValue {
+                    value: format!("{} {}", model.manufacturer, model.model),
+                    verification: cutout_core::VerificationStatus::HardwareVerified,
+                }),
+                firmware: None,
+            },
+        ))
     }
 
     /// Returns an immutable connection and identity snapshot.

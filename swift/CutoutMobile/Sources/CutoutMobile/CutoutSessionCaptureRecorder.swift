@@ -78,11 +78,10 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto
-    func setResolvedIdentity(
-        _ identity: MobileResolvedIdentityDto,
-        evidence: String?,
-        detail: String?
-    ) -> MobileCaptureWriteOutcomeDto
+    func updateIdentity(
+        from state: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken
+    ) -> MobileCaptureWriteOutcomeDto?
     func addGattFingerprint(_ fingerprint: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto
     func makeWriteReceiptRecorder(
         channel: BluetoothUuid,
@@ -344,12 +343,12 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         ) ?? .accepted
     }
 
-    func setResolvedIdentity(
-        _ identity: MobileResolvedIdentityDto,
-        evidence: String?,
-        detail: String?
-    ) -> MobileCaptureWriteOutcomeDto {
-        builder?.updateResolvedIdentity(identity: identity, evidence: evidence, detail: detail) ?? .accepted
+    func updateIdentity(
+        from state: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken
+    ) -> MobileCaptureWriteOutcomeDto? {
+        guard let builder else { return nil }
+        return state.updateCaptureIdentity(token: token, builder: builder)
     }
 
     func addGattFingerprint(_ fingerprint: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto {

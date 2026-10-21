@@ -27,7 +27,7 @@ class LocalVescDebugPanelTest {
             val replay = productionReplayPresentation()
             val connection = checkNotNull(replay.session).connection
             val fixture = replay.copy(session = MobileDeviceSessionSnapshotDto(connection,
-                MobileDeviceIdentityDto(MobileProtocolFamilyDto.VESC, MobileVehicleKindDto.BOARD, "VESC test fixture")))
+                MobileDeviceIdentityDto(MobileProtocolFamilyDto.VESC, MobileVehicleKindDto.BOARD, null, "VESC test fixture")))
             val panel = VescDebugPanel(activity)
             activity.setContentView(panel)
             panel.render(fixture)

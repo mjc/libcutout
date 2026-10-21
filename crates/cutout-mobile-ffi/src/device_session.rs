@@ -31,8 +31,30 @@ pub struct MobileDeviceIdentityDto {
     pub protocol: MobileProtocolFamilyDto,
     /// Native presentation template.
     pub vehicle_kind: MobileVehicleKindDto,
+    /// Application evidence from the current protocol owner.
+    pub vesc_application: Option<MobileVescApplicationDiscoveryDto>,
     /// Exact model label, absent when only the protocol is verified.
     pub model: Option<String>,
+}
+
+/// Validated VESC application evidence, independent from physical vehicle kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescApplicationDiscoveryDto {
+    /// No validated application INFO has arrived.
+    Pending,
+    /// INFO identifies Refloat.
+    Refloat,
+    /// INFO identifies a different application.
+    Absent,
+}
+impl From<cutout_protocols::VescApplicationDiscovery> for MobileVescApplicationDiscoveryDto {
+    fn from(value: cutout_protocols::VescApplicationDiscovery) -> Self {
+        match value {
+            cutout_protocols::VescApplicationDiscovery::Pending => Self::Pending,
+            cutout_protocols::VescApplicationDiscovery::Refloat => Self::Refloat,
+            cutout_protocols::VescApplicationDiscovery::Absent => Self::Absent,
+        }
+    }
 }
 
 /// Identity and connection admission observed together.
@@ -82,6 +104,7 @@ impl From<DeviceConnectionSnapshot> for MobileDeviceSessionSnapshotDto {
                     VehicleKind::Scooter => MobileVehicleKindDto::Scooter,
                     VehicleKind::Bike => MobileVehicleKindDto::Bike,
                 },
+                vesc_application: identity.vesc_application.map(Into::into),
                 model: identity.model.map(|model| model.model.to_string()),
             }),
         }

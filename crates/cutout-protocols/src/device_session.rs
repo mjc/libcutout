@@ -79,6 +79,17 @@ pub enum VehicleKind {
     Bike,
 }
 
+/// Application evidence derived from a validated VESC INFO response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VescApplicationDiscovery {
+    /// No validated application INFO has arrived.
+    Pending,
+    /// A validated INFO response identifies Refloat.
+    Refloat,
+    /// A validated INFO response identifies another application.
+    Absent,
+}
+
 /// Verified protocol identity with independently optional model and vehicle kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceSessionIdentity {
@@ -86,6 +97,8 @@ pub struct DeviceSessionIdentity {
     pub protocol: ProtocolFamily,
     /// Physical vehicle category established independently from generic UART.
     pub vehicle_kind: VehicleKind,
+    /// Validated application evidence, independent from the physical vehicle kind.
+    pub vesc_application: Option<VescApplicationDiscovery>,
     /// Exact registry identity, never a closest-family substitute.
     pub model: Option<&'static ModelRegistryEntry>,
 }
@@ -236,6 +249,7 @@ impl DeviceSession {
             identity: DeviceSessionIdentity {
                 protocol,
                 vehicle_kind,
+                vesc_application: None,
                 model,
             },
             engine,
@@ -244,8 +258,15 @@ impl DeviceSession {
 
     /// Returns protocol, model and kind without inventing missing identity.
     #[must_use]
-    pub const fn identity(&self) -> DeviceSessionIdentity {
-        self.identity
+    pub fn identity(&self) -> DeviceSessionIdentity {
+        let vesc_application = match &self.engine {
+            DeviceSessionEngine::Vesc(session) => Some(session.application_discovery()),
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+        };
+        DeviceSessionIdentity {
+            vesc_application,
+            ..self.identity
+        }
     }
 
     /// Selects semantic settings only for an exactly identified supported model.
