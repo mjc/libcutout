@@ -358,10 +358,15 @@ struct DeviceTuneRouteView: View {
     @State private var drivetrainEditor: VescDrivetrainEditor?
     @State private var vehicleKindChoice: VehicleKindChoice?
 
-    private struct VehicleKindChoice: Identifiable {
+    struct VehicleKindChoice: Identifiable {
+        let id = UUID()
         let token: ConnectionAttemptToken
         let kind: VehicleKind
-        var id: UInt64 { token.generation }
+
+        func dismiss(from current: inout Self?) {
+            guard current?.id == id else { return }
+            current = nil
+        }
     }
 
     var body: some View {
@@ -394,7 +399,7 @@ struct DeviceTuneRouteView: View {
         .sheet(item: $vehicleKindChoice) { choice in
             DeviceVehicleKindChoiceView(token: choice.token, currentKind: choice.kind) { kind, token in
                 try await model.selectVehicleKind(kind, token: token)
-                vehicleKindChoice = nil
+                choice.dismiss(from: &vehicleKindChoice)
             }
         }
     }

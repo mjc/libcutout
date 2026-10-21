@@ -6,6 +6,20 @@ import XCTest
 @testable import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
+    @MainActor
+    func testVehicleKindSaveCompletionPreservesAReopenedSheetOnTheSameAttempt() throws {
+        let token = try XCTUnwrap(
+            CutoutSessionStateHandle().beginConnectionAttempt(platformIdentifier: "controller", nowMs: 0).token)
+        let original = DeviceTuneRouteView.VehicleKindChoice(token: token, kind: .eskate)
+        let replacement = DeviceTuneRouteView.VehicleKindChoice(token: token, kind: .ebike)
+        XCTAssertNotEqual(original.id, replacement.id)
+        var current: DeviceTuneRouteView.VehicleKindChoice? = replacement
+        original.dismiss(from: &current)
+        XCTAssertEqual(current?.id, replacement.id)
+        replacement.dismiss(from: &current)
+        XCTAssertNil(current)
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
