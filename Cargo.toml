@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/retina"]
+exclude = ["vendor/retina", "vendor/askama_derive"]
 members = [
     "crates/cutout-core",
     "crates/cutout-music",
@@ -29,6 +29,7 @@ strip = "none"
 
 [patch.crates-io]
 retina = { path = "vendor/retina" }
+askama_derive = { path = "vendor/askama_derive" }
 
 [workspace.package]
 edition = "2024"
