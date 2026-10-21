@@ -942,15 +942,59 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn ffi_progress_waits_for_matching_receipt_after_http_consumes_all_bytes()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn gated_capture_router(
+        received: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        matching: bool,
+    ) -> axum::Router {
         use axum::{
             Router,
             body::Bytes,
             http::{HeaderMap, StatusCode},
             routing::get,
         };
+        Router::new().route(
+            "/v1/capture-submissions/{operation}",
+            get(|| async { StatusCode::NOT_FOUND }).put(
+                move |axum::extract::Path(operation): axum::extract::Path<String>,
+                      headers: HeaderMap,
+                      body: Bytes| {
+                    let received = Arc::clone(&received);
+                    let release = Arc::clone(&release);
+                    async move {
+                        let metadata: cutout_core::CaptureSubmissionMetadata =
+                            serde_json::from_str(
+                                headers.get("x-cutout-capture").unwrap().to_str().unwrap(),
+                            )
+                            .unwrap();
+                        let summary = cutout_core::validate_capture_submission_payload(
+                            body.as_ref(),
+                            &metadata,
+                        )
+                        .unwrap();
+                        assert_eq!(body.len() as u64, metadata.bytes);
+                        let receipt = CaptureSubmissionReceipt {
+                            operation_id: operation,
+                            sha256: if matching {
+                                summary.sha256
+                            } else {
+                                "a".repeat(64)
+                            },
+                            bytes: metadata.bytes,
+                            received_at_milliseconds: 123,
+                        };
+                        received.notify_one();
+                        release.notified().await;
+                        axum::Json(receipt)
+                    }
+                },
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn ffi_progress_waits_for_matching_receipt_after_http_consumes_all_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::sync::Mutex;
         use tokio::sync::Notify;
         for matching in [true, false] {
@@ -958,45 +1002,8 @@ mod tests {
             let (database, source) = finished_capture(&directory.0)?;
             let received = Arc::new(Notify::new());
             let release = Arc::new(Notify::new());
-            let handler_received = Arc::clone(&received);
-            let handler_release = Arc::clone(&release);
-            let router = Router::new().route(
-                "/v1/capture-submissions/{operation}",
-                get(|| async { StatusCode::NOT_FOUND }).put(
-                    move |axum::extract::Path(operation): axum::extract::Path<String>,
-                          headers: HeaderMap,
-                          body: Bytes| {
-                        let received = Arc::clone(&handler_received);
-                        let release = Arc::clone(&handler_release);
-                        async move {
-                            let metadata: cutout_core::CaptureSubmissionMetadata =
-                                serde_json::from_str(
-                                    headers.get("x-cutout-capture").unwrap().to_str().unwrap(),
-                                )
-                                .unwrap();
-                            let summary = cutout_core::validate_capture_submission_payload(
-                                body.as_ref(),
-                                &metadata,
-                            )
-                            .unwrap();
-                            assert_eq!(body.len() as u64, metadata.bytes);
-                            let receipt = CaptureSubmissionReceipt {
-                                operation_id: operation,
-                                sha256: if matching {
-                                    summary.sha256
-                                } else {
-                                    "a".repeat(64)
-                                },
-                                bytes: metadata.bytes,
-                                received_at_milliseconds: 123,
-                            };
-                            received.notify_one();
-                            release.notified().await;
-                            axum::Json(receipt)
-                        }
-                    },
-                ),
-            );
+            let router =
+                gated_capture_router(Arc::clone(&received), Arc::clone(&release), matching);
             let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
             let base_url = format!("http://{}/", listener.local_addr()?);
             let server = tokio::spawn(async move {

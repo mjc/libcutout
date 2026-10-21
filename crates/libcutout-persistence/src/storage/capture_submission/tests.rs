@@ -1121,7 +1121,7 @@ fn capture_submission_progress_starts_at_zero_for_the_admitted_snapshot() {
     let progress = Arc::new(Mutex::new(Vec::new()));
     let observed = Arc::clone(&progress);
     let transport = Transport::default();
-    let sent = ready(database.send_capture_submission_with_progress(
+    let completed = ready(database.send_capture_submission_with_progress(
         &prepared.operation_id,
         ACCOUNT,
         "secret",
@@ -1129,7 +1129,7 @@ fn capture_submission_progress_starts_at_zero_for_the_admitted_snapshot() {
         Arc::new(move |event| observed.lock().unwrap().push(event)),
     ))
     .unwrap();
-    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(completed.phase, CaptureSubmissionPhase::Sent);
     let progress = progress.lock().unwrap();
     let first = progress
         .first()
@@ -1186,7 +1186,7 @@ fn capture_submission_progress_waits_for_receipt_and_retry_restarts_at_zero() {
         CaptureSubmissionPhase::Retryable
     );
     events.lock().unwrap().clear();
-    let sent = ready(database.send_capture_submission_with_progress(
+    let completed = ready(database.send_capture_submission_with_progress(
         &prepared.operation_id,
         ACCOUNT,
         "secret",
@@ -1194,7 +1194,7 @@ fn capture_submission_progress_waits_for_receipt_and_retry_restarts_at_zero() {
         callback,
     ))
     .unwrap();
-    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(completed.phase, CaptureSubmissionPhase::Sent);
     let progress = events.lock().unwrap();
     assert_eq!(
         progress[0].bytes_sent, 0,
@@ -1336,7 +1336,7 @@ fn capture_submission_relaunch_retains_no_progress_and_receipt_recovery_needs_no
     *transport.lookup.lock().unwrap() = Some(receipt);
     events.lock().unwrap().clear();
     let observed = Arc::clone(&events);
-    let sent = ready(reopened.send_capture_submission_with_progress(
+    let completed = ready(reopened.send_capture_submission_with_progress(
         &prepared.operation_id,
         ACCOUNT,
         "secret",
@@ -1344,7 +1344,7 @@ fn capture_submission_relaunch_retains_no_progress_and_receipt_recovery_needs_no
         Arc::new(move |event| observed.lock().unwrap().push(event)),
     ))
     .unwrap();
-    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(completed.phase, CaptureSubmissionPhase::Sent);
     assert_eq!(
         transport.uploads.lock().unwrap().len(),
         1,
