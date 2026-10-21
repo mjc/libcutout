@@ -1106,7 +1106,16 @@ fn replacement_application_info_retires_refloat_identity_and_controls() {
     notification(&mut owner, &token, refloat_info("Other", 1, 3, 0), 20);
     assert_eq!(
         owner.snapshot().identity.unwrap().vesc_application,
-        Some(cutout_protocols::VescApplicationDiscovery::Absent)
+        Some(cutout_protocols::VescApplicationDiscovery::Pending),
+        "contradictory same-link evidence withdraws identity until reconnect"
+    );
+    assert_eq!(
+        owner
+            .snapshot()
+            .identity
+            .unwrap()
+            .classification_requirement,
+        cutout_core::VehicleClassificationRequirement::Pending
     );
     assert_eq!(
         owner.snapshot().identity.unwrap().vehicle_kind(),
