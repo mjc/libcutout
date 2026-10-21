@@ -114,6 +114,27 @@ pub trait SessionPeripheral: Send + Sync {
         mode: WriteMode,
     ) -> Result<(), BtleError>;
 
+    /// Invokes a query write only before the exclusive native submission deadline.
+    ///
+    /// An implementation must enforce the deadline at its final framework invocation,
+    /// including any independently retained backend queue. Dropping the caller's
+    /// future does not establish that guarantee. The default refuses the operation
+    /// without invoking [`Self::write`] or enqueueing bytes.
+    ///
+    /// `Ok(())` confirms actual native invocation, not internal queue admission.
+    /// [`crate::SessionBridgeError::UnsupportedApplicationQueryDeadline`] must
+    /// guarantee that no bytes were enqueued or invoked; other errors can leave
+    /// submission uncertain.
+    async fn write_application_query(
+        &self,
+        _characteristic: &Characteristic,
+        _chunk: BtleWriteChunk<'_>,
+        _mode: WriteMode,
+        _submit_before: tokio::time::Instant,
+    ) -> Result<(), BtleError> {
+        Err(crate::SessionBridgeError::UnsupportedApplicationQueryDeadline.into())
+    }
+
     /// Returns the notification stream for the connected peripheral.
     async fn notifications(
         &self,

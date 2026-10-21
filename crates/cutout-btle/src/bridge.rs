@@ -1243,28 +1243,22 @@ where
             admitted_at,
             armed: true,
         });
-        let write = context
-            .peripheral
-            .write(context.write_characteristic, chunk, mode);
         let result = if let Some(query) = query {
-            let remaining =
-                Duration::from_millis(query.submit_before.get().saturating_sub(admitted_at.get()));
-            match tokio::time::timeout(remaining, write).await {
-                Ok(result) => result,
-                Err(_) => Err(BtleError::OperationTimedOut {
-                    operation: "application query write",
-                    after: remaining,
-                }),
-            }
+            submit_application_query(context, chunk, mode, query, admitted_at).await
         } else {
-            write.await
+            context
+                .peripheral
+                .write(context.write_characteristic, chunk, mode)
+                .await
         };
         let monotonic_ms = context.clock.now().max(admitted_at);
         if let Some(receipt) = receipt {
-            let status = if result.is_ok() {
-                ApplicationQueryTransportStatus::Submitted
-            } else {
-                ApplicationQueryTransportStatus::SubmissionUnknown
+            let status = match &result {
+                Ok(()) => ApplicationQueryTransportStatus::Submitted,
+                Err(BtleError::Bridge(SessionBridgeError::UnsupportedApplicationQueryDeadline)) => {
+                    ApplicationQueryTransportStatus::Rejected
+                }
+                Err(_) => ApplicationQueryTransportStatus::SubmissionUnknown,
             };
             receipt.complete(status, monotonic_ms);
         }
@@ -1281,6 +1275,38 @@ where
         context.report.writes = context.report.writes.increment();
     }
     Ok(())
+}
+
+async fn submit_application_query<P: SessionPeripheral + ?Sized>(
+    context: &SessionOutputContext<'_, P>,
+    chunk: BtleWriteChunk<'_>,
+    mode: WriteMode,
+    query: ApplicationQueryWrite,
+    admitted_at: MonotonicMs,
+) -> Result<(), BtleError> {
+    let remaining =
+        Duration::from_millis(query.submit_before.get().saturating_sub(admitted_at.get()));
+    let submit_before = context.clock.origin
+        + Duration::from_millis(
+            query
+                .submit_before
+                .get()
+                .saturating_sub(context.clock.offset.get()),
+        );
+    let write = context.peripheral.write_application_query(
+        context.write_characteristic,
+        chunk,
+        mode,
+        submit_before,
+    );
+    tokio::time::timeout_at(submit_before, write)
+        .await
+        .unwrap_or_else(|_| {
+            Err(BtleError::OperationTimedOut {
+                operation: "application query write",
+                after: remaining,
+            })
+        })
 }
 
 /// Keeps possibly submitted bytes attributable even when the host drops the driver future.

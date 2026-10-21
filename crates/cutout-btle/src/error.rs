@@ -31,6 +31,10 @@ pub enum SessionBridgeError {
     #[error("bridge needs a writable session endpoint")]
     MissingSessionEndpoint,
 
+    /// The backend cannot enforce a deadline before its native write invocation.
+    #[error("bluetooth backend cannot enforce application query submission deadlines")]
+    UnsupportedApplicationQueryDeadline,
+
     /// A write chunk exceeded the negotiated BTLE write limit.
     #[error("bridge write chunk length {len} exceeded negotiated limit {limit}")]
     WriteChunkTooLong {
@@ -116,6 +120,9 @@ impl BtleError {
             }
             Self::Bridge(SessionBridgeError::MissingSessionEndpoint) => {
                 "inspect GATT services and select a device exposing a writable and notify-capable session characteristic"
+            }
+            Self::Bridge(SessionBridgeError::UnsupportedApplicationQueryDeadline) => {
+                "use a Bluetooth adapter that enforces application query deadlines before native submission"
             }
             Self::Bridge(SessionBridgeError::MissingNotifyEndpoint { .. }) => {
                 "inspect GATT services and select a notify-capable characteristic for the session channel"

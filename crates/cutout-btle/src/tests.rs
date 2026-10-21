@@ -1422,6 +1422,51 @@ async fn application_query_bridge_reports_submission_to_the_protocol_owner() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn application_query_bridge_rejects_a_backend_with_a_retained_write_queue() {
+    use cutout_protocols::{
+        ReadOnlySession, VescApplicationDiscovery, VescApplicationQueryState, VescGenericModel,
+    };
+    let peripheral = RetainedQueuePeripheral(RecordingPeripheral::default());
+    let summary = begode_falcon_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    let result = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await;
+    // The backend worker owns its message after the driver's future is dropped.
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        peripheral.0.writes.lock().unwrap().is_empty(),
+        "an unbounded backend queue must never receive a deadline-bound query"
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        session.application_query_state(),
+        VescApplicationQueryState::KnownUnsent { query_id: 1 }
+    );
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: ms(20_000),
+        },
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        session.application_discovery(),
+        VescApplicationDiscovery::Pending
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn application_query_bridge_starts_the_response_window_after_delayed_submission() {
     use cutout_protocols::{ReadOnlySession, VescApplicationQueryState, VescGenericModel};
     let peripheral = RecordingPeripheral::with_open_notifications_and_write_delay(
@@ -1457,6 +1502,32 @@ async fn application_query_bridge_starts_the_response_window_after_delayed_submi
         "time spent awaiting native completion must precede the response interval"
     );
     assert_eq!(response_deadline_ms - submitted_at_ms, 2_000);
+}
+
+#[tokio::test(start_paused = true)]
+async fn application_query_bridge_never_invokes_at_the_exclusive_deadline() {
+    use cutout_protocols::{ReadOnlySession, VescGenericModel};
+    let peripheral = RecordingPeripheral {
+        write_delay: Duration::from_secs(5),
+        ..RecordingPeripheral::default()
+    };
+    let summary = begode_falcon_summary("controller");
+    let mut session = ReadOnlySession::<VescGenericModel>::default();
+    let result = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            cutout_protocols::VESC_WRITE_CHANNEL,
+            cutout_protocols::VESC_NOTIFY_CHANNEL,
+        ),
+        &summary,
+        summary.select_session_endpoints().unwrap(),
+        crate::NotificationWindow::from_millis(0),
+        &[DeviceCommand::RequestTelemetry],
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(peripheral.writes.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -3148,6 +3219,33 @@ impl Default for RecordingPeripheral {
 }
 
 impl RecordingPeripheral {
+    async fn prepare_write(&self) {
+        if let Some(started) = &self.write_started {
+            started.notify_one();
+        }
+        if !self.write_delay.is_zero() {
+            tokio::time::sleep(self.write_delay).await;
+        }
+    }
+
+    fn record_write(
+        &self,
+        characteristic: &Characteristic,
+        chunk: crate::BtleWriteChunk<'_>,
+        mode: WriteMode,
+    ) -> Result<(), crate::BtleError> {
+        let mut writes = self.writes.lock().expect("write log");
+        if self.fail_write_at == Some(writes.len()) {
+            return Err(crate::BtleError::Backend(btleplug::Error::NotConnected));
+        }
+        writes.push((
+            characteristic.uuid,
+            Bytes::copy_from_slice(chunk.as_slice()),
+            mode,
+        ));
+        Ok(())
+    }
+
     fn with_mtu(mtu: u16) -> Self {
         Self {
             mtu,
@@ -3184,6 +3282,48 @@ impl RecordingPeripheral {
             write_delay,
             ..Self::default()
         }
+    }
+}
+
+/// Models an adapter worker that retains bytes independently of its caller.
+struct RetainedQueuePeripheral(RecordingPeripheral);
+
+#[async_trait::async_trait]
+impl crate::SessionPeripheral for RetainedQueuePeripheral {
+    fn mtu(&self) -> u16 {
+        self.0.mtu
+    }
+
+    async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), crate::BtleError> {
+        crate::SessionPeripheral::subscribe(&self.0, characteristic).await
+    }
+
+    async fn write(
+        &self,
+        characteristic: &Characteristic,
+        chunk: crate::BtleWriteChunk<'_>,
+        mode: WriteMode,
+    ) -> Result<(), crate::BtleError> {
+        let writes = self.0.writes.clone();
+        let uuid = characteristic.uuid;
+        let bytes = Bytes::copy_from_slice(chunk.as_slice());
+        let submitted = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            writes.lock().unwrap().push((uuid, bytes, mode));
+        });
+        submitted.await.unwrap();
+        Ok(())
+    }
+
+    async fn notifications(
+        &self,
+    ) -> Result<Pin<Box<dyn stream::Stream<Item = crate::BtleNotification> + Send>>, crate::BtleError>
+    {
+        crate::SessionPeripheral::notifications(&self.0).await
+    }
+
+    async fn disconnect(&self) -> Result<(), crate::BtleError> {
+        crate::SessionPeripheral::disconnect(&self.0).await
     }
 }
 
@@ -3267,21 +3407,25 @@ impl crate::SessionPeripheral for RecordingPeripheral {
         chunk: crate::BtleWriteChunk<'_>,
         mode: WriteMode,
     ) -> Result<(), crate::BtleError> {
-        if let Some(started) = &self.write_started {
-            started.notify_one();
+        self.prepare_write().await;
+        self.record_write(characteristic, chunk, mode)
+    }
+
+    async fn write_application_query(
+        &self,
+        characteristic: &Characteristic,
+        chunk: crate::BtleWriteChunk<'_>,
+        mode: WriteMode,
+        submit_before: tokio::time::Instant,
+    ) -> Result<(), crate::BtleError> {
+        self.prepare_write().await;
+        if tokio::time::Instant::now() >= submit_before {
+            return Err(crate::BtleError::OperationTimedOut {
+                operation: "application query native invocation",
+                after: self.write_delay,
+            });
         }
-        if !self.write_delay.is_zero() {
-            tokio::time::sleep(self.write_delay).await;
-        }
-        if self.fail_write_at == Some(self.writes.lock().expect("write log").len()) {
-            return Err(crate::BtleError::Backend(btleplug::Error::NotConnected));
-        }
-        self.writes.lock().expect("write log").push((
-            characteristic.uuid,
-            Bytes::copy_from_slice(chunk.as_slice()),
-            mode,
-        ));
-        Ok(())
+        self.record_write(characteristic, chunk, mode)
     }
 
     async fn notifications(
