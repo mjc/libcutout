@@ -7966,10 +7966,25 @@ pub enum SessionOutputError {
     },
 }
 
+/// Treatment of link-sensitive values in the shared telemetry projection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SessionTelemetryRetention {
+    /// Live link changes invalidate current charging evidence.
+    #[default]
+    Live,
+    /// Recorded link changes preserve the last historical observation.
+    Historical,
+}
+
 /// Synchronous protocol reactor.
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
+
+    /// Chooses how link events affect the shared telemetry projection.
+    fn telemetry_retention(&self) -> SessionTelemetryRetention {
+        SessionTelemetryRetention::Live
+    }
 
     /// Supplies current host time before an untimestamped command, without issuing periodic work.
     fn observe_host_time(&mut self, _at: MonotonicTimestamp) {}
@@ -8147,7 +8162,8 @@ where
                 }
             }
         }
-        self.state.observe_outputs(&self.output[start..]);
+        self.state
+            .observe_outputs(&self.output[start..], self.session.telemetry_retention());
     }
 }
 
@@ -9381,6 +9397,40 @@ mod tests {
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
             }
+        }
+    }
+
+    #[test]
+    fn default_live_host_clears_charge_evidence_on_link_changes() {
+        use crate::{ChargeMode, HostSession, RideOperatingState, SessionTelemetryRetention};
+        for input in [
+            SessionInput::LinkDown,
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(200),
+                max_write_len: None,
+            }),
+        ] {
+            let mut host = HostSession::new(EchoSession::default());
+            let mut delta = TelemetryDelta::empty(ms(100));
+            delta.charge_mode = Some(Measured::reported(ChargeMode::Charging));
+            delta.operating_state = Some(RideOperatingState::Charging);
+            delta.speed = Some(Measured::reported(Speed::from_millimetres_per_second(0)));
+            delta.voltage = Some(Measured::reported(Voltage::from_millivolts(84_000)));
+            host.state.observe_outputs(
+                &[SessionOutput::Event(DeviceEvent::Telemetry(delta))],
+                SessionTelemetryRetention::Live,
+            );
+            let before = host.current_snapshot();
+            assert_eq!(before.operating_state, Some(RideOperatingState::Charging));
+            assert_eq!(
+                before.charge_mode,
+                Some(Measured::reported(ChargeMode::Charging))
+            );
+            host.ingest(input);
+            let mut expected = before;
+            expected.charge_mode = None;
+            expected.operating_state = None;
+            assert_eq!(host.current_snapshot(), expected);
         }
     }
 

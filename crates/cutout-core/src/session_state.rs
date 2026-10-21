@@ -148,9 +148,13 @@ impl CutoutSessionState {
         };
     }
 
-    pub(crate) fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
+    pub(crate) fn observe_outputs(
+        &mut self,
+        outputs: &[SessionOutput],
+        retention: crate::SessionTelemetryRetention,
+    ) {
         for output in outputs {
-            self.observe_output(output);
+            self.observe_output(output, retention);
         }
     }
 
@@ -162,24 +166,30 @@ impl CutoutSessionState {
             .assign_observation_event_sequence(readback);
     }
 
-    fn observe_output(&mut self, output: &SessionOutput) {
+    fn observe_output(
+        &mut self,
+        output: &SessionOutput,
+        retention: crate::SessionTelemetryRetention,
+    ) {
         match output {
-            SessionOutput::Event(event) => self.observe_event(event),
+            SessionOutput::Event(event) => self.observe_event(event, retention),
             SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => {}
         }
     }
 
-    fn observe_event(&mut self, event: &DeviceEvent) {
+    fn observe_event(&mut self, event: &DeviceEvent, retention: crate::SessionTelemetryRetention) {
         match event {
             DeviceEvent::Telemetry(delta) => self.telemetry.observe_delta(*delta),
             DeviceEvent::ReadOnlyResponse(response) => self.observe_read_only_response(response),
             DeviceEvent::Diagnostics(diagnostics) => self.diagnostics.parser.merge(*diagnostics),
             DeviceEvent::LinkUp(_) | DeviceEvent::LinkDown => {
-                self.telemetry.current.charge_mode = None;
-                if self.telemetry.current.operating_state
-                    == Some(crate::RideOperatingState::Charging)
-                {
-                    self.telemetry.current.operating_state = None;
+                if retention == crate::SessionTelemetryRetention::Live {
+                    self.telemetry.current.charge_mode = None;
+                    if self.telemetry.current.operating_state
+                        == Some(crate::RideOperatingState::Charging)
+                    {
+                        self.telemetry.current.operating_state = None;
+                    }
                 }
             }
             DeviceEvent::Tick { .. }

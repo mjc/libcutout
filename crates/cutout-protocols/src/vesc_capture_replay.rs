@@ -342,6 +342,10 @@ impl VescCaptureReplaySession {
 }
 
 impl ProtocolSession for VescCaptureReplaySession {
+    fn telemetry_retention(&self) -> cutout_core::SessionTelemetryRetention {
+        cutout_core::SessionTelemetryRetention::Historical
+    }
+
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         if let SessionInput::LinkUp(link) = &input {
             self.last_receipt = Some(link.monotonic_ms);
@@ -1088,6 +1092,81 @@ mod tests {
                     );
                     assert_eq!(capture.encode(encoding).unwrap(), bytes);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn capture_ending_link_down_retains_reported_charging_state() {
+        use cutout_core::{PevcapEncoding, PevcapReader, PevcapReplayMode, RideOperatingState};
+
+        let mut info = record(90_000, 283, 1, 1, 100);
+        let mut payload = [0_u8; 60];
+        payload[..4].copy_from_slice(&[101, 0, 2, 0]);
+        payload[4..11].copy_from_slice(b"Refloat");
+        payload[24..27].copy_from_slice(&[1, 3, 0]);
+        payload[51..55].copy_from_slice(&1_000_u32.to_be_bytes());
+        info.bytes = custom_app(&payload);
+        let mut ids = info.clone();
+        ids.monotonic_ms = MonotonicTimestamp::new(200);
+        let mut descriptor = vec![101, 32, 1, 11];
+        descriptor.extend_from_slice(b"motor.speed\0");
+        ids.bytes = custom_app(&descriptor);
+        let mut realtime = info.clone();
+        realtime.monotonic_ms = MonotonicTimestamp::new(300);
+        let mut data = vec![101, 31, 4, 0];
+        data.extend_from_slice(&42_u32.to_be_bytes());
+        data.extend_from_slice(&(0x13c1_a608_u32 | (1 << 21)).to_be_bytes());
+        data.extend_from_slice(&0x5080_u16.to_be_bytes());
+        data.extend_from_slice(&[0; 9]);
+        realtime.bytes = custom_app(&data);
+        let mut capture = reconnect_capture();
+        capture.records = vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(0), None),
+            info.clone(),
+            ids.clone(),
+            realtime.clone(),
+            PevcapRecord::link_down(MonotonicTimestamp::new(310)),
+        ];
+        let mut expected_host = host(VescReplayGeometryPolicy::Captured);
+        for record in [&info, &ids, &realtime] {
+            ingest(&mut expected_host, record);
+        }
+        let expected = VescCaptureReplaySession::observation(&expected_host);
+        assert_eq!(
+            expected.telemetry.operating_state,
+            Some(RideOperatingState::Charging)
+        );
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).unwrap();
+            for mode in [PevcapReplayMode::Whole, PevcapReplayMode::OneByte] {
+                let mut host = HostSession::new(VescCaptureReplaySession::new(
+                    VescReplayGeometryPolicy::Captured,
+                ));
+                let mut outputs = Vec::new();
+                PevcapReader::new(std::io::Cursor::new(&bytes), encoding)
+                    .unwrap()
+                    .replay_into_host_with_record_context(
+                        mode,
+                        &mut host,
+                        &mut outputs,
+                        true,
+                        VescCaptureReplaySession::observe_record,
+                    )
+                    .unwrap();
+                assert_eq!(VescCaptureReplaySession::observation(&host), expected);
+                assert!(!host.protocol_session().inner.replay_is_connected());
+                assert_eq!(
+                    outputs
+                        .iter()
+                        .filter(|output| matches!(
+                            output,
+                            SessionOutput::Event(cutout_core::DeviceEvent::LinkDown)
+                        ))
+                        .count(),
+                    1
+                );
+                assert_eq!(capture.encode(encoding).unwrap(), bytes);
             }
         }
     }
