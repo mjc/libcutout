@@ -4,6 +4,9 @@ import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 
 buildscript {
+    repositories {
+        mavenCentral()
+    }
     dependencies {
         // AGP owns Kotlin application; this selects its compiler implementation.
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
