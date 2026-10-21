@@ -561,6 +561,25 @@ final class PevScreenThemeTests: XCTestCase {
         }
     }
 
+    func testRideHeaderDistinguishesStationaryAndParkedAndPreservesWarningPriority() {
+        for (state, pwm, expected) in [
+            (RideOperatingState.standing, Int16(500), "Stationary"),
+            (.parked, 500, "Parked"), (.unknown, 500, "Connected"),
+            (.standing, 990, "Reduce acceleration"), (.charging, 990, "Charging"),
+        ] {
+            let telemetry = TelemetrySnapshot(
+                at: MonotonicMilliseconds(1_000), speed: Speed(value: 0),
+                operatingState: state, pwm: DutyCycle(permille: pwm))
+            let view = EucRideScreenView(
+                rideState: EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry)),
+                rideTitle: "NOSFET Aero", now: MonotonicMilliseconds(1_000),
+                captureStatusText: nil, connectionStatusText: "Connected",
+                phoneLocationReadback: PhoneLocationReadback(
+                    snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)))
+            XCTAssertEqual(view.phaseText, expected)
+        }
+    }
+
     func testRideOnlyOffersTimeToFullWhileCharging() {
         for operatingState in [RideOperatingState.riding, .parked, .standing, .unknown, .charging] {
             let telemetry = TelemetrySnapshot(operatingState: operatingState)

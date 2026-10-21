@@ -4,6 +4,23 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testStationaryStatusStaysDistinctFromParkedInLiveActivityAndAccessibility() {
+        for (state, expected) in [
+            (RideOperatingState.standing, "Stationary"), (.parked, "Parked"),
+            (.riding, "Riding"), (.charging, "Charging"),
+        ] {
+            let ride = liveRideState(
+                speed: 0,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000), speed: Speed(value: 0), operatingState: state))
+            let snapshot = LiveActivityRideSnapshot(identity: .model(.aero), rideState: ride)
+            XCTAssertEqual(snapshot.sessionStatus.value, expected)
+            XCTAssertEqual(snapshot.sessionStatus.accessibilityText, expected)
+            XCTAssertTrue(snapshot.sessionStatus.accessibilityValue.contains(expected))
+            XCTAssertEqual(ride.operatingState, state)
+        }
+    }
+
     func testLiveActivityGlyphUsesCanonicalPhysicalKindWithoutAnOEMModelGuess() throws {
         let expected: [(VehicleKind, LiveActivityRideGlyph)] = [
             (.unknown, .unknown), (.electricUnicycle, .electricUnicycle), (.onewheel, .onewheel),

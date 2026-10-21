@@ -491,8 +491,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding" } } }
     },
     "euc.status.standing" : {
-      "comment" : "EUC operating state while parked and stationary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Parked" } } }
+      "comment" : "Live EUC at zero speed without explicit parked or balancing evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stationary" } } }
     },
     "euc.warning.connection_failed" : {
       "comment" : "Ride warning title when the Bluetooth connection has failed.",

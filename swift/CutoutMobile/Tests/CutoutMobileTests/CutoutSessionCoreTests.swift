@@ -5258,7 +5258,8 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(parked.statusText, "Parked")
         XCTAssertEqual(riding.statusText, "Riding")
-        XCTAssertEqual(standing.statusText, "Parked")
+        XCTAssertEqual(standing.statusText, "Stationary")
+        XCTAssertNotEqual(standing.statusText, parked.statusText)
         XCTAssertEqual(charging.statusText, "Charging")
     }
 

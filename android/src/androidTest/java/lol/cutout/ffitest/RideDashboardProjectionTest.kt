@@ -70,8 +70,11 @@ open class RideDashboardProjectionTest {
             }
             check(hasText(ride, expectedStatus)) { "$state did not use localized $labelKey" }
         }
-        check(ui.label("euc.status.standing") == ui.label("euc.status.parked")) {
-            "Standing wording should follow the current localized Parked label"
+        check(ui.label("euc.status.standing") == "Stationary") {
+            "Standing must use neutral stationary wording"
+        }
+        check(ui.label("euc.status.standing") != ui.label("euc.status.parked")) {
+            "Standing must remain distinct from explicitly parked telemetry"
         }
         val speedUnit = activity.getString(lol.cutout.R.string.speed_unit)
         check(speedUnit == "mph") { "Ride speed unit no longer matches Swift RideUnits" }

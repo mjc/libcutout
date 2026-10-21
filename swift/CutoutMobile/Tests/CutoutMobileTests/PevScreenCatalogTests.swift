@@ -210,7 +210,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_stale"), "Telemetry stale")
         XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3 seconds"), "Last update 3 seconds ago")
         XCTAssertEqual(pevLocalizedText("euc.status.parked"), "Parked")
-        XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Parked")
+        XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Stationary")
         XCTAssertEqual(pevLocalizedText("euc.status.riding"), "Riding")
         XCTAssertEqual(pevLocalizedText("euc.status.charging"), "Charging")
     }
