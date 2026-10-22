@@ -72,7 +72,8 @@ final class DeviceSessionTransportTests: XCTestCase {
     }
 
     private func withReadyPhoneDriveTransport(
-        _ test: (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink, Mutex<UInt64>) throws -> Void
+        _ test: (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink, borrowing Mutex<UInt64>) throws ->
+            Void
     ) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
