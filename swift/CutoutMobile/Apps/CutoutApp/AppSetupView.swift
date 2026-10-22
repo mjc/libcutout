@@ -346,7 +346,6 @@ struct AppSetupView: View {
         .tint(PevDashboardColors.yellow)
     }
 
-    @ToolbarContentBuilder
     private func phoneDriveCurrentField(_ labelKey: String, text: Binding<String>, identifier: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(localizedAppText(labelKey))
@@ -364,6 +363,7 @@ struct AppSetupView: View {
         }
     }
 
+    @ToolbarContentBuilder
     private var doneToolbar: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
             Button {
