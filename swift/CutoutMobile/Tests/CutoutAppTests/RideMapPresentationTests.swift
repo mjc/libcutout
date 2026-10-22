@@ -543,7 +543,7 @@ final class RideMapPresentationTests: XCTestCase {
     func testMapViewportDoesNotSubtractTheNativeAccessorySafeAreaTwice() {
         let player = CGRect(x: 21, y: 737, width: 360, height: 48)
         XCTAssertEqual(
-            RideMapViewportLayout.visibleHeight(
+            RideViewportLayout.visibleHeight(
                 contentFrame: CGRect(x: 0, y: 147, width: 402, height: 590),
                 musicPlayerFrame: player
             ),
@@ -551,7 +551,7 @@ final class RideMapPresentationTests: XCTestCase {
             "The observed native TabView proposal already ends at the player"
         )
         XCTAssertEqual(
-            RideMapViewportLayout.visibleHeight(
+            RideViewportLayout.visibleHeight(
                 contentFrame: CGRect(x: 0, y: 147, width: 402, height: 727),
                 musicPlayerFrame: player
             ),
@@ -563,17 +563,17 @@ final class RideMapPresentationTests: XCTestCase {
     func testMapViewportKeepsItsProposalWithoutAnOverlappingPlayerAndClampsAtZero() {
         let frame = CGRect(x: 0, y: 147, width: 402, height: 590)
         XCTAssertEqual(
-            RideMapViewportLayout.visibleHeight(contentFrame: frame, musicPlayerFrame: nil), 590
+            RideViewportLayout.visibleHeight(contentFrame: frame, musicPlayerFrame: nil), 590
         )
         XCTAssertEqual(
-            RideMapViewportLayout.visibleHeight(
+            RideViewportLayout.visibleHeight(
                 contentFrame: frame,
                 musicPlayerFrame: CGRect(x: 21, y: 791, width: 360, height: 48)
             ),
             590
         )
         XCTAssertEqual(
-            RideMapViewportLayout.visibleHeight(
+            RideViewportLayout.visibleHeight(
                 contentFrame: frame,
                 musicPlayerFrame: CGRect(x: 21, y: 100, width: 360, height: 48)
             ),

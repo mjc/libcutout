@@ -9440,6 +9440,10 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertEqual(Set(crossing.map(\.generation)).count, 1)
         XCTAssertFalse(crossing.contains { $0.phase == "pressed:brake" })
         keepPhoneScreenshot("active-preview-buttons")
+        XCTAssertLessThanOrEqual(
+            phoneApp.staticTexts["phone-control.status"].frame.maxY,
+            phoneApp.tabBars.firstMatch.frame.minY - 8,
+            "The phone-control footer must stay clear of the floating tab bar")
         try openPhoneReadings()
         phoneApp.tabBars.buttons["Map"].tap()
         XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
@@ -9465,6 +9469,9 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         let player = phoneElement("music.compact-player")
         XCTAssertTrue(player.waitForExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertLessThanOrEqual(area.frame.maxY, player.frame.minY + 1)
+        XCTAssertGreaterThanOrEqual(
+            area.frame.maxY, player.frame.minY - 16,
+            "Area must cover Ride down to the player, without reserving the native safe area twice")
         for x in [0.05, 0.95] {
             for y in [0.05, 0.5, 0.95] {
                 let beforeSample = try phoneReceiptBaseline()
@@ -9494,6 +9501,9 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(area.waitForExistence(timeout: 5))
         XCTAssertFalse((area.value as? String ?? "").contains("Held"))
         keepPhoneScreenshot("preview-area-ride")
+        XCTAssertGreaterThanOrEqual(
+            area.frame.maxY, player.frame.minY - 16,
+            "Area must still reach the player after navigation and the measured player frame updates")
         phoneApp.buttons["music.expand"].tap()
         XCTAssertTrue(phoneElement("music.player.screen").waitForExistence(timeout: 5))
         keepPhoneScreenshot("area-player-navigation")
@@ -9719,6 +9729,10 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
     }
 
     private func keepPhoneScreenshot(_ title: String) {
+        let hierarchy = XCTAttachment(string: phoneApp.debugDescription)
+        hierarchy.name = title + "-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         let attachment = XCTAttachment(screenshot: phoneApp.screenshot())
         attachment.name = title
         attachment.lifetime = .keepAlways

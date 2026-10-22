@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum RideMapViewportLayout {
+enum RideViewportLayout {
     // TabView already reduces the content proposal for its safe area. Only cap
     // that proposal if the measured player overlaps it; subtracting the safe-area
     // inset again leaves a blank band and clips the final scroll rows early.

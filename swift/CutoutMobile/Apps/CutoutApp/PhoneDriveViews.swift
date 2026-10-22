@@ -41,10 +41,8 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let frame = geometry.frame(in: .global)
-            let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
-            let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
-            let height = max(0, bottom - frame.minY)
+            let height = RideViewportLayout.visibleHeight(
+                in: geometry, musicPlayerFrame: musicCompactPlayerFrame)
             VStack(spacing: 0) {
                 content
                     .allowsHitTesting(!(model.capturesInput && model.snapshot.mode == .area))
@@ -52,7 +50,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
                 if model.snapshot.mode == .buttons {
                     buttonsPanel(height: min(200, max(110, height * 0.31)))
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 12)
+                        .padding(.bottom, 24)
                 } else if model.snapshot.mode == .area {
                     areaStatus
                         .padding(.horizontal, 24)

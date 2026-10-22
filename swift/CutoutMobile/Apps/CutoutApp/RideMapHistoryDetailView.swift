@@ -192,7 +192,7 @@ struct RideMapHistoryDetailView: View {
             RideMapHistoryDetailHeader(close: close)
 
             GeometryReader { proxy in
-                let visibleHeight = RideMapViewportLayout.visibleHeight(
+                let visibleHeight = RideViewportLayout.visibleHeight(
                     in: proxy, musicPlayerFrame: musicCompactPlayerFrame)
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {

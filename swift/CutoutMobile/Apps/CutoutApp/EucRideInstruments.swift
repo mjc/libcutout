@@ -38,10 +38,8 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
 
     var body: some View {
         GeometryReader { geometry in
-            let frame = geometry.frame(in: .global)
-            let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
-            let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
-            let height = max(0, bottom - frame.minY)
+            let height = RideViewportLayout.visibleHeight(
+                in: geometry, musicPlayerFrame: musicCompactPlayerFrame)
             let landscape = landscapeOverride ?? (geometry.size.width > height)
             VStack(spacing: spacing) {
                 header

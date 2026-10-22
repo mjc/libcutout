@@ -45,7 +45,7 @@ struct RideMapLiveContentView: View {
 
     var body: some View {
         GeometryReader { viewport in
-            let visibleHeight = RideMapViewportLayout.visibleHeight(
+            let visibleHeight = RideViewportLayout.visibleHeight(
                 in: viewport, musicPlayerFrame: musicCompactPlayerFrame)
             VStack(spacing: 0) {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -77,7 +77,7 @@ struct RideMapLiveContentView: View {
                                 location: userLocationCenter
                             )
                         )
-                        .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
+                        .frame(height: RideViewportLayout.mapHeight(for: visibleHeight))
                         .frame(maxWidth: .infinity)
                         .overlay(alignment: .topTrailing) {
                             RideMapCameraControlsView(

@@ -173,7 +173,7 @@ struct RideMapHistoryContentView: View {
                 filterControls
             }
             GeometryReader { viewport in
-                let visibleHeight = RideMapViewportLayout.visibleHeight(
+                let visibleHeight = RideViewportLayout.visibleHeight(
                     in: viewport, musicPlayerFrame: musicCompactPlayerFrame)
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
@@ -202,7 +202,7 @@ struct RideMapHistoryContentView: View {
                                     endpointMetadata: endpointMetadata,
                                     cameraRegion: cameraRegion,
                                     segments: segments,
-                                    mapHeight: RideMapViewportLayout.mapHeight(for: visibleHeight),
+                                    mapHeight: RideViewportLayout.mapHeight(for: visibleHeight),
                                     state: selectedRouteState,
                                     pointsTruncated: pointsTruncated,
                                     segmentsOmittedByBudget: segmentsOmittedByBudget,
