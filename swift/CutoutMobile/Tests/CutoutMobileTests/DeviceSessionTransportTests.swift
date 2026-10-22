@@ -491,6 +491,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(snapshot.settings.count, 75)
             XCTAssertTrue(snapshot.settingDescriptors.allSatisfy { $0.access == .readOnly })
             XCTAssertTrue(snapshot.settingDescriptors.allSatisfy { $0.applyEffect == .immediate })
+            XCTAssertTrue(snapshot.settingDescriptors.allSatisfy { $0.completion == .matchingReadback })
             XCTAssertTrue(snapshot.settings.allSatisfy { $0.current != nil && $0.requested == nil })
             XCTAssertNil(snapshot.descriptor(for: .pwmTiltback), "Standard firmware does not imply a Refloat catalog")
             XCTAssertEqual(snapshot.setting(for: .controllerId)?.current, .number(value: 0))
