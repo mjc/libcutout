@@ -3473,6 +3473,9 @@ fn reopening_legacy_import_retires_only_verified_managed_sidecar() {
     database
         .confirm_pevcap_import(&preview, 1_700_000_000_000)
         .unwrap();
+    let duplicate_preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
     let mut managed_directory = canonical_database_path.as_os_str().to_owned();
     managed_directory.push(".pevcap-imports");
     let managed_directory = std::path::PathBuf::from(managed_directory);
@@ -3520,9 +3523,32 @@ fn reopening_legacy_import_retires_only_verified_managed_sidecar() {
         .unwrap();
     drop(connection);
     database.shutdown().unwrap();
-    std::fs::remove_file(&source_path).unwrap();
+
+    let (scan_entered, scan_entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (scan_resume_tx, scan_resume_rx) = std::sync::mpsc::sync_channel(0);
+    crate::storage::pause_legacy_archive_for_test(digest.clone(), scan_entered, scan_resume_rx);
 
     let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    scan_entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("legacy archive scan pauses after reading its first chunk");
+    let duplicate = std::thread::scope(|scope| {
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let duplicate_database = reopened.clone();
+        let confirmation = scope.spawn(move || {
+            started_tx.send(()).unwrap();
+            duplicate_database.confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        scan_resume_tx.send(()).unwrap();
+        confirmation.join().unwrap().unwrap()
+    });
+    assert!(
+        duplicate.duplicate,
+        "same source is reconciled as a duplicate"
+    );
+    std::fs::remove_file(&source_path).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         let path: Option<String> = Connection::open(&database_path)
@@ -3727,7 +3753,7 @@ fn missing_legacy_chunk_preserves_source_and_does_not_block_later_receipts() {
 }
 
 #[test]
-fn transient_backfill_abort_failure_keeps_ownership_and_retries_later_receipts() {
+fn backfill_contention_does_not_block_later_receipts() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
     let database_path = directory.path().join("retry-backfill-abort.sqlite");
@@ -4066,6 +4092,180 @@ fn same_size_in_place_sidecar_edit_during_hashing_is_never_retired() {
         )
         .unwrap();
     assert!(retained_path.is_some());
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
+    let _guard = test_guard();
+    const RECORDS: u64 = 256;
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("physical-dedup.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let snapshot_json = format!(r#"{{"state":"{}"}}"#, "x".repeat(7_000));
+    let mut payloads = Vec::new();
+    for sequence in 0..RECORDS {
+        let timestamp = MonotonicTimestamp::new(sequence + 1);
+        let semantic = cutout_core::PevcapSemanticTelemetry {
+            observed_at_ms: Some(timestamp),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: 12,
+            library_version: "physical-storage-test".into(),
+            snapshot_json: snapshot_json.clone(),
+        };
+        let record = PevcapRecord::inbound_notification(
+            timestamp,
+            GattChannel::from_bytes([0x44; 16]),
+            GattChannel::from_bytes([0x55; 16]),
+            vec![u8::try_from(sequence % 255).unwrap(); 32],
+        )
+        .with_semantic_telemetry(semantic);
+        let payload = record.to_jsonl_line().unwrap().into_bytes();
+        database
+            .append_live_capture_record(capture_id, record, payload.clone())
+            .unwrap();
+        payloads.push(payload);
+    }
+    database
+        .finish_live_capture(capture_id, RECORDS + 1)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&database_path).unwrap();
+    for sequence in 0..RECORDS {
+        if sequence == 0 {
+            connection
+                .execute(
+                    "INSERT INTO live_capture_ble_semantic_telemetry
+                        (capture_id, sequence, observed_at_ms, provenance,
+                         snapshot_schema_version, library_version, snapshot_json)
+                     VALUES (?1, ?2, 99, 'replay', 99, 'independent-legacy-override', '{\"override\":true}')",
+                    (capture_id.to_string(), sequence),
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO live_capture_ble_semantic_telemetry
+                        (capture_id, sequence, observed_at_ms, provenance,
+                         snapshot_schema_version, library_version, snapshot_json)
+                     VALUES (?1, ?2, ?3, 'live_session', 12, 'physical-storage-test', ?4)",
+                    (
+                        capture_id.to_string(),
+                        sequence,
+                        sequence + 1,
+                        &snapshot_json,
+                    ),
+                )
+                .unwrap();
+        }
+    }
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    drop(connection);
+
+    fn physical_bytes(database_path: &std::path::Path) -> u64 {
+        let mut total = 0_u64;
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = database_path.as_os_str().to_owned();
+            path.push(suffix);
+            if let Ok(metadata) = std::fs::metadata(std::path::PathBuf::from(path)) {
+                total += metadata.len();
+            }
+        }
+        let mut managed = database_path.as_os_str().to_owned();
+        managed.push(".pevcap-imports");
+        let managed = std::path::PathBuf::from(managed);
+        if let Ok(entries) = std::fs::read_dir(managed) {
+            for entry in entries.flatten() {
+                total += entry.metadata().map_or(0, |metadata| metadata.len());
+            }
+        }
+        total
+    }
+
+    let before_bytes = physical_bytes(&database_path);
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut compacted = false;
+    let mut logical_bytes = None;
+    while Instant::now() < deadline {
+        let connection = Connection::open(&database_path).unwrap();
+        let state: (bool, bool, bool, bool, u64) = connection
+            .query_row(
+                "SELECT semantic_complete, artifact_complete,
+                        compaction_pending, compaction_complete,
+                        (SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry
+                         WHERE capture_id = ?1)
+                 FROM storage_normalization_progress WHERE singleton = 1",
+                [capture_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        if state.0 && state.1 && state.2 && !state.3 {
+            logical_bytes = Some(physical_bytes(&database_path));
+        }
+        if state.3 {
+            assert_eq!(state.4, 1, "only the independent legacy override remains");
+            compacted = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(compacted, "quiet worker completed physical compaction");
+    let logical_bytes = logical_bytes.expect("test observed deduplication before VACUUM");
+    let after_bytes = physical_bytes(&database_path);
+    eprintln!(
+        "legacy semantic physical fixture: records={RECORDS}, canonical_payload_bytes={}, before={before_bytes}, after_logical_dedup={logical_bytes}, after_vacuum={after_bytes}",
+        payloads.iter().map(|payload| payload.len()).sum::<usize>()
+    );
+    assert!(
+        logical_bytes >= before_bytes,
+        "deleting duplicate rows leaves the allocated database footprint in place"
+    );
+    assert!(
+        after_bytes < before_bytes,
+        "VACUUM shrinks the real database files"
+    );
+    let restored = reopened
+        .live_capture(
+            capture_id,
+            QueryLimit::new(u32::try_from(RECORDS).unwrap()).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        restored
+            .events
+            .iter()
+            .map(|event| event.payload.as_slice())
+            .collect::<Vec<_>>(),
+        payloads.iter().map(Vec::as_slice).collect::<Vec<_>>()
+    );
+    let override_row = reopened
+        .live_capture_semantic_telemetry(capture_id, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(override_row.snapshot_schema_version, 99);
+    assert_eq!(override_row.library_version, "independent-legacy-override");
+    let canonical_row = reopened
+        .live_capture_semantic_telemetry(capture_id, RECORDS - 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(canonical_row.snapshot_json, snapshot_json);
+    assert_eq!(canonical_row.snapshot_schema_version, 12);
     reopened.shutdown().unwrap();
 }
 

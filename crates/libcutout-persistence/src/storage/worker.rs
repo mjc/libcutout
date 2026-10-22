@@ -25,12 +25,13 @@ use rusqlite::Connection;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 #[cfg(test)]
-use std::sync::{Arc, mpsc::SyncSender};
+use std::sync::mpsc::SyncSender;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::Receiver,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 static DROP_NEXT_PEVCAP_FINISH_RESPONSE: AtomicBool = AtomicBool::new(false);
@@ -45,6 +46,7 @@ pub(super) fn run(
     database_path: PathBuf,
     receiver: &Receiver<Command>,
     worker_alive: &AtomicBool,
+    maintenance_demand: &Arc<AtomicU64>,
     diagnostic_recording_enabled: &AtomicBool,
 ) {
     let mut worker = DatabaseWorker {
@@ -53,6 +55,7 @@ pub(super) fn run(
         legacy_artifact_scan: None,
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
+        maintenance_demand,
         diagnostic_recording_enabled,
     };
     if super::live_capture::interrupt_active(&worker.connection).is_err() {
@@ -60,6 +63,8 @@ pub(super) fn run(
         return;
     }
     let mut normalization_state = worker.normalize_maintenance_batch();
+    let mut last_command_at = Instant::now();
+    let mut next_compaction_attempt = last_command_at + Duration::from_secs(5);
     loop {
         let idle_delay = match normalization_state {
             super::normalization::BatchState::Pending => Duration::from_millis(10),
@@ -68,13 +73,44 @@ pub(super) fn run(
         };
         match receiver.recv_timeout(idle_delay) {
             Ok(command) => {
+                last_command_at = Instant::now();
                 if worker.dispatch(command).is_break() {
                     break;
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let observed_demand = worker.maintenance_demand.load(Ordering::Acquire);
+                match receiver.try_recv() {
+                    Ok(command) => {
+                        last_command_at = Instant::now();
+                        if worker.dispatch(command).is_break() {
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
                 if normalization_state != super::normalization::BatchState::Finished {
                     normalization_state = worker.normalize_maintenance_batch();
+                } else if last_command_at.elapsed() >= Duration::from_secs(5)
+                    && Instant::now() >= next_compaction_attempt
+                {
+                    let compacted = super::normalization::compact_if_safe(
+                        &worker.connection,
+                        &worker.database_path,
+                        worker.maintenance_demand,
+                        observed_demand,
+                    );
+                    next_compaction_attempt = Instant::now()
+                        + match compacted {
+                            Ok(super::normalization::CompactionState::Complete) => {
+                                Duration::from_secs(86_400)
+                            }
+                            Ok(super::normalization::CompactionState::Deferred) | Err(_) => {
+                                Duration::from_secs(60)
+                            }
+                        };
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -89,6 +125,7 @@ struct DatabaseWorker<'a> {
     legacy_artifact_scan: Option<super::normalization::LegacyArtifactScan>,
     spatial_schema: SpatialSchemaState,
     worker_alive: &'a AtomicBool,
+    maintenance_demand: &'a Arc<AtomicU64>,
     diagnostic_recording_enabled: &'a AtomicBool,
 }
 

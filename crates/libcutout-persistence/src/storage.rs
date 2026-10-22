@@ -29,7 +29,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -64,6 +64,8 @@ mod device_drivetrain;
 mod device_vehicle;
 mod migrations;
 mod normalization;
+#[cfg(test)]
+pub(crate) use normalization::pause_legacy_archive_for_test;
 mod phone_control;
 mod ride_write;
 mod service;
@@ -1284,13 +1286,6 @@ pub struct PevcapImportReceipt {
     pub location_count: u64,
     /// Whether this digest was already imported.
     pub duplicate: bool,
-    artifact_location: PevcapArtifactLocation,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum PevcapArtifactLocation {
-    Sqlite,
-    LegacyManaged(PathBuf),
 }
 
 /// Stable identifier for a stored trail definition.
@@ -1778,7 +1773,7 @@ enum SpatialSchemaState {
 }
 
 /// Opaque synchronous handle to the one process-owned ride database worker.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RideDatabase {
     sender: SyncSender<Command>,
     service_id: Uuid,
@@ -1787,7 +1782,17 @@ pub struct RideDatabase {
     diagnostic_recording_enabled: Arc<AtomicBool>,
     diagnostic_recording_available: Arc<AtomicBool>,
     worker_alive: Arc<AtomicBool>,
+    maintenance_demand: Arc<AtomicU64>,
     pub(crate) marker_writes: Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>,
+}
+
+impl std::fmt::Debug for RideDatabase {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RideDatabase")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A location write accepted by the bounded database queue but not necessarily committed yet.
@@ -3966,10 +3971,12 @@ impl RideDatabase {
             Some(marker) => Command::SaveRideSessionMarker { marker, reply },
             None => Command::ClearRideSessionMarker { reply },
         };
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         self.sender.try_send(command).map_err(|error| match error {
             mpsc::TrySendError::Full(_) => StorageError::QueueFull,
             mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
         })?;
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         Ok(PendingRideSessionMarkerWrite {
             response,
             consumed: false,
@@ -4139,10 +4146,6 @@ impl RideDatabase {
                     publication.validate_duplicate(&receipt)?;
                     validate_existing_pevcap_confirmation(&receipt, preview, publication)?;
                     self.verify_stored_pevcap(preview)?;
-                    if let PevcapArtifactLocation::LegacyManaged(path) = &receipt.artifact_location
-                    {
-                        retire_legacy_pevcap(self.path.as_ref(), path, preview);
-                    }
                     return Ok(PevcapImportReceipt {
                         duplicate: false,
                         ..receipt
@@ -4180,9 +4183,6 @@ impl RideDatabase {
             reply,
         })?;
         self.verify_stored_pevcap(preview)?;
-        if let PevcapArtifactLocation::LegacyManaged(path) = &receipt.artifact_location {
-            retire_legacy_pevcap(self.path.as_ref(), path, preview);
-        }
         Ok(receipt)
     }
 
@@ -5147,12 +5147,14 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot stop or its ownership slot cannot be
     /// released.
     pub fn shutdown(self) -> Result<(), StorageError> {
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         let sender = service::begin_shutdown(self.service_id)?;
         let (reply, response) = response_channel();
         if sender.send(Command::Shutdown { reply }).is_err() {
             service::cancel_shutdown(self.service_id);
             return Err(StorageError::WorkerStopped);
         }
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         receive(&response)?;
         service::finish_shutdown(self.service_id)
     }
@@ -5173,25 +5175,51 @@ impl RideDatabase {
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         if self.worker_has_exited() {
-            return self.enqueue_after_worker_exit(command);
+            let result = self.enqueue_after_worker_exit(command);
+            if result.is_ok() {
+                self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+            }
+            return result;
         }
         match self.sender.try_send(command) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            }
             Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
             Err(mpsc::TrySendError::Disconnected(command)) => {
-                self.enqueue_after_worker_exit(command)
+                let result = self.enqueue_after_worker_exit(command);
+                if result.is_ok() {
+                    self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+                }
+                result
             }
         }
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
+        self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
         if self.worker_has_exited() {
-            return self.enqueue_after_worker_exit_blocking(command);
+            let result = self.enqueue_after_worker_exit_blocking(command);
+            if result.is_ok() {
+                self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+            }
+            return result;
         }
         match self.sender.send(command) {
-            Ok(()) => Ok(()),
-            Err(mpsc::SendError(command)) => self.enqueue_after_worker_exit_blocking(command),
+            Ok(()) => {
+                self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            }
+            Err(mpsc::SendError(command)) => {
+                let result = self.enqueue_after_worker_exit_blocking(command);
+                if result.is_ok() {
+                    self.maintenance_demand.fetch_add(1, Ordering::AcqRel);
+                }
+                result
+            }
         }
     }
 
@@ -7671,32 +7699,6 @@ mod sqlite_canonical_pevcap_tests {
     }
 }
 
-fn validate_managed_pevcap_artifact(
-    directory: &Path,
-    path: &Path,
-    expected_digest: &str,
-    expected_size: u64,
-) -> Result<(), StorageError> {
-    if path.parent() != Some(directory) {
-        return Err(StorageError::PevcapPreviewChanged);
-    }
-    let metadata = fs::symlink_metadata(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            StorageError::PevcapPreviewChanged
-        } else {
-            StorageError::Io(error)
-        }
-    })?;
-    let file_type = metadata.file_type();
-    if !file_type.is_file() || file_type.is_symlink() || metadata.len() != expected_size {
-        return Err(StorageError::PevcapPreviewChanged);
-    }
-    if artifact_digest(path)? != expected_digest {
-        return Err(StorageError::PevcapPreviewChanged);
-    }
-    Ok(())
-}
-
 /// Checks duplicate receipt facts against the source-bound reviewed preview.
 /// `AlreadyImported` is a preview classification, never a persisted capture outcome.
 fn validate_existing_pevcap_confirmation(
@@ -7750,28 +7752,6 @@ fn validate_existing_pevcap_confirmation(
         return Err(StorageError::PevcapPreviewChanged);
     }
     Ok(())
-}
-
-fn retire_legacy_pevcap(database_path: &Path, legacy_path: &Path, preview: &PevcapImportPreview) {
-    let directory = pevcap_import_directory(database_path);
-    if !fs::symlink_metadata(&directory)
-        .is_ok_and(|metadata| metadata.file_type().is_dir() && !metadata.file_type().is_symlink())
-    {
-        return;
-    }
-    if validate_managed_pevcap_artifact(
-        &directory,
-        legacy_path,
-        preview.artifact_digest(),
-        preview.artifact_size(),
-    )
-    .is_err()
-    {
-        return;
-    }
-    if fs::remove_file(legacy_path).is_ok() {
-        let _ = fs::remove_dir(&directory);
-    }
 }
 
 fn pevcap_import_directory(database_path: &Path) -> PathBuf {
@@ -8003,21 +7983,20 @@ fn pevcap_import_receipt(
 ) -> Result<Option<PevcapImportReceipt>, StorageError> {
     let row = connection
         .query_row(
-            "SELECT ride_id, artifact_path, outcome, record_count, location_count
+            "SELECT ride_id, outcome, record_count, location_count
              FROM pevcap_imports WHERE artifact_digest = ?1",
             [digest],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
                     row.get::<_, u64>(3)?,
-                    row.get::<_, u64>(4)?,
                 ))
             },
         )
         .optional()?;
-    let Some((ride_id, artifact_location, outcome, record_count, location_count)) = row else {
+    let Some((ride_id, outcome, record_count, location_count)) = row else {
         return Ok(None);
     };
     let ride_id = ride_id
@@ -8038,15 +8017,7 @@ fn pevcap_import_receipt(
         record_count,
         location_count,
         duplicate,
-        artifact_location: pevcap_artifact_location(artifact_location),
     }))
-}
-
-fn pevcap_artifact_location(value: Option<String>) -> PevcapArtifactLocation {
-    match value {
-        Some(path) => PevcapArtifactLocation::LegacyManaged(PathBuf::from(path)),
-        None => PevcapArtifactLocation::Sqlite,
-    }
 }
 
 fn pevcap_outcome_from_db(value: &str) -> Result<PevcapImportOutcome, StorageError> {
@@ -8202,7 +8173,6 @@ fn finish_pevcap_import(
         record_count: *record_count,
         location_count: *location_count,
         duplicate: false,
-        artifact_location: PevcapArtifactLocation::Sqlite,
     })
 }
 

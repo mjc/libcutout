@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -22,6 +22,7 @@ struct OwnerEntry {
     sender: SyncSender<Command>,
     shutting_down: bool,
     worker_alive: Arc<AtomicBool>,
+    maintenance_demand: Arc<AtomicU64>,
     diagnostic_recording_enabled: Arc<AtomicBool>,
     diagnostic_recording_available: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
@@ -82,6 +83,11 @@ fn acquire(
     );
     worker_alive.store(true, Ordering::Release);
     let worker_alive_for_thread = Arc::clone(&worker_alive);
+    let maintenance_demand = previous.map_or_else(
+        || Arc::new(AtomicU64::new(0)),
+        |database| Arc::clone(&database.maintenance_demand),
+    );
+    let maintenance_demand_for_thread = Arc::clone(&maintenance_demand);
     let diagnostic_recording_for_thread = Arc::clone(&diagnostic_recording_enabled);
     let worker_database_path = canonical_path.clone();
     let join = thread::Builder::new()
@@ -92,6 +98,7 @@ fn acquire(
                 worker_database_path,
                 &receiver,
                 &worker_alive_for_thread,
+                &maintenance_demand_for_thread,
                 &diagnostic_recording_for_thread,
             );
         })
@@ -112,6 +119,7 @@ fn acquire(
         diagnostic_recording_enabled: Arc::clone(&diagnostic_recording_enabled),
         diagnostic_recording_available: Arc::clone(&diagnostic_recording_available),
         worker_alive: Arc::clone(&worker_alive),
+        maintenance_demand: Arc::clone(&maintenance_demand),
     };
     *owner = Some(OwnerEntry {
         path: canonical_path,
@@ -120,6 +128,7 @@ fn acquire(
         marker_writes,
         sender,
         worker_alive,
+        maintenance_demand,
         diagnostic_recording_enabled,
         diagnostic_recording_available,
         shutting_down: false,
@@ -237,5 +246,6 @@ fn handle_from(owner: &OwnerEntry) -> RideDatabase {
         diagnostic_recording_enabled: Arc::clone(&owner.diagnostic_recording_enabled),
         diagnostic_recording_available: Arc::clone(&owner.diagnostic_recording_available),
         worker_alive: Arc::clone(&owner.worker_alive),
+        maintenance_demand: Arc::clone(&owner.maintenance_demand),
     }
 }
