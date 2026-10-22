@@ -725,7 +725,9 @@ fn vesc_setting_descriptors(
             descriptors.extend(crate::vesc_configuration::catalog(kind).into_iter().map(
                 |mut descriptor| {
                     descriptor.order = descriptor.order.saturating_add(order_offset);
-                    if write_evidence == FirmwareConfigurationWriteEvidence::MissingDisengagedState
+                    if descriptor.access == SettingAccess::Writable
+                        && write_evidence
+                            == FirmwareConfigurationWriteEvidence::MissingDisengagedState
                     {
                         descriptor.access = SettingAccess::ReadOnly;
                         descriptor.help_key = Some("vesc.settings.read_only.disengaged_evidence");
@@ -1182,7 +1184,7 @@ mod tests {
             75,
             "ordinary firmware catalogs remain available"
         );
-        for id in [SettingId::MotorDriveCurrentLimit, SettingId::ControllerId] {
+        for id in [SettingId::MotorDriveCurrentLimit, SettingId::CommandTimeout] {
             let descriptor = descriptors
                 .iter()
                 .find(|descriptor| descriptor.id == id)
@@ -1221,6 +1223,38 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn firmware_configuration_preserves_intrinsic_read_only_reasons() {
+        for evidence in [
+            FirmwareConfigurationWriteEvidence::Ready,
+            FirmwareConfigurationWriteEvidence::MissingDisengagedState,
+        ] {
+            let profile = vesc_control_profile(false, true, true)
+                .with_firmware_configuration_write_evidence(evidence);
+            let descriptors = profile.descriptors(false);
+            for (id, reason) in [
+                (SettingId::ControllerId, "controller_identity"),
+                (SettingId::CanBaudRate, "transport_selection"),
+                (SettingId::ApplicationToUse, "hardware_endpoint"),
+                (SettingId::ImuType, "imu_hardware"),
+                (SettingId::BmsLimitMode, "multiple_selection"),
+            ] {
+                let descriptor = descriptors.iter().find(|entry| entry.id == id).unwrap();
+                assert_eq!(descriptor.access, SettingAccess::ReadOnly, "{id:?}");
+                assert_eq!(
+                    descriptor.help_key.unwrap(),
+                    format!("vesc.settings.read_only.{reason}"),
+                    "{id:?} with {evidence:?}"
+                );
+                assert_eq!(
+                    profile.command(id, DeviceSettingValue::Number(1), false),
+                    Err(SettingsRequestError::ReadOnly),
+                    "{id:?} must remain read-only even with stationary evidence"
+                );
+            }
+        }
     }
 
     #[test]
