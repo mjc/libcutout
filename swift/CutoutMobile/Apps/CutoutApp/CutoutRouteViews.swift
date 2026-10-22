@@ -14,6 +14,7 @@ import SwiftUI
         @Environment(\.dynamicTypeSize) private var dynamicTypeSize
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @Environment(\.colorSchemeContrast) private var contrast
+        @Environment(\.colorScheme) private var colorScheme
         private let isEnabled =
             CutoutUITestSessionFixture(arguments: ProcessInfo.processInfo.arguments) != nil
             && UserDefaults.standard.bool(forKey: "CUTOUT_UI_TEST_ENVIRONMENT_READBACK")
@@ -27,13 +28,14 @@ import SwiftUI
         }
 
         private var readback: String {
+            let appearance = colorScheme == .dark ? "dark" : "light"
             #if canImport(UIKit)
-                "swiftui=\(categoryName);system=\(UIApplication.shared.preferredContentSizeCategory.rawValue);"
+                return "swiftui=\(categoryName);system=\(UIApplication.shared.preferredContentSizeCategory.rawValue);"
                     + "reduceMotion=\(reduceMotion);systemReduceMotion=\(UIAccessibility.isReduceMotionEnabled);"
                     + "contrast=\(contrast == .increased ? "increased" : "standard");"
-                    + "systemContrast=\(UIAccessibility.isDarkerSystemColorsEnabled)"
+                    + "systemContrast=\(UIAccessibility.isDarkerSystemColorsEnabled);colorScheme=\(appearance)"
             #else
-                "swiftui=\(categoryName)"
+                return "swiftui=\(categoryName);colorScheme=\(appearance)"
             #endif
         }
 

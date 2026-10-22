@@ -9657,51 +9657,59 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
     }
 
     func testPopulatedEskateButtonsInDarkAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Buttons")
+        try verifyPopulatedEskateInstruments(mode: "Buttons", appearance: .dark)
     }
 
     func testPopulatedEskateAreaInDarkAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Area of screen")
+        try verifyPopulatedEskateInstruments(mode: "Area of screen", appearance: .dark)
     }
 
     func testPopulatedEskateDisabledInDarkAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Disabled")
+        try verifyPopulatedEskateInstruments(mode: "Disabled", appearance: .dark)
     }
 
     func testPopulatedEskateButtonsInLightAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Buttons")
+        try verifyPopulatedEskateInstruments(mode: "Buttons", appearance: .light)
     }
 
     func testPopulatedEskateAreaInLightAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Area of screen")
+        try verifyPopulatedEskateInstruments(mode: "Area of screen", appearance: .light)
     }
 
     func testPopulatedEskateDisabledInLightAppearance() throws {
-        try verifyPopulatedEskateInstruments(mode: "Disabled")
+        try verifyPopulatedEskateInstruments(mode: "Disabled", appearance: .light)
     }
 
     func testPopulatedEskateButtonsAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
-            mode: "Buttons", contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+            mode: "Buttons", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
     }
 
     func testPopulatedEskateAreaAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
-            mode: "Area of screen", contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+            mode: "Area of screen", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
     }
 
     func testPopulatedEskateDisabledAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
-            mode: "Disabled", contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+            mode: "Disabled", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+    }
+
+    private enum FixtureAppearance: String {
+        case light, dark
     }
 
     private func verifyPopulatedEskateInstruments(
-        mode: String, contentSize: String = "UICTContentSizeCategoryL"
+        mode: String, appearance: FixtureAppearance, contentSize: String = "UICTContentSizeCategoryL"
     ) throws {
         launchPhoneFixture(preview: true, pausedMusic: true, contentSize: contentSize, populated: true)
         try openPhoneRide(requiresTypeChoice: true)
         try selectPhoneMode(mode)
-
+        let environment = phoneElement("dashboard.screen.vescRide").value as? String ?? ""
+        XCTAssertTrue(environment.contains("colorScheme=\(appearance.rawValue)"), environment)
+        let category = contentSize == "UICTContentSizeCategoryL" ? "large" : "accessibility5"
+        XCTAssertTrue(environment.contains("swiftui=\(category)"), environment)
+        XCTAssertTrue(environment.contains("system=\(contentSize)"), environment)
         let energy = phoneApp.buttons["ride.readings.open"]
         let estimated = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@ AND value CONTAINS %@", "Battery", "Estimated"),
@@ -9790,6 +9798,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
         ]
         if preview { phoneApp.launchArguments.append("--ui-test-phone-drive-input") }
+        if populated { phoneApp.launchArguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES"] }
         if pausedMusic {
             phoneApp.launchArguments += [
                 "-io.cutout.music.provider.selected", "apple_music",
