@@ -9492,9 +9492,88 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         try activatePhoneInput()
         XCTAssertTrue(area.waitForExistence(timeout: 5))
         XCTAssertFalse((area.value as? String ?? "").contains("Held"))
+        keepPhoneScreenshot("preview-area-ride")
         phoneApp.buttons["music.expand"].tap()
         XCTAssertTrue(phoneElement("music.player.screen").waitForExistence(timeout: 5))
         keepPhoneScreenshot("area-player-navigation")
+    }
+
+    func testPhoneButtonsSetupAndActivationRemainReachableAtAccessibilityDynamicType() throws {
+        launchPhoneFixture(preview: true, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        try selectPhoneMode("Buttons")
+        try openPhoneRide()
+        let brake = phoneApp.buttons["phone-control.brake"]
+        let throttle = phoneApp.buttons["phone-control.throttle"]
+        XCTAssertTrue(brake.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertFalse(brake.isEnabled)
+        XCTAssertFalse(throttle.isEnabled)
+        XCTAssertEqual(phoneApp.staticTexts["phone-control.status"].label, "Inactive")
+
+        try activatePhoneInput()
+
+        let tabs = phoneApp.tabBars.firstMatch
+        for button in [brake, throttle] {
+            XCTAssertTrue(button.isEnabled)
+            XCTAssertTrue(button.isHittable, phoneApp.debugDescription)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertLessThanOrEqual(button.frame.maxY, tabs.frame.minY + 1)
+        }
+        XCTAssertFalse(brake.frame.intersects(throttle.frame))
+        XCTAssertLessThan(brake.frame.maxX, throttle.frame.minX)
+        let beforeHold = try phoneReceiptBaseline()
+        throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
+        try awaitPhoneReceipts(["pressed:throttle", "idle"], after: beforeHold)
+        keepPhoneScreenshot("phone-control-buttons-large")
+
+        let map = tabs.buttons["Map"]
+        XCTAssertTrue(map.isHittable)
+        map.tap()
+        XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
+        tabs.buttons["Ride"].tap()
+        XCTAssertTrue(throttle.waitForExistence(timeout: 5))
+        XCTAssertFalse(throttle.isEnabled, "Leaving Ride must end the explicit activation")
+        XCTAssertEqual(phoneApp.staticTexts["phone-control.status"].label, "Inactive")
+    }
+
+    func testPhoneAreaPreservesHeaderLowerBoundsTabsAndPlayerAtAccessibilityDynamicType() throws {
+        launchPhoneFixture(
+            preview: true, pausedMusic: true, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        try selectPhoneMode("Area of screen")
+        try openPhoneRide()
+        try activatePhoneInput()
+        let area = phoneElement("phone-control.area")
+        XCTAssertTrue(area.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        let header = phoneElement("dashboard.top.navigation")
+        let lowerReading = phoneElement("vesc.ride.tripDistance")
+        let player = phoneElement("music.compact-player")
+        let tabs = phoneApp.tabBars.firstMatch
+        XCTAssertTrue(header.exists)
+        XCTAssertTrue(lowerReading.exists)
+        XCTAssertGreaterThan(lowerReading.frame.height, 0)
+        XCTAssertTrue(player.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertLessThanOrEqual(area.frame.minY, header.frame.minY + 1)
+        XCTAssertGreaterThanOrEqual(area.frame.maxY, lowerReading.frame.maxY)
+        XCTAssertLessThanOrEqual(area.frame.maxY, tabs.frame.minY + 1)
+        XCTAssertLessThanOrEqual(area.frame.maxY, player.frame.minY + 1)
+        for point in [CGVector(dx: 0.05, dy: 0.05), CGVector(dx: 0.95, dy: 0.95)] {
+            let beforeHold = try phoneReceiptBaseline()
+            area.coordinate(withNormalizedOffset: point).press(forDuration: 0.2)
+            try awaitPhoneReceipts(
+                [point.dx < 0.5 ? "pressed:brake" : "pressed:throttle", "idle"], after: beforeHold)
+        }
+        keepPhoneScreenshot("phone-control-area-large")
+
+        XCTAssertTrue(tabs.buttons["Map"].isHittable)
+        tabs.buttons["Map"].tap()
+        XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
+        tabs.buttons["Ride"].tap()
+        XCTAssertFalse(area.exists, "Area interception must end when leaving Ride")
+        XCTAssertEqual(phoneApp.staticTexts["phone-control.status"].label, "Inactive")
+        try activatePhoneInput()
+        XCTAssertTrue(phoneApp.buttons["music.expand"].isHittable)
+        phoneApp.buttons["music.expand"].tap()
+        XCTAssertTrue(phoneElement("music.player.screen").waitForExistence(timeout: 5))
     }
 
     func testDisabledModeRemovesInputAndRestoresOrdinaryReadings() throws {
@@ -9513,10 +9592,12 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         keepPhoneScreenshot("phone-control-disabled")
     }
 
-    private func launchPhoneFixture(preview: Bool, pausedMusic: Bool = false) {
+    private func launchPhoneFixture(
+        preview: Bool, pausedMusic: Bool = false, contentSize: String = "UICTContentSizeCategoryL"
+    ) {
         phoneApp.launchArguments = [
             "-CUTOUT_UI_TEST_FIXTURE", "eskate",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+            "-UIPreferredContentSizeCategoryName", contentSize,
             "-io.cutout.music.monitoring.enabled", pausedMusic ? "YES" : "NO",
             "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
         ]
