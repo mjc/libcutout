@@ -137,7 +137,12 @@ struct VescRideScreenView: View {
     }
 
     private var standardInstruments: some View {
-        PevRideInstrumentLayout(spacing: usesCompactPhoneInstruments ? 8 : 16) {
+        PevRideInstrumentLayout(
+            spacing: usesCompactPhoneInstruments ? 8 : 16,
+            bottomPadding: isEskate ? 8 : 28,
+            ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
+            canvas: isEskate ? PevDashboardColors.rideCanvas : PevColors.pageBackground
+        ) {
             HStack(spacing: 8) {
                 PevRideStatusHeader(
                     title: presentation.title, subtitle: presentation.subtitle,
@@ -161,18 +166,19 @@ struct VescRideScreenView: View {
         } primary: { landscape in
             if usesCompactPhoneInstruments {
                 GeometryReader { geometry in
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         VStack(spacing: 0) {
                             PevRideSpeedReading(
                                 speed: presentation.speedReadout,
                                 caption: localizedAppText("vesc.speed.caption"),
-                                pointSize: min(100, geometry.size.width * 0.27, geometry.size.height * 0.7)
+                                pointSize: min(104, geometry.size.width * 0.30, geometry.size.height * 0.75),
+                                muted: PevDashboardColors.rideMuted
                             )
                             drivetrainRecoveryAccessory
                         }
-                        .frame(maxWidth: .infinity)
+                        .frame(width: max(0, geometry.size.width * 0.64 - 4))
                         standardEnergyReading(
-                            pointSize: min(58, geometry.size.width * 0.15, geometry.size.height * 0.55)
+                            pointSize: min(36, geometry.size.width * 0.105, geometry.size.height * 0.50)
                         )
                         .frame(maxWidth: .infinity)
                     }
@@ -182,6 +188,8 @@ struct VescRideScreenView: View {
                 PevRidePrimaryInstruments(
                     speed: presentation.speedReadout,
                     caption: localizedAppText("vesc.speed.caption"), landscape: landscape,
+                    speedFraction: isEskate ? 0.48 : 0.42,
+                    muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted,
                     speedAccessory: {
                         drivetrainRecoveryAccessory
                     }
@@ -204,8 +212,10 @@ struct VescRideScreenView: View {
     }
 
     private var usesCompactPhoneInstruments: Bool {
-        liveSnapshot?.vehicleKind == .eskate && phoneDrive?.snapshot.mode == .buttons
+        isEskate && phoneDrive?.snapshot.mode == .buttons
     }
+
+    private var isEskate: Bool { liveSnapshot?.vehicleKind == .eskate }
 
     @ViewBuilder
     private var drivetrainRecoveryAccessory: some View {
@@ -213,10 +223,10 @@ struct VescRideScreenView: View {
             Button(localizedAppText("vesc.drivetrain.set")) {
                 drivetrainEditor = makeDrivetrainEditor()
             }
-            .font(.subheadline.weight(.semibold))
+            .font(usesCompactPhoneInstruments ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
             .padding(.horizontal, 14)
             .frame(minHeight: 44)
-            .background(PevColors.cardFill, in: Capsule())
+            .background(isEskate ? PevDashboardColors.rideLine.opacity(0.4) : PevColors.cardFill, in: Capsule())
             .buttonStyle(.plain)
             .accessibilityIdentifier("vesc.drivetrain.open")
         }
@@ -227,14 +237,35 @@ struct VescRideScreenView: View {
         return Button {
             showsStandardReadings = true
         } label: {
-            PevInstrumentReading(
-                label: tile.label, value: tile.metricValue, unit: tile.unit,
-                pointSize: pointSize, identifier: "vesc.ride.energy", alignment: .center,
-                detail: tile.detail
-            )
-            .visualContent
+            Group {
+                if isEskate, tile.kind == .batteryLevel,
+                    let level = liveSnapshot?.batteryLevelReported ?? liveSnapshot?.batteryLevelEstimated
+                {
+                    PevRideReserveGauge(
+                        label: tile.label, valueText: tile.metricValue.displayText, unit: tile.unit,
+                        progress: Double(level.value) / 100,
+                        accent: PevDashboardColors.rideInk,
+                        track: PevDashboardColors.rideLine,
+                        ink: PevDashboardColors.rideInk,
+                        muted: PevDashboardColors.rideMuted,
+                        showsScale: false, compact: usesCompactPhoneInstruments,
+                        valueScale: usesCompactPhoneInstruments ? 0.35 : 0.30
+                    )
+                    .frame(maxWidth: usesCompactPhoneInstruments ? 140 : 292)
+                    .frame(height: usesCompactPhoneInstruments ? 112 : 220)
+                } else {
+                    PevInstrumentReading(
+                        label: tile.label, value: tile.metricValue, unit: tile.unit,
+                        pointSize: pointSize, identifier: "vesc.ride.energy", alignment: .center,
+                        detail: tile.detail,
+                        ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
+                        muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
+                    )
+                    .visualContent
+                }
+            }
             .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.vertical, 14)
+            .padding(.vertical, usesCompactPhoneInstruments ? 4 : 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -251,16 +282,18 @@ struct VescRideScreenView: View {
             ForEach(Array(presentation.standardSummaryTiles.enumerated()), id: \.element.kind) { index, tile in
                 PevInstrumentReading(
                     label: tile.label, value: tile.metricValue, unit: tile.unit,
-                    pointSize: usesCompactPhoneInstruments ? 32 : 52, identifier: "vesc.ride.\(tile.kind)",
-                    alignment: index == 0 ? .leading : .trailing, detail: tile.detail
+                    pointSize: usesCompactPhoneInstruments ? 34 : 52, identifier: "vesc.ride.\(tile.kind)",
+                    alignment: index == 0 ? .leading : .trailing, detail: tile.detail,
+                    ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
+                    muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
                 )
                 .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : .trailing)
             }
         }
         .padding(.vertical, usesCompactPhoneInstruments ? 8 : 18)
         .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? nil : usesCompactPhoneInstruments ? 72 : 138)
-        .overlay(alignment: .top) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
-        .overlay(alignment: .bottom) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(instrumentLine).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(instrumentLine).frame(height: 1) }
     }
 
     private var standardSecondaryReadings: some View {
@@ -268,13 +301,17 @@ struct VescRideScreenView: View {
             ForEach(Array(presentation.standardSecondaryTiles.enumerated()), id: \.element.kind) { index, tile in
                 PevInstrumentReading(
                     label: tile.label, value: tile.metricValue, unit: tile.unit,
-                    pointSize: 23, identifier: "vesc.ride.\(tile.kind)",
+                    pointSize: usesCompactPhoneInstruments ? 18 : 23, identifier: "vesc.ride.\(tile.kind)",
                     alignment: index == 0 ? .leading : index == 1 ? .center : .trailing,
-                    detail: tile.detail
+                    detail: tile.detail,
+                    ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
+                    muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
                 )
                 .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : index == 1 ? .center : .trailing)
             }
         }
-        .frame(minHeight: 64, alignment: .top)
+        .frame(minHeight: usesCompactPhoneInstruments ? 42 : 64, alignment: .top)
     }
+
+    private var instrumentLine: Color { isEskate ? PevDashboardColors.rideLine : PevColors.cardStroke }
 }

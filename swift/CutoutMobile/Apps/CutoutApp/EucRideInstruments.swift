@@ -4,14 +4,21 @@ import SwiftUI
 /// Shared instrument composition; vehicle adapters supply meaning and supported readings.
 struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secondary: View>: View {
     @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     let header: Header
     let primary: (Bool) -> Primary
     let summary: Summary
     let secondary: Secondary
     let spacing: CGFloat
+    let bottomPadding: CGFloat
+    let ink: Color
+    let canvas: Color
 
     init(
         spacing: CGFloat = 12,
+        bottomPadding: CGFloat = 28,
+        ink: Color = PevColors.primaryText,
+        canvas: Color = PevColors.pageBackground,
         @ViewBuilder header: () -> Header,
         @ViewBuilder primary: @escaping (Bool) -> Primary,
         @ViewBuilder summary: () -> Summary,
@@ -22,6 +29,9 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
         self.summary = summary()
         self.secondary = secondary()
         self.spacing = spacing
+        self.bottomPadding = bottomPadding
+        self.ink = ink
+        self.canvas = canvas
     }
 
     var body: some View {
@@ -30,7 +40,9 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
             let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
             let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
             let height = max(0, bottom - frame.minY)
-            let landscape = geometry.size.width > height
+            let landscape =
+                verticalSizeClass == .compact
+                || (verticalSizeClass == nil && geometry.size.width > geometry.size.height)
             VStack(spacing: spacing) {
                 header
                 if landscape {
@@ -50,11 +62,11 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
             }
             .padding(.horizontal, 24)
             .padding(.top, landscape ? 8 : 0)
-            .padding(.bottom, 28)
+            .padding(.bottom, bottomPadding)
             .frame(width: geometry.size.width, height: height, alignment: .top)
-            .foregroundStyle(PevColors.primaryText)
+            .foregroundStyle(ink)
         }
-        .background(PevColors.pageBackground)
+        .background(canvas)
     }
 }
 
@@ -66,9 +78,13 @@ struct PevRidePrimaryInstruments<Accessory: View, Instrument: View>: View {
     let landscape: Bool
     let speedAccessory: Accessory
     let instrument: (CGSize) -> Instrument
+    let speedFraction: CGFloat
+    let muted: Color
 
     init(
         speed: RideHeroReadout, caption: String, landscape: Bool,
+        speedFraction: CGFloat = 0.42,
+        muted: Color = PevColors.muted,
         @ViewBuilder speedAccessory: () -> Accessory,
         @ViewBuilder instrument: @escaping (CGSize) -> Instrument
     ) {
@@ -77,11 +93,13 @@ struct PevRidePrimaryInstruments<Accessory: View, Instrument: View>: View {
         self.landscape = landscape
         self.speedAccessory = speedAccessory()
         self.instrument = instrument
+        self.speedFraction = speedFraction
+        self.muted = muted
     }
 
     var body: some View {
         GeometryReader { geometry in
-            let speedHeight = geometry.size.height * (landscape ? 1 : 0.42)
+            let speedHeight = geometry.size.height * (landscape ? 1 : speedFraction)
             let speedWidth = geometry.size.width * (landscape ? 0.22 : 0.44)
             let instrumentSize = CGSize(
                 width: geometry.size.width * (landscape ? 0.5 : 1),
@@ -92,7 +110,7 @@ struct PevRidePrimaryInstruments<Accessory: View, Instrument: View>: View {
                 VStack(spacing: 0) {
                     PevRideSpeedReading(
                         speed: speed, caption: caption,
-                        pointSize: min(170, speedWidth, speedHeight * 0.88)
+                        pointSize: min(170, speedWidth, speedHeight * 0.88), muted: muted
                     )
                     speedAccessory
                 }
@@ -307,6 +325,7 @@ struct PevRideSpeedReading: View {
     let speed: RideHeroReadout
     let caption: String
     let pointSize: CGFloat
+    var muted: Color = PevColors.muted
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -321,7 +340,7 @@ struct PevRideSpeedReading: View {
                 .accessibilityIdentifier("ride.hero.speed")
             Text(speed.displayUnit ?? RideUnits.speedUnit)
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(PevColors.muted)
+                .foregroundStyle(muted)
                 .accessibilityHidden(true)
         }
     }
@@ -338,6 +357,8 @@ struct PevInstrumentReading: View {
     var showsProgress = false
     var progress: Double? = nil
     var detail = ""
+    var ink: Color = PevColors.primaryText
+    var muted: Color = PevColors.muted
 
     var body: some View {
         visualContent
@@ -361,7 +382,7 @@ struct PevInstrumentReading: View {
                     ? .title3.weight(.semibold)
                     : pointSize > 30 ? .subheadline.weight(.medium) : .caption.weight(.medium)
             )
-            .foregroundStyle(pointSize > 60 ? PevColors.primaryText : PevColors.muted)
+            .foregroundStyle(pointSize > 60 ? ink : muted)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -376,7 +397,7 @@ struct PevInstrumentReading: View {
                                 ? .system(size: pointSize * 0.4, weight: .semibold)
                                 : pointSize > 30 ? .title3 : .caption
                         )
-                        .foregroundStyle(PevColors.muted)
+                        .foregroundStyle(muted)
                 }
             }
             .lineLimit(1)
@@ -399,7 +420,6 @@ struct PevInstrumentReading: View {
 }
 
 struct EucHeadroomGauge: View {
-    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.colorScheme) private var colorScheme
     let headroom: PevSafetyBar?
     var percentage: String? = nil
@@ -410,39 +430,13 @@ struct EucHeadroomGauge: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let width = min(360, geometry.size.width, max(0, geometry.size.height - 60) * 2)
-            let height = width / 2
-            VStack(spacing: 12) {
-                Text(localizedAppText("ride.safety.pwm_headroom"))
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                ZStack(alignment: .bottom) {
-                    EucHeadroomArc()
-                        .stroke(PevColors.cardStroke, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                    if let progress = displayedProgress, progress > 0 {
-                        EucHeadroomArc()
-                            .trim(from: 0, to: progress)
-                            .stroke(accent, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                            .scaleEffect(x: layoutDirection == .rightToLeft ? -1 : 1, y: 1)
-                    }
-                    headroomValue(pointSize: min(84, width * 0.23))
-                        .padding(.bottom, 4)
-                }
-                .frame(width: max(0, width - 12), height: max(0, height - 6))
-                HStack {
-                    Text(0.formatted())
-                    Spacer()
-                    Text(100.formatted())
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(PevColors.muted)
-                .frame(width: max(0, width - 12))
-                .accessibilityHidden(true)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        PevRideReserveGauge(
+            label: localizedAppText("ride.safety.pwm_headroom"),
+            valueText: percentage ?? headroom?.metricValue.displayText
+                ?? PevDashboardMetricValue.unavailable.displayText,
+            unit: percentage == nil ? "" : RideUnits.percentUnit,
+            progress: displayedProgress, accent: accent
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(localizedAppText("ride.safety.pwm_headroom"))
         .accessibilityValue(
@@ -451,12 +445,69 @@ struct EucHeadroomGauge: View {
         .accessibilityIdentifier("euc.ride.headroom")
     }
 
+    private var accent: Color { colorScheme == .dark ? PevColors.yellow : PevColors.primaryText }
+}
+
+/// Shared semicircular instrument; callers supply the metric's meaning and validated progress.
+struct PevRideReserveGauge: View {
+    @Environment(\.layoutDirection) private var layoutDirection
+    let label: String
+    let valueText: String
+    let unit: String
+    let progress: Double?
+    let accent: Color
+    var track: Color = PevColors.cardStroke
+    var ink: Color = PevColors.primaryText
+    var muted: Color = PevColors.muted
+    var showsScale = true
+    var compact = false
+    var valueScale: CGFloat = 0.23
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = min(360, geometry.size.width, max(0, geometry.size.height - (compact ? 30 : 60)) * 2)
+            let height = width / 2
+            VStack(spacing: compact ? 6 : 12) {
+                Text(label)
+                    .font(compact ? .caption.weight(.semibold) : .title3.weight(.semibold))
+                    .foregroundStyle(ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                ZStack(alignment: .bottom) {
+                    EucHeadroomArc()
+                        .stroke(track, style: StrokeStyle(lineWidth: compact ? 4 : 10, lineCap: .round))
+                    if let progress, progress > 0 {
+                        EucHeadroomArc()
+                            .trim(from: 0, to: max(0, min(1, progress)))
+                            .stroke(accent, style: StrokeStyle(lineWidth: compact ? 4 : 10, lineCap: .round))
+                            .scaleEffect(x: layoutDirection == .rightToLeft ? -1 : 1, y: 1)
+                    }
+                    headroomValue(pointSize: min(84, width * valueScale))
+                        .padding(.bottom, 4)
+                }
+                .frame(width: max(0, width - 12), height: max(0, height - 6))
+                if showsScale {
+                    HStack {
+                        Text(0.formatted())
+                        Spacer()
+                        Text(100.formatted())
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(muted)
+                    .frame(width: max(0, width - 12))
+                    .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     private func headroomValue(pointSize: CGFloat) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(percentage ?? headroom?.metricValue.displayText ?? PevDashboardMetricValue.unavailable.displayText)
+            Text(valueText)
                 .font(.system(size: pointSize, weight: .bold))
-            if percentage != nil {
-                Text(RideUnits.percentUnit)
+            if !unit.isEmpty {
+                Text(unit)
                     .font(.system(size: pointSize * 0.4, weight: .semibold))
             }
         }
@@ -467,7 +518,6 @@ struct EucHeadroomGauge: View {
         .minimumScaleFactor(0.5)
     }
 
-    private var accent: Color { colorScheme == .dark ? PevColors.yellow : PevColors.primaryText }
 }
 
 private struct EucHeadroomArc: Shape {

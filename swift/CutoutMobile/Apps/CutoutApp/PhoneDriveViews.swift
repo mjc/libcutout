@@ -50,7 +50,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     .allowsHitTesting(!(model.capturesInput && model.snapshot.mode == .area))
                     .frame(maxHeight: .infinity)
                 if model.snapshot.mode == .buttons {
-                    buttonsPanel(height: min(190, max(110, height * 0.29)))
+                    buttonsPanel(height: min(200, max(110, height * 0.31)))
                         .padding(.horizontal, 24)
                         .padding(.bottom, 12)
                 } else if model.snapshot.mode == .area {
@@ -61,7 +61,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
             }
             .frame(width: geometry.size.width, height: height)
             .overlay {
-                if model.snapshot.mode == .area {
+                if model.snapshot.mode == .area, model.capturesInput {
                     PhoneDriveTouchSurface(
                         model: model, mode: .area, acceptsInput: model.capturesInput
                     )
@@ -74,12 +74,13 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     .accessibilityAction(named: localizedAppText("phone_control.deactivate")) {
                         model.cancel(.activationChanged)
                     }
-                    .accessibilityHidden(!model.capturesInput)
                     .accessibilityIdentifier("phone-control.area")
                 }
             }
             .onChange(of: geometry.size) { _, _ in model.cancel(.layoutChanged) }
         }
+        .foregroundStyle(PevDashboardColors.rideInk)
+        .background(PevDashboardColors.rideCanvas.ignoresSafeArea())
         .overlay(alignment: .topLeading) {
             #if DEBUG && targetEnvironment(simulator)
                 if model.isInputPreview {
@@ -101,7 +102,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
     private func buttonsPanel(height: CGFloat) -> some View {
         VStack(spacing: 8) {
             HStack {
-                Text(localizedAppText("phone_control.title")).font(.caption.weight(.semibold))
+                Text(localizedAppText("phone_control.title")).font(.system(size: 13, weight: .semibold))
                 Spacer()
                 activationStatus
             }
@@ -120,6 +121,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
             }
             statusText
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("phone-control.buttons")
     }
 
@@ -136,19 +138,33 @@ struct PhoneDriveRideSurface<Content: View>: View {
         } label: {
             VStack(spacing: 5) {
                 Image(systemName: throttle ? "arrow.up" : "equal")
-                    .font(.title2.weight(.semibold))
+                    .font(.system(size: 27, weight: .semibold))
                 Text(localizedAppText(throttle ? "phone_control.throttle" : "phone_control.brake"))
-                    .font(.title2.weight(.bold))
+                    .font(.system(size: 29, weight: .bold))
+                    .tracking(-0.8)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 Text(localizedAppText(pressed ? "phone_control.held" : "phone_control.hold"))
                     .font(.caption)
+                    .opacity(0.7)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .foregroundStyle(throttle ? Color.yellow : PevColors.primaryText)
-            .background(throttle ? Color.black : PevColors.pageBackground, in: RoundedRectangle(cornerRadius: 24))
+            .foregroundStyle(throttle ? PevDashboardColors.rideAccent : PevDashboardColors.rideInk)
+            .background(
+                throttle ? PevDashboardColors.rideControlFill : PevDashboardColors.rideCanvas,
+                in: RoundedRectangle(cornerRadius: 24)
+            )
             .overlay {
-                RoundedRectangle(cornerRadius: 24).strokeBorder(PevColors.primaryText, lineWidth: pressed ? 4 : 2)
+                RoundedRectangle(cornerRadius: 24)
+                    .strokeBorder(
+                        throttle ? PevDashboardColors.rideControlFill : PevDashboardColors.rideInk,
+                        lineWidth: 2
+                    )
+                if pressed {
+                    RoundedRectangle(cornerRadius: 27)
+                        .strokeBorder(PevDashboardColors.rideAccent, lineWidth: 3)
+                        .padding(-4)
+                }
             }
             .contentShape(RoundedRectangle(cornerRadius: 24))
         }
@@ -161,11 +177,15 @@ struct PhoneDriveRideSurface<Content: View>: View {
     private var areaStatus: some View {
         VStack(spacing: 6) {
             HStack {
-                Text(localizedAppText("phone_control.area_hint")).font(.caption)
+                Text(localizedAppText("phone_control.area_hint"))
+                    .font(.caption)
+                    .foregroundStyle(PevDashboardColors.rideMuted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                 Spacer(minLength: 4)
                 activationStatus
             }
-            if model.isInputPreview, !model.feedbackText.isEmpty {
+            if case .pressed = model.snapshot.phase {
                 Text(model.feedbackText)
                     .font(.caption.weight(.semibold))
                     .accessibilityIdentifier("phone-control.feedback")
@@ -186,8 +206,8 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     private var areaFeedback: some View {
         HStack(spacing: 0) {
-            Color.yellow.opacity(isPressed(.brake) ? 0.12 : 0)
-            Color.yellow.opacity(isPressed(.throttle) ? 0.12 : 0)
+            PevDashboardColors.rideAccent.opacity(isPressed(.brake) ? 0.12 : 0)
+            PevDashboardColors.rideAccent.opacity(isPressed(.throttle) ? 0.12 : 0)
         }
         .allowsHitTesting(false)
     }
@@ -199,31 +219,30 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     @ViewBuilder
     private var activationStatus: some View {
-        if model.capturesInput, model.snapshot.mode == .area {
-            Text(localizedAppText("phone_control.active")).font(.caption.weight(.semibold))
-        } else {
+        if !model.capturesInput || model.snapshot.mode != .area {
             Button(localizedAppText(model.capturesInput ? "phone_control.deactivate" : "phone_control.arm")) {
                 if model.capturesInput { model.cancel(.activationChanged) } else { model.activate() }
             }
             .disabled(!model.capturesInput && !model.canActivate)
             .font(.caption)
+            .frame(minWidth: 44, minHeight: 44)
             .accessibilityIdentifier("phone-control.activate")
         }
     }
 
     private var statusText: some View {
         VStack(spacing: 3) {
-            Text(model.availabilityText)
-                .accessibilityIdentifier("phone-control.status")
-            Text(model.limitsSummaryText)
-                .accessibilityIdentifier("phone-control.limits")
+            HStack(spacing: 6) {
+                Text(model.availabilityText)
+                    .accessibilityIdentifier("phone-control.status")
+                if model.isInputPreview { Text(localizedAppText("phone_control.preview")) }
+            }
             if model.activationError {
                 Text(localizedAppText("phone_control.activation_failed")).foregroundStyle(.red)
             }
-            if model.isInputPreview { Text(localizedAppText("phone_control.preview")) }
         }
         .font(.caption2)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(PevDashboardColors.rideMuted)
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
     }
