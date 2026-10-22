@@ -9680,17 +9680,17 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         try verifyPopulatedEskateInstruments(mode: "Disabled", appearance: .light)
     }
 
-    func testPopulatedEskateButtonsAtAccessibilityDynamicType() throws {
+    func testPopulatedEskateButtonsInDarkAppearanceAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
             mode: "Buttons", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
     }
 
-    func testPopulatedEskateAreaAtAccessibilityDynamicType() throws {
+    func testPopulatedEskateAreaInDarkAppearanceAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
             mode: "Area of screen", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
     }
 
-    func testPopulatedEskateDisabledAtAccessibilityDynamicType() throws {
+    func testPopulatedEskateDisabledInDarkAppearanceAtAccessibilityDynamicType() throws {
         try verifyPopulatedEskateInstruments(
             mode: "Disabled", appearance: .dark, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
     }
