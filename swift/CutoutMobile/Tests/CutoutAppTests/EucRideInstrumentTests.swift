@@ -161,6 +161,65 @@ final class EucRideInstrumentTests: XCTestCase {
         XCTAssertNil(ride.boardAngle)
     }
 
+    func testPopulatedEskateFixtureDerivesInstrumentsWithoutClassifyingOrInventingReportedValues() async throws {
+        let fixture = CutoutUITestSessionFixture.populatedEskate
+        XCTAssertNil(fixture.testScript.telemetry)
+        XCTAssertTrue(fixture.testScript.appliesProtocolNotificationSteps)
+        XCTAssertEqual(
+            fixture.testScript.protocolNotifications, CutoutUITestSessionFixture.eskate.testScript.protocolNotifications
+        )
+        let suiteName = "EucRideInstrumentTests-populated-eskate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let core = CutoutSessionCore(
+            testScript: fixture.testScript, suppressNativeLocation: true, selectedDeviceStore: store
+        )
+        if let profile = fixture.vescBoardProfile { core.configureVescBoard(profile: profile) }
+        let model = CutoutAppModel(
+            core: core, selectedDeviceStore: store, liveActivityManager: fixture.makeLiveActivityManager()
+        )
+        defer { core.disconnectAndScan() }
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if model.device.deviceSessionSnapshot?.identity?.vescApplication == .absent,
+                model.displayState.telemetry?.voltage != nil
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let snapshot = try XCTUnwrap(model.device.deviceSessionSnapshot)
+        let identity = try XCTUnwrap(snapshot.identity)
+        XCTAssertEqual(identity.protocol, .vesc)
+        XCTAssertEqual(identity.vescApplication, .absent)
+        XCTAssertEqual(identity.classificationRequirement, .userSelectionRequired)
+        XCTAssertEqual(identity.vehicleKind, .unknown)
+        XCTAssertNil(identity.model)
+        XCTAssertNotNil(model.vescRideSnapshot?.boardSpeed)
+        XCTAssertNotNil(model.vescRideSnapshot?.batteryLevelEstimated)
+
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.vehicleKind, .unknown)
+        XCTAssertEqual(ride.application, .absent)
+        XCTAssertGreaterThan(try XCTUnwrap(ride.boardSpeed).value, 0)
+        let level = try XCTUnwrap(ride.batteryLevelEstimated).value
+        XCTAssertGreaterThan(level, 0)
+        XCTAssertLessThan(level, 100)
+        XCTAssertNil(ride.batteryLevelReported)
+        XCTAssertNil(ride.footpad)
+        XCTAssertNil(ride.dutyCycle)
+        XCTAssertNil(ride.dutyHeadroom)
+        XCTAssertNil(ride.boardAngle)
+        let presentation = VescRideScreenPresentation(
+            snapshot: ride, phase: .live, now: core.now(), connectionStatusText: nil
+        )
+        XCTAssertEqual(presentation.standardEnergyTile.kind, .batteryLevel)
+        XCTAssertEqual(presentation.standardEnergyTile.detail, localizedAppText("ride.detail.estimated"))
+    }
+
     func testIsolatedLiveActivityPreservesLifecycleReceiptsWithoutSystemEffects() async throws {
         let manager = CutoutUITestSessionFixture.euc.makeLiveActivityManager()
         let snapshot = LiveActivityRideSnapshot(

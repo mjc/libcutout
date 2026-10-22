@@ -9656,11 +9656,100 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertFalse(throttle.isEnabled, "Dismissing the settings sheet must leave input disarmed")
     }
 
+    func testPopulatedEskateInstrumentsInDarkAppearance() throws {
+        try verifyPopulatedEskateInstruments()
+    }
+
+    func testPopulatedEskateInstrumentsInLightAppearance() throws {
+        try verifyPopulatedEskateInstruments()
+    }
+
+    func testPopulatedEskateInstrumentsAtAccessibilityDynamicType() throws {
+        try verifyPopulatedEskateInstruments(contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+    }
+
+    private func verifyPopulatedEskateInstruments(contentSize: String = "UICTContentSizeCategoryL") throws {
+        for mode in ["Buttons", "Area of screen", "Disabled"] {
+            launchPhoneFixture(preview: true, pausedMusic: true, contentSize: contentSize, populated: true)
+            try openPhoneRide(requiresTypeChoice: true)
+            try selectPhoneMode(mode)
+            let energy = phoneApp.buttons["ride.readings.open"]
+            let estimated = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@ AND value CONTAINS %@", "Battery", "Estimated"),
+                object: energy)
+            XCTAssertEqual(XCTWaiter.wait(for: [estimated], timeout: 5), .completed, phoneApp.debugDescription)
+            let speed = phoneElement("ride.hero.speed")
+            let speedValue = speed.value as? String ?? ""
+            XCTAssertFalse(speedValue.isEmpty, phoneApp.debugDescription)
+            XCTAssertFalse(speedValue.localizedCaseInsensitiveContains("unavailable"), phoneApp.debugDescription)
+            XCTAssertFalse(speedValue.contains("--"), phoneApp.debugDescription)
+            XCTAssertFalse(phoneApp.buttons["vesc.drivetrain.open"].exists)
+            XCTAssertFalse(energy.frame.isEmpty)
+            let trip = phoneElement("vesc.ride.tripDistance")
+            XCTAssertTrue(trip.exists)
+            XCTAssertLessThanOrEqual(energy.frame.maxY, trip.frame.minY + 1)
+
+            let tabs = phoneApp.tabBars.firstMatch
+            let player = phoneElement("music.compact-player")
+            XCTAssertTrue(player.waitForExistence(timeout: 5), phoneApp.debugDescription)
+            XCTAssertLessThanOrEqual(player.frame.maxY, tabs.frame.minY + 1)
+            if mode == "Buttons" {
+                try activatePhoneInput()
+                for id in ["phone-control.brake", "phone-control.throttle"] {
+                    let button = phoneApp.buttons[id]
+                    XCTAssertTrue(button.isHittable, phoneApp.debugDescription)
+                    XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+                    XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+                    XCTAssertGreaterThanOrEqual(button.frame.minY, trip.frame.maxY)
+                    XCTAssertLessThanOrEqual(button.frame.maxY, player.frame.minY + 1)
+                }
+                XCTAssertFalse(phoneElement("phone-control.area").exists)
+                try openPhoneReadings()
+            } else if mode == "Area of screen" {
+                try activatePhoneInput()
+                let area = phoneElement("phone-control.area")
+                XCTAssertTrue(area.waitForExistence(timeout: 5), phoneApp.debugDescription)
+                XCTAssertLessThanOrEqual(area.frame.minY, phoneElement("dashboard.top.navigation").frame.minY + 1)
+                XCTAssertGreaterThanOrEqual(area.frame.maxY, trip.frame.maxY)
+                XCTAssertLessThanOrEqual(area.frame.maxY, player.frame.minY + 1)
+                XCTAssertGreaterThanOrEqual(area.frame.maxY, player.frame.minY - 16)
+                XCTAssertFalse(phoneApp.buttons["phone-control.brake"].exists)
+                XCTAssertFalse(phoneApp.buttons["phone-control.throttle"].exists)
+            } else {
+                XCTAssertFalse(phoneElement("phone-control.buttons").exists)
+                XCTAssertFalse(phoneElement("phone-control.area").exists)
+                XCTAssertFalse(phoneApp.buttons["ride.phone-control.activate"].exists)
+                try openPhoneReadings()
+            }
+            keepPhoneScreenshot("populated-eskate-\(mode)")
+            XCTAssertTrue(tabs.buttons["Map"].isHittable)
+            tabs.buttons["Map"].tap()
+            XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
+            tabs.buttons["Ride"].tap()
+            XCTAssertTrue(energy.waitForExistence(timeout: 5))
+            XCTAssertFalse(phoneElement("phone-control.area").exists)
+            XCTAssertTrue(phoneApp.buttons["ride.phone-control.settings"].isHittable)
+            if mode == "Disabled" {
+                XCTAssertFalse(phoneApp.buttons["phone-control.brake"].exists)
+                XCTAssertFalse(phoneApp.buttons["phone-control.throttle"].exists)
+            } else {
+                XCTAssertFalse(phoneApp.buttons["phone-control.brake"].isEnabled)
+                XCTAssertFalse(phoneApp.buttons["phone-control.throttle"].isEnabled)
+            }
+            XCTAssertTrue(phoneApp.buttons["music.expand"].isHittable)
+            phoneApp.buttons["music.expand"].tap()
+            XCTAssertTrue(phoneElement("music.player.screen").waitForExistence(timeout: 5))
+            phoneApp.terminate()
+        }
+    }
+
     private func launchPhoneFixture(
-        preview: Bool, pausedMusic: Bool = false, contentSize: String = "UICTContentSizeCategoryL"
+        preview: Bool, pausedMusic: Bool = false, contentSize: String = "UICTContentSizeCategoryL",
+        populated: Bool = false
     ) {
+        let fixture = populated ? "eskate-populated" : "eskate"
         phoneApp.launchArguments = [
-            "-CUTOUT_UI_TEST_FIXTURE", "eskate",
+            "-CUTOUT_UI_TEST_FIXTURE", fixture,
             "-UIPreferredContentSizeCategoryName", contentSize,
             "-io.cutout.music.monitoring.enabled", pausedMusic ? "YES" : "NO",
             "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
@@ -9673,7 +9762,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             ]
         }
         phoneApp.launchEnvironment = [
-            "CUTOUT_UI_TEST_FIXTURE": "eskate",
+            "CUTOUT_UI_TEST_FIXTURE": fixture,
             "CUTOUT_UI_TEST_RIDE_DATABASE_ID": UUID().uuidString,
         ]
         phoneApp.launch()
@@ -9700,11 +9789,16 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(phoneElement("ride.phone-control.settings-sheet").waitForNonExistence(timeout: 5))
     }
 
-    private func openPhoneRide() throws {
+    private func openPhoneRide(requiresTypeChoice: Bool = false) throws {
         let use = phoneApp.buttons["device-picker.use.ui-test-standard-vesc-eskate"]
         if use.waitForExistence(timeout: 2) { use.tap() }
         let choice = phoneApp.buttons["device.type.choice.eskate"]
-        if choice.waitForExistence(timeout: 2) { choice.tap() }
+        if requiresTypeChoice {
+            XCTAssertTrue(choice.waitForExistence(timeout: 5), phoneApp.debugDescription)
+            choice.tap()
+        } else if choice.waitForExistence(timeout: 2) {
+            choice.tap()
+        }
         XCTAssertTrue(phoneApp.buttons["ride.readings.open"].waitForExistence(timeout: 10), phoneApp.debugDescription)
     }
 

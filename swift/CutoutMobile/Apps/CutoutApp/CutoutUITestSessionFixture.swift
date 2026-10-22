@@ -16,6 +16,7 @@ import Foundation
         case bluetoothPermissionDenied
         case vesc
         case eskate
+        case populatedEskate
         case dynamicVesc
         case warningVesc(VescRideWarning)
         case stopVesc(VescRideStopReason)
@@ -53,9 +54,9 @@ import Foundation
             case "bluetooth-unavailable": self = .bluetoothUnavailable
             case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
             case "vesc": self = .vesc
-            case "eskate":
+            case "eskate", "eskate-populated":
                 #if targetEnvironment(simulator)
-                    self = .eskate
+                    self = value == "eskate-populated" ? .populatedEskate : .eskate
                 #else
                     return nil
                 #endif
@@ -163,7 +164,7 @@ import Foundation
                     ),
                     symbolName: "circle.hexagongrid.circle"
                 )
-            case .eskate:
+            case .eskate, .populatedEskate:
                 DevicePickerDiscoveryCandidate(
                     platformIdentifier: "ui-test-standard-vesc-eskate",
                     displayName: "Workshop board",
@@ -328,7 +329,7 @@ import Foundation
                 #endif
                 return [frame]
             }
-            if self == .eskate {
+            if isStandardVesc {
                 // Ordinary firmware identity followed by an explicit non-Refloat app-info
                 // response. The production Rust session derives Absent and requires a choice.
                 return [
@@ -391,17 +392,37 @@ import Foundation
             ])
         #endif
 
+        /// Synthetic geometry and pack facts let Rust derive instruments from the shared raw replay.
+        var vescBoardProfile: VescBoardProfile? {
+            guard self == .populatedEskate else { return nil }
+            return VescBoardProfile(
+                motorPolePairs: 7,
+                gearRatioMilli: 2_500,
+                wheelCircumference: Distance(value: 283),
+                batteryType: .liIon,
+                batteryCells: 13,
+                batteryParallelCells: 1,
+                batteryCellModel: .unknown,
+                chargeProfile: nil,
+                reportsBatteryCurrent: true
+            )
+        }
+
+        private var isStandardVesc: Bool {
+            self == .eskate || self == .populatedEskate
+        }
+
         var testScript: CutoutSessionTestScript {
             let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
             let notifications = protocolNotifications
             return CutoutSessionTestScript(
                 candidate: candidate,
-                telemetry: emitsPendingTelemetry || self == .eskate ? nil : telemetry,
+                telemetry: emitsPendingTelemetry || isStandardVesc ? nil : telemetry,
                 protocolNotifications: notifications,
                 // Application proof belongs to the live protocol owner, after LinkUp submits INFO.
-                protocolDetectionNotifications: isRefloatVesc || self == .eskate ? Array(notifications.prefix(1)) : nil,
-                appliesProtocolNotificationSteps: self == .eskate,
-                protocolNotificationIntervalMilliseconds: self == .eskate
+                protocolDetectionNotifications: isRefloatVesc || isStandardVesc ? Array(notifications.prefix(1)) : nil,
+                appliesProtocolNotificationSteps: isStandardVesc,
+                protocolNotificationIntervalMilliseconds: isStandardVesc
                     || (isEuc && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS")) ? 500 : nil,
                 telemetryUpdate: telemetryUpdate,
                 telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
@@ -425,7 +446,7 @@ import Foundation
         private var connectingDelayMilliseconds: UInt64 {
             switch self {
             case .connectingVesc, .connectingEuc: 5_000
-            case .eskate: 0
+            case .eskate, .populatedEskate: 0
             default: 1_000
             }
         }

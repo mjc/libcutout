@@ -1476,12 +1476,14 @@ final class CutoutAppModel {
                 #else
                     let suppressNativeLocation = false
                 #endif
-                return CutoutSessionCore(
+                let core = CutoutSessionCore(
                     testScript: fixture.testScript,
                     suppressNativeLocation: suppressNativeLocation,
                     rideMapState: rideMapState,
                     database: fixture == .rideMapStorageUnavailable ? nil : database
                 )
+                if let profile = fixture.vescBoardProfile { core.configureVescBoard(profile: profile) }
+                return core
             }
         #endif
         if let rideMapState {
