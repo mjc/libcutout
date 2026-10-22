@@ -77,6 +77,91 @@ fn press(
 }
 
 #[test]
+fn phone_drive_platform_cancellation_requires_explicit_reactivation_in_a_fresh_input_epoch() {
+    let (mut owner, token, generation) = active();
+    let first = press(&mut owner, &token, generation);
+    assert!(owner.mark_phone_drive_transport(
+        &token,
+        first,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_001)
+    ));
+    owner.cancel_phone_drive_at(PhoneDriveCancelReason::TouchCancelled, at(3_002));
+    assert_eq!(
+        owner.phone_drive_activation(),
+        None,
+        "system cancellation must retire the old grant"
+    );
+    let release = drives(&owner.tick_phone_drive(&token, at(3_002), true).unwrap())[0].0;
+    assert_eq!(release.kind, PhoneDriveWriteKind::Release);
+    assert!(owner.mark_phone_drive_transport(
+        &token,
+        release,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_002)
+    ));
+    let current_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        current_generation,
+        PhoneDriveContacts::Released,
+        at(3_003),
+        at(3_003),
+    );
+    let fresh_contact = owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            current_generation,
+            held(PhoneDriveAction::Throttle),
+            at(3_004),
+            at(3_004),
+        )
+        .unwrap();
+    assert_eq!(
+        drives(&fresh_contact),
+        Vec::new(),
+        "a new UIKit event alone must not restore drive authority"
+    );
+    assert_eq!(
+        owner.phone_drive_availability(),
+        PhoneDriveAvailability::Ready
+    );
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        current_generation,
+        PhoneDriveContacts::Released,
+        at(3_005),
+        at(3_005),
+    );
+    let new_activation = owner
+        .activate_phone_drive(&token, PhoneDriveLimits::default(), at(3_005))
+        .unwrap();
+    assert_ne!(new_activation, first.activation_id);
+    let new_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        new_generation,
+        PhoneDriveContacts::Released,
+        at(3_005),
+        at(3_005),
+    );
+    let reactivated = owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            new_generation,
+            held(PhoneDriveAction::Throttle),
+            at(3_006),
+            at(3_006),
+        )
+        .unwrap();
+    assert_eq!(drives(&reactivated)[0].0.activation_id, new_activation);
+    assert_eq!(
+        drives(&reactivated)[0].0.kind,
+        PhoneDriveWriteKind::Setpoint
+    );
+}
+
+#[test]
 fn phone_drive_cadence_has_no_catch_up_and_input_age_expires_without_poll_capacity() {
     let (mut owner, token, generation) = active();
     let first = press(&mut owner, &token, generation);

@@ -654,8 +654,7 @@ const fn gesture_local_cancel(reason: PhoneDriveCancelReason) -> bool {
         PhoneDriveCancelReason::RegionLeft
         | PhoneDriveCancelReason::MultipleContacts
         | PhoneDriveCancelReason::ContactReplaced
-        | PhoneDriveCancelReason::InvalidContact
-        | PhoneDriveCancelReason::TouchCancelled => true,
+        | PhoneDriveCancelReason::InvalidContact => true,
         _ => false,
     }
 }
