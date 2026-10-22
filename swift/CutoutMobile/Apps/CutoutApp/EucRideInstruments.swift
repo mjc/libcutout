@@ -4,7 +4,6 @@ import SwiftUI
 /// Shared instrument composition; vehicle adapters supply meaning and supported readings.
 struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secondary: View>: View {
     @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     let header: Header
     let primary: (Bool) -> Primary
     let summary: Summary
@@ -13,12 +12,14 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
     let bottomPadding: CGFloat
     let ink: Color
     let canvas: Color
+    let landscapeOverride: Bool?
 
     init(
         spacing: CGFloat = 12,
         bottomPadding: CGFloat = 28,
         ink: Color = PevColors.primaryText,
         canvas: Color = PevColors.pageBackground,
+        landscapeOverride: Bool? = nil,
         @ViewBuilder header: () -> Header,
         @ViewBuilder primary: @escaping (Bool) -> Primary,
         @ViewBuilder summary: () -> Summary,
@@ -32,6 +33,7 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
         self.bottomPadding = bottomPadding
         self.ink = ink
         self.canvas = canvas
+        self.landscapeOverride = landscapeOverride
     }
 
     var body: some View {
@@ -40,9 +42,7 @@ struct PevRideInstrumentLayout<Header: View, Primary: View, Summary: View, Secon
             let safeBottom = frame.maxY - geometry.safeAreaInsets.bottom
             let bottom = min(safeBottom, musicCompactPlayerFrame?.minY ?? safeBottom)
             let height = max(0, bottom - frame.minY)
-            let landscape =
-                verticalSizeClass == .compact
-                || (verticalSizeClass == nil && geometry.size.width > geometry.size.height)
+            let landscape = landscapeOverride ?? (geometry.size.width > height)
             VStack(spacing: spacing) {
                 header
                 if landscape {

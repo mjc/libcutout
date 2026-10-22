@@ -5,6 +5,8 @@ import SwiftUI
 
 struct VescRideScreenView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ScaledMetric(relativeTo: .headline) private var headroomLineHeight: CGFloat = 21
     @ScaledMetric(relativeTo: .caption) private var footerHeight: CGFloat = 20
     let liveSnapshot: VescRideSnapshot?
@@ -141,7 +143,9 @@ struct VescRideScreenView: View {
             spacing: usesCompactPhoneInstruments ? 8 : 16,
             bottomPadding: isEskate ? 8 : 28,
             ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
-            canvas: isEskate ? PevDashboardColors.rideCanvas : PevColors.pageBackground
+            canvas: isEskate ? PevDashboardColors.rideCanvas : PevColors.pageBackground,
+            landscapeOverride: usesCompactPhoneInstruments && horizontalSizeClass == .compact
+                ? verticalSizeClass == .compact : nil
         ) {
             HStack(spacing: 8) {
                 PevRideStatusHeader(
