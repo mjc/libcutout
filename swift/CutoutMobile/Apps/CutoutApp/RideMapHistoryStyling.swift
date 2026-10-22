@@ -1,9 +1,9 @@
 import SwiftUI
 
 enum RideViewportLayout {
-    // TabView already reduces the content proposal for its safe area. Only cap
-    // that proposal if the measured player overlaps it; subtracting the safe-area
-    // inset again leaves a blank band and clips the final scroll rows early.
+    // Map content uses its proposed bounds. Fixed Ride controls also supply the
+    // native tab inset as a fallback. A measured player replaces that fallback;
+    // subtracting both boundaries would reserve the same chrome twice.
     static func visibleHeight(
         in geometry: GeometryProxy, musicPlayerFrame: CGRect?, bottomSafeAreaInset: CGFloat = 0
     ) -> CGFloat {
