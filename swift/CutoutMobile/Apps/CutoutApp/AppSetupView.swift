@@ -96,24 +96,22 @@ struct AppSetupView: View {
                         ProgressView(localizedAppText("phone_control.input_mode"))
                     }
                     if model.phoneDrive.settingsLoaded {
-                        TextField(
-                            localizedAppText("phone_control.throttle_current"),
+                        phoneDriveCurrentField(
+                            "phone_control.throttle_current",
                             text: Binding(
                                 get: { model.phoneDrive.throttleAmpsText },
                                 set: { model.phoneDrive.throttleAmpsText = $0 }
-                            )
+                            ),
+                            identifier: "setup.phone-control.throttle-current"
                         )
-                        .disabled(model.phoneDrive.settingsBusy)
-                        .accessibilityIdentifier("setup.phone-control.throttle-current")
-                        TextField(
-                            localizedAppText("phone_control.brake_current"),
+                        phoneDriveCurrentField(
+                            "phone_control.brake_current",
                             text: Binding(
                                 get: { model.phoneDrive.brakeAmpsText },
                                 set: { model.phoneDrive.brakeAmpsText = $0 }
-                            )
+                            ),
+                            identifier: "setup.phone-control.brake-current"
                         )
-                        .disabled(model.phoneDrive.settingsBusy)
-                        .accessibilityIdentifier("setup.phone-control.brake-current")
                         Button(localizedAppText("phone_control.save_limits")) {
                             Task { await model.phoneDrive.saveLimits() }
                         }
@@ -349,6 +347,23 @@ struct AppSetupView: View {
     }
 
     @ToolbarContentBuilder
+    private func phoneDriveCurrentField(_ labelKey: String, text: Binding<String>, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(localizedAppText(labelKey))
+            TextField(localizedAppText(labelKey), text: text)
+                .labelsHidden()
+                .frame(minHeight: 44)
+                .disabled(model.phoneDrive.settingsBusy)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.numbersAndPunctuation)
+                #endif
+                .accessibilityLabel(localizedAppText(labelKey))
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
     private var doneToolbar: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
             Button {

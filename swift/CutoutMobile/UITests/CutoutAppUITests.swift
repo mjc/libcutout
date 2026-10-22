@@ -9404,7 +9404,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         phoneApp.buttons["device-picker.open-setup"].tap()
         let mode = phoneElement("setup.phone-control.mode")
         XCTAssertTrue(mode.waitForExistence(timeout: 5), phoneApp.debugDescription)
-        XCTAssertEqual(mode.value as? String, "Buttons")
+        XCTAssertTrue(mode.label.hasSuffix("Buttons"), phoneApp.debugDescription)
         XCTAssertTrue(phoneApp.buttons["setup.music"].exists)
         phoneApp.buttons["setup.done"].tap()
     }
@@ -9625,9 +9625,15 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         let option = phoneApp.buttons[title].firstMatch
         XCTAssertTrue(option.waitForExistence(timeout: 5), phoneApp.debugDescription)
         option.tap()
-        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", title), object: mode)
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label ENDSWITH %@", title), object: mode)
         XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed, phoneApp.debugDescription)
         XCTAssertFalse(phoneElement("setup.phone-control.error").exists)
+        for title in ["Throttle current (A)", "Brake current (A)"] {
+            let label = phoneApp.staticTexts[title].firstMatch
+            for _ in 0..<4 where !label.isHittable { phoneElement("setup.screen").swipeUp() }
+            XCTAssertTrue(
+                label.isHittable, "Current values need persistent visible labels: " + phoneApp.debugDescription)
+        }
         phoneApp.buttons["setup.done"].tap()
         XCTAssertTrue(gear.waitForExistence(timeout: 5), phoneApp.debugDescription)
     }
