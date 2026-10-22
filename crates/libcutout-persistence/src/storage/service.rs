@@ -83,11 +83,13 @@ fn acquire(
     worker_alive.store(true, Ordering::Release);
     let worker_alive_for_thread = Arc::clone(&worker_alive);
     let diagnostic_recording_for_thread = Arc::clone(&diagnostic_recording_enabled);
+    let worker_database_path = canonical_path.clone();
     let join = thread::Builder::new()
         .name("cutout-ride-maps-db".to_owned())
         .spawn(move || {
             worker::run(
                 connection,
+                worker_database_path,
                 &receiver,
                 &worker_alive_for_thread,
                 &diagnostic_recording_for_thread,

@@ -23,6 +23,7 @@ use super::{
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::{Arc, mpsc::SyncSender};
 use std::sync::{
@@ -41,12 +42,15 @@ pub(super) fn drop_next_pevcap_finish_response_for_test() {
 
 pub(super) fn run(
     connection: Connection,
+    database_path: PathBuf,
     receiver: &Receiver<Command>,
     worker_alive: &AtomicBool,
     diagnostic_recording_enabled: &AtomicBool,
 ) {
     let mut worker = DatabaseWorker {
         connection,
+        database_path,
+        legacy_artifact_scan: None,
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
         diagnostic_recording_enabled,
@@ -55,7 +59,7 @@ pub(super) fn run(
         worker.worker_alive.store(false, Ordering::Release);
         return;
     }
-    let mut normalization_state = worker.normalize_semantic_batch();
+    let mut normalization_state = worker.normalize_maintenance_batch();
     loop {
         let idle_delay = match normalization_state {
             super::normalization::BatchState::Pending => Duration::from_millis(10),
@@ -70,7 +74,7 @@ pub(super) fn run(
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if normalization_state != super::normalization::BatchState::Finished {
-                    normalization_state = worker.normalize_semantic_batch();
+                    normalization_state = worker.normalize_maintenance_batch();
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -81,15 +85,45 @@ pub(super) fn run(
 
 struct DatabaseWorker<'a> {
     connection: Connection,
+    database_path: PathBuf,
+    legacy_artifact_scan: Option<super::normalization::LegacyArtifactScan>,
     spatial_schema: SpatialSchemaState,
     worker_alive: &'a AtomicBool,
     diagnostic_recording_enabled: &'a AtomicBool,
 }
 
 impl DatabaseWorker<'_> {
-    fn normalize_semantic_batch(&mut self) -> super::normalization::BatchState {
-        super::normalization::remove_redundant_semantic_batch(&mut self.connection)
-            .unwrap_or(super::normalization::BatchState::Deferred)
+    fn normalize_maintenance_batch(&mut self) -> super::normalization::BatchState {
+        match super::normalization::remove_redundant_semantic_batch(
+            &mut self.connection,
+            self.legacy_artifact_scan
+                .as_ref()
+                .and_then(super::normalization::LegacyArtifactScan::backfill_digest),
+        ) {
+            Ok(super::normalization::BatchState::Pending) => {
+                super::normalization::BatchState::Pending
+            }
+            Ok(super::normalization::BatchState::Deferred) | Err(_) => {
+                super::normalization::BatchState::Deferred
+            }
+            Ok(super::normalization::BatchState::Finished) => {
+                match super::normalization::normalize_legacy_artifact_batch(
+                    &mut self.connection,
+                    &self.database_path,
+                    &mut self.legacy_artifact_scan,
+                ) {
+                    Ok(super::normalization::ArchiveState::Pending) => {
+                        super::normalization::BatchState::Pending
+                    }
+                    Ok(super::normalization::ArchiveState::Deferred) | Err(_) => {
+                        super::normalization::BatchState::Deferred
+                    }
+                    Ok(super::normalization::ArchiveState::Finished) => {
+                        super::normalization::BatchState::Finished
+                    }
+                }
+            }
+        }
     }
 
     #[allow(

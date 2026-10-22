@@ -3453,6 +3453,505 @@ fn database_preflights_confirms_and_deduplicates_sqlite_canonical_pevcap_artifac
 }
 
 #[test]
+fn reopening_legacy_import_retires_only_verified_managed_sidecar() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("legacy-sidecar.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let capture = PevcapCapture::new(
+        pevcap_header(),
+        vec![pevcap_location_record(1, 40.0, Some(3.0))],
+    );
+    let artifact_bytes = capture.to_jsonl().unwrap();
+    std::fs::write(&source_path, artifact_bytes.as_bytes()).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let digest = preview.artifact_digest().to_owned();
+    database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = std::path::PathBuf::from(managed_directory);
+    std::fs::create_dir_all(&managed_directory).unwrap();
+    let sidecar_path = managed_directory.join(format!("{digest}.jsonl"));
+    std::fs::write(&sidecar_path, artifact_bytes.as_bytes()).unwrap();
+    let connection = Connection::open(&database_path).unwrap();
+    let transaction = connection.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "DELETE FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
+            [&digest],
+        )
+        .unwrap();
+    for (sequence, chunk) in artifact_bytes.as_bytes().chunks(17).enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![digest, sequence, chunk],
+            )
+            .unwrap();
+    }
+    transaction
+        .execute(
+            "UPDATE pevcap_captures SET next_sequence = ?1 WHERE artifact_digest = ?2",
+            (artifact_bytes.len().div_ceil(17), &digest),
+        )
+        .unwrap();
+    transaction.commit().unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+            (sidecar_path.to_string_lossy().as_ref(), &digest),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_size = 0 WHERE artifact_digest = ?1",
+            [&digest],
+        )
+        .unwrap();
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    drop(connection);
+    database.shutdown().unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let path: Option<String> = Connection::open(&database_path)
+            .unwrap()
+            .query_row(
+                "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if path.is_none() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !sidecar_path.exists(),
+        "verified redundant sidecar is retired"
+    );
+    let exported_path = directory.path().join("reopened-export.jsonl");
+    reopened
+        .export_pevcap_capture(&digest, &exported_path)
+        .expect("canonical SQLite bytes remain exportable");
+    assert_eq!(
+        std::fs::read(&exported_path).unwrap(),
+        artifact_bytes.as_bytes()
+    );
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn reopening_file_only_legacy_import_backfills_before_sidecar_retirement() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("file-only-legacy.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let capture = PevcapCapture::new(
+        pevcap_header(),
+        vec![pevcap_location_record(2, 40.0, Some(4.0))],
+    );
+    let artifact_bytes = capture.to_jsonl().unwrap();
+    std::fs::write(&source_path, artifact_bytes.as_bytes()).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let digest = preview.artifact_digest().to_owned();
+    database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = std::path::PathBuf::from(managed_directory);
+    std::fs::create_dir_all(&managed_directory).unwrap();
+    let sidecar_path = managed_directory.join(format!("{digest}.jsonl"));
+    std::fs::write(&sidecar_path, artifact_bytes.as_bytes()).unwrap();
+    let connection = Connection::open(&database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+            (sidecar_path.to_string_lossy().as_ref(), &digest),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_size = 0 WHERE artifact_digest = ?1",
+            [&digest],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+            [&digest],
+        )
+        .unwrap();
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    drop(connection);
+    database.shutdown().unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let path: Option<String> = Connection::open(&database_path)
+            .unwrap()
+            .query_row(
+                "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if path.is_none() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!sidecar_path.exists(), "backfilled sidecar is retired");
+    let repaired_size: u64 = Connection::open(&database_path)
+        .unwrap()
+        .query_row(
+            "SELECT artifact_size FROM pevcap_imports WHERE artifact_digest = ?1",
+            [&digest],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(repaired_size, artifact_bytes.len() as u64);
+    let exported_path = directory.path().join("backfilled-export.jsonl");
+    reopened
+        .export_pevcap_capture(&digest, &exported_path)
+        .expect("backfilled canonical bytes are exportable");
+    assert_eq!(
+        std::fs::read(&exported_path).unwrap(),
+        artifact_bytes.as_bytes()
+    );
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn corrupt_legacy_sidecar_is_preserved_and_does_not_block_later_receipts() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("corrupt-first-legacy.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let mut imports = Vec::new();
+    for (index, timestamp) in [1_700_000_000_001, 1_700_000_000_002]
+        .into_iter()
+        .enumerate()
+    {
+        let source_path = directory.path().join(format!("source-{index}.jsonl"));
+        let bytes = PevcapCapture::new(
+            pevcap_header(),
+            vec![pevcap_location_record(timestamp, 40.0, Some(3.0))],
+        )
+        .to_jsonl()
+        .unwrap();
+        std::fs::write(&source_path, &bytes).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let digest = preview.artifact_digest().to_owned();
+        database
+            .confirm_pevcap_import(&preview, 1_700_000_000_000 + index as u64)
+            .unwrap();
+        let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+        managed_directory.push(".pevcap-imports");
+        let sidecar_path =
+            std::path::PathBuf::from(managed_directory).join(format!("{digest}.jsonl"));
+        std::fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar_path, &bytes).unwrap();
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+                (sidecar_path.to_string_lossy().as_ref(), &digest),
+            )
+            .unwrap();
+        imports.push((digest, sidecar_path, bytes));
+    }
+    imports.sort_by(|left, right| left.0.cmp(&right.0));
+    std::fs::write(&imports[0].1, b"corrupt but retained source").unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while imports[1].1.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(imports[0].1.exists(), "corrupt source is preserved");
+    assert!(
+        !imports[1].1.exists(),
+        "a later verified sidecar is still retired"
+    );
+    for (digest, _, bytes) in &imports {
+        let export_path = directory.path().join(format!("{digest}.export.jsonl"));
+        reopened
+            .export_pevcap_capture(digest, &export_path)
+            .expect("canonical bytes remain exportable");
+        assert_eq!(std::fs::read(export_path).unwrap(), bytes.as_bytes());
+    }
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn file_only_backfill_keeps_sidecar_if_published_chunks_fail_readback() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("backfill-readback.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let records = (0..512)
+        .map(|timestamp| pevcap_location_record(timestamp, 40.0, Some(3.0)))
+        .collect();
+    let artifact_bytes = PevcapCapture::new(pevcap_header(), records)
+        .to_jsonl()
+        .unwrap();
+    assert!(artifact_bytes.len() > 64 * 1024);
+    std::fs::write(&source_path, &artifact_bytes).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let digest = preview.artifact_digest().to_owned();
+    database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let sidecar_path = std::path::PathBuf::from(managed_directory).join(format!("{digest}.jsonl"));
+    std::fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+    std::fs::write(&sidecar_path, &artifact_bytes).unwrap();
+    let connection = Connection::open(&database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+            (sidecar_path.to_string_lossy().as_ref(), &digest),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+            [&digest],
+        )
+        .unwrap();
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    drop(connection);
+    database.shutdown().unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut corrupted = false;
+    while Instant::now() < deadline && sidecar_path.exists() {
+        let connection = Connection::open(&database_path).unwrap();
+        let published: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pevcap_captures
+                 WHERE artifact_digest = ?1 AND receipt_digest = ?1)",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if published {
+            connection
+                .execute(
+                    "UPDATE pevcap_capture_chunks SET payload = zeroblob(length(payload))
+                     WHERE artifact_digest = ?1 AND sequence = 0",
+                    [&digest],
+                )
+                .unwrap();
+            corrupted = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(corrupted, "test observed publication before SQL readback");
+    std::thread::sleep(Duration::from_millis(75));
+    assert!(
+        sidecar_path.exists(),
+        "the only known-good source is retained"
+    );
+    assert_eq!(
+        std::fs::read(&sidecar_path).unwrap(),
+        artifact_bytes.as_bytes()
+    );
+    let retained_path: Option<String> = Connection::open(&database_path)
+        .unwrap()
+        .query_row(
+            "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+            [&digest],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        retained_path.is_some(),
+        "unverified bytes keep their receipt path"
+    );
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn missing_legacy_sidecar_is_cleared_only_after_canonical_bytes_verify() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("missing-sidecar.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let artifact_bytes = PevcapCapture::new(
+        pevcap_header(),
+        vec![pevcap_location_record(9, 40.0, Some(2.0))],
+    )
+    .to_jsonl()
+    .unwrap();
+    std::fs::write(&source_path, &artifact_bytes).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let digest = preview.artifact_digest().to_owned();
+    database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let missing_path = std::path::PathBuf::from(managed_directory).join(format!("{digest}.jsonl"));
+    std::fs::create_dir_all(missing_path.parent().unwrap()).unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+            (missing_path.to_string_lossy().as_ref(), &digest),
+        )
+        .unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    database.shutdown().unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut cleared = false;
+    while Instant::now() < deadline {
+        let path: Option<String> = Connection::open(&database_path)
+            .unwrap()
+            .query_row(
+                "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if path.is_none() {
+            cleared = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(cleared, "canonical receipt was independently verified");
+    let exported_path = directory.path().join("recovered.jsonl");
+    reopened
+        .export_pevcap_capture(&digest, &exported_path)
+        .expect("canonical data remains exportable");
+    assert_eq!(
+        std::fs::read(exported_path).unwrap(),
+        artifact_bytes.as_bytes()
+    );
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn same_size_in_place_sidecar_edit_during_hashing_is_never_retired() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("edited-sidecar.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let records = (0..512)
+        .map(|timestamp| pevcap_location_record(timestamp, 40.0, Some(3.0)))
+        .collect();
+    let artifact_bytes = PevcapCapture::new(pevcap_header(), records)
+        .to_jsonl()
+        .unwrap();
+    assert!(artifact_bytes.len() > 64 * 1024);
+    std::fs::write(&source_path, &artifact_bytes).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let digest = preview.artifact_digest().to_owned();
+    database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let sidecar_path = std::path::PathBuf::from(managed_directory).join(format!("{digest}.jsonl"));
+    std::fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+    std::fs::write(&sidecar_path, &artifact_bytes).unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+            (sidecar_path.to_string_lossy().as_ref(), &digest),
+        )
+        .unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    database.shutdown().unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+    std::thread::sleep(Duration::from_millis(15));
+    assert!(sidecar_path.exists(), "long scan is still active");
+    let mut edited = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&sidecar_path)
+        .unwrap();
+    use std::io::{Seek, SeekFrom, Write};
+    edited.seek(SeekFrom::Start(0)).unwrap();
+    edited.write_all(b"X").unwrap();
+    edited.sync_all().unwrap();
+    drop(edited);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(sidecar_path.exists(), "changed bytes are never retired");
+    let retained_path: Option<String> = Connection::open(&database_path)
+        .unwrap()
+        .query_row(
+            "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+            [&digest],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(retained_path.is_some());
+    reopened.shutdown().unwrap();
+}
+
+#[test]
 fn pevcap_import_keeps_a_valid_location_without_horizontal_accuracy() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(

@@ -118,6 +118,21 @@ pub(super) fn append(
     Ok(())
 }
 
+/// Persists one already bounded chunk while normalizing an older file-only receipt.
+pub(super) fn append_legacy_backfill_chunk(
+    connection: &mut Connection,
+    digest: &str,
+    sequence: u64,
+    bytes: &[u8],
+) -> Result<(), StorageError> {
+    if bytes.is_empty() || bytes.len() > CHUNK_BYTES {
+        return Err(StorageError::PevcapCaptureIntegrity(
+            "legacy backfill chunk exceeded its storage bound".to_owned(),
+        ));
+    }
+    append(connection, digest, sequence, &CaptureChunk(bytes.to_vec()))
+}
+
 /// Links complete bytes to an existing receipt, making bounded reads visible.
 /// New imports call this inside the transaction that publishes their receipt.
 pub(super) fn publish(connection: &Connection, digest: &str) -> Result<(), StorageError> {
