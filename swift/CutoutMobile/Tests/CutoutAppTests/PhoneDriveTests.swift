@@ -217,7 +217,7 @@ final class PhoneDriveTests: XCTestCase {
                 throttleAmpsText: String(Double(previous.throttleMilliamps) / 1_000),
                 brakeAmpsText: String(Double(previous.brakeMilliamps) / 1_000))
         }
-        await fixture.holdWrite()
+        try await fixture.holdWrite()
         model.throttleAmpsText = "2.5"
         model.brakeAmpsText = "1.25"
         let saving = Task { await model.saveLimits() }
