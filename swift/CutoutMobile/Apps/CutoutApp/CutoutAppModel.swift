@@ -663,6 +663,7 @@ final class CutoutAppModel {
                     self?.phoneDrive.refresh()
                     self?.syncLiveActivity()
                 },
+                phoneDrive: { [weak self] _ in self?.phoneDrive.refresh() },
                 protocolIdentity: { [weak self] candidate in
                     self?.applyProtocolIdentityCandidate(candidate)
                 },

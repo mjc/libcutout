@@ -9,6 +9,45 @@ fn database() -> std::sync::Arc<crate::RideDatabaseHandle> {
 }
 
 #[test]
+fn phone_drive_ffi_current_budgets_are_durable_and_invalid_edits_do_not_replace_them() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let initial = handle.load_phone_control_mode().unwrap();
+    assert_eq!(initial.limits.throttle_milliamps, 3_000);
+    assert_eq!(initial.limits.brake_milliamps, 3_000);
+    let saved = handle
+        .save_phone_drive_limits("7.125".into(), "4.5".into())
+        .unwrap();
+    assert_eq!(saved.limits.throttle_milliamps, 7_125);
+    assert_eq!(saved.limits.brake_milliamps, 4_500);
+    assert!(matches!(
+        handle.save_phone_drive_limits("7.125".into(), "NaN".into()),
+        Err(MobilePhoneControlError::InvalidLimits)
+    ));
+    assert_eq!(handle.phone_drive_snapshot().limits, saved.limits);
+    let restored = CutoutSessionStateHandle::with_database(database.clone())
+        .load_phone_control_mode()
+        .unwrap();
+    assert_eq!(restored.limits, saved.limits);
+    assert_eq!(
+        restored.availability,
+        MobilePhoneDriveAvailabilityDto::Unavailable {
+            reason: MobilePhoneDriveUnavailableReasonDto::Disconnected
+        }
+    );
+    database.shutdown().unwrap();
+    assert!(
+        handle
+            .save_phone_drive_limits("8".into(), "9".into())
+            .is_err()
+    );
+    assert_eq!(handle.phone_drive_snapshot().limits, saved.limits);
+}
+
+#[test]
 fn phone_drive_ffi_preferences_roundtrip_without_restoring_pressed_input() {
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()
@@ -27,8 +66,10 @@ fn phone_drive_ffi_preferences_roundtrip_without_restoring_pressed_input() {
         let saved = handle.save_phone_control_mode(mode).unwrap();
         assert_eq!(saved.mode, mode);
         assert_eq!(
-            saved.unavailability,
-            MobilePhoneDriveUnavailableReasonDto::Disconnected
+            saved.availability,
+            MobilePhoneDriveAvailabilityDto::Unavailable {
+                reason: MobilePhoneDriveUnavailableReasonDto::Disconnected
+            }
         );
         let restored = CutoutSessionStateHandle::with_database(database.clone())
             .load_phone_control_mode()

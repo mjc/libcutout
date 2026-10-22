@@ -382,6 +382,17 @@ pub struct VescReadOnlySession {
 }
 
 impl VescReadOnlySession {
+    pub(crate) fn current_step(&self) -> crate::DeviceSessionStep {
+        let telemetry = self.host.session_state().telemetry();
+        crate::DeviceSessionStep {
+            outputs: Vec::new(),
+            error: None,
+            bms_observation_summary: telemetry.bms.observation_summary(),
+            bms_temperature_summary: telemetry.bms.temperature_summary(),
+            bms_current_summary: telemetry.bms.current_summary(),
+        }
+    }
+
     pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
         self.host.protocol_session().application_query_state()
     }

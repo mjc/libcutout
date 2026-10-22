@@ -7721,13 +7721,14 @@ pub struct WritePayload {
     correlation: WritePayloadCorrelation,
 }
 
-// Most writes are untracked or carry a small settings ID. Only the rare discovery
-// query allocates its admission metadata, preserving the ordinary inline payload size.
+// Most writes are untracked or carry a small settings ID. Larger discovery and
+// drive admission metadata is boxed to preserve the ordinary inline payload size.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WritePayloadCorrelation {
     Untracked,
     Operation(TransportOperationId),
     ApplicationQuery(Box<ApplicationQueryWrite>),
+    PhoneDrive(Box<PhoneDriveWrite>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7813,9 +7814,9 @@ impl WritePayload {
     pub const fn operation_id(&self) -> Option<TransportOperationId> {
         match self.correlation {
             WritePayloadCorrelation::Operation(id) => Some(id),
-            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::ApplicationQuery(_) => {
-                None
-            }
+            WritePayloadCorrelation::Untracked
+            | WritePayloadCorrelation::ApplicationQuery(_)
+            | WritePayloadCorrelation::PhoneDrive(_) => None,
         }
     }
 
@@ -7824,13 +7825,31 @@ impl WritePayload {
     pub fn application_query(&self) -> Option<ApplicationQueryWrite> {
         match &self.correlation {
             WritePayloadCorrelation::ApplicationQuery(query) => Some(**query),
-            WritePayloadCorrelation::Untracked | WritePayloadCorrelation::Operation(_) => None,
+            WritePayloadCorrelation::Untracked
+            | WritePayloadCorrelation::Operation(_)
+            | WritePayloadCorrelation::PhoneDrive(_) => None,
         }
     }
 
     /// Attaches protocol-owned application-query correlation to this payload.
     pub fn set_application_query(&mut self, query: ApplicationQueryWrite) {
         self.correlation = WritePayloadCorrelation::ApplicationQuery(Box::new(query));
+    }
+
+    /// Returns bounded live-control submission admission, independent from settings.
+    #[must_use]
+    pub fn phone_drive(&self) -> Option<PhoneDriveWrite> {
+        match &self.correlation {
+            WritePayloadCorrelation::PhoneDrive(write) => Some(**write),
+            WritePayloadCorrelation::Untracked
+            | WritePayloadCorrelation::Operation(_)
+            | WritePayloadCorrelation::ApplicationQuery(_) => None,
+        }
+    }
+
+    /// Attaches the current live-control intent to this payload.
+    pub fn set_phone_drive(&mut self, write: PhoneDriveWrite) {
+        self.correlation = WritePayloadCorrelation::PhoneDrive(Box::new(write));
     }
 
     /// Associates this payload with one host transport operation.

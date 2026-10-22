@@ -6,19 +6,21 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private typealias PendingOperation = (
         operation: CoreBluetoothPlannedOperation,
         applicationQuery: MobileApplicationQueryWriteDto?,
+        phoneDrive: MobilePhoneDriveWriteDto?,
         receipt: (CoreBluetoothWriteDisposition) -> Void
     )
 
-    private enum SettingsWriteReceiptTarget {
+    private enum WriteReceiptTarget {
         case setting(id: DeviceSettingID, operationID: UInt64)
         case configRead(operationID: UInt64)
+        case phoneDrive(MobilePhoneDriveWriteDto)
     }
 
-    private final class SettingsWriteReceipt {
-        let target: SettingsWriteReceiptTarget
+    private final class WriteReceipt {
+        let target: WriteReceiptTarget
         var chunks: [CoreBluetoothWriteDisposition]
 
-        init(target: SettingsWriteReceiptTarget, chunkCount: Int) {
+        init(target: WriteReceiptTarget, chunkCount: Int) {
             self.target = target
             chunks = Array(repeating: .queued, count: chunkCount)
         }
@@ -51,10 +53,12 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private(set) var records: [CoreBluetoothLiveRecord] = []
     private var publishedSettings: DeviceSettings?
     private var publishedDeviceSession: MobileDeviceSessionSnapshotDto?
+    private var publishedPhoneDrive: MobilePhoneDriveSnapshotDto?
     private var lastSettingsReadAt: MonotonicMilliseconds?
     private var presentationActive = true
     var onSettingsChange: ((DeviceSettings) -> Void)?
     var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
+    var onPhoneDriveSnapshotChange: ((MobilePhoneDriveSnapshotDto) -> Void)?
     var onSubscriptionFailure: ((BluetoothUuid, Error?) -> Void)?
 
     init(
@@ -169,17 +173,53 @@ final class DeviceSessionTransport: @unchecked Sendable {
         try ingest(.tick, at: at)
     }
 
+    func activatePhoneDrive() throws -> MobilePhoneDriveSnapshotDto {
+        guard !invalidated else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+        let snapshot = try state.activatePhoneDrive(token: token, monotonicMs: clock.now().rawValue)
+        publishPhoneDriveSnapshot()
+        rescheduleTimer()
+        return snapshot
+    }
+
     func observePhoneDriveContacts(
-        generation: UInt64, contacts: MobilePhoneDriveContactsDto
+        generation: UInt64, contacts: MobilePhoneDriveContactsDto, observedAtMs: UInt64
     ) -> MobilePhoneDriveSnapshotDto {
         guard !invalidated, state.connectionAttemptIsCurrent(token: token) else {
             return state.phoneDriveSnapshot()
         }
-        return state.observePhoneDriveContacts(token: token, generation: generation, contacts: contacts)
+        if let step = state.observePhoneDriveContactsAt(
+            token: token, generation: generation, contacts: contacts,
+            observedAtMs: observedAtMs, monotonicMs: clock.now().rawValue
+        ) {
+            _ = try? process(step, at: clock.now())
+        }
+        publishPhoneDriveSnapshot()
+        rescheduleTimer()
+        return state.phoneDriveSnapshot()
+    }
+
+    func cancelPhoneDrive(_ reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto {
+        _ = state.cancelPhoneDriveAt(reason: reason, monotonicMs: clock.now().rawValue)
+        advancePhoneDrive(at: clock.now())
+        publishPhoneDriveSnapshot()
+        rescheduleTimer()
+        return state.phoneDriveSnapshot()
+    }
+
+    private func advancePhoneDrive(at now: MonotonicMilliseconds) {
+        let canSubmit = waitingForSubscription == nil && sink?.canSubmitWithoutResponse() == true
+        if let step = state.tickPhoneDrive(token: token, monotonicMs: now.rawValue, canSubmit: canSubmit) {
+            _ = try? process(step, at: now)
+        }
+        publishPhoneDriveSnapshot()
     }
 
     func invalidate() {
         guard !invalidated else { return }
+        if state.connectionAttemptIsCurrent(token: token) {
+            _ = state.cancelPhoneDriveAt(reason: .connectionChanged, monotonicMs: clock.now().rawValue)
+            publishPhoneDriveSnapshot()
+        }
         timer?.cancel()
         timer = nil
         scheduledWakeupAt = nil
@@ -212,6 +252,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
 
     func handlePeripheralIsReadyToSendWithoutResponse() {
         guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
+        advancePhoneDrive(at: clock.now())
         sink?.peripheralIsReadyToSendWithoutResponse()
         rescheduleTimer()
     }
@@ -250,6 +291,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
         publishDeviceSessionSnapshot()
+        publishPhoneDriveSnapshot()
         chargeEstimate = ChargeEstimateState(
             chargeEstimator.update(
                 input: MobileChargeEstimateInputDto(
@@ -268,23 +310,25 @@ final class DeviceSessionTransport: @unchecked Sendable {
         var pending: [PendingOperation] = []
         for action in actions {
             let planned = planner.plan(action: action)
-            let receipt: SettingsWriteReceipt?
-            if action.kind == .write, let operationID = action.operationID,
+            let receipt: WriteReceipt?
+            if let drive = action.phoneDrive {
+                receipt = WriteReceipt(target: .phoneDrive(drive), chunkCount: planned.count)
+            } else if action.kind == .write, let operationID = action.operationID,
                 let setting = settings?.settings.first(where: { $0.requestId == operationID })
             {
-                receipt = SettingsWriteReceipt(
+                receipt = WriteReceipt(
                     target: .setting(id: setting.id, operationID: operationID),
                     chunkCount: planned.count)
             } else if action.kind == .write, let operationID = action.operationID,
                 state.settingReadTransportIsCurrent(
                     token: token, operationId: operationID, monotonicMs: clock.now().rawValue)
             {
-                receipt = SettingsWriteReceipt(
+                receipt = WriteReceipt(
                     target: .configRead(operationID: operationID), chunkCount: planned.count)
             } else {
                 receipt = nil
             }
-            if let receipt, planned.isEmpty { recordSettingTransport(receipt) }
+            if let receipt, planned.isEmpty { recordWriteTransport(receipt) }
             if let query = action.applicationQuery, planned.isEmpty {
                 recordApplicationQueryTransport(query, index: 0, count: 0, disposition: .rejected)
             }
@@ -293,6 +337,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
                     (
                         operation,
                         action.applicationQuery,
+                        action.phoneDrive,
                         { [weak self] disposition in
                             guard let self else { return }
                             // Keep the native effect receipt even if its authorization has retired.
@@ -309,7 +354,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
                             }
                             if let receipt, receipt.chunks[index] == .queued {
                                 receipt.chunks[index] = disposition
-                                self.recordSettingTransport(receipt)
+                                self.recordWriteTransport(receipt)
                             }
                         }
                     ))
@@ -336,10 +381,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     private func execute(_ operations: [PendingOperation]) {
-        for (operation, applicationQuery, onReceipt) in operations {
+        for (operation, applicationQuery, phoneDrive, onReceipt) in operations {
             guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
             if waitingForSubscription != nil {
-                pendingOperations.append((operation, applicationQuery, onReceipt))
+                pendingOperations.append((operation, applicationQuery, phoneDrive, onReceipt))
                 if case .writeWithoutResponse = operation { onReceipt(.queued) }
                 continue
             }
@@ -348,10 +393,18 @@ final class DeviceSessionTransport: @unchecked Sendable {
             if case .subscribe(let channel) = operation { waitingForSubscription = channel }
             executor.execute(
                 operation,
+                priority: phoneDrive.map { $0.kind == .release ? .release : .drive } ?? .ordinary,
                 isCurrent: { [weak self] in
                     guard let self, !self.invalidated,
                         self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
                     else { return false }
+                    if let phoneDrive {
+                        let now = self.clock.now().rawValue
+                        return now < phoneDrive.submitBeforeMs
+                            && self.state.phoneDriveTransportIsCurrent(
+                                token: self.token, write: phoneDrive, monotonicMs: now
+                            )
+                    }
                     if let applicationQuery {
                         let now = self.clock.now().rawValue
                         return now < applicationQuery.submitBeforeMs
@@ -370,7 +423,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private func rejectPendingOperations() {
         let cancelled = pendingOperations
         pendingOperations.removeAll()
-        for (operation, _, onReceipt) in cancelled {
+        for (operation, _, _, onReceipt) in cancelled {
             if isWrite(operation) { onReceipt(.cancelled) }
         }
     }
@@ -389,6 +442,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
             return nil
         }
         return operationID
+    }
+
+    private func publishPhoneDriveSnapshot() {
+        let snapshot = state.phoneDriveSnapshot()
+        guard snapshot != publishedPhoneDrive else { return }
+        publishedPhoneDrive = snapshot
+        onPhoneDriveSnapshotChange?(snapshot)
     }
 
     private func publishDeviceSessionSnapshot() {
@@ -418,8 +478,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
         rescheduleTimer()
     }
 
-    private func recordSettingTransport(
-        _ receipt: SettingsWriteReceipt
+    private func recordWriteTransport(
+        _ receipt: WriteReceipt
     ) {
         let status: MobileSettingTransportStatusDto
         switch receipt.disposition {
@@ -434,12 +494,24 @@ final class DeviceSessionTransport: @unchecked Sendable {
             accepted = state.markSettingTransport(
                 token: token, id: id, requestId: operationID,
                 status: status, monotonicMs: clock.now().rawValue)
+        case .phoneDrive(let write):
+            let driveStatus: MobilePhoneDriveTransportStatusDto
+            switch receipt.disposition {
+            case .queued: driveStatus = .queued
+            case .submitted: driveStatus = .submitted
+            case .rejected: driveStatus = .rejected
+            case .cancelled: driveStatus = .cancelled
+            }
+            accepted = state.markPhoneDriveTransport(
+                token: token, write: write, status: driveStatus, monotonicMs: clock.now().rawValue
+            )
         case .configRead(let operationID):
             accepted = state.markSettingReadTransport(
                 token: token, operationId: operationID,
                 status: status, monotonicMs: clock.now().rawValue)
         }
         guard accepted else { return }
+        publishPhoneDriveSnapshot()
         publishSettings(at: clock.now(), immediately: true)
         rescheduleTimer()
     }
@@ -482,6 +554,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         defer { rescheduleTimer() }
         // Confirmation and queue authorization deadlines advance even under backpressure.
         let now = clock.now()
+        advancePhoneDrive(at: now)
         _ = state.tickSettingTransport(token: token, monotonicMs: now.rawValue)
         _ = state.tickApplicationQueryTransport(token: token, monotonicMs: now.rawValue)
         publishDeviceSessionSnapshot()

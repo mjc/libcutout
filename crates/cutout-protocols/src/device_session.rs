@@ -107,6 +107,13 @@ enum DeviceSessionEngine {
 }
 
 impl DeviceSession {
+    pub(crate) fn phone_drive_step(&self) -> Option<DeviceSessionStep> {
+        match &self.engine {
+            DeviceSessionEngine::Vesc(session) => Some(session.current_step()),
+            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+        }
+    }
+
     pub(crate) fn configure_user_drivetrain(&mut self, value: cutout_core::VescDrivetrain) {
         if let DeviceSessionEngine::Vesc(session) = &mut self.engine {
             session.configure_user_drivetrain(value);

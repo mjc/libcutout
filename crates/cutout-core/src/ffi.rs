@@ -3112,6 +3112,8 @@ pub enum TransportActionDto {
 
         /// Typed application-query native admission, separate from settings operations.
         application_query: Option<crate::ApplicationQueryWrite>,
+        /// Live-control admission, independent from settings and discovery.
+        phone_drive: Option<crate::PhoneDriveWrite>,
     },
 
     /// Disconnect the underlying transport.
@@ -3134,6 +3136,7 @@ impl From<TransportAction> for TransportActionDto {
                 mode: mode.into(),
                 operation_id: bytes.operation_id().map(TransportOperationId::get),
                 application_query: bytes.application_query(),
+                phone_drive: bytes.phone_drive(),
             },
             TransportAction::Disconnect => Self::Disconnect,
         }
@@ -4028,6 +4031,7 @@ mod tests {
                 mode: WriteModeDto::WithoutResponse,
                 operation_id: None,
                 application_query: None,
+                phone_drive: None,
             })
         );
         assert_eq!(

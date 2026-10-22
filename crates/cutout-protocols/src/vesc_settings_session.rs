@@ -164,6 +164,10 @@ pub(crate) struct VescSettingsSession {
 }
 
 impl VescSettingsSession {
+    pub(crate) fn current_step(&self) -> DeviceSessionStep {
+        self.read_only.current_step()
+    }
+
     pub(crate) fn application_query_state(&self) -> crate::VescApplicationQueryState {
         self.read_only.application_query_state()
     }

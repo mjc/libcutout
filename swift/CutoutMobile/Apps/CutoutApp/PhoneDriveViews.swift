@@ -61,12 +61,9 @@ struct PhoneDriveRideSurface<Content: View>: View {
             }
             .frame(width: geometry.size.width, height: height)
             .overlay {
-                if model.capturesInput, model.snapshot.mode == .area,
-                    let generation = model.snapshot.generation
-                {
+                if model.snapshot.mode == .area {
                     PhoneDriveTouchSurface(
-                        mode: .area, generation: generation,
-                        observe: model.contacts, cancel: model.cancel
+                        model: model, mode: .area, acceptsInput: model.capturesInput
                     )
                     .background { areaFeedback }
                     .accessibilityElement()
@@ -74,6 +71,10 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     .accessibilityValue(model.feedbackText)
                     .accessibilityAction(named: localizedAppText("phone_control.brake")) { pulse(.brake) }
                     .accessibilityAction(named: localizedAppText("phone_control.throttle")) { pulse(.throttle) }
+                    .accessibilityAction(named: localizedAppText("phone_control.deactivate")) {
+                        model.cancel(.activationChanged)
+                    }
+                    .accessibilityHidden(!model.capturesInput)
                     .accessibilityIdentifier("phone-control.area")
                 }
             }
@@ -110,10 +111,9 @@ struct PhoneDriveRideSurface<Content: View>: View {
             }
             .frame(height: height)
             .overlay {
-                if model.capturesInput, let generation = model.snapshot.generation {
+                if model.snapshot.mode == .buttons {
                     PhoneDriveTouchSurface(
-                        mode: .buttons, generation: generation,
-                        observe: model.contacts, cancel: model.cancel
+                        model: model, mode: .buttons, acceptsInput: model.capturesInput
                     )
                     .accessibilityHidden(true)
                 }
@@ -176,8 +176,12 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     private func pulse(_ action: MobilePhoneDriveActionDto) {
         guard model.capturesInput, let generation = model.snapshot.generation else { return }
-        model.contacts(.single(contactId: UInt64.max, region: action), generation: generation)
-        model.contacts(.released, generation: generation)
+        #if os(iOS)
+            model.nativeContacts.discreteAction(action)
+        #else
+            model.contacts(.single(contactId: UInt64.max, region: action), generation: generation)
+            model.contacts(.released, generation: generation)
+        #endif
     }
 
     private var areaFeedback: some View {
@@ -195,148 +199,315 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     @ViewBuilder
     private var activationStatus: some View {
-        if !model.isInputPreview {
-            Button(localizedAppText("phone_control.arm")) {}
-                .disabled(true)
-                .font(.caption)
-                .accessibilityIdentifier("phone-control.activate")
+        if model.capturesInput, model.snapshot.mode == .area {
+            Text(localizedAppText("phone_control.active")).font(.caption.weight(.semibold))
+        } else {
+            Button(localizedAppText(model.capturesInput ? "phone_control.deactivate" : "phone_control.arm")) {
+                if model.capturesInput { model.cancel(.activationChanged) } else { model.activate() }
+            }
+            .disabled(!model.capturesInput && !model.canActivate)
+            .font(.caption)
+            .accessibilityIdentifier("phone-control.activate")
         }
     }
 
     private var statusText: some View {
-        Text(model.isInputPreview ? localizedAppText("phone_control.preview") : model.unavailableText)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("phone-control.status")
+        VStack(spacing: 3) {
+            Text(model.availabilityText)
+                .accessibilityIdentifier("phone-control.status")
+            Text(model.limitsSummaryText)
+                .accessibilityIdentifier("phone-control.limits")
+            if model.activationError {
+                Text(localizedAppText("phone_control.activation_failed")).foregroundStyle(.red)
+            }
+            if model.isInputPreview { Text(localizedAppText("phone_control.preview")) }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
     }
+
 }
 
 #if os(iOS)
-    /// Reports complete native contact observations; it contains no drive policy.
-    private struct PhoneDriveTouchSurface: UIViewRepresentable {
-        let mode: MobilePhoneControlModeDto
-        let generation: UInt64
-        let observe: (MobilePhoneDriveContactsDto, UInt64) -> Void
-        let cancel: (MobilePhoneDriveCancelReasonDto) -> Void
-
-        func makeUIView(context: Context) -> PhoneDriveTouchView {
-            let view = PhoneDriveTouchView()
-            view.backgroundColor = .clear
-            view.isMultipleTouchEnabled = true
-            return view
-        }
-
-        func updateUIView(_ view: PhoneDriveTouchView, context: Context) {
-            view.mode = mode
-            view.generation = generation
-            view.observe = observe
-            view.cancel = cancel
-            view.reportReleasedWhenIdle()
-        }
-
-        static func dismantleUIView(_ view: PhoneDriveTouchView, coordinator: ()) {
-            view.cancel?(.navigation)
-        }
-    }
-
-    private final class PhoneDriveTouchView: UIView {
-        var mode = MobilePhoneControlModeDto.disabled
-        var generation: UInt64 = 0
-        var observe: ((MobilePhoneDriveContactsDto, UInt64) -> Void)?
+    /// One passive observer remains attached to this app's window while input
+    /// surfaces change. Only actual framework observations can establish all-up.
+    @MainActor
+    final class PhoneDriveNativeContactObserver: NSObject, UIGestureRecognizerDelegate {
+        var now: () -> UInt64 = { 0 }
+        var currentGeneration: () -> UInt64? = { nil }
+        var observe: ((MobilePhoneDriveContactsDto, UInt64, UInt64) -> Void)?
         var cancel: ((MobilePhoneDriveCancelReasonDto) -> Void)?
-        private var contacts: [ObjectIdentifier: (id: UInt64, point: CGPoint)] = [:]
+        private weak var window: UIWindow?
+        private weak var inputView: PhoneDriveInputView?
+        private var recognizer: PhoneDriveWindowGestureRecognizer?
+        private var contacts: [ObjectIdentifier: (id: UInt64, touch: UITouch, input: Bool)] = [:]
         private var nextContactID: UInt64 = 1
         private var contactGeneration: UInt64?
-        private var reportedIdleGeneration: UInt64?
-        private var previousSize: CGSize?
+        private var hasAttachedWindow = false
+        private var observationIsComplete = false
+        private var heartbeat: Task<Void, Never>?
 
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            if let previousSize, previousSize != bounds.size { cancel?(.layoutChanged) }
-            previousSize = bounds.size
+        deinit { heartbeat?.cancel() }
+
+        func attach(to newWindow: UIWindow?) {
+            guard window !== newWindow else { return }
+            if let recognizer { window?.removeGestureRecognizer(recognizer) }
+            heartbeat?.cancel()
+            heartbeat = nil
+            if window != nil { cancel?(.sceneInactive) }
+            contacts.removeAll()
+            contactGeneration = nil
+            observationIsComplete = false
+            window = newWindow
+            guard let newWindow else {
+                recognizer = nil
+                return
+            }
+            if !hasAttachedWindow {
+                // The first app-owned window establishes the cold framework
+                // epoch. Once observation is lost, reattachment stays unknown.
+                observationIsComplete = true
+                hasAttachedWindow = true
+            }
+            let recognizer = PhoneDriveWindowGestureRecognizer(owner: self)
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.delegate = self
+            newWindow.addGestureRecognizer(recognizer)
+            self.recognizer = recognizer
         }
 
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            if window == nil { cancel?(.sceneInactive) }
+        fileprivate func register(_ view: PhoneDriveInputView) { inputView = view }
+
+        fileprivate func unregister(_ view: PhoneDriveInputView) {
+            guard inputView === view else { return }
+            inputView = nil
+            cancel?(.navigation)
         }
 
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            if contacts.isEmpty { contactGeneration = generation }
-            reportedIdleGeneration = nil
-            for touch in touches {
+        fileprivate func observeEvent(_ event: UIEvent, cancelled: Bool) {
+            if cancelled {
+                observationIsComplete = false
+                heartbeat?.cancel()
+                heartbeat = nil
+                cancel?(.touchCancelled)
+                return
+            }
+            guard let touches = event.allTouches else {
+                observationIsComplete = false
+                cancel?(.touchCancelled)
+                return
+            }
+            let active = touches.filter {
+                $0.window === window && ($0.phase == .began || $0.phase == .moved || $0.phase == .stationary)
+            }
+            if contacts.isEmpty, !active.isEmpty { contactGeneration = currentGeneration() }
+            let previous = contacts
+            contacts.removeAll(keepingCapacity: true)
+            for touch in active {
+                let key = ObjectIdentifier(touch)
+                if let retained = previous[key] {
+                    contacts[key] = retained
+                    continue
+                }
                 guard nextContactID < UInt64.max else {
                     cancel?(.generationExhausted)
                     return
                 }
-                contacts[ObjectIdentifier(touch)] = (nextContactID, touch.location(in: self))
+                let input =
+                    touch.phase == .began
+                    && (inputView.map { $0.acceptsInput && $0.region(for: touch) != nil } ?? false)
+                contacts[key] = (nextContactID, touch, input)
                 nextContactID += 1
             }
-            publish()
-        }
-
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            for touch in touches {
-                let key = ObjectIdentifier(touch)
-                guard let contact = contacts[key] else { continue }
-                contacts[key] = (contact.id, touch.location(in: self))
-            }
-            publish()
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            for touch in touches { contacts.removeValue(forKey: ObjectIdentifier(touch)) }
-            publish()
+            observationIsComplete = true
+            let observedAtMs = now()
             if contacts.isEmpty {
+                heartbeat?.cancel()
+                heartbeat = nil
                 contactGeneration = nil
-                reportReleasedWhenIdle()
+                reobserveAllUp()
+            } else {
+                publish(observedAtMs: observedAtMs)
+                startHeartbeat()
             }
         }
 
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            cancel?(.touchCancelled)
-            for touch in touches { contacts.removeValue(forKey: ObjectIdentifier(touch)) }
-            publish()
-            if contacts.isEmpty {
-                contactGeneration = nil
-                reportReleasedWhenIdle()
+        func reobserveAllUp() {
+            guard sampleKnownAllUp(),
+                let generation = currentGeneration()
+            else { return }
+            // A continuously observed empty contact set can be sampled at the
+            // completed keyboard/accessibility action; held intent is never cached.
+            observe?(.released, generation, now())
+        }
+
+        func discreteAction(_ action: MobilePhoneDriveActionDto) {
+            guard let generation = currentGeneration() else { return }
+            guard sampleKnownAllUp() else {
+                observe?(.multiple, generation, now())
+                return
+            }
+            let observedAtMs = now()
+            observe?(.single(contactId: UInt64.max, region: action), generation, observedAtMs)
+            observe?(.released, generation, observedAtMs)
+        }
+
+        private func sampleKnownAllUp() -> Bool {
+            guard window != nil, observationIsComplete else { return false }
+            // UIKit can invoke a completed Button action before this passive
+            // recognizer's end callback. Read the retained framework objects now.
+            if contacts.values.contains(where: { $0.touch.phase == .cancelled }) {
+                observationIsComplete = false
+                heartbeat?.cancel()
+                heartbeat = nil
+                cancel?(.touchCancelled)
+                return false
+            }
+            contacts = contacts.filter { $0.value.touch.phase != .ended }
+            guard contacts.isEmpty else { return false }
+            contactGeneration = nil
+            heartbeat?.cancel()
+            heartbeat = nil
+            return true
+        }
+
+        private func startHeartbeat() {
+            guard heartbeat == nil else { return }
+            heartbeat = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                    guard !Task.isCancelled, let self, !self.contacts.isEmpty else { return }
+                    guard
+                        self.contacts.values.allSatisfy({
+                            $0.touch.phase == .began || $0.touch.phase == .moved || $0.touch.phase == .stationary
+                        })
+                    else {
+                        self.observationIsComplete = false
+                        self.cancel?(.touchCancelled)
+                        return
+                    }
+                    self.publish(observedAtMs: self.now())
+                }
             }
         }
 
-        func reportReleasedWhenIdle() {
-            guard contacts.isEmpty, reportedIdleGeneration != generation else { return }
-            let observedGeneration = generation
-            reportedIdleGeneration = observedGeneration
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.contacts.isEmpty, self.generation == observedGeneration else { return }
-                self.observe?(.released, observedGeneration)
-            }
-        }
-
-        private func publish() {
-            guard let contactGeneration else { return }
+        private func publish(observedAtMs: UInt64) {
+            guard let generation = contactGeneration else { return }
             let observation: MobilePhoneDriveContactsDto
             if contacts.count > 1 {
                 observation = .multiple
             } else if let contact = contacts.values.first {
                 observation = .single(
                     contactId: contact.id,
-                    region: PhoneDriveTouchGeometry.region(at: contact.point, size: bounds.size, mode: mode)
-                )
+                    region: contact.input ? inputView?.region(for: contact.touch) : nil)
             } else {
-                observation = .released
+                return
             }
-            observe?(observation, contactGeneration)
+            observe?(observation, generation, observedAtMs)
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool { true }
+    }
+
+    private final class PhoneDriveWindowGestureRecognizer: UIGestureRecognizer {
+        private weak var owner: PhoneDriveNativeContactObserver?
+        init(owner: PhoneDriveNativeContactObserver) {
+            self.owner = owner
+            super.init(target: nil, action: nil)
+        }
+        required init?(coder: NSCoder) { super.init(coder: coder) }
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            owner?.observeEvent(event, cancelled: false)
+        }
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            owner?.observeEvent(event, cancelled: false)
+        }
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            owner?.observeEvent(event, cancelled: false)
+            if event.allTouches?.allSatisfy({ $0.phase == .ended || $0.phase == .cancelled }) == true {
+                state = .failed
+            }
+        }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+            owner?.observeEvent(event, cancelled: true)
+            state = .failed
+        }
+        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    }
+
+    struct PhoneDriveWindowContactObservations: UIViewRepresentable {
+        let model: PhoneDriveModel
+        func makeUIView(context: Context) -> PhoneDriveWindowProbe {
+            let view = PhoneDriveWindowProbe()
+            view.observer = model.nativeContacts
+            view.isUserInteractionEnabled = false
+            return view
+        }
+        func updateUIView(_ view: PhoneDriveWindowProbe, context: Context) { view.observer = model.nativeContacts }
+        static func dismantleUIView(_ view: PhoneDriveWindowProbe, coordinator: ()) { view.observer?.attach(to: nil) }
+    }
+
+    final class PhoneDriveWindowProbe: UIView {
+        weak var observer: PhoneDriveNativeContactObserver?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            observer?.attach(to: window)
+        }
+    }
+
+    private struct PhoneDriveTouchSurface: UIViewRepresentable {
+        let model: PhoneDriveModel
+        let mode: MobilePhoneControlModeDto
+        let acceptsInput: Bool
+        func makeUIView(context: Context) -> PhoneDriveInputView {
+            let view = PhoneDriveInputView()
+            view.backgroundColor = .clear
+            view.isMultipleTouchEnabled = true
+            view.observer = model.nativeContacts
+            return view
+        }
+        func updateUIView(_ view: PhoneDriveInputView, context: Context) {
+            view.mode = mode
+            view.acceptsInput = acceptsInput
+            model.nativeContacts.register(view)
+        }
+        static func dismantleUIView(_ view: PhoneDriveInputView, coordinator: ()) { view.observer?.unregister(view) }
+    }
+
+    private final class PhoneDriveInputView: UIView {
+        weak var observer: PhoneDriveNativeContactObserver?
+        var mode = MobilePhoneControlModeDto.disabled
+        var acceptsInput = false
+        private var previousSize: CGSize?
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            acceptsInput && PhoneDriveTouchGeometry.region(at: point, size: bounds.size, mode: mode) != nil
+        }
+        func region(for touch: UITouch) -> MobilePhoneDriveActionDto? {
+            PhoneDriveTouchGeometry.region(at: touch.location(in: self), size: bounds.size, mode: mode)
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            if let previousSize, previousSize != bounds.size { observer?.cancel?(.layoutChanged) }
+            previousSize = bounds.size
         }
     }
 #else
+    struct PhoneDriveWindowContactObservations: View {
+        let model: PhoneDriveModel
+        var body: some View { Color.clear.allowsHitTesting(false) }
+    }
     private struct PhoneDriveTouchSurface: View {
+        let model: PhoneDriveModel
         let mode: MobilePhoneControlModeDto
-        let generation: UInt64
-        let observe: (MobilePhoneDriveContactsDto, UInt64) -> Void
-        let cancel: (MobilePhoneDriveCancelReasonDto) -> Void
+        let acceptsInput: Bool
         var body: some View { Color.clear.allowsHitTesting(false) }
     }
 #endif

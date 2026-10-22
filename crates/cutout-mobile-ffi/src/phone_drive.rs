@@ -1,4 +1,4 @@
-//! Typed phone contact feedback; this boundary cannot grant motor authority.
+//! Typed phone control facade; the shared Rust session owns admission and effects.
 
 use crate::{CutoutSessionStateHandle, MobileConnectionAttemptTokenDto, MobileRideDatabaseError};
 use cutout_core as core;
@@ -64,6 +64,16 @@ impl From<core::PhoneDriveAction> for MobilePhoneDriveActionDto {
 /// Input cancellation reason, independent of any controller response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobilePhoneDriveCancelReasonDto {
+    /// Same-connection vehicle or drivetrain configuration changed.
+    ConfigurationChanged,
+    /// Explicit activation/deactivation changed the input identity.
+    ActivationChanged,
+    /// Held-contact heartbeat expired.
+    InputExpired,
+    /// Native submission failed or its outcome is unknown.
+    TransportUnavailable,
+    /// The controller reported a fault.
+    ControllerFault,
     /// Native touch delivery was cancelled by the platform.
     TouchCancelled,
     /// Native contact identity was malformed.
@@ -90,6 +100,11 @@ pub enum MobilePhoneDriveCancelReasonDto {
 impl From<MobilePhoneDriveCancelReasonDto> for core::PhoneDriveCancelReason {
     fn from(value: MobilePhoneDriveCancelReasonDto) -> Self {
         match value {
+            MobilePhoneDriveCancelReasonDto::ConfigurationChanged => Self::ConfigurationChanged,
+            MobilePhoneDriveCancelReasonDto::ActivationChanged => Self::ActivationChanged,
+            MobilePhoneDriveCancelReasonDto::InputExpired => Self::InputExpired,
+            MobilePhoneDriveCancelReasonDto::TransportUnavailable => Self::TransportUnavailable,
+            MobilePhoneDriveCancelReasonDto::ControllerFault => Self::ControllerFault,
             MobilePhoneDriveCancelReasonDto::TouchCancelled => Self::TouchCancelled,
             MobilePhoneDriveCancelReasonDto::InvalidContact => Self::InvalidContact,
             MobilePhoneDriveCancelReasonDto::ModeChanged => Self::ModeChanged,
@@ -107,6 +122,11 @@ impl From<MobilePhoneDriveCancelReasonDto> for core::PhoneDriveCancelReason {
 impl From<core::PhoneDriveCancelReason> for MobilePhoneDriveCancelReasonDto {
     fn from(value: core::PhoneDriveCancelReason) -> Self {
         match value {
+            core::PhoneDriveCancelReason::ConfigurationChanged => Self::ConfigurationChanged,
+            core::PhoneDriveCancelReason::ActivationChanged => Self::ActivationChanged,
+            core::PhoneDriveCancelReason::InputExpired => Self::InputExpired,
+            core::PhoneDriveCancelReason::TransportUnavailable => Self::TransportUnavailable,
+            core::PhoneDriveCancelReason::ControllerFault => Self::ControllerFault,
             core::PhoneDriveCancelReason::TouchCancelled => Self::TouchCancelled,
             core::PhoneDriveCancelReason::InvalidContact => Self::InvalidContact,
             core::PhoneDriveCancelReason::ModeChanged => Self::ModeChanged,
@@ -179,8 +199,118 @@ pub enum MobilePhoneDriveUnavailableReasonDto {
     Disconnected,
     /// Current physical vehicle/route is not an e-skate candidate.
     VehicleUnsupported,
-    /// No exact controller contract is qualified.
-    ControllerUnqualified,
+}
+
+/// Availability never implies activation from a saved preference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePhoneDriveAvailabilityDto {
+    /// Connection or vehicle does not support this control path.
+    Unavailable {
+        /// Why this path is unavailable.
+        reason: MobilePhoneDriveUnavailableReasonDto,
+    },
+    /// Rider may explicitly activate the standard VESC path.
+    Ready,
+    /// Current connection was explicitly activated.
+    Active {
+        /// Ephemeral activation identity.
+        activation_id: u64,
+    },
+}
+
+/// Saved rider-selected current requests, independent of activation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePhoneDriveLimitsDto {
+    /// Positive throttle-current budget.
+    pub throttle_milliamps: u32,
+    /// Positive braking-current magnitude.
+    pub brake_milliamps: u32,
+}
+impl From<core::PhoneDriveLimits> for MobilePhoneDriveLimitsDto {
+    fn from(value: core::PhoneDriveLimits) -> Self {
+        Self {
+            throttle_milliamps: value.throttle_milliamps(),
+            brake_milliamps: value.brake_milliamps(),
+        }
+    }
+}
+
+/// Admission kind for the existing Bluetooth writer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePhoneDriveWriteKindDto {
+    /// Fresh held-current request.
+    Setpoint,
+    /// Bounded zero motor-current request.
+    Release,
+}
+
+/// Exact live-control intent revalidated immediately before native submission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePhoneDriveWriteDto {
+    /// Ephemeral activation identity.
+    pub activation_id: u64,
+    /// Supersession sequence.
+    pub sequence: u64,
+    /// Original contact generation.
+    pub generation: u64,
+    /// Exclusive monotonic submission deadline.
+    pub submit_before_ms: u64,
+    /// Setpoint or release intent.
+    pub kind: MobilePhoneDriveWriteKindDto,
+}
+impl From<core::PhoneDriveWrite> for MobilePhoneDriveWriteDto {
+    fn from(value: core::PhoneDriveWrite) -> Self {
+        Self {
+            activation_id: value.activation_id.get(),
+            sequence: value.sequence,
+            generation: value.generation,
+            submit_before_ms: value.submit_before_ms,
+            kind: match value.kind {
+                core::PhoneDriveWriteKind::Setpoint => MobilePhoneDriveWriteKindDto::Setpoint,
+                core::PhoneDriveWriteKind::Release => MobilePhoneDriveWriteKindDto::Release,
+            },
+        }
+    }
+}
+impl MobilePhoneDriveWriteDto {
+    fn checked(self) -> Option<core::PhoneDriveWrite> {
+        Some(core::PhoneDriveWrite {
+            activation_id: core::PhoneDriveActivationId::new(self.activation_id)?,
+            sequence: self.sequence,
+            generation: self.generation,
+            submit_before_ms: self.submit_before_ms,
+            kind: match self.kind {
+                MobilePhoneDriveWriteKindDto::Setpoint => core::PhoneDriveWriteKind::Setpoint,
+                MobilePhoneDriveWriteKindDto::Release => core::PhoneDriveWriteKind::Release,
+            },
+        })
+    }
+}
+
+/// Native evidence for a drive write; never proof of motor application.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePhoneDriveTransportStatusDto {
+    /// Native queue retained the write without submitting it.
+    Queued,
+    /// Submitted to the host peripheral API.
+    Submitted,
+    /// Rejected before submission.
+    Rejected,
+    /// Cancelled before submission.
+    Cancelled,
+    /// Submission outcome cannot be established.
+    SubmissionUnknown,
+}
+impl From<MobilePhoneDriveTransportStatusDto> for core::ApplicationQueryTransportStatus {
+    fn from(value: MobilePhoneDriveTransportStatusDto) -> Self {
+        match value {
+            MobilePhoneDriveTransportStatusDto::Queued => Self::Queued,
+            MobilePhoneDriveTransportStatusDto::Submitted => Self::Submitted,
+            MobilePhoneDriveTransportStatusDto::Rejected => Self::Rejected,
+            MobilePhoneDriveTransportStatusDto::Cancelled => Self::Cancelled,
+            MobilePhoneDriveTransportStatusDto::SubmissionUnknown => Self::SubmissionUnknown,
+        }
+    }
 }
 
 /// One canonical input and eligibility projection from the existing Rust owner.
@@ -192,8 +322,10 @@ pub struct MobilePhoneDriveSnapshotDto {
     pub generation: Option<u64>,
     /// Contact feedback only.
     pub phase: MobilePhoneDriveInputPhaseDto,
-    /// Production drive remains unavailable until an exact profile is qualified.
-    pub unavailability: MobilePhoneDriveUnavailableReasonDto,
+    /// Supported path and explicit per-attempt activation.
+    pub availability: MobilePhoneDriveAvailabilityDto,
+    /// Saved current budgets; never an arming state.
+    pub limits: MobilePhoneDriveLimitsDto,
 }
 
 fn snapshot(owner: &cutout_protocols::DeviceConnectionSession) -> MobilePhoneDriveSnapshotDto {
@@ -212,29 +344,82 @@ fn snapshot(owner: &cutout_protocols::DeviceConnectionSession) -> MobilePhoneDri
                 }
             }
         },
-        unavailability: match owner.phone_drive_unavailability() {
-            core::PhoneDriveUnavailableReason::Disconnected => {
-                MobilePhoneDriveUnavailableReasonDto::Disconnected
+        availability: match owner.phone_drive_availability() {
+            core::PhoneDriveAvailability::Unavailable(reason) => {
+                MobilePhoneDriveAvailabilityDto::Unavailable {
+                    reason: match reason {
+                        core::PhoneDriveUnavailableReason::Disconnected => {
+                            MobilePhoneDriveUnavailableReasonDto::Disconnected
+                        }
+                        core::PhoneDriveUnavailableReason::VehicleUnsupported => {
+                            MobilePhoneDriveUnavailableReasonDto::VehicleUnsupported
+                        }
+                    },
+                }
             }
-            core::PhoneDriveUnavailableReason::VehicleUnsupported => {
-                MobilePhoneDriveUnavailableReasonDto::VehicleUnsupported
-            }
-            core::PhoneDriveUnavailableReason::ControllerUnqualified => {
-                MobilePhoneDriveUnavailableReasonDto::ControllerUnqualified
-            }
+            core::PhoneDriveAvailability::Ready => MobilePhoneDriveAvailabilityDto::Ready,
+            core::PhoneDriveAvailability::Active(id) => MobilePhoneDriveAvailabilityDto::Active {
+                activation_id: id.get(),
+            },
         },
+        limits: owner.session_state().phone_drive_limits.into(),
     }
 }
 
 /// Durable preference failure; no native fallback value is substituted.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum MobilePhoneControlError {
+    /// Current fields failed checked Rust parsing or range validation.
+    #[error("enter a current from 0.001 to 500 A for each control")]
+    InvalidLimits,
+    /// Activation refused on the current connection.
+    #[error("phone activation refused: {reason:?}")]
+    Activation {
+        /// Typed refusal from the existing session owner.
+        reason: MobilePhoneDriveActivationRefusalDto,
+    },
     /// Session was created without the existing database service.
     #[error("phone input preferences require the ride database")]
     PersistenceUnavailable,
     /// Existing database service rejected the operation.
     #[error("phone input preference storage failed: {error}")]
     Persistence { error: MobileRideDatabaseError },
+}
+
+/// Explicit activation refusal, independent of storage errors.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePhoneDriveActivationRefusalDto {
+    /// The current VESC telemetry reports a controller fault.
+    ControllerFault,
+    /// No current verified connection.
+    ConnectionUnavailable,
+    /// Wrong vehicle/protocol/application route.
+    VehicleUnsupported,
+    /// Saved mode is disabled.
+    ModeDisabled,
+    /// A contact is already held.
+    InputHeld,
+    /// A conflicting operation is active.
+    Busy,
+    /// Clock moved backwards.
+    ClockRegression,
+    /// Activation identity exhausted.
+    IdentifierExhausted,
+}
+impl From<cutout_protocols::PhoneDriveActivationError> for MobilePhoneDriveActivationRefusalDto {
+    fn from(value: cutout_protocols::PhoneDriveActivationError) -> Self {
+        use cutout_protocols::PhoneDriveActivationError as E;
+        match value {
+            E::ControllerFault => Self::ControllerFault,
+            E::ConnectionUnavailable => Self::ConnectionUnavailable,
+            E::VehicleUnsupported => Self::VehicleUnsupported,
+            E::ModeDisabled => Self::ModeDisabled,
+            E::InputHeld => Self::InputHeld,
+            E::Busy => Self::Busy,
+            E::ClockRegression => Self::ClockRegression,
+            E::IdentifierExhausted => Self::IdentifierExhausted,
+        }
+    }
 }
 
 #[uniffi::export]
@@ -260,16 +445,26 @@ impl CutoutSessionStateHandle {
             .configuration_updates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mode = self
+        let database = self
             .diagnostic_database
             .as_ref()
-            .ok_or(MobilePhoneControlError::PersistenceUnavailable)?
-            .phone_control_mode()
-            .map_err(|error| MobilePhoneControlError::Persistence {
+            .ok_or(MobilePhoneControlError::PersistenceUnavailable)?;
+        let mode = database.phone_control_mode().map_err(|error| {
+            MobilePhoneControlError::Persistence {
                 error: crate::map_ride_database_error(error),
-            })?;
+            }
+        })?;
+        let limits = database.phone_drive_limits().map_err(|error| {
+            MobilePhoneControlError::Persistence {
+                error: crate::map_ride_database_error(error),
+            }
+        })?;
         let mut owner = self.lock_inner();
         owner.set_phone_control_mode(mode);
+        if owner.session_state().phone_drive_limits != limits {
+            owner.cancel_phone_drive(core::PhoneDriveCancelReason::ActivationChanged);
+            owner.session_state_mut().phone_drive_limits = limits;
+        }
         Ok(snapshot(&owner))
     }
 
@@ -305,17 +500,136 @@ impl CutoutSessionStateHandle {
         Ok(snapshot(&owner))
     }
 
-    /// Observes complete contact state for its original connection and input generation.
+    /// Saves rider-selected current budgets without persisting activation.
+    ///
+    /// # Errors
+    /// Returns invalid fields or the actual storage failure.
+    pub fn save_phone_drive_limits(
+        &self,
+        throttle_amps_text: String,
+        brake_amps_text: String,
+    ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
+        let limits = core::PhoneDriveLimits::from_amp_text(&throttle_amps_text, &brake_amps_text)
+            .map_err(|_| MobilePhoneControlError::InvalidLimits)?;
+        let _ordering = self
+            .configuration_updates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.lock_inner()
+            .cancel_phone_drive(core::PhoneDriveCancelReason::ActivationChanged);
+        self.diagnostic_database
+            .as_ref()
+            .ok_or(MobilePhoneControlError::PersistenceUnavailable)?
+            .save_phone_drive_limits(limits)
+            .map_err(|error| MobilePhoneControlError::Persistence {
+                error: crate::map_ride_database_error(error),
+            })?;
+        let mut owner = self.lock_inner();
+        owner.session_state_mut().phone_drive_limits = limits;
+        Ok(snapshot(&owner))
+    }
+
+    /// Explicitly activates the current supported connection with saved current budgets.
+    ///
+    /// # Errors
+    /// Returns the session owner's typed refusal.
+    pub fn activate_phone_drive(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        monotonic_ms: u64,
+    ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
+        let _ordering = self
+            .configuration_updates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut owner = self.lock_inner();
+        let limits = owner.session_state().phone_drive_limits;
+        owner
+            .activate_phone_drive(
+                &token.into(),
+                limits,
+                core::MonotonicTimestamp::new(monotonic_ms),
+            )
+            .map_err(|reason| MobilePhoneControlError::Activation {
+                reason: reason.into(),
+            })?;
+        Ok(snapshot(&owner))
+    }
+
+    /// Delivers actual contact-observation time separately from queue receipt time.
     #[must_use]
-    pub fn observe_phone_drive_contacts(
+    pub fn observe_phone_drive_contacts_at(
         &self,
         token: MobileConnectionAttemptTokenDto,
         generation: u64,
         contacts: MobilePhoneDriveContactsDto,
-    ) -> MobilePhoneDriveSnapshotDto {
-        let mut owner = self.lock_inner();
-        owner.observe_phone_drive_contacts(&token.into(), generation, contacts.into());
-        snapshot(&owner)
+        observed_at_ms: u64,
+        monotonic_ms: u64,
+    ) -> Option<crate::MobileDeviceSessionStepDto> {
+        self.lock_inner()
+            .observe_phone_drive_contacts_at(
+                &token.into(),
+                generation,
+                contacts.into(),
+                core::MonotonicTimestamp::new(observed_at_ms),
+                core::MonotonicTimestamp::new(monotonic_ms),
+            )
+            .map(Into::into)
+    }
+
+    /// Advances the shared drive deadline/cadence without renewing a contact heartbeat.
+    #[must_use]
+    pub fn tick_phone_drive(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        monotonic_ms: u64,
+        can_submit: bool,
+    ) -> Option<crate::MobileDeviceSessionStepDto> {
+        self.lock_inner()
+            .tick_phone_drive(
+                &token.into(),
+                core::MonotonicTimestamp::new(monotonic_ms),
+                can_submit,
+            )
+            .map(Into::into)
+    }
+
+    /// Rechecks exact intent identity immediately before the sole native writer submits.
+    #[must_use]
+    pub fn phone_drive_transport_is_current(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        write: MobilePhoneDriveWriteDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        let Some(write) = write.checked() else {
+            return false;
+        };
+        self.lock_inner().phone_drive_transport_is_current(
+            &token.into(),
+            write,
+            core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
+    /// Records native submission evidence without claiming motor application.
+    #[must_use]
+    pub fn mark_phone_drive_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        write: MobilePhoneDriveWriteDto,
+        status: MobilePhoneDriveTransportStatusDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        let Some(write) = write.checked() else {
+            return false;
+        };
+        self.lock_inner().mark_phone_drive_transport(
+            &token.into(),
+            write,
+            status.into(),
+            core::MonotonicTimestamp::new(monotonic_ms),
+        )
     }
 
     /// Retires semantic input without claiming a controller stopped or applied braking.
@@ -326,6 +640,18 @@ impl CutoutSessionStateHandle {
     ) -> MobilePhoneDriveSnapshotDto {
         let mut owner = self.lock_inner();
         owner.cancel_phone_drive(reason.into());
+        snapshot(&owner)
+    }
+
+    /// Cancels at the current host time so the pending neutral has a fresh bounded deadline.
+    #[must_use]
+    pub fn cancel_phone_drive_at(
+        &self,
+        reason: MobilePhoneDriveCancelReasonDto,
+        monotonic_ms: u64,
+    ) -> MobilePhoneDriveSnapshotDto {
+        let mut owner = self.lock_inner();
+        owner.cancel_phone_drive_at(reason.into(), core::MonotonicTimestamp::new(monotonic_ms));
         snapshot(&owner)
     }
 }

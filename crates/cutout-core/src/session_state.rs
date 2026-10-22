@@ -44,6 +44,8 @@ pub struct CutoutSessionState {
 
     /// Ephemeral phone contact semantics, independent of motor-control authority.
     pub phone_drive_input: crate::PhoneDriveInputState,
+    /// Saved current budgets; activation itself is always ephemeral.
+    pub phone_drive_limits: crate::PhoneDriveLimits,
 
     /// Diagnostics accumulated from parser and protocol diagnostic events.
     pub diagnostics: SessionDiagnosticsState,

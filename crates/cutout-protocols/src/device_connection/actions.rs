@@ -74,6 +74,9 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return Err(DeviceActionSubmissionError::ConnectionUnavailable);
         }
+        if self.phone_drive_activation().is_some() {
+            return Err(DeviceActionSubmissionError::Busy);
+        }
         let profile = self
             .device
             .as_ref()

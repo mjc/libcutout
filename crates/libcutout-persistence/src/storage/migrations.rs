@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 55;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 56;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -78,6 +78,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         52 => migrate_v52_to_v53(connection)?,
         53 => migrate_v53_to_v54(connection)?,
         54 => migrate_v54_to_v55(connection)?,
+        55 => migrate_v55_to_v56(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -141,6 +142,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 54 {
             migrate_v54_to_v55(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 55 {
+            migrate_v55_to_v56(connection)?;
         }
     }
     Ok(())
@@ -247,7 +251,7 @@ fn migrate_v2_to_current(connection: &mut Connection) -> Result<(), StorageError
     reason = "the declarative schema stays in one transaction"
 )]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
-    connection.execute_batch(super::phone_control::SCHEMA)?;
+    super::phone_control::create_schema(connection)?;
     connection.execute_batch(super::device_vehicle::SCHEMA)?;
     connection.execute_batch(super::device_drivetrain::SCHEMA)?;
     connection.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
@@ -2248,9 +2252,28 @@ fn migrate_v53_to_v54(connection: &mut Connection) -> Result<(), StorageError> {
 
 fn migrate_v54_to_v55(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    transaction.execute_batch(super::phone_control::SCHEMA)?;
-    super::phone_control::verify_schema(&transaction)?;
+    transaction.execute_batch(super::phone_control::SCHEMA_V55)?;
     transaction.execute_batch(&schema_pragmas(55))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v55_to_v56(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    match (
+        table_has_column(
+            &transaction,
+            "phone_control_preferences",
+            "throttle_milliamps",
+        )?,
+        table_has_column(&transaction, "phone_control_preferences", "brake_milliamps")?,
+    ) {
+        (false, false) => transaction.execute_batch(super::phone_control::BUDGET_MIGRATION)?,
+        (true, true) => {}
+        _ => return Err(StorageError::InvalidDatabaseIdentity),
+    }
+    super::phone_control::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(56))?;
     transaction.commit()?;
     Ok(())
 }

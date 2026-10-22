@@ -11,6 +11,99 @@ final class DeviceSessionTransportTests: XCTestCase {
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
     ])
 
+    func testPhoneDriveQueuedSetpointExpiresBeforeActualNativeSubmission() throws {
+        try withReadyPhoneDriveTransport { state, transport, sink, now in
+            let activated = try transport.activatePhoneDrive()
+            let generation = try XCTUnwrap(activated.generation)
+            _ = transport.observePhoneDriveContacts(generation: generation, contacts: .released, observedAtMs: 3_000)
+            sink.dispositions = [.queued]
+            sink.canSend = false
+            _ = transport.observePhoneDriveContacts(
+                generation: generation, contacts: .single(contactId: 1, region: .throttle), observedAtMs: 3_000
+            )
+            let current = Data([2, 5, 6, 0, 0, 0x0b, 0xb8, 0x37, 0xac, 3])
+            XCTAssertTrue(sink.writes.contains(current), "The queued effect must be an actual encoded current request")
+            XCTAssertFalse(sink.submittedWrites.contains(current))
+            now.withLock { $0 = 3_051 }
+            sink.canSend = true
+            // Flush the retained native closure before a timer can authorize a newer
+            // sample with the same bytes. This isolates the original write's deadline.
+            sink.peripheralIsReadyToSendWithoutResponse()
+            XCTAssertFalse(
+                sink.submittedWrites.contains(current), "Final native submission must reject the expired setpoint")
+            XCTAssertTrue(
+                transport.records.contains { record in
+                    if case .writeReceipt(_, _, .cancelled) = record { return true }
+                    return false
+                })
+            now.withLock { $0 = 3_151 }
+            transport.handleTimer()
+            XCTAssertFalse(
+                sink.submittedWrites.contains(current), "The sole transport timer cannot replay retired intent")
+            _ = state
+        }
+    }
+
+    func testPhoneDriveTimerExpiresInputWithoutRenewingContactAndSubmitsBoundedRelease() throws {
+        try withReadyPhoneDriveTransport { state, transport, sink, now in
+            let activated = try transport.activatePhoneDrive()
+            let generation = try XCTUnwrap(activated.generation)
+            _ = transport.observePhoneDriveContacts(generation: generation, contacts: .released, observedAtMs: 3_000)
+            _ = transport.observePhoneDriveContacts(
+                generation: generation, contacts: .single(contactId: 1, region: .throttle), observedAtMs: 3_000
+            )
+            let current = Data([2, 5, 6, 0, 0, 0x0b, 0xb8, 0x37, 0xac, 3])
+            let zeroCurrent = Data([2, 5, 6, 0, 0, 0, 0, 0xcd, 0x85, 3])
+            XCTAssertTrue(sink.submittedWrites.contains(current))
+            var snapshots: [MobilePhoneDriveSnapshotDto] = []
+            transport.onPhoneDriveSnapshotChange = { snapshots.append($0) }
+            now.withLock { $0 = 3_151 }
+            transport.handleTimer()
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            XCTAssertEqual(state.phoneDriveSnapshot().phase, .cancelled(reason: .inputExpired))
+            XCTAssertTrue(
+                sink.submittedWrites.contains(zeroCurrent), "Expiry must use the existing writer's zero-current effect")
+            XCTAssertEqual(snapshots.last?.availability, .ready)
+            let nonzeroCount = sink.submittedWrites.filter { $0 == current }.count
+            now.withLock { $0 = 3_300 }
+            transport.handleTimer()
+            XCTAssertEqual(sink.submittedWrites.filter { $0 == current }.count, nonzeroCount)
+        }
+    }
+
+    private func withReadyPhoneDriveTransport(
+        _ test: (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink, Mutex<UInt64>) throws -> Void
+    ) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try openRideDatabase(path: directory.appendingPathComponent("ride.sqlite").path)
+        defer { try? database.shutdown() }
+        try queue.sync {
+            let state = CutoutSessionStateHandle.withDatabase(database: database)
+            _ = try state.savePhoneControlMode(mode: .buttons)
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "phone-vesc", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let now = Mutex<UInt64>(1)
+            let sink = TransportSink()
+            let transport = makeTransport(
+                state, token: token, sink: sink, writeLimit: 64,
+                clock: MonotonicClock { MonotonicMilliseconds(now.withLock { $0 }) })
+            defer { transport.invalidate() }
+            _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            transport.handleNotificationStateUpdate(channel: .vescNordicUartNotify, isNotifying: true, error: nil)
+            now.withLock { $0 = 3_000 }
+            transport.handleTimer()
+            XCTAssertTrue(state.configureConnectionVehicleKind(token: token, kind: .eskate))
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            sink.writes.removeAll()
+            sink.submittedWrites.removeAll()
+            try test(state, transport, sink, now)
+        }
+    }
+
     func testTimerPublishesApplicationTimeoutWithoutTelemetryAndDoesNotRepeatUnchangedIdentity() throws {
         let state = CutoutSessionStateHandle()
         let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "VESC", nowMs: 0).token)

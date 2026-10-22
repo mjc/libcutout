@@ -12,7 +12,14 @@ final class PhoneDriveModel {
     private(set) var settingsBusy = false
     private(set) var settingsLoaded = false
     private(set) var settingsError = false
+    private(set) var limitsError = false
+    private(set) var activationError = false
+    var throttleAmpsText = "3"
+    var brakeAmpsText = "3"
     let isInputPreview: Bool
+    #if os(iOS)
+        let nativeContacts = PhoneDriveNativeContactObserver()
+    #endif
     #if DEBUG && targetEnvironment(simulator)
         private struct PreviewReceipt {
             let ordinal: UInt64
@@ -35,12 +42,77 @@ final class PhoneDriveModel {
         #else
             isInputPreview = false
         #endif
+        #if os(iOS)
+            nativeContacts.now = { core.now().rawValue }
+            nativeContacts.currentGeneration = { [weak self] in self?.snapshot.generation }
+            nativeContacts.observe = { [weak self] contacts, generation, observedAtMs in
+                self?.contacts(contacts, generation: generation, observedAtMs: observedAtMs)
+            }
+            nativeContacts.cancel = { [weak self] reason in self?.cancel(reason) }
+        #endif
     }
 
-    /// Current production profiles cannot grant drive authority. A simulator fixture
-    /// may exercise semantic input feedback using the same Rust processor.
     var capturesInput: Bool {
-        isInputPreview && snapshot.mode != .disabled && snapshot.generation != nil
+        guard snapshot.mode != .disabled, snapshot.generation != nil else { return false }
+        if case .active = snapshot.availability { return true }
+        return false
+    }
+
+    var canActivate: Bool {
+        guard settingsLoaded, !settingsBusy, snapshot.mode != .disabled else { return false }
+        if case .ready = snapshot.availability { return true }
+        return false
+    }
+
+    func activate() {
+        guard canActivate, let token = core.connectionSnapshot.token else { return }
+        do {
+            #if os(iOS)
+                nativeContacts.reobserveAllUp()
+            #endif
+            applySnapshot(try core.activatePhoneDrive(token: token))
+            #if os(iOS)
+                nativeContacts.reobserveAllUp()
+            #endif
+            activationError = false
+        } catch {
+            activationError = true
+            refresh()
+        }
+    }
+
+    func saveLimits() async {
+        guard !settingsBusy, settingsLoaded else { return }
+        settingsBusy = true
+        defer { settingsBusy = false }
+        let state = core.rideSessionStateHandle
+        let throttle = throttleAmpsText
+        let brake = brakeAmpsText
+        do {
+            _ = try await Task.detached(priority: .userInitiated) {
+                try state.savePhoneDriveLimits(throttleAmpsText: throttle, brakeAmpsText: brake)
+            }.value
+            refresh()
+            if throttleAmpsText == throttle, brakeAmpsText == brake { restoreBudgetDrafts() }
+            limitsError = false
+        } catch {
+            limitsError = true
+            refresh()
+        }
+    }
+
+    private func restoreBudgetDrafts() {
+        throttleAmpsText = Self.ampsText(snapshot.limits.throttleMilliamps)
+        brakeAmpsText = Self.ampsText(snapshot.limits.brakeMilliamps)
+    }
+
+    private static func ampsText(_ milliamps: UInt32) -> String {
+        let whole = milliamps / 1_000
+        let remainder = milliamps % 1_000
+        guard remainder != 0 else { return String(whole) }
+        var fraction = String(format: "%03u", remainder)
+        while fraction.last == "0" { fraction.removeLast() }
+        return "\(whole).\(fraction)"
     }
 
     func refresh() {
@@ -59,6 +131,7 @@ final class PhoneDriveModel {
             // Read the current projection after awaiting: a concurrent connection or
             // lifecycle cancellation must not be replaced by a captured older snapshot.
             refresh()
+            restoreBudgetDrafts()
             settingsLoaded = true
             settingsError = false
         } catch {
@@ -85,9 +158,13 @@ final class PhoneDriveModel {
         }
     }
 
-    func contacts(_ contacts: MobilePhoneDriveContactsDto, generation: UInt64) {
-        guard capturesInput, let token = core.connectionSnapshot.token else { return }
-        applySnapshot(core.observePhoneDriveContacts(token: token, generation: generation, contacts: contacts))
+    func contacts(_ contacts: MobilePhoneDriveContactsDto, generation: UInt64, observedAtMs: UInt64? = nil) {
+        guard let token = core.connectionSnapshot.token else { return }
+        let observedAtMs = observedAtMs ?? core.now().rawValue
+        applySnapshot(
+            core.observePhoneDriveContacts(
+                token: token, generation: generation, contacts: contacts, observedAtMs: observedAtMs
+            ))
     }
 
     func cancel(_ reason: MobilePhoneDriveCancelReasonDto) {
@@ -138,6 +215,11 @@ final class PhoneDriveModel {
 
         private static func previewReason(_ reason: MobilePhoneDriveCancelReasonDto) -> String {
             switch reason {
+            case .activationChanged: "activation_changed"
+            case .inputExpired: "input_expired"
+            case .transportUnavailable: "transport_unavailable"
+            case .controllerFault: "controller_fault"
+            case .configurationChanged: "configuration_changed"
             case .touchCancelled: "touch_cancelled"
             case .invalidContact: "invalid_contact"
             case .modeChanged: "mode_changed"
@@ -153,11 +235,21 @@ final class PhoneDriveModel {
         }
     #endif
 
-    var unavailableText: String {
-        switch snapshot.unavailability {
-        case .disconnected: localizedAppText("phone_control.unavailable.disconnected")
-        case .vehicleUnsupported: localizedAppText("phone_control.unavailable.vehicle")
-        case .controllerUnqualified: localizedAppText("phone_control.unavailable.controller")
+    var limitsSummaryText: String {
+        localizedAppText(
+            "phone_control.limits_summary", Self.ampsText(snapshot.limits.throttleMilliamps),
+            Self.ampsText(snapshot.limits.brakeMilliamps))
+    }
+
+    var availabilityText: String {
+        switch snapshot.availability {
+        case .unavailable(let reason):
+            switch reason {
+            case .disconnected: localizedAppText("phone_control.unavailable.disconnected")
+            case .vehicleUnsupported: localizedAppText("phone_control.unavailable.vehicle")
+            }
+        case .ready: localizedAppText("phone_control.inactive")
+        case .active: localizedAppText("phone_control.active")
         }
     }
 

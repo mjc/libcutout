@@ -3,6 +3,54 @@ use cutout_core::PhoneControlMode;
 use rusqlite::Connection;
 
 #[test]
+fn phone_drive_limits_save_rejects_an_ignored_update() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("phone-control.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER ignore_budget BEFORE UPDATE ON phone_control_preferences BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+    assert!(
+        database
+            .save_phone_drive_limits(cutout_core::PhoneDriveLimits::new(7_000, 8_000).unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        database.phone_drive_limits().unwrap(),
+        cutout_core::PhoneDriveLimits::default()
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_limits_round_trip_and_failed_write_keeps_both_budgets() {
+    use cutout_core::PhoneDriveLimits;
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("phone-control.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.phone_drive_limits().unwrap(),
+        PhoneDriveLimits::default()
+    );
+    let limits = PhoneDriveLimits::new(7_125, 9_500).unwrap();
+    database.save_phone_drive_limits(limits).unwrap();
+    assert_eq!(database.phone_drive_limits().unwrap(), limits);
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(database.phone_drive_limits().unwrap(), limits);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_phone_budget BEFORE UPDATE ON phone_control_preferences BEGIN SELECT RAISE(ABORT, 'injected budget failure'); END;").unwrap();
+    assert!(
+        database
+            .save_phone_drive_limits(PhoneDriveLimits::default())
+            .is_err()
+    );
+    assert_eq!(database.phone_drive_limits().unwrap(), limits);
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn phone_control_mode_defaults_disabled_and_survives_reopen() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
@@ -47,7 +95,10 @@ fn phone_control_mode_has_only_one_constrained_persistent_value() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(columns, ["id", "mode"]);
+    assert_eq!(
+        columns,
+        ["id", "mode", "throttle_milliamps", "brake_milliamps"]
+    );
     assert_eq!(
         connection
             .query_row(

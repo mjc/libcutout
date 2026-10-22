@@ -1,5 +1,156 @@
 //! Phone input semantics. A pressed surface is never a motor-control grant.
 
+/// Explicit rider-selected current budgets, in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneDriveLimits {
+    throttle_milliamps: u32,
+    brake_milliamps: u32,
+}
+
+/// A current budget is outside the supported UI range or is not a whole milliamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("enter a positive current of at most 500 A, in whole milliamps")]
+pub struct PhoneDriveLimitsError;
+
+impl Default for PhoneDriveLimits {
+    fn default() -> Self {
+        // VESC Tool's control UI uses 3 A. This is a product default, not a
+        // board-specific safety limit; the rider can change it before activation.
+        Self {
+            throttle_milliamps: 3_000,
+            brake_milliamps: 3_000,
+        }
+    }
+}
+
+impl PhoneDriveLimits {
+    /// Checks independent positive budgets against the supported 500 A UI range.
+    ///
+    /// # Errors
+    /// Returns an error for zero or an out-of-range budget.
+    pub fn new(
+        throttle_milliamps: u32,
+        brake_milliamps: u32,
+    ) -> Result<Self, PhoneDriveLimitsError> {
+        if !(1..=500_000).contains(&throttle_milliamps) || !(1..=500_000).contains(&brake_milliamps)
+        {
+            return Err(PhoneDriveLimitsError);
+        }
+        Ok(Self {
+            throttle_milliamps,
+            brake_milliamps,
+        })
+    }
+
+    /// Parses decimal amp fields without floating point or silent rounding.
+    ///
+    /// # Errors
+    /// Returns an error for invalid text, fractional milliamps or unsupported budgets.
+    pub fn from_amp_text(throttle: &str, brake: &str) -> Result<Self, PhoneDriveLimitsError> {
+        Self::new(parse_amp_text(throttle)?, parse_amp_text(brake)?)
+    }
+
+    /// Requested throttle current budget.
+    #[must_use]
+    pub const fn throttle_milliamps(self) -> u32 {
+        self.throttle_milliamps
+    }
+
+    /// Requested braking current magnitude.
+    #[must_use]
+    pub const fn brake_milliamps(self) -> u32 {
+        self.brake_milliamps
+    }
+}
+
+fn parse_amp_text(text: &str) -> Result<u32, PhoneDriveLimitsError> {
+    let text = text.trim();
+    let (whole, fraction) = match text.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (text, None),
+    };
+    if whole.is_empty() || !whole.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(PhoneDriveLimitsError);
+    }
+    let fraction = match fraction {
+        Some(value) => {
+            let scale = match value.len() {
+                1 => 100,
+                2 => 10,
+                3 => 1,
+                _ => return Err(PhoneDriveLimitsError),
+            };
+            if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(PhoneDriveLimitsError);
+            }
+            value.parse::<u32>().map_err(|_| PhoneDriveLimitsError)? * scale
+        }
+        None => 0,
+    };
+    whole
+        .parse::<u32>()
+        .map_err(|_| PhoneDriveLimitsError)?
+        .checked_mul(1_000)
+        .and_then(|value| value.checked_add(fraction))
+        .ok_or(PhoneDriveLimitsError)
+}
+
+/// Ephemeral activation identity; never persisted or restored after reconnect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneDriveActivationId(core::num::NonZeroU64);
+
+impl PhoneDriveActivationId {
+    /// Validates a nonzero activation identity.
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
+        match core::num::NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Returns the activation identity.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+/// Controller-path support and explicit per-attempt activation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhoneDriveAvailability {
+    /// Current connection or vehicle does not support this path.
+    Unavailable(PhoneDriveUnavailableReason),
+    /// Standard VESC path is available; deliberate activation is still required.
+    Ready,
+    /// Rider explicitly activated this connection attempt.
+    Active(PhoneDriveActivationId),
+}
+
+/// Which bounded live-control intent a write carries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhoneDriveWriteKind {
+    /// Current/brake-current request for a fresh held contact.
+    Setpoint,
+    /// Zero motor current; does not claim an on-controller stop.
+    Release,
+}
+
+/// Session-owned admission checked again immediately before native submission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneDriveWrite {
+    /// Per-attempt activation that produced this intent.
+    pub activation_id: PhoneDriveActivationId,
+    /// Latest intent sequence; superseded writes must be rejected.
+    pub sequence: u64,
+    /// Original semantic input generation.
+    pub generation: u64,
+    /// Exclusive monotonic submission deadline in milliseconds.
+    pub submit_before_ms: u64,
+    /// Setpoint or separately retained release intent.
+    pub kind: PhoneDriveWriteKind,
+}
+
 /// Saved input layout, independent of controller qualification and activation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PhoneControlMode {
@@ -57,6 +208,16 @@ pub enum PhoneDriveContacts {
 /// Why an input generation or held gesture ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhoneDriveCancelReason {
+    /// Same-connection vehicle or drivetrain configuration changed.
+    ConfigurationChanged,
+    /// Explicit activation or deactivation retired the previous input.
+    ActivationChanged,
+    /// The native held-contact heartbeat expired.
+    InputExpired,
+    /// Submission failed or its outcome is unknown.
+    TransportUnavailable,
+    /// The controller reported a fault.
+    ControllerFault,
     /// Native touch delivery was cancelled by the platform.
     TouchCancelled,
     /// A native contact identity was malformed.
@@ -248,20 +409,46 @@ impl PhoneDriveInputState {
     }
 }
 
-/// A missing production control contract is independent of telemetry/settings support.
+/// Unsupported connection/vehicle path, independent of saved settings and activation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhoneDriveUnavailableReason {
     /// No verified current connection exists.
     Disconnected,
     /// The current route is not an e-skate phone-control candidate.
     VehicleUnsupported,
-    /// No exact profile proves source-specific expiry, arbitration and physical behavior.
-    ControllerUnqualified,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phone_drive_budgets_are_checked_independently_and_parse_exact_milliamps() {
+        let limits = PhoneDriveLimits::new(3_000, 4_125).unwrap();
+        assert_eq!(limits.throttle_milliamps(), 3_000);
+        assert_eq!(limits.brake_milliamps(), 4_125);
+        assert_eq!(
+            PhoneDriveLimits::from_amp_text(" 3.000 ", "4.125").unwrap(),
+            limits
+        );
+        assert!(PhoneDriveLimits::new(0, 3_000).is_err());
+        assert!(PhoneDriveLimits::new(3_000, 500_001).is_err());
+        assert!(PhoneDriveLimits::new(500_000, 1).is_ok());
+        for invalid in [
+            "", "-3", "+3", "NaN", "inf", "1e3", "0", "500.001", "3.0001", ".5", "3.", "0.0009",
+        ] {
+            assert!(
+                PhoneDriveLimits::from_amp_text(invalid, "3").is_err(),
+                "{invalid}"
+            );
+            assert!(
+                PhoneDriveLimits::from_amp_text("3", invalid).is_err(),
+                "{invalid}"
+            );
+        }
+        assert_eq!(PhoneDriveActivationId::new(1).unwrap().get(), 1);
+        assert_eq!(PhoneDriveActivationId::new(0), None);
+    }
 
     fn contact(id: u64, action: Option<PhoneDriveAction>) -> PhoneDriveContacts {
         PhoneDriveContacts::Single {

@@ -9361,7 +9361,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testProductionUnqualifiedButtonsStayInertAndLayoutSurvivesRelaunch() throws {
+    func testStandardVescButtonsRequireActivationAndLayoutSurvivesRelaunch() throws {
         launchPhoneFixture(preview: false)
         try selectPhoneMode("Buttons")
         try openPhoneRide()
@@ -9370,10 +9370,8 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(brake.waitForExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertFalse(brake.isEnabled)
         XCTAssertFalse(throttle.isEnabled)
-        XCTAssertFalse(phoneApp.buttons["phone-control.activate"].isEnabled)
-        XCTAssertEqual(
-            phoneApp.staticTexts["phone-control.status"].label,
-            "Phone control is unavailable for this controller.")
+        XCTAssertTrue(phoneApp.buttons["phone-control.activate"].isEnabled)
+        XCTAssertEqual(phoneApp.staticTexts["phone-control.status"].label, "Inactive")
         XCTAssertFalse(phoneElement("phone-control.area").exists)
         XCTAssertFalse(phoneElement("phone-control.preview-receipts").exists)
         let speed = phoneElement("ride.hero.speed")
@@ -9387,7 +9385,12 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertFalse(throttle.label.contains("Held"))
         try openPhoneReadings()
-        keepPhoneScreenshot("unqualified-buttons")
+        try activatePhoneInput()
+        XCTAssertTrue(throttle.isEnabled)
+        throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
+        phoneApp.buttons["phone-control.activate"].tap()
+        XCTAssertFalse(throttle.isEnabled)
+        keepPhoneScreenshot("inactive-standard-vesc-buttons")
 
         phoneApp.terminate()
         // Keep launch environment/database identity, then exercise existing reconnect/restoration.
@@ -9410,6 +9413,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         launchPhoneFixture(preview: true)
         try selectPhoneMode("Buttons")
         try openPhoneRide()
+        try activatePhoneInput()
         let brake = phoneApp.buttons["phone-control.brake"]
         let throttle = phoneApp.buttons["phone-control.throttle"]
         XCTAssertTrue(brake.waitForExistence(timeout: 5), phoneApp.debugDescription)
@@ -9448,6 +9452,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         launchPhoneFixture(preview: true, pausedMusic: true)
         try selectPhoneMode("Area of screen")
         try openPhoneRide()
+        try activatePhoneInput()
         let area = phoneElement("phone-control.area")
         XCTAssertTrue(area.waitForExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertFalse(phoneApp.buttons["phone-control.brake"].exists)
@@ -9483,6 +9488,8 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         phoneApp.tabBars.buttons["Map"].tap()
         XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
         phoneApp.tabBars.buttons["Ride"].tap()
+        XCTAssertFalse(area.exists)
+        try activatePhoneInput()
         XCTAssertTrue(area.waitForExistence(timeout: 5))
         XCTAssertFalse((area.value as? String ?? "").contains("Held"))
         phoneApp.buttons["music.expand"].tap()
@@ -9557,6 +9564,17 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(phoneElement("ride.readings.detail").waitForExistence(timeout: 5), phoneApp.debugDescription)
         phoneApp.buttons["ride.readings.done"].tap()
         XCTAssertTrue(phoneElement("ride.readings.detail").waitForNonExistence(timeout: 5))
+    }
+
+    private func activatePhoneInput() throws {
+        let activate = phoneApp.buttons["phone-control.activate"]
+        XCTAssertTrue(activate.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertTrue(activate.isEnabled, phoneApp.debugDescription)
+        activate.tap()
+        let active = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Active"),
+            object: phoneApp.staticTexts["phone-control.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [active], timeout: 5), .completed, phoneApp.debugDescription)
     }
 
     private struct PhoneReceipt {

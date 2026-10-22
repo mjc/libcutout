@@ -78,6 +78,7 @@ impl DeviceConnectionSession {
             })
             .min();
         [
+            self.phone_drive_next_wakeup_at(can_poll),
             self.state.settings.next_confirmation_at(),
             queued_expiry,
             device.application_query_deadline(),
@@ -427,6 +428,9 @@ impl DeviceConnectionSession {
     ) -> Result<DeviceConnectionStep, DeviceSettingRequestError> {
         if !self.state.connection.is_verified(token) {
             return Err(DeviceSettingRequestError::ConnectionUnavailable);
+        }
+        if self.phone_drive_activation().is_some() {
+            return Err(DeviceSettingRequestError::Busy);
         }
         let validation_authorized = self.validation_authorized();
         let device = self

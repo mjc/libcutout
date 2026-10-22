@@ -1122,6 +1122,23 @@ fn encode_request_frame(
     .map_err(|_err| VescCodecError::EncodeFailed)
 }
 
+/// Encodes positive local motor current or brake magnitude; release is zero current.
+pub(crate) fn encode_phone_drive_current(
+    action: Option<cutout_core::PhoneDriveAction>,
+    milliamps: u32,
+) -> Option<cutout_core::WritePayload> {
+    let current = i32::try_from(milliamps).ok()?;
+    let command = match action {
+        Some(cutout_core::PhoneDriveAction::Brake) => 7,
+        Some(cutout_core::PhoneDriveAction::Throttle) | None => 6,
+    };
+    let mut frame = [2, 5, command, 0, 0, 0, 0, 0, 0, 3];
+    frame[3..7].copy_from_slice(&current.to_be_bytes());
+    let checksum = vesc_crc16(&frame[2..7]);
+    frame[7..9].copy_from_slice(&checksum.to_be_bytes());
+    cutout_core::WritePayload::try_from_slice(&frame).ok()
+}
+
 fn encode_raw_command(command_id: u8, frame: &mut [u8; VESC_MAX_FRAME_LEN]) -> usize {
     frame[0] = VESC_FRAME_START_SHORT;
     frame[1] = 1;

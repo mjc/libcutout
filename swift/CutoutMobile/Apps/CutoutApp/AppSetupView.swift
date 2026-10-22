@@ -95,7 +95,40 @@ struct AppSetupView: View {
                     } else if !model.phoneDrive.settingsError {
                         ProgressView(localizedAppText("phone_control.input_mode"))
                     }
-                    Text(model.phoneDrive.unavailableText)
+                    if model.phoneDrive.settingsLoaded {
+                        TextField(
+                            localizedAppText("phone_control.throttle_current"),
+                            text: Binding(
+                                get: { model.phoneDrive.throttleAmpsText },
+                                set: { model.phoneDrive.throttleAmpsText = $0 }
+                            )
+                        )
+                        .disabled(model.phoneDrive.settingsBusy)
+                        .accessibilityIdentifier("setup.phone-control.throttle-current")
+                        TextField(
+                            localizedAppText("phone_control.brake_current"),
+                            text: Binding(
+                                get: { model.phoneDrive.brakeAmpsText },
+                                set: { model.phoneDrive.brakeAmpsText = $0 }
+                            )
+                        )
+                        .disabled(model.phoneDrive.settingsBusy)
+                        .accessibilityIdentifier("setup.phone-control.brake-current")
+                        Button(localizedAppText("phone_control.save_limits")) {
+                            Task { await model.phoneDrive.saveLimits() }
+                        }
+                        .disabled(model.phoneDrive.settingsBusy)
+                        .accessibilityIdentifier("setup.phone-control.save-limits")
+                        if model.phoneDrive.limitsError {
+                            Text(localizedAppText("phone_control.limits_failed"))
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier("setup.phone-control.limits-error")
+                        }
+                    }
+                    Text(localizedAppText("phone_control.limitations"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(model.phoneDrive.availabilityText)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     if model.phoneDrive.settingsError {

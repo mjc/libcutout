@@ -56,6 +56,7 @@ struct ContentView: View {
 
     var body: some View {
         primaryTabs
+            .background { PhoneDriveWindowContactObservations(model: model.phoneDrive) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(PevColors.pageBackground.ignoresSafeArea())
             .sheet(item: $presentedSheet) { destination in

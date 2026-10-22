@@ -5009,6 +5009,9 @@ pub struct MobileSessionOutputDto {
 
     /// Native admission for application discovery, independent from settings writes.
     pub application_query: Option<MobileApplicationQueryWriteDto>,
+    /// Dedicated live-control admission for the existing transport writer.
+    #[uniffi(default = None)]
+    pub phone_drive: Option<MobilePhoneDriveWriteDto>,
 
     /// Typed parser-first ingest outcome.
     pub ingest: Option<MobileNotificationIngestOutcomeDto>,
@@ -18392,6 +18395,7 @@ impl MobileSessionOutputDto {
             bytes: Vec::new(),
             operation_id: None,
             application_query: None,
+            phone_drive: None,
             ingest: None,
             fault_history_readback: None,
             bms_snapshot: None,
@@ -18445,12 +18449,14 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes,
                 operation_id,
                 application_query,
+                phone_drive,
                 ..
             }) => {
                 let mut output =
                     Self::transport(MobileSessionOutputKindDto::Write, channel.to_vec(), bytes);
                 output.operation_id = operation_id;
                 output.application_query = application_query.map(Into::into);
+                output.phone_drive = phone_drive.map(Into::into);
                 output
             }
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => {

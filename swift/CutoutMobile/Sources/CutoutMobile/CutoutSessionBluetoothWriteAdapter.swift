@@ -29,6 +29,7 @@ final class CutoutSessionBluetoothWriteAdapter {
     func submit(
         channel: BluetoothUuid,
         bytes: Data,
+        priority: CoreBluetoothWritePriority = .ordinary,
         peripheral: CBPeripheral,
         characteristic: CBCharacteristic,
         isCurrent: @escaping () -> Bool,
@@ -37,6 +38,7 @@ final class CutoutSessionBluetoothWriteAdapter {
         submit(
             channel: channel,
             bytes: bytes,
+            priority: priority,
             canSend: { peripheral.canSendWriteWithoutResponse },
             isCurrent: isCurrent,
             write: { peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse) },
@@ -47,6 +49,7 @@ final class CutoutSessionBluetoothWriteAdapter {
     func submit(
         channel: BluetoothUuid,
         bytes: Data,
+        priority: CoreBluetoothWritePriority = .ordinary,
         canSend: @escaping () -> Bool,
         isCurrent: @escaping () -> Bool,
         write: @escaping () -> Void,
@@ -68,6 +71,7 @@ final class CutoutSessionBluetoothWriteAdapter {
             canSend: {
                 isCurrent() && canSend()
             },
+            priority: priority,
             isCurrent: {
                 isCurrent()
             },

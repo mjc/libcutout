@@ -524,6 +524,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let operationID: UInt64?
     /// Typed admission for application discovery, independent from the settings lane.
     public let applicationQuery: MobileApplicationQueryWriteDto?
+    public let phoneDrive: MobilePhoneDriveWriteDto?
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
     public let rawTelemetry: RawTelemetryReadback?
@@ -537,6 +538,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         bytes: Data,
         operationID: UInt64? = nil,
         applicationQuery: MobileApplicationQueryWriteDto? = nil,
+        phoneDrive: MobilePhoneDriveWriteDto? = nil,
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
         rawTelemetry: RawTelemetryReadback? = nil,
@@ -548,6 +550,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.bytes = bytes
         self.operationID = operationID
         self.applicationQuery = applicationQuery
+        self.phoneDrive = phoneDrive
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
         self.rawTelemetry = rawTelemetry
@@ -608,6 +611,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.bytes = dto.bytes
         self.operationID = dto.operationId
         self.applicationQuery = dto.applicationQuery
+        self.phoneDrive = dto.phoneDrive
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
         self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)
@@ -4911,12 +4915,22 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     }
 }
 
+public enum CoreBluetoothWritePriority: Equatable, Sendable {
+    case ordinary
+    case drive
+    case release
+}
+
 public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     /// Reports admission synchronously and a final receipt when a queued write is submitted or rejected.
     /// All receipts run on the transport's queue.
     func writeWithoutResponse(
         channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition
+    func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition
     func canSubmitWithoutResponse() -> Bool
@@ -4948,6 +4962,13 @@ extension CoreBluetoothOperationSink {
         writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: { true }, onReceipt: onReceipt)
     }
 
+    public func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
+        writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onReceipt)
+    }
+
     public func canSubmitWithoutResponse() -> Bool { true }
     public func peripheralIsReadyToSendWithoutResponse() {}
     public func clearPendingWithoutResponseWrites() {}
@@ -4956,52 +4977,96 @@ extension CoreBluetoothOperationSink {
 /// Queue-confined pending native writes, including their eventual transport receipts.
 final class CoreBluetoothWriteQueue {
     private let capacity: Int
-    private var pending:
-        [(isCurrent: () -> Bool, write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void)] = []
+    private typealias PendingWrite = (
+        isCurrent: () -> Bool, write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void,
+        priority: CoreBluetoothWritePriority
+    )
+    private var pending: [PendingWrite] = []
+    private var driveWasLastSubmitted = false
 
     init(capacity: Int) { self.capacity = capacity }
 
     func submit(
         canSend: () -> Bool,
+        priority: CoreBluetoothWritePriority = .ordinary,
         isCurrent: @escaping () -> Bool = { true },
         write: @escaping () -> Void,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
+        discardExpired()
         guard isCurrent() else {
             onReceipt(.cancelled)
             return .cancelled
         }
         if pending.isEmpty, canSend() {
             write()
+            noteSubmission(priority)
             onReceipt(.submitted)
             return .submitted
+        }
+        if pending.count >= capacity, priority != .ordinary {
+            let displaced =
+                pending.lastIndex(where: { $0.priority == .ordinary })
+                ?? (priority == .release ? pending.lastIndex(where: { $0.priority == .drive }) : nil)
+            if let displaced { pending.remove(at: displaced).receipt(.cancelled) }
         }
         guard pending.count < capacity else {
             onReceipt(.rejected)
             return .rejected
         }
-        pending.append((isCurrent, write, onReceipt))
+        pending.append((isCurrent, write, onReceipt, priority))
         onReceipt(.queued)
         flush(canSend: canSend)
         return .queued
     }
 
     func flush(canSend: () -> Bool) {
-        while let first = pending.first {
-            guard first.isCurrent() else {
-                pending.removeFirst().receipt(.cancelled)
+        while !pending.isEmpty {
+            discardExpired()
+            guard !pending.isEmpty, canSend() else { return }
+            let index: Int
+            if let release = pending.firstIndex(where: { $0.priority == .release }) {
+                index = release
+            } else if driveWasLastSubmitted,
+                let ordinary = pending.firstIndex(where: { $0.priority == .ordinary })
+            {
+                index = ordinary
+            } else {
+                index = pending.firstIndex(where: { $0.priority == .drive }) ?? 0
+            }
+            let next = pending.remove(at: index)
+            guard next.isCurrent() else {
+                next.receipt(.cancelled)
                 continue
             }
-            guard canSend() else { return }
-            let next = pending.removeFirst()
             next.write()
+            noteSubmission(next.priority)
             next.receipt(.submitted)
+        }
+    }
+
+    private func discardExpired() {
+        let previous = pending
+        pending.removeAll(keepingCapacity: true)
+        var expired: [PendingWrite] = []
+        for item in previous {
+            if item.isCurrent() { pending.append(item) } else { expired.append(item) }
+        }
+        expired.forEach { $0.receipt(.cancelled) }
+    }
+
+    private func noteSubmission(_ priority: CoreBluetoothWritePriority) {
+        switch priority {
+        case .drive: driveWasLastSubmitted = true
+        case .ordinary: driveWasLastSubmitted = false
+        case .release: break
         }
     }
 
     func clear() {
         let cancelled = pending
         pending.removeAll()
+        driveWasLastSubmitted = false
         cancelled.forEach { $0.receipt(.cancelled) }
     }
 }
@@ -5016,6 +5081,7 @@ public struct CoreBluetoothOperationExecutor {
     @discardableResult
     public func execute(
         _ operation: CoreBluetoothPlannedOperation,
+        priority: CoreBluetoothWritePriority = .ordinary,
         isCurrent: @escaping () -> Bool,
         onWriteReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void = { _ in }
     ) -> CoreBluetoothWriteDisposition? {
@@ -5029,14 +5095,14 @@ public struct CoreBluetoothOperationExecutor {
                 return .rejected
             }
             return sink.writeWithoutResponse(
-                channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
+                channel: channel, bytes: bytes, priority: priority, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .writeWithoutResponseWithOperationID(let channel, let bytes, _):
             guard let sink else {
                 onWriteReceipt(.rejected)
                 return .rejected
             }
             return sink.writeWithoutResponse(
-                channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
+                channel: channel, bytes: bytes, priority: priority, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .disconnect:
             sink?.disconnect()
             return nil

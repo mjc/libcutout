@@ -8,6 +8,7 @@ protocol CutoutSessionDriving: AnyObject {
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
     var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? { get set }
+    var onPhoneDriveSnapshotChange: ((MobilePhoneDriveSnapshotDto) -> Void)? { get set }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPresentation) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
@@ -52,8 +53,9 @@ protocol CutoutSessionDriving: AnyObject {
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func observePhoneDriveContacts(
-        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto, observedAtMs: UInt64
     ) -> MobilePhoneDriveSnapshotDto
+    func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto
     func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto
     func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
         -> MobileDeviceSessionSnapshotDto
@@ -82,14 +84,27 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var onPhoneDriveSnapshotChange: ((MobilePhoneDriveSnapshotDto) -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto {
+        try rideSessionStateHandle.activatePhoneDrive(token: token, monotonicMs: now().rawValue)
+    }
+
     func observePhoneDriveContacts(
-        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto, observedAtMs: UInt64
     ) -> MobilePhoneDriveSnapshotDto {
-        rideSessionStateHandle.observePhoneDriveContacts(token: token, generation: generation, contacts: contacts)
+        _ = rideSessionStateHandle.observePhoneDriveContactsAt(
+            token: token, generation: generation, contacts: contacts,
+            observedAtMs: observedAtMs, monotonicMs: now().rawValue
+        )
+        return rideSessionStateHandle.phoneDriveSnapshot()
     }
 
     func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto {
-        rideSessionStateHandle.cancelPhoneDrive(reason: reason)
+        rideSessionStateHandle.cancelPhoneDriveAt(reason: reason, monotonicMs: now().rawValue)
     }
 
     var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? {

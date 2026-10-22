@@ -492,6 +492,7 @@ public final class CutoutSessionCore: NSObject {
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPresentation) -> Void)?
     public var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)?
+    public var onPhoneDriveSnapshotChange: ((MobilePhoneDriveSnapshotDto) -> Void)?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
@@ -1244,18 +1245,33 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func observePhoneDriveContacts(
-        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto, observedAtMs: UInt64
     ) -> MobilePhoneDriveSnapshotDto {
         onBleQueue {
             guard let owner = liveOwner, owner.token == token else {
                 return rustSessionState.phoneDriveSnapshot()
             }
-            return owner.observePhoneDriveContacts(generation: generation, contacts: contacts)
+            return owner.observePhoneDriveContacts(
+                generation: generation, contacts: contacts, observedAtMs: observedAtMs)
         }
     }
 
+    public func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto {
+        try onBleQueue {
+            Result {
+                guard let owner = liveOwner, owner.token == token else {
+                    throw DeviceSettingSubmissionError.ConnectionUnavailable
+                }
+                return try owner.activatePhoneDrive()
+            }
+        }.get()
+    }
+
     public func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto {
-        onBleQueue { rustSessionState.cancelPhoneDrive(reason: reason) }
+        onBleQueue {
+            if let owner = liveOwner { return owner.cancelPhoneDrive(reason) }
+            return rustSessionState.cancelPhoneDriveAt(reason: reason, monotonicMs: clock.now().rawValue)
+        }
     }
     /// Attempts the generic trip-meter reset action for a new ride when the
     /// selected device profile exposes that capability.
@@ -2310,6 +2326,10 @@ public final class CutoutSessionCore: NSObject {
         owner.onDeviceSessionSnapshotChange = { [weak self, weak owner] snapshot in
             guard let self, let owner, self.liveOwner === owner else { return }
             self.publishDeviceSessionSnapshot(snapshot)
+        }
+        owner.onPhoneDriveSnapshotChange = { [weak self, weak owner] snapshot in
+            guard let self, let owner, self.liveOwner === owner else { return }
+            self.publishOnMain { [weak self] in self?.onPhoneDriveSnapshotChange?(snapshot) }
         }
         owner.onSubscriptionFailure = { [weak self] channel, error in
             guard let self, self.liveOwner?.token == token else { return }
@@ -3852,6 +3872,14 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
+        writeWithoutResponse(
+            channel: channel, bytes: bytes, priority: .ordinary, isCurrent: isCurrent, onReceipt: onReceipt)
+    }
+
+    public func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
@@ -3874,6 +3902,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         return bluetoothWriteAdapter.submit(
             channel: channel,
             bytes: bytes,
+            priority: priority,
             peripheral: peripheral,
             characteristic: characteristic,
             isCurrent: { [weak self] in
