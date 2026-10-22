@@ -475,6 +475,49 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
+    func testStandardEskateSettingsKeepReadbackAndPerControlRestrictionsThroughNativeTransport() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyVescTransport()
+            defer { transport.invalidate() }
+            let noApp = vescFrame(
+                [36, 101, 0, 2, 0] + Array("No app".utf8) + Array(repeating: 0, count: 14)
+                    + [0, 0, 0] + Array(repeating: 0, count: 33))
+            _ = try transport.handleNotification(
+                bytes: noApp, channel: .vescNordicUartNotify, at: MonotonicMilliseconds(4))
+            XCTAssertTrue(state.configureConnectionVehicleKind(token: transport.token, kind: .eskate))
+            XCTAssertEqual(state.deviceSessionSnapshot().identity?.vehicleKind, .eskate)
+            let snapshot = state.settings()
+            XCTAssertEqual(snapshot.settingDescriptors.count, 75)
+            XCTAssertEqual(snapshot.settings.count, 75)
+            XCTAssertTrue(snapshot.settingDescriptors.allSatisfy { $0.access == .readOnly })
+            XCTAssertTrue(snapshot.settingDescriptors.allSatisfy { $0.applyEffect == .immediate })
+            XCTAssertTrue(snapshot.settings.allSatisfy { $0.current != nil && $0.requested == nil })
+            XCTAssertNil(snapshot.descriptor(for: .pwmTiltback), "Standard firmware does not imply a Refloat catalog")
+            XCTAssertEqual(snapshot.setting(for: .controllerId)?.current, .number(value: 0))
+            let restrictions: [(DeviceSettingID, String)] = [
+                (.controllerId, "controller_identity"),
+                (.canBaudRate, "transport_selection"),
+                (.applicationToUse, "hardware_endpoint"),
+                (.imuType, "imu_hardware"),
+                (.bmsLimitMode, "multiple_selection"),
+                (.motorDriveCurrentLimit, "disengaged_evidence"),
+            ]
+            for (id, reason) in restrictions {
+                XCTAssertEqual(snapshot.descriptor(for: id)?.helpKey, "vesc.settings.read_only.\(reason)")
+            }
+            sink.writes.removeAll()
+            sink.submittedWrites.removeAll()
+            XCTAssertThrowsError(
+                try transport.submitSetting(.controllerId, value: .number(value: 1), at: MonotonicMilliseconds(5))
+            ) { error in
+                XCTAssertEqual(error as? DeviceSettingSubmissionError, .ReadOnly)
+            }
+            XCTAssertTrue(sink.writes.isEmpty, "A read-only refusal must not reach the native writer")
+            XCTAssertTrue(sink.submittedWrites.isEmpty)
+            XCTAssertNil(state.settings().setting(for: .controllerId)?.requested)
+        }
+    }
+
     func testRejectedCorrelatedInitialConfigReadSettlesRustReadSlot() throws {
         try queue.sync {
             let (state, transport, sink) = try makeReadyVescTransport()

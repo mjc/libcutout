@@ -1714,7 +1714,9 @@ pub(crate) fn descriptor(id: SettingId, order: u16) -> Option<SettingDescriptor>
         access,
         write_verification: VerificationStatus::SourceVerified,
         completion: SettingCompletionStrategy::MatchingReadback,
-        apply_effect: SettingApplyEffect::Unspecified,
+        // Both pinned firmware SET handlers install the configuration at runtime.
+        // Completion still requires the independent matching readback above.
+        apply_effect: SettingApplyEffect::Immediate,
     })
 }
 
@@ -2401,6 +2403,27 @@ mod tests {
             control(SettingId::BmsLimitMode),
             Some(SettingControl::ReadOnly)
         );
+    }
+
+    #[test]
+    fn firmware_configuration_effect_is_runtime_apply_with_independent_confirmation() {
+        for kind in [VescConfigurationKind::Motor, VescConfigurationKind::App] {
+            let descriptors = catalog(kind);
+            assert!(!descriptors.is_empty());
+            for descriptor in descriptors {
+                assert_eq!(
+                    descriptor.apply_effect,
+                    SettingApplyEffect::Immediate,
+                    "{:?} is installed by the configuration SET handler without a reboot",
+                    descriptor.id
+                );
+                assert_eq!(
+                    descriptor.completion,
+                    SettingCompletionStrategy::MatchingReadback,
+                    "runtime application does not establish receipt or readback"
+                );
+            }
+        }
     }
 
     #[test]
