@@ -1170,8 +1170,8 @@ fn read_projection(
 #[cfg(test)]
 mod tests {
     use super::{
-        CompactionState, LegacyArtifactPhase, LegacyArtifactScan, MaintenanceBusyTimeout,
-        compact_with_available_space, compact_with_available_space_and_observer, reject_artifact,
+        CompactionState, LegacyArtifactPhase, LegacyArtifactScan, compact_with_available_space,
+        compact_with_available_space_and_observer, reject_artifact,
     };
     use rusqlite::{
         Connection,
@@ -1499,35 +1499,5 @@ mod tests {
             CompactionState::Complete
         );
         assert!(!compaction_is_pending(&connection));
-    }
-
-    #[test]
-    fn idle_normalization_uses_nonblocking_busy_timeout_and_restores_connection_setting() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().join("busy-normalization.sqlite");
-        let mut connection = Connection::open(&database_path).unwrap();
-        super::super::configure_connection(&mut connection, &database_path).unwrap();
-        let original_busy_timeout: i64 = connection
-            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
-            .unwrap();
-        assert_eq!(original_busy_timeout, 5_000);
-
-        let lock = Connection::open(&database_path).unwrap();
-        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let maintenance_started = std::time::Instant::now();
-        let mut busy_timeout = MaintenanceBusyTimeout::enter(&mut connection).unwrap();
-        let result = super::remove_redundant_semantic_batch(busy_timeout.connection_mut(), None);
-        busy_timeout.restore().unwrap();
-        drop(busy_timeout);
-        assert!(result.is_err(), "the competing writer keeps its lock");
-        assert!(
-            maintenance_started.elapsed() < Duration::from_millis(500),
-            "idle normalization yields to a queued command instead of waiting five seconds"
-        );
-        let restored_busy_timeout: i64 = connection
-            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
-            .unwrap();
-        assert_eq!(restored_busy_timeout, original_busy_timeout);
-        lock.execute_batch("ROLLBACK").unwrap();
     }
 }

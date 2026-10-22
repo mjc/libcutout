@@ -1039,3 +1039,63 @@ fn install_sqlite_progress_gate(
         )
         .expect("SQLite progress handler hook installs");
 }
+
+#[cfg(test)]
+mod normalization_busy_timeout_tests {
+    use super::{DatabaseWorker, SpatialSchemaState};
+    use crate::storage::{self, normalization::BatchState};
+    use rusqlite::Connection;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn worker_normalization_yields_to_writer_and_restores_busy_timeout() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("worker-busy-normalization.sqlite");
+        let mut connection = Connection::open(&database_path).unwrap();
+        storage::configure_connection(&mut connection, &database_path).unwrap();
+        let original_busy_timeout: i64 = connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(original_busy_timeout, 5_000);
+
+        let lock = Connection::open(&database_path).unwrap();
+        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let worker_alive = AtomicBool::new(true);
+        let maintenance_demand = std::sync::Arc::new(AtomicU64::new(0));
+        let diagnostic_recording_enabled = AtomicBool::new(false);
+        let mut worker = DatabaseWorker {
+            connection,
+            database_path,
+            legacy_artifact_scan: None,
+            spatial_schema: SpatialSchemaState::Uninitialized,
+            worker_alive: &worker_alive,
+            maintenance_demand: &maintenance_demand,
+            diagnostic_recording_enabled: &diagnostic_recording_enabled,
+        };
+
+        let started = Instant::now();
+        assert_eq!(
+            worker.normalize_maintenance_batch(),
+            BatchState::Deferred,
+            "the actual worker maintenance entrypoint defers on the competing lock"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "a queued database command does not wait through the normal busy timeout"
+        );
+        let restored_busy_timeout: i64 = worker
+            .connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(restored_busy_timeout, original_busy_timeout);
+        assert_eq!(
+            worker
+                .connection
+                .query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        lock.execute_batch("ROLLBACK").unwrap();
+    }
+}

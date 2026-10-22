@@ -7657,13 +7657,14 @@ mod sqlite_canonical_pevcap_tests {
         .unwrap();
         fs::write(&source_path, &bytes).unwrap();
         let database = RideDatabase::open(&database_path).unwrap();
+        let canonical_database_path = fs::canonicalize(&database_path).unwrap();
         let preview = database
             .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
             .unwrap();
         let receipt = database
             .confirm_pevcap_import(&preview, 1_700_000_000_001)
             .unwrap();
-        let managed_directory = pevcap_import_directory(&database_path);
+        let managed_directory = pevcap_import_directory(&canonical_database_path);
         let legacy_path = managed_directory.join(format!("{}.jsonl", receipt.artifact_digest));
         let external_path = directory.path().join("external.jsonl");
         fs::write(&external_path, b"outside managed storage").unwrap();
@@ -7675,6 +7676,14 @@ mod sqlite_canonical_pevcap_tests {
                 params![legacy_path.to_string_lossy(), receipt.artifact_digest],
             )
             .unwrap();
+        let stored_path: String = connection
+            .query_row(
+                "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&receipt.artifact_digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(PathBuf::from(stored_path), legacy_path);
         drop(connection);
 
         let duplicate_preview = database
