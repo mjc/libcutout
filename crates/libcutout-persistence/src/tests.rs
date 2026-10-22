@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 #[path = "ride_session_marker_tests.rs"]
 mod ride_session_marker_tests;
 
+#[path = "storage/phone_control_preferences_tests.rs"]
+mod phone_control_preferences_tests;
+
 use crate::{
     CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
 };

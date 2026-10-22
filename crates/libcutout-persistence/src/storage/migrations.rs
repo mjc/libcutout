@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 54;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 55;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -77,6 +77,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         51 => migrate_v51_to_v52(connection)?,
         52 => migrate_v52_to_v53(connection)?,
         53 => migrate_v53_to_v54(connection)?,
+        54 => migrate_v54_to_v55(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -137,6 +138,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 53 {
             migrate_v53_to_v54(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 54 {
+            migrate_v54_to_v55(connection)?;
         }
     }
     Ok(())
@@ -243,6 +247,7 @@ fn migrate_v2_to_current(connection: &mut Connection) -> Result<(), StorageError
     reason = "the declarative schema stays in one transaction"
 )]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute_batch(super::phone_control::SCHEMA)?;
     connection.execute_batch(super::device_vehicle::SCHEMA)?;
     connection.execute_batch(super::device_drivetrain::SCHEMA)?;
     connection.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
@@ -1971,6 +1976,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "device_vehicle_classifications",
         "device_vesc_drivetrains",
         "phone_alarm_preferences",
+        "phone_control_preferences",
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
         "capture_submissions",
@@ -2047,6 +2053,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_device_schema(connection)?;
     super::device_vehicle::verify_schema(connection)?;
     super::device_drivetrain::verify_schema(connection)?;
+    super::phone_control::verify_schema(connection)?;
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
@@ -2235,6 +2242,15 @@ fn migrate_v53_to_v54(connection: &mut Connection) -> Result<(), StorageError> {
     }
     super::device_drivetrain::verify_schema(&transaction)?;
     transaction.execute_batch(&schema_pragmas(54))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v54_to_v55(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::phone_control::SCHEMA)?;
+    super::phone_control::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(55))?;
     transaction.commit()?;
     Ok(())
 }

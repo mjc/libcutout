@@ -79,6 +79,9 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::PhoneControl(command) => {
+                super::phone_control::dispatch(connection, command);
+            }
             Command::DeviceDrivetrain(command) => {
                 super::device_drivetrain::dispatch(connection, command);
             }

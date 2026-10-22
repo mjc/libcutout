@@ -64,6 +64,7 @@ pub use charging::*;
 mod device_drivetrain;
 mod device_vehicle;
 mod migrations;
+mod phone_control;
 mod ride_write;
 mod service;
 mod worker;
@@ -5304,6 +5305,7 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    PhoneControl(phone_control::Command),
     DeviceVehicle(device_vehicle::Command),
     DeviceDrivetrain(device_drivetrain::Command),
     CaptureSubmission(capture_submission::Command),
