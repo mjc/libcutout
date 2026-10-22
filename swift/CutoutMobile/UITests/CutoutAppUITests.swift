@@ -9439,6 +9439,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         )
         XCTAssertEqual(Set(crossing.map(\.generation)).count, 1)
         XCTAssertFalse(crossing.contains { $0.phase == "pressed:brake" })
+        keepPhoneScreenshot("active-preview-buttons")
         try openPhoneReadings()
         phoneApp.tabBars.buttons["Map"].tap()
         XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))

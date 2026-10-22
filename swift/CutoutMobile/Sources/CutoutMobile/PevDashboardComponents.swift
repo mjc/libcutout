@@ -9,6 +9,42 @@ import SwiftUI
 private enum PevSystemColors {
     #if os(iOS)
         static let pageBackground = Color(uiColor: .systemBackground)
+        static let rideCanvas = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 8 / 255, green: 10 / 255, blue: 9 / 255, alpha: 1)
+                    : UIColor(red: 250 / 255, green: 249 / 255, blue: 244 / 255, alpha: 1)
+            })
+        static let rideInk = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 248 / 255, green: 247 / 255, blue: 239 / 255, alpha: 1)
+                    : UIColor(red: 17 / 255, green: 19 / 255, blue: 18 / 255, alpha: 1)
+            })
+        static let rideAccent = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 1, green: 223 / 255, blue: 88 / 255, alpha: 1)
+                    : UIColor(red: 1, green: 222 / 255, blue: 84 / 255, alpha: 1)
+            })
+        static let rideControlFill = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 50 / 255, green: 55 / 255, blue: 42 / 255, alpha: 1)
+                    : UIColor(red: 17 / 255, green: 19 / 255, blue: 18 / 255, alpha: 1)
+            })
+        static let rideMuted = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 175 / 255, green: 181 / 255, blue: 174 / 255, alpha: 1)
+                    : UIColor(red: 86 / 255, green: 91 / 255, blue: 88 / 255, alpha: 1)
+            })
+        static let rideLine = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 48 / 255, green: 54 / 255, blue: 47 / 255, alpha: 1)
+                    : UIColor(red: 216 / 255, green: 219 / 255, blue: 211 / 255, alpha: 1)
+            })
         static let disabledFill = pageBackground
         static let brand = Color(
             uiColor: UIColor { traits in
@@ -35,6 +71,42 @@ private enum PevSystemColors {
             })
     #elseif os(macOS)
         static let pageBackground = Color(nsColor: .windowBackgroundColor)
+        static let rideCanvas = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 8 / 255, green: 10 / 255, blue: 9 / 255, alpha: 1)
+                    : NSColor(red: 250 / 255, green: 249 / 255, blue: 244 / 255, alpha: 1)
+            })
+        static let rideInk = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 248 / 255, green: 247 / 255, blue: 239 / 255, alpha: 1)
+                    : NSColor(red: 17 / 255, green: 19 / 255, blue: 18 / 255, alpha: 1)
+            })
+        static let rideAccent = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 1, green: 223 / 255, blue: 88 / 255, alpha: 1)
+                    : NSColor(red: 1, green: 222 / 255, blue: 84 / 255, alpha: 1)
+            })
+        static let rideControlFill = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 50 / 255, green: 55 / 255, blue: 42 / 255, alpha: 1)
+                    : NSColor(red: 17 / 255, green: 19 / 255, blue: 18 / 255, alpha: 1)
+            })
+        static let rideMuted = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 175 / 255, green: 181 / 255, blue: 174 / 255, alpha: 1)
+                    : NSColor(red: 86 / 255, green: 91 / 255, blue: 88 / 255, alpha: 1)
+            })
+        static let rideLine = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 48 / 255, green: 54 / 255, blue: 47 / 255, alpha: 1)
+                    : NSColor(red: 216 / 255, green: 219 / 255, blue: 211 / 255, alpha: 1)
+            })
         static let disabledFill = pageBackground
         static let brand = Color(
             nsColor: NSColor(name: nil) { appearance in
@@ -59,6 +131,12 @@ private enum PevSystemColors {
 
 public enum PevDashboardColors {
     public static let pageBackground = PevSystemColors.pageBackground
+    public static let rideCanvas = PevSystemColors.rideCanvas
+    public static let rideInk = PevSystemColors.rideInk
+    public static let rideAccent = PevSystemColors.rideAccent
+    public static let rideControlFill = PevSystemColors.rideControlFill
+    public static let rideMuted = PevSystemColors.rideMuted
+    public static let rideLine = PevSystemColors.rideLine
     public static let disabledFill = PevSystemColors.disabledFill
     public static let brand = PevSystemColors.brand
     public static let yellow = PevSystemColors.yellow
