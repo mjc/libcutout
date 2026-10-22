@@ -2407,9 +2407,12 @@ mod tests {
 
     #[test]
     fn firmware_configuration_effect_is_runtime_apply_with_independent_confirmation() {
-        for kind in [VescConfigurationKind::Motor, VescConfigurationKind::App] {
+        for (kind, count) in [
+            (VescConfigurationKind::Motor, 40),
+            (VescConfigurationKind::App, 35),
+        ] {
             let descriptors = catalog(kind);
-            assert!(!descriptors.is_empty());
+            assert_eq!(descriptors.len(), count);
             for descriptor in descriptors {
                 assert_eq!(
                     descriptor.apply_effect,
