@@ -29,6 +29,7 @@ typealias RideHistoryDateProvider = @MainActor () -> Date
 final class CutoutAppModel {
 
     let device: DevicePresentationModel
+    let phoneDrive: PhoneDriveModel
     var displayState: RideDisplayState { device.displayState }
     var phase: SessionConnectionPhase { device.phase }
     var devicePickerScanState: DevicePickerScanState? { device.scanState }
@@ -526,6 +527,7 @@ final class CutoutAppModel {
         )
         device = DevicePresentationModel(
             selectedDeviceStore: selectedDeviceStore, restoredSelection: restoredDeviceSelection)
+        phoneDrive = PhoneDriveModel(core: core)
         device.protocolIdentityCandidate = core.protocolIdentityCandidate
         device.deviceSessionSnapshot = core.rideSessionStateHandle.deviceSessionSnapshot()
         self.rideHistory = rideHistory
@@ -658,6 +660,7 @@ final class CutoutAppModel {
                 },
                 deviceSession: { [weak self] snapshot in
                     self?.device.deviceSessionSnapshot = snapshot
+                    self?.phoneDrive.refresh()
                     self?.syncLiveActivity()
                 },
                 protocolIdentity: { [weak self] candidate in
@@ -1016,6 +1019,7 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
+        phoneDrive.cancel(.sceneInactive)
         websiteScreenshotRideFeed?.cancel()
         websiteScreenshotRideFeed = nil
         liveRide.setSceneActive(false)
@@ -1080,6 +1084,7 @@ final class CutoutAppModel {
     }
 
     func appDidBecomeActive() {
+        phoneDrive.refresh()
         liveRide.setSceneActive(true)
         core.setPresentationActive(true)
         refreshPhoneAlarmAuthorization()
@@ -1100,6 +1105,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func disconnectTransport() async -> Bool {
+        phoneDrive.cancel(.connectionChanged)
         let expectedRecordingToken = await core.rideMapStateHandle?.currentSnapshotAsync(atMs: core.now().rawValue)?
             .recordingToken
         let connectionGeneration = core.connectionSnapshot.generation

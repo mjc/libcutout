@@ -88,7 +88,7 @@ struct CutoutApp: App {
                             rideMapPresentation.charging.applicationDidEnterBackground()
                         }
                     case .inactive:
-                        break
+                        model?.phoneDrive.cancel(.sceneInactive)
                     @unknown default:
                         break
                     }

@@ -1242,6 +1242,21 @@ public final class CutoutSessionCore: NSObject {
             }
         }.get()
     }
+
+    public func observePhoneDriveContacts(
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+    ) -> MobilePhoneDriveSnapshotDto {
+        onBleQueue {
+            guard let owner = liveOwner, owner.token == token else {
+                return rustSessionState.phoneDriveSnapshot()
+            }
+            return owner.observePhoneDriveContacts(generation: generation, contacts: contacts)
+        }
+    }
+
+    public func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto {
+        onBleQueue { rustSessionState.cancelPhoneDrive(reason: reason) }
+    }
     /// Attempts the generic trip-meter reset action for a new ride when the
     /// selected device profile exposes that capability.
     ///

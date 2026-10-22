@@ -9334,3 +9334,288 @@ final class ChargingMapDeviceUITests: XCTestCase {
         add(attachment)
     }
 }
+
+// Simulator-only native phone-input observation acceptance.
+// Canonical Rust phase receipts establish input feedback, never controller actuation.
+
+@MainActor
+final class PhoneDriveSimulatorUITests: XCTestCase {
+    private var phoneApp: XCUIApplication!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Phone-control presentation acceptance is restricted to Simulator")
+        #endif
+        continueAfterFailure = false
+        phoneApp = XCUIApplication()
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    override func tearDown() async throws {
+        phoneApp?.terminate()
+        phoneApp = nil
+        #if targetEnvironment(simulator)
+            XCUIDevice.shared.orientation = .portrait
+        #endif
+        try await super.tearDown()
+    }
+
+    func testProductionUnqualifiedButtonsStayInertAndLayoutSurvivesRelaunch() throws {
+        launchPhoneFixture(preview: false)
+        try selectPhoneMode("Buttons")
+        try openPhoneRide()
+        let brake = phoneApp.buttons["phone-control.brake"]
+        let throttle = phoneApp.buttons["phone-control.throttle"]
+        XCTAssertTrue(brake.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertFalse(brake.isEnabled)
+        XCTAssertFalse(throttle.isEnabled)
+        XCTAssertFalse(phoneApp.buttons["phone-control.activate"].isEnabled)
+        XCTAssertEqual(
+            phoneApp.staticTexts["phone-control.status"].label,
+            "Phone control is unavailable for this controller.")
+        XCTAssertFalse(phoneElement("phone-control.area").exists)
+        XCTAssertFalse(phoneElement("phone-control.preview-receipts").exists)
+        let speed = phoneElement("ride.hero.speed")
+        XCTAssertTrue((speed.value as? String ?? "").localizedCaseInsensitiveContains("unavailable"))
+        let drivetrain = phoneApp.buttons["vesc.drivetrain.open"]
+        XCTAssertTrue(drivetrain.isHittable, "Buttons must preserve the missing-drivetrain recovery action")
+        drivetrain.tap()
+        XCTAssertTrue(phoneElement("vesc.drivetrain.editor").waitForExistence(timeout: 5))
+        phoneApp.buttons["vesc.drivetrain.done"].tap()
+        XCTAssertTrue(phoneElement("vesc.drivetrain.editor").waitForNonExistence(timeout: 5))
+        throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertFalse(throttle.label.contains("Held"))
+        try openPhoneReadings()
+        keepPhoneScreenshot("unqualified-buttons")
+
+        phoneApp.terminate()
+        // Keep launch environment/database identity, then exercise existing reconnect/restoration.
+        phoneApp.launch()
+        try openPhoneRide()
+        XCTAssertTrue(throttle.waitForExistence(timeout: 10), phoneApp.debugDescription)
+        XCTAssertFalse(throttle.isEnabled)
+        XCTAssertFalse(throttle.label.contains("Held"))
+        phoneApp.buttons["dashboard.disconnect"].tap()
+        XCTAssertTrue(phoneApp.buttons["device-picker.open-setup"].waitForExistence(timeout: 10))
+        phoneApp.buttons["device-picker.open-setup"].tap()
+        let mode = phoneElement("setup.phone-control.mode")
+        XCTAssertTrue(mode.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertEqual(mode.value as? String, "Buttons")
+        XCTAssertTrue(phoneApp.buttons["setup.music"].exists)
+        phoneApp.buttons["setup.done"].tap()
+    }
+
+    func testPreviewButtonsUseBottomRegionsAndReleaseBeforeReadingsOrNavigation() throws {
+        launchPhoneFixture(preview: true)
+        try selectPhoneMode("Buttons")
+        try openPhoneRide()
+        let brake = phoneApp.buttons["phone-control.brake"]
+        let throttle = phoneApp.buttons["phone-control.throttle"]
+        XCTAssertTrue(brake.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        for button in [brake, throttle] {
+            XCTAssertTrue(button.isEnabled)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 100)
+            XCTAssertLessThanOrEqual(button.frame.maxY, phoneApp.tabBars.firstMatch.frame.minY)
+        }
+        XCTAssertLessThan(brake.frame.midX, throttle.frame.midX)
+        XCTAssertGreaterThan(brake.frame.minY, phoneElement("vesc.ride.tripDistance").frame.maxY)
+        let beforeHold = try phoneReceiptBaseline()
+        throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.4)
+        let hold = try awaitPhoneReceipts(["pressed:throttle", "idle"], after: beforeHold)
+        XCTAssertEqual(Set(hold.map(\.generation)).count, 1)
+        XCTAssertFalse(throttle.label.contains("Held"), "A completed hold must be released")
+        let beforeCrossing = try phoneReceiptBaseline()
+        let start = throttle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let end = brake.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+        let crossing = try awaitPhoneReceipts(
+            ["pressed:throttle", "cancelled:region_left", "idle"], after: beforeCrossing
+        )
+        XCTAssertEqual(Set(crossing.map(\.generation)).count, 1)
+        XCTAssertFalse(crossing.contains { $0.phase == "pressed:brake" })
+        try openPhoneReadings()
+        phoneApp.tabBars.buttons["Map"].tap()
+        XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
+        phoneApp.tabBars.buttons["Ride"].tap()
+        XCTAssertTrue(throttle.waitForExistence(timeout: 5))
+        XCTAssertFalse(throttle.label.contains("Held"))
+        keepPhoneScreenshot("preview-buttons")
+    }
+
+    func testPreviewAreaCoversHeaderAndReadingsWhileTabsAndPlayerStayReachable() throws {
+        launchPhoneFixture(preview: true, pausedMusic: true)
+        try selectPhoneMode("Area of screen")
+        try openPhoneRide()
+        let area = phoneElement("phone-control.area")
+        XCTAssertTrue(area.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertFalse(phoneApp.buttons["phone-control.brake"].exists)
+        XCTAssertFalse(phoneApp.buttons["phone-control.throttle"].exists)
+        let header = phoneElement("dashboard.top.navigation")
+        XCTAssertLessThanOrEqual(area.frame.minY, header.frame.minY + 1)
+        XCTAssertGreaterThanOrEqual(area.frame.maxY, phoneElement("vesc.ride.tripDistance").frame.maxY)
+        XCTAssertLessThanOrEqual(area.frame.maxY, phoneApp.tabBars.firstMatch.frame.minY + 1)
+        let player = phoneElement("music.compact-player")
+        XCTAssertTrue(player.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertLessThanOrEqual(area.frame.maxY, player.frame.minY + 1)
+        for x in [0.05, 0.95] {
+            for y in [0.05, 0.5, 0.95] {
+                let beforeSample = try phoneReceiptBaseline()
+                area.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).press(forDuration: 0.1)
+                let sample = try awaitPhoneReceipts(
+                    [x < 0.5 ? "pressed:brake" : "pressed:throttle", "idle"], after: beforeSample
+                )
+                XCTAssertEqual(Set(sample.map(\.generation)).count, 1)
+                XCTAssertFalse(phoneElement("ride.readings.detail").exists)
+            }
+        }
+        let beforeCrossing = try phoneReceiptBaseline()
+        let right = area.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3))
+        let left = area.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3))
+        right.press(forDuration: 0.1, thenDragTo: left, withVelocity: .slow, thenHoldForDuration: 0.1)
+        let crossing = try awaitPhoneReceipts(
+            ["pressed:throttle", "cancelled:region_left", "idle"], after: beforeCrossing
+        )
+        XCTAssertFalse(crossing.contains { $0.phase == "pressed:brake" })
+        // Real returned Rust observations establish the sampled held/canceled states.
+        // This one-segment drag does not prove reentry or controlled multitouch.
+        phoneApp.tabBars.buttons["Map"].tap()
+        XCTAssertTrue(phoneElement("ride-map.screen").waitForExistence(timeout: 5))
+        phoneApp.tabBars.buttons["Ride"].tap()
+        XCTAssertTrue(area.waitForExistence(timeout: 5))
+        XCTAssertFalse((area.value as? String ?? "").contains("Held"))
+        phoneApp.buttons["music.expand"].tap()
+        XCTAssertTrue(phoneElement("music.player.screen").waitForExistence(timeout: 5))
+        keepPhoneScreenshot("area-player-navigation")
+    }
+
+    func testDisabledModeRemovesInputAndRestoresOrdinaryReadings() throws {
+        launchPhoneFixture(preview: true)
+        try selectPhoneMode("Buttons")
+        try openPhoneRide()
+        XCTAssertTrue(phoneApp.buttons["phone-control.throttle"].waitForExistence(timeout: 5))
+        phoneApp.buttons["dashboard.disconnect"].tap()
+        XCTAssertTrue(phoneApp.buttons["device-picker.open-setup"].waitForExistence(timeout: 10))
+        try selectPhoneMode("Disabled")
+        try openPhoneRide()
+        XCTAssertFalse(phoneElement("phone-control.buttons").exists)
+        XCTAssertFalse(phoneElement("phone-control.area").exists)
+        XCTAssertFalse(phoneApp.buttons["phone-control.activate"].exists)
+        try openPhoneReadings()
+        keepPhoneScreenshot("phone-control-disabled")
+    }
+
+    private func launchPhoneFixture(preview: Bool, pausedMusic: Bool = false) {
+        phoneApp.launchArguments = [
+            "-CUTOUT_UI_TEST_FIXTURE", "eskate",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL",
+            "-io.cutout.music.monitoring.enabled", pausedMusic ? "YES" : "NO",
+            "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
+        ]
+        if preview { phoneApp.launchArguments.append("--ui-test-phone-drive-input") }
+        if pausedMusic {
+            phoneApp.launchArguments += [
+                "-io.cutout.music.provider.selected", "apple_music",
+                "-io.cutout.music.compact-player.hidden", "NO",
+            ]
+        }
+        phoneApp.launchEnvironment = [
+            "CUTOUT_UI_TEST_FIXTURE": "eskate",
+            "CUTOUT_UI_TEST_RIDE_DATABASE_ID": UUID().uuidString,
+        ]
+        phoneApp.launch()
+    }
+
+    private func selectPhoneMode(_ title: String) throws {
+        let gear = phoneApp.buttons["device-picker.open-setup"]
+        XCTAssertTrue(gear.waitForExistence(timeout: 10), phoneApp.debugDescription)
+        gear.tap()
+        let mode = phoneElement("setup.phone-control.mode")
+        XCTAssertTrue(mode.waitForExistence(timeout: 10), phoneApp.debugDescription)
+        mode.tap()
+        let option = phoneApp.buttons[title].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        option.tap()
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", title), object: mode)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed, phoneApp.debugDescription)
+        XCTAssertFalse(phoneElement("setup.phone-control.error").exists)
+        phoneApp.buttons["setup.done"].tap()
+        XCTAssertTrue(gear.waitForExistence(timeout: 5), phoneApp.debugDescription)
+    }
+
+    private func openPhoneRide() throws {
+        let use = phoneApp.buttons["device-picker.use.ui-test-standard-vesc-eskate"]
+        if use.waitForExistence(timeout: 2) { use.tap() }
+        let choice = phoneApp.buttons["device.type.choice.eskate"]
+        if choice.waitForExistence(timeout: 2) { choice.tap() }
+        XCTAssertTrue(phoneApp.buttons["ride.readings.open"].waitForExistence(timeout: 10), phoneApp.debugDescription)
+    }
+
+    private func openPhoneReadings() throws {
+        phoneApp.buttons["ride.readings.open"].tap()
+        XCTAssertTrue(phoneElement("ride.readings.detail").waitForExistence(timeout: 5), phoneApp.debugDescription)
+        phoneApp.buttons["ride.readings.done"].tap()
+        XCTAssertTrue(phoneElement("ride.readings.detail").waitForNonExistence(timeout: 5))
+    }
+
+    private struct PhoneReceipt {
+        let ordinal: UInt64
+        let generation: String
+        let phase: String
+    }
+
+    private func phoneReceipts() -> [PhoneReceipt] {
+        let value = phoneElement("phone-control.preview-receipts").value as? String ?? ""
+        return value.split(separator: "|").dropFirst().compactMap { raw in
+            let fields = Dictionary(
+                uniqueKeysWithValues: raw.split(separator: ",").compactMap { field -> (String, String)? in
+                    let pair = field.split(separator: "=", maxSplits: 1)
+                    guard pair.count == 2 else { return nil }
+                    return (String(pair[0]), String(pair[1]))
+                })
+            guard let rawOrdinal = fields["n"], let ordinal = UInt64(rawOrdinal),
+                let generation = fields["g"], let phase = fields["p"]
+            else { return nil }
+            return PhoneReceipt(ordinal: ordinal, generation: generation, phase: phase)
+        }
+    }
+
+    private func phoneReceiptBaseline() throws -> UInt64 {
+        let readback = phoneElement("phone-control.preview-receipts")
+        XCTAssertTrue(readback.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        let released = XCTNSPredicateExpectation(
+            predicate: NSPredicate { [self] _, _ in
+                phoneReceipts().last?.phase == "idle"
+            }, object: readback)
+        XCTAssertEqual(XCTWaiter.wait(for: [released], timeout: 5), .completed, phoneApp.debugDescription)
+        return try XCTUnwrap(phoneReceipts().last?.ordinal)
+    }
+
+    @discardableResult
+    private func awaitPhoneReceipts(_ expected: [String], after ordinal: UInt64) throws -> [PhoneReceipt] {
+        let readback = phoneElement("phone-control.preview-receipts")
+        let observed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { [self] _, _ in
+                phoneReceipts().filter { $0.ordinal > ordinal }.map(\.phase) == expected
+            }, object: readback)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [observed], timeout: 5), .completed,
+            "Expected actual Rust input receipts \(expected): \(String(describing: readback.value))")
+        let receipts = phoneReceipts().filter { $0.ordinal > ordinal }
+        XCTAssertEqual(receipts.map(\.phase), expected)
+        XCTAssertTrue(receipts.allSatisfy { $0.generation != "none" })
+        return receipts
+    }
+
+    private func phoneElement(_ identifier: String) -> XCUIElement {
+        phoneApp.descendants(matching: .any)[identifier].firstMatch
+    }
+
+    private func keepPhoneScreenshot(_ title: String) {
+        let attachment = XCTAttachment(screenshot: phoneApp.screenshot())
+        attachment.name = title
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

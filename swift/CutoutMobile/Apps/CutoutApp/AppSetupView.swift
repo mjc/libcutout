@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import SwiftUI
 
 #if canImport(UIKit)
@@ -75,6 +76,44 @@ struct AppSetupView: View {
                         Label(pevLocalizedText("music.settings.title"), systemImage: "music.note")
                     }
                     .accessibilityIdentifier("setup.music")
+                }
+                Section(localizedAppText("phone_control.title")) {
+                    if model.phoneDrive.settingsLoaded {
+                        Picker(
+                            localizedAppText("phone_control.input_mode"),
+                            selection: Binding(
+                                get: { model.phoneDrive.snapshot.mode },
+                                set: { mode in Task { await model.phoneDrive.saveMode(mode) } }
+                            )
+                        ) {
+                            ForEach([MobilePhoneControlModeDto.disabled, .buttons, .area], id: \.self) { mode in
+                                Text(mode.phoneControlTitle).tag(mode)
+                            }
+                        }
+                        .disabled(model.phoneDrive.settingsBusy)
+                        .accessibilityIdentifier("setup.phone-control.mode")
+                    } else if !model.phoneDrive.settingsError {
+                        ProgressView(localizedAppText("phone_control.input_mode"))
+                    }
+                    Text(model.phoneDrive.unavailableText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if model.phoneDrive.settingsError {
+                        Text(
+                            localizedAppText(
+                                model.phoneDrive.settingsLoaded
+                                    ? "phone_control.save_failed" : "phone_control.load_failed"
+                            )
+                        )
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("setup.phone-control.error")
+                        if !model.phoneDrive.settingsLoaded {
+                            Button(localizedAppText("phone_control.retry")) {
+                                Task { await model.phoneDrive.loadMode() }
+                            }
+                            .disabled(model.phoneDrive.settingsBusy)
+                        }
+                    }
                 }
                 if model.device.hasSavedDevice {
                     Section(localizedAppText("setup.device")) {
@@ -187,6 +226,7 @@ struct AppSetupView: View {
             }
             .task { await model.loadRideAutostartSetting() }
             .task { await model.loadDiagnosticRecordingSetting() }
+            .task { await model.phoneDrive.loadMode() }
             .task { await accountDeletion.refresh() }
             .formStyle(.grouped)
             .navigationTitle(localizedAppText("picker.section.setup"))

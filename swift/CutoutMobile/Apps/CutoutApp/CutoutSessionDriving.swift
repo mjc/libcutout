@@ -51,6 +51,10 @@ protocol CutoutSessionDriving: AnyObject {
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
+    func observePhoneDriveContacts(
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+    ) -> MobilePhoneDriveSnapshotDto
+    func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto
     func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
         -> MobileDeviceSessionSnapshotDto
     func loadVescDrivetrain(token: ConnectionAttemptToken) async throws -> MobileVescDrivetrainDraft?
@@ -78,6 +82,16 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    func observePhoneDriveContacts(
+        token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto
+    ) -> MobilePhoneDriveSnapshotDto {
+        rideSessionStateHandle.observePhoneDriveContacts(token: token, generation: generation, contacts: contacts)
+    }
+
+    func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto {
+        rideSessionStateHandle.cancelPhoneDrive(reason: reason)
+    }
+
     var onDeviceSessionSnapshotChange: ((MobileDeviceSessionSnapshotDto) -> Void)? {
         get { nil }
         set {}

@@ -519,7 +519,8 @@ struct VescRideRouteView: View {
                         captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
                         connectionStatusText: model.device.connectionStatusText,
                         disconnect: disconnect,
-                        makeDrivetrainEditor: model.makeVescDrivetrainEditor
+                        makeDrivetrainEditor: model.makeVescDrivetrainEditor,
+                        phoneDrive: model.phoneDrive
                     )
                 }
             }

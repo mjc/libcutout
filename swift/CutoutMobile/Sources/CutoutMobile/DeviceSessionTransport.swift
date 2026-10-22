@@ -169,6 +169,15 @@ final class DeviceSessionTransport: @unchecked Sendable {
         try ingest(.tick, at: at)
     }
 
+    func observePhoneDriveContacts(
+        generation: UInt64, contacts: MobilePhoneDriveContactsDto
+    ) -> MobilePhoneDriveSnapshotDto {
+        guard !invalidated, state.connectionAttemptIsCurrent(token: token) else {
+            return state.phoneDriveSnapshot()
+        }
+        return state.observePhoneDriveContacts(token: token, generation: generation, contacts: contacts)
+    }
+
     func invalidate() {
         guard !invalidated else { return }
         timer?.cancel()

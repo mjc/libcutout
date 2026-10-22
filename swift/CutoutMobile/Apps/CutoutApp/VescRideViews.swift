@@ -1,5 +1,6 @@
 import Accessibility
 import CutoutMobile
+import CutoutMobileFFI
 import SwiftUI
 
 struct VescRideScreenView: View {
@@ -13,6 +14,7 @@ struct VescRideScreenView: View {
     let connectionStatusText: String?
     var disconnect: (() -> Void)? = nil
     var makeDrivetrainEditor: (() -> VescDrivetrainEditor?)? = nil
+    var phoneDrive: PhoneDriveModel? = nil
     @State private var showsStandardReadings = false
     @State private var drivetrainEditor: VescDrivetrainEditor?
 
@@ -40,7 +42,11 @@ struct VescRideScreenView: View {
     var body: some View {
         Group {
             if presentation.usesStandardInstruments {
-                standardInstruments
+                if let phoneDrive, liveSnapshot?.vehicleKind == .eskate {
+                    PhoneDriveRideSurface(model: phoneDrive) { standardInstruments }
+                } else {
+                    standardInstruments
+                }
             } else {
                 refloatInstruments
             }
@@ -49,6 +55,8 @@ struct VescRideScreenView: View {
         .sheet(item: $drivetrainEditor) { editor in
             VescDrivetrainEditorView(editor: editor)
         }
+        .onChange(of: showsStandardReadings) { _, _ in phoneDrive?.cancel(.navigation) }
+        .onChange(of: drivetrainEditor != nil) { _, _ in phoneDrive?.cancel(.navigation) }
         .onChange(of: liveSnapshot?.warning) { _, warning in
             if let announcement = warning?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
@@ -129,7 +137,7 @@ struct VescRideScreenView: View {
     }
 
     private var standardInstruments: some View {
-        PevRideInstrumentLayout(spacing: 16) {
+        PevRideInstrumentLayout(spacing: usesCompactPhoneInstruments ? 8 : 16) {
             HStack(spacing: 8) {
                 PevRideStatusHeader(
                     title: presentation.title, subtitle: presentation.subtitle,
@@ -151,24 +159,35 @@ struct VescRideScreenView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.top.navigation")
         } primary: { landscape in
-            PevRidePrimaryInstruments(
-                speed: presentation.speedReadout,
-                caption: localizedAppText("vesc.speed.caption"), landscape: landscape,
-                speedAccessory: {
-                    if phase == .live, !presentation.speedReadout.isAvailable, let makeDrivetrainEditor {
-                        Button(localizedAppText("vesc.drivetrain.set")) {
-                            drivetrainEditor = makeDrivetrainEditor()
+            if usesCompactPhoneInstruments {
+                GeometryReader { geometry in
+                    HStack(spacing: 12) {
+                        VStack(spacing: 0) {
+                            PevRideSpeedReading(
+                                speed: presentation.speedReadout,
+                                caption: localizedAppText("vesc.speed.caption"),
+                                pointSize: min(100, geometry.size.width * 0.27, geometry.size.height * 0.7)
+                            )
+                            drivetrainRecoveryAccessory
                         }
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(PevColors.cardFill, in: Capsule())
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("vesc.drivetrain.open")
+                        .frame(maxWidth: .infinity)
+                        standardEnergyReading(
+                            pointSize: min(58, geometry.size.width * 0.15, geometry.size.height * 0.55)
+                        )
+                        .frame(maxWidth: .infinity)
                     }
+                    .frame(maxHeight: .infinity)
                 }
-            ) { size in
-                standardEnergyReading(pointSize: min(76, size.width * 0.23, size.height * 0.45))
+            } else {
+                PevRidePrimaryInstruments(
+                    speed: presentation.speedReadout,
+                    caption: localizedAppText("vesc.speed.caption"), landscape: landscape,
+                    speedAccessory: {
+                        drivetrainRecoveryAccessory
+                    }
+                ) { size in
+                    standardEnergyReading(pointSize: min(76, size.width * 0.23, size.height * 0.45))
+                }
             }
         } summary: {
             standardSummaryReadings
@@ -181,6 +200,25 @@ struct VescRideScreenView: View {
         }
         .sheet(isPresented: $showsStandardReadings) {
             PevRideReadingsDetail(tiles: dashboardTiles, footpadText: nil)
+        }
+    }
+
+    private var usesCompactPhoneInstruments: Bool {
+        liveSnapshot?.vehicleKind == .eskate && phoneDrive?.snapshot.mode == .buttons
+    }
+
+    @ViewBuilder
+    private var drivetrainRecoveryAccessory: some View {
+        if phase == .live, !presentation.speedReadout.isAvailable, let makeDrivetrainEditor {
+            Button(localizedAppText("vesc.drivetrain.set")) {
+                drivetrainEditor = makeDrivetrainEditor()
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .background(PevColors.cardFill, in: Capsule())
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("vesc.drivetrain.open")
         }
     }
 
@@ -213,14 +251,14 @@ struct VescRideScreenView: View {
             ForEach(Array(presentation.standardSummaryTiles.enumerated()), id: \.element.kind) { index, tile in
                 PevInstrumentReading(
                     label: tile.label, value: tile.metricValue, unit: tile.unit,
-                    pointSize: 52, identifier: "vesc.ride.\(tile.kind)",
+                    pointSize: usesCompactPhoneInstruments ? 32 : 52, identifier: "vesc.ride.\(tile.kind)",
                     alignment: index == 0 ? .leading : .trailing, detail: tile.detail
                 )
                 .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : .trailing)
             }
         }
-        .padding(.vertical, 18)
-        .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? nil : 138)
+        .padding(.vertical, usesCompactPhoneInstruments ? 8 : 18)
+        .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? nil : usesCompactPhoneInstruments ? 72 : 138)
         .overlay(alignment: .top) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(PevColors.cardStroke).frame(height: 1) }
     }
