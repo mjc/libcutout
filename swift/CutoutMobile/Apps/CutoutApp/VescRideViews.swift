@@ -296,7 +296,7 @@ struct VescRideScreenView: View {
             showsStandardReadings = true
         } label: {
             Group {
-                if isEskate, tile.kind == .batteryLevel,
+                if isEskate, tile.kind == .batteryLevel, !dynamicTypeSize.isAccessibilitySize,
                     let level = liveSnapshot?.batteryLevelReported ?? liveSnapshot?.batteryLevelEstimated
                 {
                     PevRideReserveGauge(
@@ -315,7 +315,8 @@ struct VescRideScreenView: View {
                 } else {
                     PevInstrumentReading(
                         label: tile.label, value: tile.metricValue, unit: tile.unit,
-                        pointSize: pointSize, identifier: "vesc.ride.energy", alignment: .center,
+                        pointSize: dynamicTypeSize.isAccessibilitySize ? min(52, pointSize) : pointSize,
+                        identifier: "vesc.ride.energy", alignment: .center,
                         detail: tile.detail,
                         ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
                         muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
