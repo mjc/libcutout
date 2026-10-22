@@ -9680,9 +9680,8 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [estimated], timeout: 5), .completed, phoneApp.debugDescription)
             let speed = phoneElement("ride.hero.speed")
             let speedValue = speed.value as? String ?? ""
-            XCTAssertFalse(speedValue.isEmpty, phoneApp.debugDescription)
-            XCTAssertFalse(speedValue.localizedCaseInsensitiveContains("unavailable"), phoneApp.debugDescription)
-            XCTAssertFalse(speedValue.contains("--"), phoneApp.debugDescription)
+            // Freshness/severity metadata can be unavailable beside a numeric primary speed.
+            XCTAssertTrue(speedValue.first?.isNumber == true, phoneApp.debugDescription)
             XCTAssertFalse(phoneApp.buttons["vesc.drivetrain.open"].exists)
             XCTAssertFalse(energy.frame.isEmpty)
             let trip = phoneElement("vesc.ride.tripDistance")
