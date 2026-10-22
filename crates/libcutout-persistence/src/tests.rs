@@ -661,9 +661,11 @@ fn live_ble_observation_is_structured_with_its_raw_event_sequence() {
         .expect("capture finishes");
     database.shutdown().expect("database shuts down");
 
+    let reopened = RideDatabase::open(&path).expect("database can be reopened");
     let connection = Connection::open(&path).expect("database can be queried");
-    assert_stored_live_ble_observations(&connection, capture_id);
+    assert_stored_live_ble_observations(&connection, &reopened, capture_id);
     drop(connection);
+    reopened.shutdown().expect("reopened database shuts down");
     let _ = std::fs::remove_file(path);
 }
 
@@ -676,7 +678,11 @@ type StoredBleObservation = (
     Option<Vec<u8>>,
 );
 
-fn assert_stored_live_ble_observations(connection: &Connection, capture_id: LiveCaptureId) {
+fn assert_stored_live_ble_observations(
+    connection: &Connection,
+    database: &RideDatabase,
+    capture_id: LiveCaptureId,
+) {
     let stored: StoredBleObservation = connection
         .query_row(
             "SELECT event.sequence, ble.direction, ble.characteristic_uuid,
@@ -711,7 +717,7 @@ fn assert_stored_live_ble_observations(connection: &Connection, capture_id: Live
         )
     );
     assert_stored_raw_ble_fields(connection, capture_id);
-    assert_stored_semantic_telemetry(connection, capture_id);
+    assert_stored_semantic_telemetry(connection, database, capture_id);
     assert_stored_outbound_ble_observation(connection, capture_id);
 }
 
@@ -741,35 +747,37 @@ fn assert_stored_raw_ble_fields(connection: &Connection, capture_id: LiveCapture
     );
 }
 
-fn assert_stored_semantic_telemetry(connection: &Connection, capture_id: LiveCaptureId) {
-    let semantic: (u64, String, i64, String, i64) = connection
+fn assert_stored_semantic_telemetry(
+    connection: &Connection,
+    database: &RideDatabase,
+    capture_id: LiveCaptureId,
+) {
+    let projection_rows: u64 = connection
         .query_row(
-            "SELECT observed_at_ms, provenance,
-                    snapshot_schema_version, library_version,
-                    json_extract(snapshot_json, '$.speed.value.value')
-             FROM live_capture_ble_semantic_telemetry
+            "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry
              WHERE capture_id = ?1 AND sequence = 0",
             [capture_id.to_string()],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            |row| row.get(0),
         )
-        .expect("semantic snapshot is queryable");
+        .expect("projection count is queryable");
     assert_eq!(
-        semantic,
-        (
-            119,
-            "live_session".to_owned(),
-            1,
-            "test-build".to_owned(),
-            1234
-        )
+        projection_rows, 0,
+        "canonical event stores semantic data once"
+    );
+    let semantic = database
+        .live_capture_semantic_telemetry(capture_id, 0)
+        .expect("semantic snapshot lookup succeeds")
+        .expect("semantic snapshot is recovered from the canonical event");
+    assert_eq!(semantic.observed_at_ms.unwrap().get(), 119);
+    assert_eq!(
+        semantic.provenance,
+        cutout_core::PevcapTelemetryProvenance::LiveSession
+    );
+    assert_eq!(semantic.snapshot_schema_version, 1);
+    assert_eq!(semantic.library_version, "test-build");
+    assert_eq!(
+        semantic.snapshot_json,
+        r#"{"speed":{"value":{"value":1234},"source":"reported"}}"#
     );
 }
 
@@ -10069,22 +10077,23 @@ fn battery_current_snapshot_versions_survive_storage_without_relabeling() {
     database.finish_live_capture(capture_id, 10).unwrap();
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
-    let mut query = connection.prepare(
-        "SELECT snapshot_schema_version, snapshot_json FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1 ORDER BY sequence"
-    ).unwrap();
-    let stored: Vec<(u16, String)> = query
-        .query_map([capture_id.to_string()], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .unwrap()
-        .collect::<Result<_, _>>()
+    let canonical_projection_rows: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1",
+            [capture_id.to_string()],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(stored.len(), snapshots.len());
-    for ((version, json), (expected_version, expected_json)) in stored.iter().zip(snapshots) {
-        assert_eq!(*version, expected_version);
-        assert_eq!(json, expected_json);
-    }
-    drop(query);
+    assert_eq!(canonical_projection_rows, 0);
+    connection
+        .execute(
+            "INSERT INTO live_capture_ble_semantic_telemetry
+                (capture_id, sequence, observed_at_ms, provenance,
+                 snapshot_schema_version, library_version, snapshot_json)
+             VALUES (?1, 0, 99, 'replay', 9, 'legacy-independent-override', '{\"legacy\":true}')",
+            [capture_id.to_string()],
+        )
+        .unwrap();
     drop(connection);
     let reopened = RideDatabase::open(&path).unwrap();
     let restored = reopened
@@ -10101,9 +10110,192 @@ fn battery_current_snapshot_versions_survive_storage_without_relabeling() {
             decoded["record"]["semantic_telemetry"]["snapshot_json"],
             json
         );
+        let telemetry = reopened
+            .live_capture_semantic_telemetry(capture_id, event.sequence)
+            .unwrap()
+            .expect("canonical event retains semantic telemetry");
+        if event.sequence == 0 {
+            assert_eq!(telemetry.snapshot_schema_version, 9);
+            assert_eq!(telemetry.library_version, "legacy-independent-override");
+            assert_eq!(telemetry.snapshot_json, r#"{"legacy":true}"#);
+            assert_eq!(telemetry.observed_at_ms.unwrap().get(), 99);
+            assert_eq!(
+                telemetry.provenance,
+                cutout_core::PevcapTelemetryProvenance::Replay
+            );
+        } else {
+            assert_eq!(telemetry.snapshot_schema_version, version);
+            assert_eq!(telemetry.library_version, "current-direction-test");
+            assert_eq!(telemetry.snapshot_json, json);
+            assert_eq!(
+                telemetry.observed_at_ms.unwrap().get(),
+                event.receipt_monotonic_ms
+            );
+            assert_eq!(
+                telemetry.provenance,
+                cutout_core::PevcapTelemetryProvenance::LiveSession
+            );
+        }
     }
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn reopening_legacy_capture_removes_only_its_redundant_semantic_projection() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let telemetry = cutout_core::PevcapSemanticTelemetry {
+        observed_at_ms: Some(MonotonicTimestamp::new(7)),
+        provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+        snapshot_schema_version: 3,
+        library_version: "legacy-normalization-test".into(),
+        snapshot_json: r#"{"value":{"mV":52100},"unknown":{"future":true}}"#.into(),
+    };
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(7),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xde, 0xad, 0xbe, 0xef],
+    )
+    .with_semantic_telemetry(telemetry.clone());
+    let payload = record.to_jsonl_line().unwrap().into_bytes();
+    database
+        .append_live_capture_record(capture_id, record, payload.clone())
+        .unwrap();
+    database.finish_live_capture(capture_id, 8).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO live_capture_ble_semantic_telemetry
+                (capture_id, sequence, observed_at_ms, provenance,
+                 snapshot_schema_version, library_version, snapshot_json)
+             VALUES (?1, 0, 7, 'live_session', 3, 'legacy-normalization-test', ?2)",
+            (capture_id.to_string(), &telemetry.snapshot_json),
+        )
+        .unwrap();
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    drop(connection);
+
+    let reopened = RideDatabase::open(&path).expect("legacy schema upgrades");
+    let recovered = reopened
+        .live_capture_semantic_telemetry(capture_id, 0)
+        .unwrap()
+        .expect("semantic snapshot remains available");
+    assert_eq!(recovered, telemetry);
+    let events = reopened
+        .live_capture(capture_id, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(events.events[0].payload, payload);
+    let connection = Connection::open(&path).unwrap();
+    let remaining: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1",
+            [capture_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0, "the redundant legacy projection is removed");
+    drop(connection);
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn legacy_semantic_normalization_batches_yield_to_database_commands() {
+    let _guard = test_guard();
+    const RECORDS: u64 = 130;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy-normalization-batches.sqlite");
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let channel = GattChannel::from_bytes([0x33; 16]);
+    let snapshot_json = r#"{"unknown":{"future":true},"speed":{"value":1234}}"#;
+    for sequence in 0..RECORDS {
+        let timestamp = MonotonicTimestamp::new(sequence + 1);
+        let semantic = cutout_core::PevcapSemanticTelemetry {
+            observed_at_ms: Some(timestamp),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: 9,
+            library_version: "normalization-batch-test".into(),
+            snapshot_json: snapshot_json.into(),
+        };
+        let record = PevcapRecord::inbound_notification(
+            timestamp,
+            channel,
+            channel,
+            vec![sequence as u8, 0xa5],
+        )
+        .with_semantic_telemetry(semantic);
+        let payload = record.to_jsonl_line().unwrap().into_bytes();
+        database
+            .append_live_capture_record(capture_id, record, payload)
+            .unwrap();
+    }
+    database
+        .finish_live_capture(capture_id, RECORDS + 1)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    for sequence in 0..RECORDS {
+        connection
+            .execute(
+                "INSERT INTO live_capture_ble_semantic_telemetry
+                    (capture_id, sequence, observed_at_ms, provenance,
+                     snapshot_schema_version, library_version, snapshot_json)
+                 VALUES (?1, ?2, ?3, 'live_session', 9,
+                         'normalization-batch-test', ?4)",
+                rusqlite::params![
+                    capture_id.to_string(),
+                    sequence,
+                    i64::try_from(sequence + 1).unwrap(),
+                    snapshot_json,
+                ],
+            )
+            .unwrap();
+    }
+    connection
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    drop(connection);
+
+    let reopened = RideDatabase::open(&path).expect("legacy schema upgrades");
+    // This ordinary worker request must be serviced between bounded normalization batches.
+    let page = reopened
+        .live_capture(capture_id, QueryLimit::new(1).unwrap())
+        .expect("capture queries remain responsive during normalization");
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].sequence, 0);
+    let telemetry = reopened
+        .live_capture_semantic_telemetry(capture_id, RECORDS - 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(telemetry.snapshot_json, snapshot_json);
+    let connection = Connection::open(&path).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let remaining = loop {
+        let remaining: u64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1",
+                [capture_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if remaining == 0 || Instant::now() >= deadline {
+            break remaining;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(remaining, 0, "all batches complete after worker idle time");
+    drop(connection);
+    reopened.shutdown().unwrap();
 }
 
 fn settings_count_capture(encoding: PevcapEncoding, count: usize) -> Vec<u8> {

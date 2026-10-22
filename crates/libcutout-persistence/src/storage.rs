@@ -63,6 +63,7 @@ pub use charging::*;
 mod device_drivetrain;
 mod device_vehicle;
 mod migrations;
+mod normalization;
 mod phone_control;
 mod ride_write;
 mod service;
@@ -5380,6 +5381,11 @@ enum Command {
         after_sequence: Option<i64>,
         limit: QueryLimit,
         reply: Reply<LiveCaptureSnapshot>,
+    },
+    ReadLiveCaptureSemanticTelemetry {
+        id: LiveCaptureId,
+        sequence: i64,
+        reply: Reply<Option<cutout_core::PevcapSemanticTelemetry>>,
     },
     RetainLiveCaptureContext {
         id: LiveCaptureId,

@@ -29,6 +29,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Receiver,
 };
+use std::time::Duration;
 
 #[cfg(test)]
 static DROP_NEXT_PEVCAP_FINISH_RESPONSE: AtomicBool = AtomicBool::new(false);
@@ -54,9 +55,25 @@ pub(super) fn run(
         worker.worker_alive.store(false, Ordering::Release);
         return;
     }
-    while let Ok(command) = receiver.recv() {
-        if worker.dispatch(command).is_break() {
-            break;
+    let mut normalization_state = worker.normalize_semantic_batch();
+    loop {
+        let idle_delay = match normalization_state {
+            super::normalization::BatchState::Pending => Duration::from_millis(10),
+            super::normalization::BatchState::Deferred
+            | super::normalization::BatchState::Finished => Duration::from_secs(1),
+        };
+        match receiver.recv_timeout(idle_delay) {
+            Ok(command) => {
+                if worker.dispatch(command).is_break() {
+                    break;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if normalization_state != super::normalization::BatchState::Finished {
+                    normalization_state = worker.normalize_semantic_batch();
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
     worker.stop();
@@ -70,6 +87,11 @@ struct DatabaseWorker<'a> {
 }
 
 impl DatabaseWorker<'_> {
+    fn normalize_semantic_batch(&mut self) -> super::normalization::BatchState {
+        super::normalization::remove_redundant_semantic_batch(&mut self.connection)
+            .unwrap_or(super::normalization::BatchState::Deferred)
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "the exhaustive command protocol remains visible in one dispatch table"
@@ -179,6 +201,15 @@ impl DatabaseWorker<'_> {
                     id,
                     after_sequence,
                     limit,
+                ));
+            }
+            Command::ReadLiveCaptureSemanticTelemetry {
+                id,
+                sequence,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::read_semantic_telemetry(
+                    connection, id, sequence,
                 ));
             }
             Command::RetainLiveCaptureContext {

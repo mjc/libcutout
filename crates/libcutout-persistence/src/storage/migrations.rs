@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 57;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 58;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -80,6 +80,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         54 => migrate_v54_to_v55(connection)?,
         55 => migrate_v55_to_v56(connection)?,
         56 => migrate_v56_to_current(connection)?,
+        57 => migrate_v57_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -149,6 +150,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 56 {
             migrate_v56_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 57 {
+            migrate_v57_to_current(connection)?;
         }
     }
     Ok(())
@@ -429,6 +433,18 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
             ride_id TEXT REFERENCES rides(id) ON DELETE CASCADE
         );
+        CREATE TABLE storage_normalization_progress (
+            singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+            semantic_capture_id TEXT,
+            semantic_sequence INTEGER CHECK (semantic_sequence IS NULL OR semantic_sequence >= 0),
+            semantic_complete INTEGER NOT NULL DEFAULT 0 CHECK (semantic_complete IN (0, 1)),
+            artifact_digest TEXT,
+            artifact_complete INTEGER NOT NULL DEFAULT 0 CHECK (artifact_complete IN (0, 1)),
+            compaction_pending INTEGER NOT NULL DEFAULT 0 CHECK (compaction_pending IN (0, 1)),
+            compaction_complete INTEGER NOT NULL DEFAULT 0 CHECK (compaction_complete IN (0, 1)),
+            CHECK ((semantic_capture_id IS NULL) = (semantic_sequence IS NULL))
+        );
+        INSERT INTO storage_normalization_progress (singleton) VALUES (1);
         CREATE TABLE trails (
             id TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512)
@@ -1994,6 +2010,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_session_marker",
         "pevcap_imports",
         "pevcap_import_work",
+        "storage_normalization_progress",
         "pevcap_captures",
         "pevcap_capture_chunks",
         "pevcap_recordings",
@@ -2037,6 +2054,14 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         || !table_has_column(connection, "live_capture_events", "payload_encoding")?
         || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
     {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    let normalization_progress: u64 = connection.query_row(
+        "SELECT COUNT(*) FROM storage_normalization_progress WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if normalization_progress != 1 {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     for column in [
@@ -2307,9 +2332,9 @@ fn migrate_v56_to_current(connection: &mut Connection) -> Result<(), StorageErro
              DROP TABLE pevcap_imports;
              ALTER TABLE pevcap_imports_new RENAME TO pevcap_imports;
              CREATE INDEX pevcap_imports_history
-                 ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);
+     ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);
              {}",
-            schema_pragmas(CURRENT_SCHEMA_VERSION),
+            schema_pragmas(57),
         );
         transaction.execute_batch(&migration)?;
         let violations: u64 =
@@ -2332,17 +2357,39 @@ fn migrate_v56_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS storage_normalization_progress (
+            singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+            semantic_capture_id TEXT,
+            semantic_sequence INTEGER CHECK (semantic_sequence IS NULL OR semantic_sequence >= 0),
+            semantic_complete INTEGER NOT NULL DEFAULT 0 CHECK (semantic_complete IN (0, 1)),
+            artifact_digest TEXT,
+            artifact_complete INTEGER NOT NULL DEFAULT 0 CHECK (artifact_complete IN (0, 1)),
+            compaction_pending INTEGER NOT NULL DEFAULT 0 CHECK (compaction_pending IN (0, 1)),
+            compaction_complete INTEGER NOT NULL DEFAULT 0 CHECK (compaction_complete IN (0, 1)),
+            CHECK ((semantic_capture_id IS NULL) = (semantic_sequence IS NULL))
+        );
+        INSERT OR IGNORE INTO storage_normalization_progress (singleton) VALUES (1);",
+    )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn schema_v57_makes_legacy_artifact_path_nullable_and_preserves_receipts() {
+    fn schema_v58_makes_legacy_artifact_path_nullable_and_preserves_receipts() {
         let mut connection = Connection::open_in_memory().unwrap();
         initialize_current_schema(&connection).unwrap();
         connection
             .execute_batch(
-                "DROP INDEX pevcap_imports_history;
+                "DROP TABLE storage_normalization_progress;
+                 DROP INDEX pevcap_imports_history;
                  DROP TABLE pevcap_imports;
                  CREATE TABLE pevcap_imports (
                      artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
@@ -2366,10 +2413,17 @@ mod tests {
         let digest = "a".repeat(64);
         connection
             .execute(
+                "INSERT INTO rides (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-one', 'pevcap_import', 'imported', 50, 55, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
                 "INSERT INTO pevcap_imports
                     (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
                      record_count, location_count, imported_at_ms)
-                 VALUES (?1, '/old/managed.jsonl', NULL, 'capture_only', 123, 4, 0, 55)",
+                 VALUES (?1, '/old/managed.jsonl', 'ride-one', 'ride_and_capture', 123, 4, 1, 55)",
                 [&digest],
             )
             .unwrap();
@@ -2411,20 +2465,30 @@ mod tests {
             .unwrap();
         connection.execute_batch(&schema_pragmas(56)).unwrap();
 
-        migrate_v56_to_current(&mut connection).unwrap();
+        migrate(&mut connection).unwrap();
 
-        let (path, imported_at, version): (Option<String>, u64, i64) = connection
-            .query_row(
-                "SELECT artifact_path, imported_at_ms,
+        let (path, ride_id, imported_at, version): (Option<String>, Option<String>, u64, i64) =
+            connection
+                .query_row(
+                    "SELECT artifact_path, ride_id, imported_at_ms,
                         (SELECT user_version FROM pragma_user_version)
                  FROM pevcap_imports WHERE artifact_digest = ?1",
-                [&digest],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    [&digest],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(path.as_deref(), Some("/old/managed.jsonl"));
+        assert_eq!(ride_id.as_deref(), Some("ride-one"));
+        assert_eq!(imported_at, 55);
+        assert_eq!(version, 58);
+        let progress_rows: u64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM storage_normalization_progress WHERE singleton = 1",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(path.as_deref(), Some("/old/managed.jsonl"));
-        assert_eq!(imported_at, 55);
-        assert_eq!(version, 57);
+        assert_eq!(progress_rows, 1);
         let (chunk, recording_count, submission_count): (Vec<u8>, u64, u64) = connection
             .query_row(
                 "SELECT

@@ -3,13 +3,14 @@
 use super::{Command, QueryLimit, RideDatabase, StorageError};
 use cutout_core::{
     PevcapDirection, PevcapPhoneLocation, PevcapPhoneLocationError, PevcapRecord,
-    PevcapWriteDisposition, RequestTarget, TransportWriteLimit, WriteMode,
+    PevcapSemanticTelemetry, PevcapWriteDisposition, RequestTarget, TransportWriteLimit, WriteMode,
 };
 use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
 pub(super) mod payload;
+pub(in crate::storage) mod semantic_telemetry;
 
 /// Maximum header size retained for a live capture.
 pub const LIVE_CAPTURE_HEADER_LIMIT_BYTES: usize = 65_536;
@@ -479,6 +480,318 @@ pub(super) const BLE_SEMANTIC_TELEMETRY_SCHEMA: &str = "
     ) WITHOUT ROWID;
 ";
 
+#[cfg(test)]
+mod semantic_telemetry_storage_tests {
+    use super::*;
+    use cutout_core::{GattChannel, MonotonicTimestamp, PevcapSemanticTelemetry};
+    use rusqlite::Connection;
+
+    #[test]
+    fn repeated_semantic_snapshots_are_not_duplicated_when_event_is_canonical() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA}{LOCATION_SCHEMA}{BLE_SCHEMA}{BLE_RAW_TELEMETRY_SCHEMA}{BLE_SEMANTIC_TELEMETRY_SCHEMA}"
+            ))
+            .unwrap();
+        let id = LiveCaptureId::new();
+        begin(&connection, id, b"{}", 100).unwrap();
+        let characteristic = GattChannel::from_bytes([0x11; 16]);
+        let service = GattChannel::from_bytes([0x22; 16]);
+        let snapshot_json = format!(
+            "{{\"sensors\":[{}]}}",
+            (0..24)
+                .map(|index| format!(
+                    "{{\"controller\":{index},\"rpm\":{},\"temperature_c\":23.125,\"source\":\"reported\"}}",
+                    index * 137
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        let mut payloads = Vec::new();
+        for sequence in 0..8_u64 {
+            let telemetry = PevcapSemanticTelemetry {
+                observed_at_ms: Some(MonotonicTimestamp::new(500 + sequence)),
+                provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+                snapshot_schema_version: 2,
+                library_version: "test-build".to_owned(),
+                snapshot_json: snapshot_json.clone(),
+            };
+            let record = PevcapRecord::inbound_notification(
+                MonotonicTimestamp::new(500 + sequence),
+                characteristic,
+                service,
+                vec![1, 2, 3, 4],
+            )
+            .with_semantic_telemetry(telemetry);
+            let payload = record.to_jsonl_line().unwrap().into_bytes();
+            payloads.push(payload.clone());
+            append(
+                &mut connection,
+                &LiveCaptureEventAppend {
+                    id,
+                    kind: LiveCaptureEventKind::Notification,
+                    receipt_monotonic_ms: 500 + sequence,
+                    source_monotonic_offset_ms: None,
+                    source_wall_clock_unix_ms: None,
+                    payload: &payload,
+                    location: None,
+                    ble_record: Some(&record),
+                },
+            )
+            .unwrap();
+        }
+
+        let semantic_rows: u64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1",
+                [id.as_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(semantic_rows, 0);
+
+        let events = read(&connection, id, None, QueryLimit::new(8).unwrap()).unwrap();
+        assert_eq!(events.events.len(), 8);
+        assert_eq!(
+            events
+                .events
+                .into_iter()
+                .map(|event| event.payload)
+                .collect::<Vec<_>>(),
+            payloads
+        );
+        for sequence in 0..8_i64 {
+            let recovered = read_semantic_telemetry(&connection, id, sequence)
+                .unwrap()
+                .expect("semantic telemetry is recovered from the canonical event");
+            assert_eq!(
+                recovered.provenance,
+                cutout_core::PevcapTelemetryProvenance::LiveSession
+            );
+            assert_eq!(recovered.snapshot_schema_version, 2);
+            assert_eq!(recovered.library_version, "test-build");
+            assert_eq!(recovered.snapshot_json, snapshot_json);
+            assert_eq!(
+                recovered.observed_at_ms,
+                Some(MonotonicTimestamp::new(500 + sequence as u64))
+            );
+        }
+    }
+
+    #[test]
+    fn independent_projection_wins_when_event_payload_does_not_match_or_decode() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA}{LOCATION_SCHEMA}{BLE_SCHEMA}{BLE_RAW_TELEMETRY_SCHEMA}{BLE_SEMANTIC_TELEMETRY_SCHEMA}"
+            ))
+            .unwrap();
+        let id = LiveCaptureId::new();
+        begin(&connection, id, b"{}", 100).unwrap();
+        let telemetry = PevcapSemanticTelemetry {
+            observed_at_ms: Some(MonotonicTimestamp::new(42)),
+            provenance: cutout_core::PevcapTelemetryProvenance::Replay,
+            snapshot_schema_version: 4,
+            library_version: "independent-projection".to_owned(),
+            snapshot_json: "{ \"speed\": 1.00 }".to_owned(),
+        };
+        let record = PevcapRecord::inbound_notification(
+            MonotonicTimestamp::new(42),
+            GattChannel::from_bytes([0x11; 16]),
+            GattChannel::from_bytes([0x22; 16]),
+            vec![1],
+        )
+        .with_semantic_telemetry(telemetry.clone());
+        append(
+            &mut connection,
+            &LiveCaptureEventAppend {
+                id,
+                kind: LiveCaptureEventKind::Notification,
+                receipt_monotonic_ms: 42,
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: None,
+                payload: b"X'0001FEFF'",
+                location: None,
+                ble_record: Some(&record),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_semantic_telemetry(&connection, id, 0).unwrap(),
+            Some(telemetry.clone())
+        );
+        let oversized_snapshot = format!(
+            "{{\"retained\":\"{}\"}}",
+            "x".repeat(LIVE_CAPTURE_EVENT_LIMIT_BYTES)
+        );
+        connection
+            .execute(
+                "UPDATE live_capture_ble_semantic_telemetry SET snapshot_json = ?1
+                 WHERE capture_id = ?2 AND sequence = 0",
+                params![oversized_snapshot, id.as_string()],
+            )
+            .unwrap();
+        assert!(matches!(
+            read_semantic_telemetry(&connection, id, 0),
+            Err(StorageError::PevcapLimitExceeded {
+                resource: "semantic telemetry bytes",
+                ..
+            })
+        ));
+        let retained_rows: u64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1",
+                [id.as_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained_rows, 1);
+    }
+
+    #[test]
+    fn canonical_omission_does_not_bypass_projection_metadata_constraints() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA}{LOCATION_SCHEMA}{BLE_SCHEMA}{BLE_RAW_TELEMETRY_SCHEMA}{BLE_SEMANTIC_TELEMETRY_SCHEMA}"
+            ))
+            .unwrap();
+        let id = LiveCaptureId::new();
+        begin(&connection, id, b"{}", 100).unwrap();
+        let characteristic = GattChannel::from_bytes([0x11; 16]);
+        let service = GattChannel::from_bytes([0x22; 16]);
+        let mut invalid_values = Vec::new();
+        let mut invalid = PevcapSemanticTelemetry {
+            observed_at_ms: Some(MonotonicTimestamp::new(42)),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: 1,
+            library_version: "test-build".to_owned(),
+            snapshot_json: "{}".to_owned(),
+        };
+        invalid.snapshot_schema_version = 0;
+        invalid_values.push(invalid.clone());
+        invalid.snapshot_schema_version = 1;
+        invalid.library_version.clear();
+        invalid_values.push(invalid.clone());
+        invalid.library_version = "x".repeat(65);
+        invalid_values.push(invalid.clone());
+        invalid.library_version = "test-build".to_owned();
+        invalid.observed_at_ms = Some(MonotonicTimestamp::new(i64::MAX as u64 + 1));
+        invalid_values.push(invalid);
+
+        for telemetry in invalid_values {
+            let record = PevcapRecord::inbound_notification(
+                MonotonicTimestamp::new(42),
+                characteristic,
+                service,
+                vec![1, 2, 3],
+            )
+            .with_semantic_telemetry(telemetry);
+            let payload = record.to_jsonl_line().unwrap().into_bytes();
+            assert!(matches!(
+                append(
+                    &mut connection,
+                    &LiveCaptureEventAppend {
+                        id,
+                        kind: LiveCaptureEventKind::Notification,
+                        receipt_monotonic_ms: 42,
+                        source_monotonic_offset_ms: None,
+                        source_wall_clock_unix_ms: None,
+                        payload: &payload,
+                        location: None,
+                        ble_record: Some(&record),
+                    }
+                ),
+                Err(StorageError::LiveCaptureInputInvalid(
+                    "semantic telemetry value"
+                ))
+            ));
+        }
+        let (next_sequence, event_rows, semantic_rows): (u64, u64, u64) = connection
+            .query_row(
+                "SELECT next_sequence,
+                        (SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1),
+                        (SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1)
+                 FROM live_capture_sessions WHERE capture_id = ?1",
+                [id.as_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((next_sequence, event_rows, semantic_rows), (0, 0, 0));
+    }
+
+    #[test]
+    fn corrupt_compressed_canonical_event_is_not_reported_as_missing_semantics() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA}{LOCATION_SCHEMA}{BLE_SCHEMA}{BLE_RAW_TELEMETRY_SCHEMA}{BLE_SEMANTIC_TELEMETRY_SCHEMA}"
+            ))
+            .unwrap();
+        let id = LiveCaptureId::new();
+        begin(&connection, id, b"{}", 100).unwrap();
+        let telemetry = PevcapSemanticTelemetry {
+            observed_at_ms: Some(MonotonicTimestamp::new(42)),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: 1,
+            library_version: "test-build".to_owned(),
+            snapshot_json: format!("{{\"state\":\"{}\"}}", "active".repeat(500)),
+        };
+        let record = PevcapRecord::inbound_notification(
+            MonotonicTimestamp::new(42),
+            GattChannel::from_bytes([0x11; 16]),
+            GattChannel::from_bytes([0x22; 16]),
+            vec![1, 2, 3],
+        )
+        .with_semantic_telemetry(telemetry);
+        let payload = record.to_jsonl_line().unwrap().into_bytes();
+        append(
+            &mut connection,
+            &LiveCaptureEventAppend {
+                id,
+                kind: LiveCaptureEventKind::Notification,
+                receipt_monotonic_ms: 42,
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: None,
+                payload: &payload,
+                location: None,
+                ble_record: Some(&record),
+            },
+        )
+        .unwrap();
+
+        let (mut stored, encoding, original_size): (Vec<u8>, i64, Option<i64>) = connection
+            .query_row(
+                "SELECT payload, payload_encoding, payload_original_bytes
+                 FROM live_capture_events WHERE capture_id = ?1 AND sequence = 0",
+                [id.as_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(encoding, 1, "fixture event uses the bounded codec");
+        let original_size = original_size.unwrap();
+        *stored.last_mut().unwrap() ^= 1;
+        connection
+            .execute(
+                "UPDATE live_capture_events SET payload = ?1
+                 WHERE capture_id = ?2 AND sequence = 0",
+                params![stored, id.as_string()],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            read_semantic_telemetry(&connection, id, 0),
+            Err(StorageError::InvalidStoredValue {
+                field: "live capture payload encoding",
+                ..
+            })
+        ));
+        assert_eq!(original_size, i64::try_from(payload.len()).unwrap());
+    }
+}
+
 impl RideDatabase {
     /// Starts a live capture in the existing Rust-owned database worker.
     ///
@@ -786,6 +1099,27 @@ impl RideDatabase {
             reply,
         })
     }
+
+    /// Returns the semantic snapshot for one event, preferring any independent retained value.
+    ///
+    /// If no projection row exists, the bounded original event is decoded while retaining the
+    /// exact snapshot JSON string supplied by the capture producer.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, database, sequence, or bounded-materialization error.
+    pub fn live_capture_semantic_telemetry(
+        &self,
+        id: LiveCaptureId,
+        sequence: u64,
+    ) -> Result<Option<PevcapSemanticTelemetry>, StorageError> {
+        let sequence = i64::try_from(sequence)
+            .map_err(|_| StorageError::LiveCaptureInputInvalid("sequence range"))?;
+        self.request(|reply| Command::ReadLiveCaptureSemanticTelemetry {
+            id,
+            sequence,
+            reply,
+        })
+    }
 }
 
 fn validate_timestamp(value: u64) -> Result<(), StorageError> {
@@ -888,7 +1222,7 @@ pub(super) fn append(
         insert_location(&transaction, *id, sequence, location)?;
     }
     if let Some(record) = ble_record {
-        insert_ble_observation(&transaction, *id, sequence, record)?;
+        insert_ble_observation(&transaction, *id, sequence, record, payload)?;
     }
     transaction.commit()?;
     Ok(sequence)
@@ -899,6 +1233,7 @@ fn insert_ble_observation(
     id: LiveCaptureId,
     sequence: u64,
     record: &PevcapRecord,
+    canonical_event_payload: &[u8],
 ) -> Result<(), StorageError> {
     let direction = match record.direction {
         PevcapDirection::LinkUp => "link_up",
@@ -957,7 +1292,7 @@ fn insert_ble_observation(
             raw_telemetry_json,
         ],
     )?;
-    insert_ble_telemetry(transaction, id, sequence, record)?;
+    insert_ble_telemetry(transaction, id, sequence, record, canonical_event_payload)?;
     Ok(())
 }
 
@@ -966,6 +1301,7 @@ fn insert_ble_telemetry(
     id: LiveCaptureId,
     sequence: u64,
     record: &PevcapRecord,
+    canonical_event_payload: &[u8],
 ) -> Result<(), StorageError> {
     if let Some(telemetry) = &record.telemetry {
         for (field_index, field) in telemetry.fields.iter().enumerate() {
@@ -992,10 +1328,13 @@ fn insert_ble_telemetry(
         }
     }
     if let Some(telemetry) = &record.semantic_telemetry {
-        if serde_json::from_str::<serde_json::Value>(&telemetry.snapshot_json).is_err() {
+        if semantic_telemetry::invalid_projection(telemetry).is_some() {
             return Err(StorageError::LiveCaptureInputInvalid(
-                "semantic telemetry encoding",
+                "semantic telemetry value",
             ));
+        }
+        if semantic_telemetry::event_matches_projection(canonical_event_payload, telemetry) {
+            return Ok(());
         }
         let provenance = match telemetry.provenance {
             cutout_core::PevcapTelemetryProvenance::LiveSession => "live_session",
@@ -1660,6 +1999,119 @@ pub(super) fn read(
         next_sequence: header.next_sequence,
         events,
     })
+}
+
+/// Reads a semantic projection without materializing legacy unbounded snapshot text.
+pub(super) fn read_semantic_telemetry(
+    connection: &Connection,
+    id: LiveCaptureId,
+    sequence: i64,
+) -> Result<Option<PevcapSemanticTelemetry>, StorageError> {
+    let transaction = connection.unchecked_transaction()?;
+    let projection_size: Option<i64> = transaction
+        .query_row(
+            "SELECT length(CAST(snapshot_json AS BLOB))
+             FROM live_capture_ble_semantic_telemetry
+             WHERE capture_id = ?1 AND sequence = ?2",
+            params![id.as_string(), sequence],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(snapshot_size) = projection_size {
+        ensure_semantic_snapshot_size(snapshot_size)?;
+        let projection = transaction.query_row(
+            "SELECT observed_at_ms, provenance, snapshot_schema_version, library_version, snapshot_json
+             FROM live_capture_ble_semantic_telemetry
+             WHERE capture_id = ?1 AND sequence = ?2",
+            params![id.as_string(), sequence],
+            |row| {
+                Ok((
+                    row.get::<_, Option<u64>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u16>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )?;
+        let provenance = match projection.1.as_str() {
+            "live_session" => cutout_core::PevcapTelemetryProvenance::LiveSession,
+            "replay" => cutout_core::PevcapTelemetryProvenance::Replay,
+            value => {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "semantic telemetry provenance",
+                    value: value.to_owned(),
+                });
+            }
+        };
+        let telemetry = PevcapSemanticTelemetry {
+            observed_at_ms: projection.0.map(cutout_core::MonotonicTimestamp::new),
+            provenance,
+            snapshot_schema_version: projection.2,
+            library_version: projection.3,
+            snapshot_json: projection.4,
+        };
+        if let Some(field) = semantic_telemetry::invalid_projection(&telemetry) {
+            return Err(StorageError::InvalidStoredValue {
+                field,
+                value: "projection violates its storage contract".to_owned(),
+            });
+        }
+        return Ok(Some(telemetry));
+    }
+
+    let event_metadata: Option<(i64, i64, Option<i64>)> = transaction
+        .query_row(
+            "SELECT length(payload), payload_encoding, payload_original_bytes
+             FROM live_capture_events WHERE capture_id = ?1 AND sequence = ?2",
+            params![id.as_string(), sequence],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((physical_size, encoding, original_size)) = event_metadata else {
+        return Ok(None);
+    };
+    ensure_semantic_snapshot_size(physical_size)?;
+    if let Some(original_size) = original_size {
+        ensure_semantic_snapshot_size(original_size)?;
+    }
+    let stored_payload: Vec<u8> = transaction.query_row(
+        "SELECT payload FROM live_capture_events WHERE capture_id = ?1 AND sequence = ?2",
+        params![id.as_string(), sequence],
+        |row| row.get(0),
+    )?;
+    let payload = payload::decode(stored_payload, encoding, original_size)?;
+    Ok(semantic_telemetry_from_event(&payload))
+}
+
+fn ensure_semantic_snapshot_size(actual: i64) -> Result<(), StorageError> {
+    let actual = u64::try_from(actual).map_err(|_| StorageError::InvalidStoredValue {
+        field: "semantic telemetry byte length",
+        value: actual.to_string(),
+    })?;
+    let limit = u64::try_from(LIVE_CAPTURE_EVENT_LIMIT_BYTES)
+        .expect("the semantic telemetry bound fits u64");
+    if actual > limit {
+        return Err(StorageError::PevcapLimitExceeded {
+            resource: "semantic telemetry bytes",
+            limit,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+/// Returns the bounded semantic telemetry encoded in one canonical record event.
+pub(super) fn semantic_telemetry_from_event(payload: &[u8]) -> Option<PevcapSemanticTelemetry> {
+    semantic_telemetry::event_telemetry(payload)
+}
+
+/// Confirms that an event carries the exact valid value represented by a legacy projection row.
+pub(super) fn semantic_telemetry_matches_event(
+    payload: &[u8],
+    projection: &PevcapSemanticTelemetry,
+) -> bool {
+    semantic_telemetry::event_matches_projection(payload, projection)
 }
 
 fn parse_optional_bool(
