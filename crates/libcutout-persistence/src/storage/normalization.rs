@@ -36,8 +36,9 @@ pub(super) struct LegacyArtifactScan {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LegacyArtifactPhase {
-    CompareSource,
-    VerifyPublishedBackfill,
+    VerifyExisting,
+    CopyLegacy,
+    VerifyCopied,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +90,7 @@ enum ManagedArtifactSource {
 
 impl LegacyArtifactScan {
     pub(super) fn backfill_digest(&self) -> Option<&str> {
-        (self.phase == LegacyArtifactPhase::CompareSource && self.file.is_some())
+        (self.phase == LegacyArtifactPhase::CopyLegacy && self.file.is_some())
             .then_some(self.digest.as_str())
     }
 }
@@ -319,6 +320,11 @@ pub(super) fn normalize_legacy_artifact_batch(
             advance_artifact_cursor(connection, &digest)?;
             return Ok(ArchiveState::Pending);
         }
+        let phase = if backfill && file.is_some() {
+            LegacyArtifactPhase::CopyLegacy
+        } else {
+            LegacyArtifactPhase::VerifyExisting
+        };
         *scan = Some(LegacyArtifactScan {
             digest,
             path,
@@ -327,7 +333,7 @@ pub(super) fn normalize_legacy_artifact_batch(
             offset: 0,
             sequence: 0,
             size,
-            phase: LegacyArtifactPhase::CompareSource,
+            phase,
             original_file,
         });
     }
@@ -338,7 +344,7 @@ pub(super) fn normalize_legacy_artifact_batch(
     let expected_chunk = super::capture_data::chunk(connection, &active.digest, active.sequence)?;
     let chunk_limit = if let Some(expected_chunk) = &expected_chunk {
         expected_chunk.len()
-    } else if active.phase == LegacyArtifactPhase::CompareSource && active.file.is_some() {
+    } else if active.phase == LegacyArtifactPhase::CopyLegacy && active.file.is_some() {
         usize::try_from(active.size.saturating_sub(active.offset))
             .unwrap_or(CAPTURE_CHUNK_BYTES)
             .min(CAPTURE_CHUNK_BYTES)
@@ -365,8 +371,7 @@ pub(super) fn normalize_legacy_artifact_batch(
         let already_unlinked = if active.file.is_some()
             && !managed_file_still_matches(database_path, active)?
         {
-            let missing_after_verified_unlink = active.phase
-                == LegacyArtifactPhase::VerifyPublishedBackfill
+            let missing_after_verified_unlink = active.phase != LegacyArtifactPhase::CopyLegacy
                 && matches!(fs::symlink_metadata(&active.path), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
             if !missing_after_verified_unlink {
                 reject_artifact(connection, scan)?;
@@ -376,25 +381,12 @@ pub(super) fn normalize_legacy_artifact_batch(
         } else {
             false
         };
-        if active.phase == LegacyArtifactPhase::CompareSource
-            && active.file.is_some()
-            && super::capture_data::is_stored(connection, &active.digest)?
-        {
-            active.phase = LegacyArtifactPhase::VerifyPublishedBackfill;
-            active.hasher = Sha256::new();
-            active.offset = 0;
-            active.sequence = 0;
-            if let Some(file) = &mut active.file {
-                file.seek(SeekFrom::Start(0))?;
-            }
-            return Ok(ArchiveState::Pending);
-        }
-        if active.phase == LegacyArtifactPhase::CompareSource && active.file.is_some() {
+        if active.phase == LegacyArtifactPhase::CopyLegacy && active.file.is_some() {
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             super::capture_data::publish(&transaction, &active.digest)?;
             transaction.commit()?;
-            active.phase = LegacyArtifactPhase::VerifyPublishedBackfill;
+            active.phase = LegacyArtifactPhase::VerifyCopied;
             active.hasher = Sha256::new();
             active.offset = 0;
             active.sequence = 0;
@@ -459,7 +451,7 @@ pub(super) fn normalize_legacy_artifact_batch(
         if active.file.is_none() {
             file_chunk = expected_chunk;
         }
-    } else if active.phase == LegacyArtifactPhase::CompareSource && active.file.is_some() {
+    } else if active.phase == LegacyArtifactPhase::CopyLegacy && active.file.is_some() {
         super::capture_data::append_legacy_backfill_chunk(
             connection,
             &active.digest,
@@ -654,14 +646,17 @@ fn reject_artifact(
     connection: &mut Connection,
     scan: &mut Option<LegacyArtifactScan>,
 ) -> Result<(), StorageError> {
-    if let Some(active) = scan.take() {
-        if active.phase == LegacyArtifactPhase::CompareSource
+    if let Some(active) = scan.as_ref() {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if active.phase == LegacyArtifactPhase::CopyLegacy
             && active.file.is_some()
-            && !super::capture_data::is_stored(connection, &active.digest)?
+            && !super::capture_data::is_stored(&transaction, &active.digest)?
         {
-            super::capture_data::abort(connection, &active.digest)?;
+            super::capture_data::abort(&transaction, &active.digest)?;
         }
-        advance_artifact_cursor(connection, &active.digest)?;
+        advance_artifact_cursor(&transaction, &active.digest)?;
+        transaction.commit()?;
+        scan.take();
     }
     Ok(())
 }

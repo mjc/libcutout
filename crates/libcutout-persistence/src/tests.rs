@@ -3644,7 +3644,7 @@ fn reopening_file_only_legacy_import_backfills_before_sidecar_retirement() {
 }
 
 #[test]
-fn corrupt_legacy_sidecar_is_preserved_and_does_not_block_later_receipts() {
+fn missing_legacy_chunk_preserves_source_and_does_not_block_later_receipts() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
     let database_path = directory.path().join("corrupt-first-legacy.sqlite");
@@ -3656,12 +3656,14 @@ fn corrupt_legacy_sidecar_is_preserved_and_does_not_block_later_receipts() {
         .enumerate()
     {
         let source_path = directory.path().join(format!("source-{index}.jsonl"));
-        let bytes = PevcapCapture::new(
-            pevcap_header(),
-            vec![pevcap_location_record(timestamp, 40.0, Some(3.0))],
-        )
-        .to_jsonl()
-        .unwrap();
+        let records = (0..512)
+            .map(|record_timestamp| {
+                pevcap_location_record(record_timestamp + timestamp, 40.0, Some(3.0))
+            })
+            .collect();
+        let bytes = PevcapCapture::new(pevcap_header(), records)
+            .to_jsonl()
+            .unwrap();
         std::fs::write(&source_path, &bytes).unwrap();
         let preview = database
             .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
@@ -3686,7 +3688,13 @@ fn corrupt_legacy_sidecar_is_preserved_and_does_not_block_later_receipts() {
         imports.push((digest, sidecar_path, bytes));
     }
     imports.sort_by(|left, right| left.0.cmp(&right.0));
-    std::fs::write(&imports[0].1, b"corrupt but retained source").unwrap();
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "DELETE FROM pevcap_capture_chunks WHERE artifact_digest = ?1 AND sequence = 1",
+            [&imports[0].0],
+        )
+        .unwrap();
     Connection::open(&database_path)
         .unwrap()
         .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
@@ -3698,18 +3706,128 @@ fn corrupt_legacy_sidecar_is_preserved_and_does_not_block_later_receipts() {
     while imports[1].1.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(imports[0].1.exists(), "corrupt source is preserved");
+    assert!(imports[0].1.exists(), "source for gapped SQL is preserved");
     assert!(
         !imports[1].1.exists(),
         "a later verified sidecar is still retired"
     );
-    for (digest, _, bytes) in &imports {
+    assert_eq!(
+        std::fs::read(&imports[0].1).unwrap(),
+        imports[0].2.as_bytes(),
+        "the known-good original survives the missing SQL chunk"
+    );
+    for (digest, _, bytes) in imports.iter().skip(1) {
         let export_path = directory.path().join(format!("{digest}.export.jsonl"));
         reopened
             .export_pevcap_capture(digest, &export_path)
             .expect("canonical bytes remain exportable");
         assert_eq!(std::fs::read(export_path).unwrap(), bytes.as_bytes());
     }
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn transient_backfill_abort_failure_keeps_ownership_and_retries_later_receipts() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("retry-backfill-abort.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let canonical_database_path = std::fs::canonicalize(&database_path).unwrap();
+    let mut imports = Vec::new();
+    for index in 1..=2 {
+        let source_path = directory.path().join(format!("source-{index}.jsonl"));
+        let bytes = PevcapCapture::new(
+            pevcap_header(),
+            vec![pevcap_location_record(index, 40.0, Some(3.0))],
+        )
+        .to_jsonl()
+        .unwrap();
+        std::fs::write(&source_path, &bytes).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let digest = preview.artifact_digest().to_owned();
+        database
+            .confirm_pevcap_import(&preview, 1_700_000_000_000 + index)
+            .unwrap();
+        let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+        managed_directory.push(".pevcap-imports");
+        let sidecar_path =
+            std::path::PathBuf::from(managed_directory).join(format!("{digest}.jsonl"));
+        std::fs::create_dir_all(sidecar_path.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar_path, &bytes).unwrap();
+        Connection::open(&database_path)
+            .unwrap()
+            .execute(
+                "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+                (sidecar_path.to_string_lossy().as_ref(), &digest),
+            )
+            .unwrap();
+        imports.push((digest, sidecar_path, bytes, source_path));
+    }
+    imports.sort_by(|left, right| left.0.cmp(&right.0));
+    let (bad_digest, bad_path, bad_bytes, _) = &imports[0];
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+            [bad_digest],
+        )
+        .unwrap();
+    let mut bad_sidecar = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(bad_path)
+        .unwrap();
+    use std::io::{Seek, SeekFrom, Write};
+    bad_sidecar.seek(SeekFrom::Start(0)).unwrap();
+    bad_sidecar.write_all(b"X").unwrap();
+    bad_sidecar.sync_all().unwrap();
+    drop(bad_sidecar);
+    Connection::open(&database_path)
+        .unwrap()
+        .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+        .unwrap();
+    database.shutdown().unwrap();
+    for (_, _, _, source_path) in &imports {
+        std::fs::remove_file(source_path).unwrap();
+    }
+    let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let lock_connection = Connection::open(&database_path).unwrap();
+    loop {
+        let staged: bool = lock_connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pevcap_captures
+                 WHERE artifact_digest = ?1 AND receipt_digest IS NULL
+                   AND written_bytes = artifact_size)",
+                [bad_digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if staged {
+            lock_connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "backfill reached its final decision"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    lock_connection.execute_batch("ROLLBACK").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while imports[1].1.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(bad_path.exists(), "bad legacy source remains available");
+    let mut preserved = bad_bytes.clone().into_bytes();
+    preserved[0] = b'X';
+    assert_eq!(std::fs::read(bad_path).unwrap(), preserved);
+    assert!(!imports[1].1.exists(), "the later good receipt progresses");
     reopened.shutdown().unwrap();
 }
 
