@@ -2379,6 +2379,180 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedDisconnectRetainsQueuedPhoneDriveNeutralForTheLiveAttempt() async throws {
+        try await withActivePhoneDrive { state, token, generation, driver, model in
+            let pressed = try XCTUnwrap(
+                state.observePhoneDriveContactsAt(
+                    token: token, generation: generation,
+                    contacts: .single(contactId: 1, region: .throttle),
+                    observedAtMs: 3_001, monotonicMs: 3_001
+                )?.result.outputs.first { $0.phoneDrive != nil })
+            let setpoint = try XCTUnwrap(pressed.phoneDrive)
+            XCTAssertTrue(
+                state.markPhoneDriveTransport(token: token, write: setpoint, status: .submitted, monotonicMs: 3_001))
+            _ = state.cancelPhoneDriveAt(reason: .touchCancelled, monotonicMs: 3_002)
+            let output = try XCTUnwrap(
+                state.tickPhoneDrive(token: token, monotonicMs: 3_002, canSubmit: true)?
+                    .result.outputs.first { $0.phoneDrive != nil })
+            let neutral = try XCTUnwrap(output.phoneDrive)
+            XCTAssertEqual(neutral.kind, .release)
+            XCTAssertEqual(neutral.submitBeforeMs, 3_052)
+            XCTAssertEqual(output.bytes, Data([2, 5, 6, 0, 0, 0, 0, 0xcd, 0x85, 3]))
+            XCTAssertTrue(
+                state.markPhoneDriveTransport(token: token, write: neutral, status: .queued, monotonicMs: 3_002))
+            driver.nowValue = 3_003
+            driver.disconnectPreparation = { throw MobileRideMapError.storageError("disk unavailable") }
+
+            let disconnected = await model.disconnectTransport()
+
+            XCTAssertFalse(disconnected)
+            XCTAssertEqual(driver.disconnectCount, 0)
+            XCTAssertTrue(state.connectionAttemptIsCurrent(token: token))
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            XCTAssertFalse(state.phoneDriveTransportIsCurrent(token: token, write: setpoint, monotonicMs: 3_003))
+            XCTAssertTrue(
+                state.phoneDriveTransportIsCurrent(token: token, write: neutral, monotonicMs: 3_051),
+                "A failed checkpoint must preserve the queued neutral until its original deadline")
+            XCTAssertFalse(state.phoneDriveTransportIsCurrent(token: token, write: neutral, monotonicMs: 3_052))
+            XCTAssertTrue(
+                state.markPhoneDriveTransport(token: token, write: neutral, status: .submitted, monotonicMs: 3_003))
+        }
+    }
+
+    @MainActor
+    func testDisconnectPreparesPhoneDriveNeutralBeforeRideCheckpointCompletes() async throws {
+        try await withActivePhoneDrive { state, token, generation, driver, model in
+            let pressed = try XCTUnwrap(
+                state.observePhoneDriveContactsAt(
+                    token: token, generation: generation,
+                    contacts: .single(contactId: 1, region: .throttle),
+                    observedAtMs: 3_001, monotonicMs: 3_001
+                )?.result.outputs.first { $0.phoneDrive != nil })
+            let setpoint = try XCTUnwrap(pressed.phoneDrive)
+            XCTAssertTrue(
+                state.markPhoneDriveTransport(token: token, write: setpoint, status: .submitted, monotonicMs: 3_001))
+            driver.nowValue = 3_002
+            var neutralAtCheckpoint: MobilePhoneDriveWriteDto?
+            driver.disconnectPreparation = {
+                XCTAssertTrue(state.connectionAttemptIsCurrent(token: token))
+                XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+                XCTAssertFalse(state.phoneDriveTransportIsCurrent(token: token, write: setpoint, monotonicMs: 3_002))
+                let output = try XCTUnwrap(
+                    state.tickPhoneDrive(token: token, monotonicMs: 3_002, canSubmit: true)?
+                        .result.outputs.first { $0.phoneDrive != nil },
+                    "The live connection needs neutral while disconnect checkpointing is still pending")
+                let neutral = try XCTUnwrap(output.phoneDrive)
+                XCTAssertEqual(neutral.kind, .release)
+                XCTAssertEqual(output.bytes, Data([2, 5, 6, 0, 0, 0, 0, 0xcd, 0x85, 3]))
+                neutralAtCheckpoint = neutral
+                throw MobileRideMapError.storageError("disk unavailable")
+            }
+
+            let disconnected = await model.disconnectTransport()
+
+            XCTAssertFalse(disconnected)
+            XCTAssertEqual(driver.disconnectCount, 0)
+            let neutral = try XCTUnwrap(neutralAtCheckpoint)
+            XCTAssertTrue(state.phoneDriveTransportIsCurrent(token: token, write: neutral, monotonicMs: 3_003))
+        }
+    }
+
+    @MainActor
+    func testFailedDisconnectPreservesPhoneDriveControllerFaultRefusal() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, model in
+            // COMM_GET_VALUES_SELECTIVE with only the current fault-code field: ABS_OVER_CURRENT (4).
+            let faultFrame = Data([2, 6, 50, 0, 0, 128, 0, 4, 223, 18, 3])
+            let fault = try XCTUnwrap(
+                state.ingestDeviceSession(
+                    token: token,
+                    input: MobileSessionInputDto(
+                        kind: .notification, monotonicMs: .init(milliseconds: 3_001), maxWriteLen: nil,
+                        channel: BluetoothUuid.vescNordicUartNotify.bytes, bytes: faultFrame)))
+            XCTAssertTrue(
+                fault.result.outputs.contains { output in
+                    output.rawTelemetry?.fields.contains { $0.id == 0x8004 && $0.value == 4 } == true
+                })
+            XCTAssertThrowsError(try state.activatePhoneDrive(token: token, monotonicMs: 3_001)) { error in
+                XCTAssertEqual(error as? MobilePhoneControlError, .Activation(reason: .controllerFault))
+            }
+            driver.nowValue = 3_002
+            driver.disconnectPreparation = { throw MobileRideMapError.storageError("disk unavailable") }
+
+            let disconnected = await model.disconnectTransport()
+
+            XCTAssertFalse(disconnected)
+            XCTAssertEqual(driver.disconnectCount, 0)
+            XCTAssertTrue(state.connectionAttemptIsCurrent(token: token))
+            let generation = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            _ = state.observePhoneDriveContactsAt(
+                token: token, generation: generation, contacts: .released,
+                observedAtMs: 3_003, monotonicMs: 3_003)
+            XCTAssertThrowsError(try state.activatePhoneDrive(token: token, monotonicMs: 3_003)) { error in
+                XCTAssertEqual(error as? MobilePhoneControlError, .Activation(reason: .controllerFault))
+            }
+        }
+    }
+
+    @MainActor
+    private func withActivePhoneDrive(
+        _ test: (CutoutSessionStateHandle, ConnectionAttemptToken, UInt64, SessionDriverSpy, CutoutAppModel)
+            async throws -> Void
+    ) async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let state = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try state.loadPhoneControlMode()
+        defer {
+            XCTAssertNoThrow(try state.savePhoneControlMode(mode: previous.mode))
+            XCTAssertNoThrow(
+                try state.savePhoneDriveLimits(
+                    throttleAmpsText: String(Double(previous.limits.throttleMilliamps) / 1_000),
+                    brakeAmpsText: String(Double(previous.limits.brakeMilliamps) / 1_000)))
+        }
+        _ = try state.savePhoneControlMode(mode: .buttons)
+        _ = try state.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
+        let token = try XCTUnwrap(
+            state.beginConnectionAttempt(platformIdentifier: "disconnect-phone-vesc", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        _ = state.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ]))
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        let linked = try XCTUnwrap(
+            state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
+                    channel: Data(), bytes: Data())))
+        let query = try XCTUnwrap(linked.result.outputs.compactMap(\.applicationQuery).first)
+        XCTAssertTrue(
+            state.markApplicationQueryTransport(
+                token: token, queryId: query.queryId, fragmentIndex: 0, fragmentCount: 1,
+                status: .submitted, monotonicMs: 1))
+        _ = state.ingestDeviceSession(
+            token: token,
+            input: MobileSessionInputDto(
+                kind: .tick, monotonicMs: .init(milliseconds: 3_000), maxWriteLen: nil,
+                channel: Data(), bytes: Data()))
+        XCTAssertTrue(state.configureConnectionVehicleKind(token: token, kind: .eskate))
+        XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+        let idleGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+        _ = state.observePhoneDriveContactsAt(
+            token: token, generation: idleGeneration, contacts: .released,
+            observedAtMs: 3_000, monotonicMs: 3_000)
+        let activated = try state.activatePhoneDrive(token: token, monotonicMs: 3_000)
+        let generation = try XCTUnwrap(activated.generation)
+        _ = state.observePhoneDriveContactsAt(
+            token: token, generation: generation, contacts: .released,
+            observedAtMs: 3_000, monotonicMs: 3_000)
+        let driver = SessionDriverSpy(rows: [], rideSessionStateHandle: state)
+        driver.nowValue = 3_000
+        let model = CutoutAppModel(core: driver)
+        try await test(state, token, generation, driver, model)
+    }
+
+    @MainActor
     func testDisconnectKeepsGpsRecordingActive() async throws {
         let driver = SessionDriverSpy(rows: [])
         let started = try await driver.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
@@ -3793,7 +3967,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
-    let rideSessionStateHandle = CutoutSessionStateHandle()
+    let rideSessionStateHandle: CutoutSessionStateHandle
     let rideMapState: MobileRideMapState
     private var rideMapUnavailable: Bool
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
@@ -3880,6 +4054,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     init(
         rows: [DevicePickerRow],
+        rideSessionStateHandle: CutoutSessionStateHandle = CutoutSessionStateHandle(),
         rideMapState: MobileRideMapState? = nil,
         pairingSucceeds: Bool = true,
         flushSucceeds: Bool = true,
@@ -3887,6 +4062,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         notifyBluetoothRestorationOnStart: Bool = true,
         rideMapUnavailable: Bool = false
     ) {
+        self.rideSessionStateHandle = rideSessionStateHandle
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds

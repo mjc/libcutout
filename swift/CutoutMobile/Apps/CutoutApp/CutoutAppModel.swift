@@ -1106,7 +1106,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func disconnectTransport() async -> Bool {
-        phoneDrive.cancel(.connectionChanged)
+        phoneDrive.cancel(.navigation)
         let expectedRecordingToken = await core.rideMapStateHandle?.currentSnapshotAsync(atMs: core.now().rawValue)?
             .recordingToken
         let connectionGeneration = core.connectionSnapshot.generation
