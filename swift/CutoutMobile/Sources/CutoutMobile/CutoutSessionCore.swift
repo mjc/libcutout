@@ -338,7 +338,8 @@ enum CoreBluetoothRestorationPolicy {
         func subscribe(channel _: BluetoothUuid) {}
 
         func writeWithoutResponse(
-            channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+            channel: BluetoothUuid, bytes: Data, priority _: CoreBluetoothWritePriority,
+            isCurrent: @escaping () -> Bool,
             onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
         ) -> CoreBluetoothWriteDisposition {
             guard isCurrent() else {
@@ -3866,14 +3867,6 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             return
         }
         peripheral?.setNotifyValue(true, for: characteristic)
-    }
-
-    public func writeWithoutResponse(
-        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
-        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
-    ) -> CoreBluetoothWriteDisposition {
-        writeWithoutResponse(
-            channel: channel, bytes: bytes, priority: .ordinary, isCurrent: isCurrent, onReceipt: onReceipt)
     }
 
     public func writeWithoutResponse(

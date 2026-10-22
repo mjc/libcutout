@@ -11,6 +11,20 @@ final class DeviceSessionTransportTests: XCTestCase {
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
     ])
 
+    func testLegacyWritesUseOrdinaryPriorityAndReleaseKeepsItsPriority() {
+        let sink = TransportSink()
+        let operationSink: any CoreBluetoothOperationSink = sink
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        var receipts: [CoreBluetoothWriteDisposition] = []
+        _ = operationSink.writeWithoutResponse(
+            channel: channel, bytes: Data([1]), isCurrent: { true }, onReceipt: { receipts.append($0) })
+        _ = operationSink.writeWithoutResponse(
+            channel: channel, bytes: Data([2]), priority: .release, isCurrent: { true },
+            onReceipt: { receipts.append($0) })
+        XCTAssertEqual(sink.priorities, [.ordinary, .release])
+        XCTAssertEqual(receipts, [.submitted, .submitted])
+    }
+
     func testPhoneDriveQueuedSetpointExpiresBeforeActualNativeSubmission() throws {
         try withReadyPhoneDriveTransport { state, transport, sink, now in
             let activated = try transport.activatePhoneDrive()
@@ -63,6 +77,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(state.phoneDriveSnapshot().phase, .cancelled(reason: .inputExpired))
             XCTAssertTrue(
                 sink.submittedWrites.contains(zeroCurrent), "Expiry must use the existing writer's zero-current effect")
+            XCTAssertEqual(sink.priorities.filter { $0 != .ordinary }, [.drive, .release])
             XCTAssertEqual(snapshots.last?.availability, .ready)
             let nonzeroCount = sink.submittedWrites.filter { $0 == current }.count
             now.withLock { $0 = 3_300 }
@@ -110,6 +125,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(state.phoneDriveSnapshot().phase, .idle)
             sink.writes.removeAll()
             sink.submittedWrites.removeAll()
+            sink.priorities.removeAll()
             try test(state, transport, sink, now)
         }
     }
@@ -985,6 +1001,7 @@ private final class TransportSink: CoreBluetoothOperationSink {
     var dispositions: [CoreBluetoothWriteDisposition] = []
     var receipts: [(CoreBluetoothWriteDisposition) -> Void] = []
     var submittedWrites: [Data] = []
+    var priorities: [CoreBluetoothWritePriority] = []
     var canSend = true
     private var pending: [(Data, () -> Bool, (CoreBluetoothWriteDisposition) -> Void)] = []
     func canSubmitWithoutResponse() -> Bool { canSend }
@@ -993,7 +1010,7 @@ private final class TransportSink: CoreBluetoothOperationSink {
         onSubscribe?(channel)
     }
     func writeWithoutResponse(
-        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
         guard isCurrent() else {
@@ -1001,6 +1018,7 @@ private final class TransportSink: CoreBluetoothOperationSink {
             return .cancelled
         }
         writes.append(bytes)
+        priorities.append(priority)
         receipts.append(onReceipt)
         let disposition = dispositions.isEmpty ? .submitted : dispositions.removeFirst()
         if disposition == .queued { pending.append((bytes, isCurrent, onReceipt)) }

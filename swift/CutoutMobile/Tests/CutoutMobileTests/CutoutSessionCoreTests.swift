@@ -5935,7 +5935,7 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
     }
 
     func writeWithoutResponse(
-        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        channel: BluetoothUuid, bytes: Data, priority _: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
         guard isCurrent() else {

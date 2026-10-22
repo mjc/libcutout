@@ -4924,11 +4924,7 @@ public enum CoreBluetoothWritePriority: Equatable, Sendable {
 public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     /// Reports admission synchronously and a final receipt when a queued write is submitted or rejected.
-    /// All receipts run on the transport's queue.
-    func writeWithoutResponse(
-        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
-        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
-    ) -> CoreBluetoothWriteDisposition
+    /// Preserve priority through native queue admission. All receipts run on the transport's queue.
     func writeWithoutResponse(
         channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
@@ -4963,10 +4959,11 @@ extension CoreBluetoothOperationSink {
     }
 
     public func writeWithoutResponse(
-        channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
+        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
-        writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onReceipt)
+        writeWithoutResponse(
+            channel: channel, bytes: bytes, priority: .ordinary, isCurrent: isCurrent, onReceipt: onReceipt)
     }
 
     public func canSubmitWithoutResponse() -> Bool { true }
@@ -5493,7 +5490,7 @@ extension CoreBluetoothScanPolicy {
         }
 
         public func writeWithoutResponse(
-            channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+            channel: BluetoothUuid, bytes: Data, priority: CoreBluetoothWritePriority, isCurrent: @escaping () -> Bool,
             onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
         ) -> CoreBluetoothWriteDisposition {
             guard let characteristic = peripheral.characteristic(for: channel) else {
@@ -5506,6 +5503,7 @@ extension CoreBluetoothScanPolicy {
             }
             return pendingWithoutResponseWrites.submit(
                 canSend: { peripheral.canSendWriteWithoutResponse },
+                priority: priority,
                 isCurrent: isCurrent,
                 write: { [peripheral] in
                     peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
