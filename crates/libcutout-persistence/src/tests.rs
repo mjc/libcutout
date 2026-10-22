@@ -3505,6 +3505,9 @@ fn sqlite_export_keeps_final_absent_until_verified_and_preserves_race_winner() {
         .export_pevcap_capture(&receipt.artifact_digest, &exported)
         .unwrap();
     assert_eq!(std::fs::read(exported).unwrap(), bytes.as_bytes());
+    database.shutdown().unwrap();
+    let next_database = RideDatabase::open(&directory.path().join("next-capture.sqlite")).unwrap();
+    next_database.shutdown().unwrap();
 }
 
 fn assert_staging_directory_is_empty(directory: &std::path::Path) {
