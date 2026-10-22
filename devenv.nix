@@ -209,6 +209,7 @@ in
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "test:swift-package"
+      "test:ios-phone-control"
       "test:ios-music-monitor"
       "test:ios-capture-staging"
       "test:shell-regressions"
@@ -358,6 +359,16 @@ in
     '';
     after = [ "check:xcode-ios" ];
   };
+  tasks."test:ios-phone-control" = swiftTask ''
+    cargo cutout xcodebuild -- \
+      -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+      -scheme CutoutAppIOSUnitTests \
+      -destination "''${CUTOUT_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 18 Pro,OS=latest}" \
+      -only-testing:CutoutAppIOSUnitTests/PhoneDriveTests \
+      -parallel-testing-enabled NO \
+      -collect-test-diagnostics never \
+      ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test
+  '';
   tasks."test:ios-locked-ride" = {
     exec = ''
       destination="''${CUTOUT_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 18 Pro,OS=latest}"
@@ -391,6 +402,7 @@ in
     # native checks so it cannot invalidate their captured source generations.
     after = [
       "test:swift-package"
+      "test:ios-phone-control"
       "test:ios-music-monitor"
       "test:ios-capture-staging"
       "build:ios-ui-tests"
