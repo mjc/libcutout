@@ -422,7 +422,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
             self.owner = owner
             super.init(target: nil, action: nil)
         }
-        required init?(coder: NSCoder) { super.init(coder: coder) }
+        required init?(coder: NSCoder) { return nil }
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
             owner?.observeEvent(event, cancelled: false)
         }
