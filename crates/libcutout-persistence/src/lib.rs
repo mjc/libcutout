@@ -9,6 +9,7 @@
 
 //! Rust-owned `SQLite` persistence for rides, maps, and mobile state.
 
+mod atomic_export;
 mod capture_writer;
 mod pevcap_limits;
 mod recording;

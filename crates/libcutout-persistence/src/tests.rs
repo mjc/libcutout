@@ -3445,6 +3445,68 @@ fn database_preflights_confirms_and_deduplicates_sqlite_canonical_pevcap_artifac
     let _ = std::fs::remove_file(export_path);
 }
 
+#[test]
+fn sqlite_export_keeps_final_absent_until_verified_and_preserves_race_winner() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("capture.sqlite")).unwrap();
+    let source = directory.path().join("source.jsonl");
+    let records = (0..4)
+        .map(|index| {
+            PevcapRecord::inbound_notification(
+                MonotonicTimestamp::new(index + 1),
+                GattChannel::from_bytes([0x11; 16]),
+                GattChannel::from_bytes([0x22; 16]),
+                vec![u8::try_from(index).unwrap(); 20_000],
+            )
+        })
+        .collect();
+    let bytes = PevcapCapture::new(pevcap_header(), records)
+        .to_jsonl()
+        .unwrap();
+    assert!(bytes.len() > 65_536);
+    std::fs::write(&source, bytes.as_bytes()).unwrap();
+    let preview = database
+        .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+        .unwrap();
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_001)
+        .unwrap();
+
+    let interrupted_path = directory.path().join("interrupted.jsonl");
+    let interrupted = database.export_pevcap_capture_with_chunk_hook(
+        &receipt.artifact_digest,
+        &interrupted_path,
+        |_| {
+            assert!(!interrupted_path.exists());
+            Err(StorageError::InvalidDatabaseIdentity)
+        },
+    );
+    assert!(interrupted.is_err());
+    assert!(!interrupted_path.exists());
+
+    let race_path = directory.path().join("race.jsonl");
+    let race = database.export_pevcap_capture_with_chunk_hook(
+        &receipt.artifact_digest,
+        &race_path,
+        |sequence| {
+            if sequence == 0 {
+                assert!(!race_path.exists());
+                std::fs::write(&race_path, b"race winner").unwrap();
+            }
+            Ok(())
+        },
+    );
+    assert!(race.is_err());
+    assert_eq!(std::fs::read(race_path).unwrap(), b"race winner");
+
+    let exported = directory.path().join("verified.jsonl");
+    database
+        .export_pevcap_capture(&receipt.artifact_digest, &exported)
+        .unwrap();
+    assert_eq!(std::fs::read(exported).unwrap(), bytes.as_bytes());
+}
+
 fn assert_staging_directory_is_empty(directory: &std::path::Path) {
     assert!(std::fs::read_dir(directory).unwrap().next().is_none());
 }
@@ -4249,6 +4311,16 @@ fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
     let snapshot_json = format!(r#"{{"state":"{}"}}"#, "x".repeat(7_000));
     let (capture_id, payloads) =
         create_legacy_semantic_fixture(&database_path, PHYSICAL_DEDUP_RECORDS, &snapshot_json);
+    let oversized_override = format!(r#"{{"legacy":"{}"}}"#, "é".repeat(32_765));
+    assert!(oversized_override.len() > crate::LIVE_CAPTURE_EVENT_LIMIT_BYTES);
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "UPDATE live_capture_ble_semantic_telemetry SET snapshot_json = ?1
+             WHERE capture_id = ?2 AND sequence = 0",
+            (&oversized_override, capture_id.to_string()),
+        )
+        .unwrap();
 
     let before_bytes = physical_bytes(&database_path);
     let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
@@ -4315,12 +4387,12 @@ fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
             .collect::<Vec<_>>(),
         payloads.iter().map(Vec::as_slice).collect::<Vec<_>>()
     );
-    let override_row = reopened
-        .live_capture_semantic_telemetry(capture_id, 0)
-        .unwrap()
-        .unwrap();
-    assert_eq!(override_row.snapshot_schema_version, 99);
-    assert_eq!(override_row.library_version, "independent-legacy-override");
+    assert_oversized_legacy_override_is_preserved(
+        &reopened,
+        &database_path,
+        capture_id,
+        &oversized_override,
+    );
     let canonical_row = reopened
         .live_capture_semantic_telemetry(capture_id, PHYSICAL_DEDUP_RECORDS - 1)
         .unwrap()
@@ -4328,6 +4400,46 @@ fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
     assert_eq!(canonical_row.snapshot_json, snapshot_json);
     assert_eq!(canonical_row.snapshot_schema_version, 12);
     reopened.shutdown().unwrap();
+}
+
+fn assert_oversized_legacy_override_is_preserved(
+    database: &RideDatabase,
+    database_path: &std::path::Path,
+    capture_id: LiveCaptureId,
+    expected_json: &str,
+) {
+    assert!(matches!(
+        database.live_capture_semantic_telemetry(capture_id, 0),
+        Err(StorageError::PevcapLimitExceeded {
+            resource: "semantic telemetry bytes",
+            limit: 65_536,
+            actual,
+        }) if actual == expected_json.len() as u64
+    ));
+    let legacy_override: (Option<u64>, String, u16, String, String) = Connection::open(
+        database_path,
+    )
+    .unwrap()
+    .query_row(
+        "SELECT observed_at_ms, provenance, snapshot_schema_version, library_version, snapshot_json
+                 FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1 AND sequence = 0",
+        [capture_id.to_string()],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(legacy_override.0, Some(99));
+    assert_eq!(legacy_override.1, "replay");
+    assert_eq!(legacy_override.2, 99);
+    assert_eq!(legacy_override.3, "independent-legacy-override");
+    assert_eq!(legacy_override.4, expected_json);
 }
 
 #[test]
@@ -10983,6 +11095,91 @@ fn battery_current_snapshot_versions_survive_storage_without_relabeling() {
     }
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn semantic_snapshot_byte_bound_is_enforced_before_public_append_and_roundtrips_at_limit() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("semantic-snapshot-limit.sqlite");
+    let mut database = RideDatabase::open(&path).unwrap();
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let channel = GattChannel::from_bytes([0x11; 16]);
+    let oversized_json = format!("{{\"v\":\"{}a\"}}", "é".repeat(32_764));
+    assert_eq!(oversized_json.len(), 65_537);
+    let oversized =
+        PevcapRecord::inbound_notification(MonotonicTimestamp::new(1), channel, channel, vec![1])
+            .with_semantic_telemetry(cutout_core::PevcapSemanticTelemetry {
+                observed_at_ms: Some(MonotonicTimestamp::new(1)),
+                provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+                snapshot_schema_version: 1,
+                library_version: "limit-test".into(),
+                snapshot_json: oversized_json,
+            });
+    let small_event = br#"{"kind":"record","record":{}}"#.to_vec();
+    let error = database
+        .append_live_capture_record(capture_id, oversized, small_event.clone())
+        .expect_err("an unreadable oversized independent projection must be rejected");
+    assert!(matches!(
+        error,
+        StorageError::PevcapLimitExceeded {
+            resource: "semantic telemetry bytes",
+            limit: 65_536,
+            actual: 65_537,
+        }
+    ));
+    let unchanged = database
+        .live_capture(capture_id, QueryLimit::new(2).unwrap())
+        .unwrap();
+    assert_eq!(unchanged.next_sequence, 0);
+    assert_eq!(unchanged.events.len(), 0);
+    database.shutdown().unwrap();
+    let observer = Connection::open(&path).unwrap();
+    let (stored_bytes, event_rows, ble_rows, semantic_rows): (u64, u64, u64, u64) = observer
+        .query_row(
+            "SELECT stored_bytes,
+                    (SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1),
+                    (SELECT COUNT(*) FROM live_capture_ble_observations WHERE capture_id = ?1),
+                    (SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1)
+             FROM live_capture_sessions WHERE capture_id = ?1",
+            [capture_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (stored_bytes, event_rows, ble_rows, semantic_rows),
+        (2, 0, 0, 0)
+    );
+    drop(observer);
+    database = RideDatabase::open(&path).unwrap();
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+
+    let exact_json = format!("{{\"v\":\"{}\"}}", "é".repeat(32_764));
+    assert_eq!(exact_json.len(), 65_536);
+    let exact =
+        PevcapRecord::inbound_notification(MonotonicTimestamp::new(2), channel, channel, vec![2])
+            .with_semantic_telemetry(cutout_core::PevcapSemanticTelemetry {
+                observed_at_ms: Some(MonotonicTimestamp::new(2)),
+                provenance: cutout_core::PevcapTelemetryProvenance::Replay,
+                snapshot_schema_version: 1,
+                library_version: "limit-test".into(),
+                snapshot_json: exact_json.clone(),
+            });
+    assert_eq!(
+        database
+            .append_live_capture_record(capture_id, exact, small_event)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        database
+            .live_capture_semantic_telemetry(capture_id, 0)
+            .unwrap()
+            .unwrap()
+            .snapshot_json,
+        exact_json
+    );
+    database.shutdown().unwrap();
 }
 
 fn assert_snapshot_record_and_projection(

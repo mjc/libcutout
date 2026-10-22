@@ -4249,6 +4249,25 @@ impl RideDatabase {
         digest: &str,
         destination: &Path,
     ) -> Result<String, StorageError> {
+        self.export_pevcap_capture_with_chunk_hook_inner(digest, destination, |_| Ok(()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn export_pevcap_capture_with_chunk_hook(
+        &self,
+        digest: &str,
+        destination: &Path,
+        after_chunk: impl FnMut(u64) -> Result<(), StorageError>,
+    ) -> Result<String, StorageError> {
+        self.export_pevcap_capture_with_chunk_hook_inner(digest, destination, after_chunk)
+    }
+
+    fn export_pevcap_capture_with_chunk_hook_inner(
+        &self,
+        digest: &str,
+        destination: &Path,
+        mut after_chunk: impl FnMut(u64) -> Result<(), StorageError>,
+    ) -> Result<String, StorageError> {
         let mut expected_digest = [0_u8; 32];
         if digest.len() != 64
             || hex::decode_to_slice(digest, &mut expected_digest).is_err()
@@ -4257,57 +4276,43 @@ impl RideDatabase {
             return Err(StorageError::InvalidPevcapCaptureDigest);
         }
 
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(destination)?;
-        let result = (|| {
-            let mut content_digest = Sha256::new();
-            let mut byte_count = 0_u64;
-            let mut sequence = 0_u64;
-            loop {
-                let Some(chunk) = self.pevcap_capture_chunk(digest, sequence)? else {
-                    break;
-                };
-                byte_count = byte_count
-                    .checked_add(u64::try_from(chunk.len()).map_err(|_| {
-                        StorageError::PevcapCaptureIntegrity(
-                            "chunk length cannot be represented".to_owned(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        StorageError::PevcapCaptureIntegrity("byte count overflowed".to_owned())
-                    })?;
-                check_limit_result(PevcapLimits::IMPORT.check_artifact_bytes(byte_count))?;
-                content_digest.update(&chunk);
-                output.write_all(&chunk)?;
-                sequence = sequence.checked_add(1).ok_or_else(|| {
-                    StorageError::PevcapCaptureIntegrity("chunk sequence overflowed".to_owned())
+        let mut output = crate::atomic_export::AtomicExport::new(destination)?;
+        let mut content_digest = Sha256::new();
+        let mut byte_count = 0_u64;
+        let mut sequence = 0_u64;
+        loop {
+            let Some(chunk) = self.pevcap_capture_chunk(digest, sequence)? else {
+                break;
+            };
+            byte_count = byte_count
+                .checked_add(u64::try_from(chunk.len()).map_err(|_| {
+                    StorageError::PevcapCaptureIntegrity(
+                        "chunk length cannot be represented".to_owned(),
+                    )
+                })?)
+                .ok_or_else(|| {
+                    StorageError::PevcapCaptureIntegrity("byte count overflowed".to_owned())
                 })?;
-            }
-
-            if byte_count == 0 {
-                return Err(StorageError::PevcapCaptureNotFound);
-            }
-            if content_digest.finalize().as_slice() != expected_digest {
-                return Err(StorageError::PevcapCaptureIntegrity(
-                    "stored byte digest does not match capture identity".to_owned(),
-                ));
-            }
-
-            output.sync_all()?;
-            let parent = destination
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            File::open(parent)?.sync_all()?;
-            Ok(digest.to_owned())
-        })();
-        if result.is_err() {
-            drop(output);
-            let _ = fs::remove_file(destination);
+            check_limit_result(PevcapLimits::IMPORT.check_artifact_bytes(byte_count))?;
+            content_digest.update(&chunk);
+            output.file_mut().write_all(&chunk)?;
+            after_chunk(sequence)?;
+            sequence = sequence.checked_add(1).ok_or_else(|| {
+                StorageError::PevcapCaptureIntegrity("chunk sequence overflowed".to_owned())
+            })?;
         }
-        result
+
+        if byte_count == 0 {
+            return Err(StorageError::PevcapCaptureNotFound);
+        }
+        if content_digest.finalize().as_slice() != expected_digest {
+            return Err(StorageError::PevcapCaptureIntegrity(
+                "stored byte digest does not match capture identity".to_owned(),
+            ));
+        }
+
+        output.publish()?;
+        Ok(digest.to_owned())
     }
 
     /// Lists published SQLite-backed captures in descending import-time/digest order.

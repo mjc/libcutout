@@ -991,6 +991,15 @@ fn insert_ble_telemetry(
     record: &PevcapRecord,
     canonical_event_payload: &[u8],
 ) -> Result<(), StorageError> {
+    if let Some(telemetry) = &record.semantic_telemetry {
+        let snapshot_size = i64::try_from(telemetry.snapshot_json.len()).map_err(|_| {
+            StorageError::InvalidStoredValue {
+                field: "semantic telemetry byte length",
+                value: telemetry.snapshot_json.len().to_string(),
+            }
+        })?;
+        ensure_semantic_snapshot_size(snapshot_size)?;
+    }
     if let Some(telemetry) = &record.telemetry {
         for (field_index, field) in telemetry.fields.iter().enumerate() {
             transaction.execute(

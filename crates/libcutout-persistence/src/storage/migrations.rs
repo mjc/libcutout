@@ -2352,14 +2352,17 @@ fn migrate_v56_to_current(connection: &mut Connection) -> Result<(), StorageErro
         transaction.commit()?;
         Ok::<_, StorageError>(())
     })();
-    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-    let foreign_keys_enabled: bool =
-        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    if !foreign_keys_enabled {
-        return Err(StorageError::InvalidDatabaseIdentity);
-    }
+    let restore_result = (|| {
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let foreign_keys_enabled: bool =
+            connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        if !foreign_keys_enabled {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+        Ok(())
+    })();
     result?;
-    Ok(())
+    restore_result
 }
 
 fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -2386,6 +2389,37 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn v56_migration_fixture(with_conflicting_table: bool) -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE storage_normalization_progress;
+                 DROP INDEX pevcap_imports_history;
+                 DROP TABLE pevcap_imports;
+                 CREATE TABLE pevcap_imports (
+                     artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+                     artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
+                     ride_id TEXT REFERENCES rides(id),
+                     outcome TEXT NOT NULL CHECK (outcome IN ('ride_and_capture', 'capture_only')),
+                     artifact_size INTEGER NOT NULL CHECK (artifact_size >= 0),
+                     record_count INTEGER NOT NULL CHECK (record_count >= 0),
+                     location_count INTEGER NOT NULL CHECK (location_count >= 0),
+                     imported_at_ms INTEGER NOT NULL CHECK (imported_at_ms >= 0)
+                 );
+                 CREATE INDEX pevcap_imports_history
+                     ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);",
+            )
+            .unwrap();
+        if with_conflicting_table {
+            connection
+                .execute_batch("CREATE TABLE pevcap_imports_new (artifact_digest TEXT);")
+                .unwrap();
+        }
+        connection.execute_batch(&schema_pragmas(56)).unwrap();
+        connection
+    }
 
     fn insert_v56_import_fixture(connection: &Connection, digest: &str) {
         connection
@@ -2581,6 +2615,75 @@ mod tests {
         assert_eq!(version, 56);
         assert!(foreign_keys);
         assert!(table_exists);
+    }
+
+    #[test]
+    fn v56_migration_error_is_not_masked_by_foreign_key_restore_failure() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let mut connection = v56_migration_fixture(true);
+        let restore_attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&restore_attempts);
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::Pragma {
+                    pragma_name: "foreign_keys",
+                    pragma_value: Some("ON"),
+                } => {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Authorization::Deny
+                }
+                _ => Authorization::Allow,
+            }))
+            .unwrap();
+
+        let error = migrate_v56_to_current(&mut connection).unwrap_err();
+        assert_eq!(restore_attempts.load(Ordering::SeqCst), 1);
+        assert!(
+            error
+                .to_string()
+                .contains("pevcap_imports_new already exists"),
+            "the migration failure should remain primary, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn successful_v56_migration_reports_foreign_key_restore_failure() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let mut connection = v56_migration_fixture(false);
+        let restore_attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&restore_attempts);
+        connection
+            .authorizer(Some(move |context: AuthContext<'_>| match context.action {
+                AuthAction::Pragma {
+                    pragma_name: "foreign_keys",
+                    pragma_value: Some("ON"),
+                } => {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Authorization::Deny
+                }
+                _ => Authorization::Allow,
+            }))
+            .unwrap();
+
+        let error = migrate_v56_to_current(&mut connection).unwrap_err();
+        assert_eq!(restore_attempts.load(Ordering::SeqCst), 1);
+        assert!(error.to_string().contains("not authorized"), "{error:?}");
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION - 1
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Bounded PEVCAP ingestion and durable completion evidence.
 //! Mobile captures use SQLite as their live source; JSONL exports are created on explicit demand.
 
+use crate::atomic_export::AtomicExport;
 use crate::storage::{
     CaptureTransportReadPrefix, LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity,
     LiveCaptureLocationAdmission, LiveCaptureLocationObservation, LiveCaptureLocationValidation,
@@ -13,9 +14,11 @@ use cutout_core::{
     PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::fs;
 use std::{
     collections::VecDeque,
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
@@ -1778,18 +1781,9 @@ fn export_database_capture_from_pages(
     // Inactive captures have a fixed event total; cleanup that reindexes rows lowers it.
     let expected_next_sequence = first_page.next_sequence;
 
-    let mut created = false;
-    let result = (|| {
-        let file = sync_parent_directory_after(path, || {
-            let file = OpenOptions::new()
-                .create_new(true)
-                .read(true)
-                .write(true)
-                .open(path)?;
-            created = true;
-            Ok(file)
-        })?;
-        let mut output = BufWriter::new(file);
+    let mut export = AtomicExport::new(path).map_err(|error| error.to_string())?;
+    {
+        let mut output = BufWriter::new(export.file_mut());
         let header = std::str::from_utf8(&first_page.header_json)
             .map_err(|error| format!("stored capture header is not UTF-8: {error}"))?;
         let mut bytes_written = write_line(&mut output, header)? as u64;
@@ -1829,13 +1823,13 @@ fn export_database_capture_from_pages(
         }
 
         output.flush().map_err(|error| error.to_string())?;
-        let mut file = output
+        let file = output
             .into_inner()
             .map_err(|error| error.into_error().to_string())?;
         file.seek(SeekFrom::Start(0))
             .map_err(|error| error.to_string())?;
-        let mut reader =
-            PevcapReader::new(&mut file, cutout_core::PevcapEncoding::Jsonl).map_err(|error| {
+        let mut reader = PevcapReader::new(&mut *file, cutout_core::PevcapEncoding::Jsonl)
+            .map_err(|error| {
                 format!("stored capture is not valid current-format PEVCAP: {error}")
             })?;
         while reader
@@ -1843,16 +1837,14 @@ fn export_database_capture_from_pages(
             .map_err(|error| format!("stored capture is not valid current-format PEVCAP: {error}"))?
             .is_some()
         {}
-        file.sync_all().map_err(|error| error.to_string())?;
+        drop(reader);
+        let digest = hex::encode(digest.finalize());
+        export.publish().map_err(|error| error.to_string())?;
         state
             .physical_bytes_written
             .fetch_add(bytes_written, Ordering::AcqRel);
-        Ok(hex::encode(digest.finalize()))
-    })();
-    if result.is_err() && created {
-        let _ = fs::remove_file(path);
+        Ok(digest)
     }
-    result
 }
 
 fn capture_writer_action(
@@ -2079,7 +2071,7 @@ fn close_pending_capture_labels(
     Ok(true)
 }
 
-fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
+fn write_line(writer: &mut impl Write, line: &str) -> Result<usize, String> {
     writer
         .write_all(line.as_bytes())
         .and_then(|()| writer.write_all(b"\n"))
@@ -2186,6 +2178,98 @@ fn sync_parent_directory_after<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    fn export_test_page(
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        sequence: u64,
+        payload: Vec<u8>,
+    ) -> crate::storage::LiveCaptureSnapshot {
+        crate::storage::LiveCaptureSnapshot {
+            id,
+            state: LiveCaptureState::Finished,
+            integrity: LiveCaptureIntegrity::Complete,
+            header_json,
+            started_at_ms: 1,
+            finished_at_ms: Some(2),
+            next_sequence: 2,
+            events: vec![crate::storage::LiveCaptureEvent {
+                sequence,
+                kind: LiveCaptureEventKind::LinkUp,
+                receipt_monotonic_ms: sequence,
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: None,
+                payload,
+                location: None,
+            }],
+        }
+    }
+
+    fn export_test_inputs() -> (LiveCaptureId, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let header = capture_header(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &metadata,
+        )
+        .unwrap()
+        .to_jsonl_line()
+        .unwrap()
+        .into_bytes();
+        let first = PevcapRecord::link_up(cutout_core::MonotonicTimestamp::new(1), None)
+            .to_jsonl_line()
+            .unwrap()
+            .into_bytes();
+        let second = PevcapRecord::link_down(cutout_core::MonotonicTimestamp::new(2))
+            .to_jsonl_line()
+            .unwrap()
+            .into_bytes();
+        (LiveCaptureId::new(), header, first, second)
+    }
+
+    #[test]
+    fn live_export_keeps_final_absent_until_validation_and_preserves_race_winner() {
+        let directory = tempfile::tempdir().unwrap();
+        let (id, header, first, second) = export_test_inputs();
+        let limit = QueryLimit::new(1).unwrap();
+        let first_page = export_test_page(id, header.clone(), 0, first.clone());
+        let interrupted_path = directory.path().join("interrupted.jsonl");
+        let interrupted = export_database_capture_from_pages(
+            &interrupted_path,
+            first_page,
+            &CaptureWriterState::default(),
+            limit,
+            |_, _| {
+                assert!(!interrupted_path.exists());
+                Err("interrupted after the first page".into())
+            },
+        );
+        assert!(interrupted.is_err());
+        assert!(!interrupted_path.exists());
+
+        let race_path = directory.path().join("race.jsonl");
+        let first_page = export_test_page(id, header, 0, first);
+        let race = export_database_capture_from_pages(
+            &race_path,
+            first_page,
+            &CaptureWriterState::default(),
+            limit,
+            |_, _| {
+                assert!(!race_path.exists());
+                fs::write(&race_path, b"race winner").unwrap();
+                Ok(export_test_page(id, b"unused".to_vec(), 1, second.clone()))
+            },
+        );
+        assert!(race.is_err());
+        assert_eq!(fs::read(race_path).unwrap(), b"race winner");
+    }
 
     pub(super) fn stationary_record(at: u64) -> PevcapRecord {
         PevcapRecord::inbound_notification(
