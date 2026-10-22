@@ -340,6 +340,8 @@ struct PevRideSpeedReading: View {
             Text(speed.displayUnit ?? RideUnits.speedUnit)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(muted)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .accessibilityHidden(true)
         }
     }
@@ -463,15 +465,17 @@ struct PevRideReserveGauge: View {
     var valueScale: CGFloat = 0.23
 
     var body: some View {
-        GeometryReader { geometry in
-            let width = min(360, geometry.size.width, max(0, geometry.size.height - (compact ? 30 : 60)) * 2)
-            let height = width / 2
-            VStack(spacing: compact ? 6 : 12) {
-                Text(label)
-                    .font(compact ? .caption.weight(.semibold) : .title3.weight(.semibold))
-                    .foregroundStyle(ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+        VStack(spacing: compact ? 6 : 12) {
+            Text(label)
+                .font(compact ? .caption.weight(.semibold) : .title3.weight(.semibold))
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
+            GeometryReader { geometry in
+                // Text takes its measured height before the arc uses the remaining proposal.
+                // Include stroke clearance so neither end can paint into adjacent readings.
+                let width = min(348, max(0, geometry.size.width - 12), max(0, geometry.size.height - 12) * 2)
                 ZStack(alignment: .bottom) {
                     EucHeadroomArc()
                         .stroke(track, style: StrokeStyle(lineWidth: compact ? 4 : 10, lineCap: .round))
@@ -484,21 +488,23 @@ struct PevRideReserveGauge: View {
                     headroomValue(pointSize: min(84, width * valueScale))
                         .padding(.bottom, 4)
                 }
-                .frame(width: max(0, width - 12), height: max(0, height - 6))
-                if showsScale {
-                    HStack {
-                        Text(0.formatted())
-                        Spacer()
-                        Text(100.formatted())
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(muted)
-                    .frame(width: max(0, width - 12))
-                    .accessibilityHidden(true)
-                }
+                .frame(width: width, height: width / 2)
+                .padding(6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showsScale {
+                HStack {
+                    Text(0.formatted())
+                    Spacer()
+                    Text(100.formatted())
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(muted)
+                .frame(maxWidth: 348)
+                .accessibilityHidden(true)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func headroomValue(pointSize: CGFloat) -> some View {

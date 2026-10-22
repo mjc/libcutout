@@ -309,8 +309,9 @@ struct VescRideScreenView: View {
                         showsScale: false, compact: usesCompactPhoneInstruments,
                         valueScale: usesCompactPhoneInstruments ? 0.35 : 0.30
                     )
-                    .frame(maxWidth: usesCompactPhoneInstruments ? 140 : 292)
-                    .frame(height: usesCompactPhoneInstruments ? 112 : 220)
+                    .frame(
+                        maxWidth: usesCompactPhoneInstruments ? 140 : 292,
+                        maxHeight: usesCompactPhoneInstruments ? 112 : 220)
                 } else {
                     PevInstrumentReading(
                         label: tile.label, value: tile.metricValue, unit: tile.unit,
