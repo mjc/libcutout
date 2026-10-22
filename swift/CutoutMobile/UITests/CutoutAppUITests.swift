@@ -9528,6 +9528,8 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         let header = phoneElement("dashboard.top.navigation")
         let rideOrigin = phoneElement("phone-control.preview-receipts")
         XCTAssertTrue(header.exists)
+        XCTAssertTrue(rideOrigin.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertFalse(rideOrigin.frame.isEmpty)
         XCTAssertGreaterThanOrEqual(header.frame.minY + 1, rideOrigin.frame.minY)
 
         let tabs = phoneApp.tabBars.firstMatch
