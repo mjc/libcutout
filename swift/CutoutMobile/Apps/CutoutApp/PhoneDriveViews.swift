@@ -144,7 +144,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 Text(localizedAppText(pressed ? "phone_control.held" : "phone_control.hold"))
-                    .font(.caption)
+                    .font(.system(size: 13))
                     .opacity(0.7)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -180,7 +180,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     .font(.caption)
                     .foregroundStyle(PevDashboardColors.rideMuted)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(0.45)
                 Spacer(minLength: 4)
                 activationStatus
             }
@@ -219,12 +219,24 @@ struct PhoneDriveRideSurface<Content: View>: View {
     @ViewBuilder
     private var activationStatus: some View {
         if !model.capturesInput || model.snapshot.mode != .area {
-            Button(localizedAppText(model.capturesInput ? "phone_control.deactivate" : "phone_control.arm")) {
+            Button {
                 if model.capturesInput { model.cancel(.activationChanged) } else { model.activate() }
+            } label: {
+                if model.capturesInput {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .semibold))
+                } else {
+                    Text(localizedAppText("phone_control.arm"))
+                        .font(.caption)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
             }
             .disabled(!model.capturesInput && !model.canActivate)
-            .font(.caption)
             .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel(
+                localizedAppText(model.capturesInput ? "phone_control.deactivate" : "phone_control.arm")
+            )
             .accessibilityIdentifier("phone-control.activate")
         }
     }
@@ -234,7 +246,13 @@ struct PhoneDriveRideSurface<Content: View>: View {
             HStack(spacing: 6) {
                 Text(model.availabilityText)
                     .accessibilityIdentifier("phone-control.status")
-                if model.isInputPreview { Text(localizedAppText("phone_control.preview")) }
+                if model.isInputPreview {
+                    Text(localizedAppText("phone_control.preview"))
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .accessibilityLabel(localizedAppText("phone_control.preview"))
+                }
             }
             if model.activationError {
                 Text(localizedAppText("phone_control.activation_failed")).foregroundStyle(.red)

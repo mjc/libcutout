@@ -5,6 +5,7 @@ import SwiftUI
 
 struct VescRideScreenView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ScaledMetric(relativeTo: .headline) private var headroomLineHeight: CGFloat = 21
@@ -153,10 +154,12 @@ struct VescRideScreenView: View {
                     statusTone: presentation.statusTone, captureStatusText: captureStatusText,
                     quietStatus: true
                 )
+                .lineLimit(isEskate ? 1 : nil)
+                .minimumScaleFactor(isEskate ? 0.6 : 1)
                 if let disconnect {
                     Button(action: disconnect) {
                         Image(systemName: "xmark")
-                            .font(.body.weight(.semibold))
+                            .font(isEskate ? .system(size: 20, weight: .semibold) : .body.weight(.semibold))
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
@@ -228,6 +231,8 @@ struct VescRideScreenView: View {
                 drivetrainEditor = makeDrivetrainEditor()
             }
             .font(usesCompactPhoneInstruments ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+            .lineLimit(isEskate ? 1 : nil)
+            .minimumScaleFactor(isEskate ? 0.5 : 1)
             .padding(.horizontal, 14)
             .frame(minHeight: 44)
             .background(isEskate ? PevDashboardColors.rideLine.opacity(0.4) : PevColors.cardFill, in: Capsule())
@@ -248,7 +253,7 @@ struct VescRideScreenView: View {
                     PevRideReserveGauge(
                         label: tile.label, valueText: tile.metricValue.displayText, unit: tile.unit,
                         progress: Double(level.value) / 100,
-                        accent: PevDashboardColors.rideInk,
+                        accent: colorScheme == .dark ? PevDashboardColors.rideAccent : PevDashboardColors.rideInk,
                         track: PevDashboardColors.rideLine,
                         ink: PevDashboardColors.rideInk,
                         muted: PevDashboardColors.rideMuted,

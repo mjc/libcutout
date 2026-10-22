@@ -9525,6 +9525,11 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
 
         try activatePhoneInput()
 
+        let header = phoneElement("dashboard.top.navigation")
+        let rideOrigin = phoneElement("phone-control.preview-receipts")
+        XCTAssertTrue(header.exists)
+        XCTAssertGreaterThanOrEqual(header.frame.minY + 1, rideOrigin.frame.minY)
+
         let tabs = phoneApp.tabBars.firstMatch
         for button in [brake, throttle] {
             XCTAssertTrue(button.isEnabled)
@@ -9566,6 +9571,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(lowerReading.exists)
         XCTAssertGreaterThan(lowerReading.frame.height, 0)
         XCTAssertTrue(player.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        keepPhoneScreenshot("phone-control-area-large-before-input")
         XCTAssertLessThanOrEqual(area.frame.minY, header.frame.minY + 1)
         XCTAssertGreaterThanOrEqual(area.frame.maxY, lowerReading.frame.maxY)
         XCTAssertLessThanOrEqual(area.frame.maxY, tabs.frame.minY + 1)
