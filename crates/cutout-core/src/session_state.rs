@@ -42,6 +42,9 @@ pub struct CutoutSessionState {
     /// Semantic device action lifecycle and measured procedure progress.
     pub actions: crate::DeviceActionsState,
 
+    /// Ephemeral phone contact semantics, independent of motor-control authority.
+    pub phone_drive_input: crate::PhoneDriveInputState,
+
     /// Diagnostics accumulated from parser and protocol diagnostic events.
     pub diagnostics: SessionDiagnosticsState,
 }

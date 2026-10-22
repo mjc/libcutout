@@ -82,6 +82,8 @@ mod device_actions;
 pub use device_actions::*;
 mod phone_alarm;
 pub use phone_alarm::*;
+mod phone_drive;
+pub use phone_drive::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
