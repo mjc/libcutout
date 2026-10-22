@@ -19380,18 +19380,25 @@ impl MobileChargeEstimator {
             })
             .unwrap_or(BatteryLevelBasis::Unavailable);
         let at = MonotonicTimestamp::new(input.at.milliseconds);
-        let observed_at = snapshot.at_ms.map_or(at, |timestamp| {
+        let snapshot_observed_at = snapshot.at_ms.map_or(at, |timestamp| {
             MonotonicTimestamp::new(timestamp.milliseconds)
         });
+        let battery_current = current_is_fresh
+            .then_some(snapshot.battery_current)
+            .flatten()
+            .map(core_battery_current);
+        // Other telemetry fields can advance the snapshot without a new current sample.
+        let observed_at = current_observed_at
+            .filter(|_| {
+                battery_current.is_some_and(|current| current.value.magnitude_milliamps() != 0)
+            })
+            .unwrap_or(snapshot_observed_at);
         let result = state.estimator.update(ChargeEstimateInput {
             session: ChargeSessionIdentity::new(profile.session_id),
             profile: ChargeProfileIdentity::new(profile.profile_id),
             at,
             observed_at,
-            battery_current: current_is_fresh
-                .then_some(snapshot.battery_current)
-                .flatten()
-                .map(core_battery_current),
+            battery_current,
             charge_mode,
             flow,
             battery_level,
@@ -26968,6 +26975,87 @@ mod tests {
             Some(MobileChargeEstimateUnavailableReasonDto::NotCharging),
         );
         assert_eq!(result.estimate, None);
+    }
+
+    #[test]
+    fn replayed_charge_ffi_uses_the_current_fields_observation_time() {
+        let estimator = MobileChargeEstimator::new();
+        estimator.configure_profile(charge_profile(
+            MobileVerificationStatusDto::HardwareVerified,
+        ));
+        for at in [0, 30_000] {
+            let _ = estimator.update(MobileChargeEstimateInputDto {
+                at: MobileMonotonicMillisDto { milliseconds: at },
+                snapshot: charge_estimator_snapshot(at, PowerFlowDirection::Charging),
+                freshness: MobileDurationDto {
+                    milliseconds: 60_000,
+                },
+            });
+        }
+
+        let mut snapshot = charge_estimator_snapshot(30_050, PowerFlowDirection::Charging);
+        snapshot.battery_current_observed_at_ms = Some(MobileMonotonicMillisDto {
+            milliseconds: 30_000,
+        });
+        let result = estimator.update(MobileChargeEstimateInputDto {
+            at: MobileMonotonicMillisDto {
+                milliseconds: 30_050,
+            },
+            snapshot,
+            freshness: MobileDurationDto {
+                milliseconds: 60_000,
+            },
+        });
+        assert_eq!(
+            result.kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
+        );
+        assert_eq!(result.samples, 2);
+        assert_eq!(result.observed_for.milliseconds, 30_000);
+    }
+
+    #[test]
+    fn replayed_charge_ffi_preserves_soc_time_for_zero_or_missing_current() {
+        for current in [
+            None,
+            Some(BatteryCurrent::Zero),
+            Some(BatteryCurrent::CurrentIn { milliamps: 0 }),
+        ] {
+            let estimator = MobileChargeEstimator::new();
+            estimator.configure_profile(charge_profile(
+                MobileVerificationStatusDto::HardwareVerified,
+            ));
+            let update = |at, current_at, level| {
+                let mut snapshot = charge_estimator_snapshot(at, PowerFlowDirection::Charging);
+                if let Some(value) = current {
+                    snapshot.battery_current.as_mut().unwrap().value = value;
+                } else {
+                    snapshot.battery_current = None;
+                }
+                snapshot.battery_current_observed_at_ms = Some(MobileMonotonicMillisDto {
+                    milliseconds: current_at,
+                });
+                snapshot.battery_level_reported.as_mut().unwrap().value =
+                    BatteryLevel { value: level };
+                estimator.update(MobileChargeEstimateInputDto {
+                    at: MobileMonotonicMillisDto { milliseconds: at },
+                    snapshot,
+                    freshness: MobileDurationDto {
+                        milliseconds: 60_000,
+                    },
+                })
+            };
+            assert_eq!(update(0, 0, 50).samples, 1);
+            let progress = update(50, 0, 51);
+            assert_eq!(progress.samples, 2, "{current:?}");
+            assert_eq!(progress.observed_for.milliseconds, 50, "{current:?}");
+            let available = update(30_000, 29_999, 52);
+            assert_eq!(available.kind, MobileChargeEstimateStateKindDto::Available);
+            assert_eq!(
+                available.estimate.unwrap().kind,
+                MobileEstimateKindDto::ObservedProgressTimeToFull
+            );
+        }
     }
 
     #[test]

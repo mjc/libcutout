@@ -797,6 +797,10 @@ impl CurrentRateWindow {
     }
 
     fn observe(&mut self, at: MonotonicTimestamp, current: i64) {
+        // Reevaluating one observation must not reweight the current rate.
+        if self.last == Some(at) && self.last_current == current {
+            return;
+        }
         let current_q8 = current.saturating_mul(256);
         if self.count == 0 {
             self.start = Some(at);
@@ -1466,6 +1470,96 @@ mod tests {
             ));
         }
         unreachable!("the final sample returns an estimate")
+    }
+
+    #[test]
+    fn replayed_charge_current_does_not_create_a_third_sample() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        let _ = estimator.update(input(30_000, -2_000, 50));
+        let mut replay = input(30_000, -2_000, 50);
+        replay.at = MonotonicTimestamp::new(30_050);
+        assert_eq!(
+            estimator.update(replay),
+            ChargeEstimateState::CollectingSamples {
+                samples: 2,
+                observed_for: Duration::from_milliseconds(30_000),
+            }
+        );
+
+        replay.at = MonotonicTimestamp::new(90_001);
+        assert_eq!(estimator.update(replay), ChargeEstimateState::Stale);
+    }
+
+    #[test]
+    fn replayed_charge_current_preserves_rate_but_updates_context() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        let _ = estimator.update(input(15_000, -2_100, 50));
+        let ChargeEstimateState::Available(original) = estimator.update(input(30_000, -2_000, 50))
+        else {
+            panic!("three fresh samples should produce an estimate");
+        };
+        let mut replay = input(30_000, -2_000, 51);
+        for at in (30_050..=31_000).step_by(50) {
+            replay.at = MonotonicTimestamp::new(at);
+            let ChargeEstimateState::Available(estimate) = estimator.update(replay) else {
+                panic!("a fresh cached observation should retain the estimate");
+            };
+            assert_eq!(estimate.current_rate, original.current_rate);
+            assert_eq!(estimate.calculated_at, replay.at);
+            assert!(estimate.expected < original.expected);
+        }
+
+        replay.flow = Measured::reported(ChargeFlow::Discharging);
+        assert_eq!(
+            estimator.update(replay),
+            unavailable(ChargeEstimateUnavailableReason::ContradictoryInputs)
+        );
+    }
+
+    #[test]
+    fn replayed_charge_context_still_admits_changed_current_and_evidence() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        let mut changed = input(0, -2_100, 50);
+        assert_eq!(
+            estimator.update(changed),
+            ChargeEstimateState::CollectingSamples {
+                samples: 2,
+                observed_for: Duration::from_milliseconds(0),
+            }
+        );
+
+        changed.battery_current.as_mut().unwrap().verification =
+            VerificationStatus::SourceAndHardwareVerified;
+        assert_eq!(
+            estimator.update(changed),
+            ChargeEstimateState::CollectingSamples {
+                samples: 1,
+                observed_for: Duration::from_milliseconds(0),
+            }
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::CurrentEvidenceChanged)
+        );
+        changed.usable_capacity = UsablePackCapacity::new(
+            Capacity::from_milliamp_hours(12_000),
+            CapacitySource::ProtocolProfile,
+            VerificationStatus::SourceAndHardwareVerified,
+        );
+        assert_eq!(
+            estimator.update(changed),
+            ChargeEstimateState::CollectingSamples {
+                samples: 1,
+                observed_for: Duration::from_milliseconds(0),
+            }
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::CapacityChanged)
+        );
     }
 
     #[test]
