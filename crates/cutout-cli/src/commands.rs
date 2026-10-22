@@ -132,7 +132,6 @@ fn pevcap_import(args: &PevcapImportArgs) -> Result<()> {
     let receipt = database.confirm_pevcap_import(&preview, capture_wall_clock_unix_ms().get())?;
     info!(
         digest = %receipt.artifact_digest,
-        managed_artifact = %receipt.managed_artifact_path.display(),
         ride_id = ?receipt.ride_id,
         duplicate = receipt.duplicate,
         outcome = ?receipt.outcome,

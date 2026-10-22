@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 56;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 57;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -79,6 +79,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         53 => migrate_v53_to_v54(connection)?,
         54 => migrate_v54_to_v55(connection)?,
         55 => migrate_v55_to_v56(connection)?,
+        56 => migrate_v56_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -145,6 +146,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 55 {
             migrate_v55_to_v56(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 56 {
+            migrate_v56_to_current(connection)?;
         }
     }
     Ok(())
@@ -412,7 +416,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         );
         CREATE TABLE pevcap_imports (
             artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
-            artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
+            artifact_path TEXT CHECK (artifact_path IS NULL OR length(artifact_path) BETWEEN 1 AND 4096),
             ride_id TEXT REFERENCES rides(id),
             outcome TEXT NOT NULL CHECK (outcome IN ('ride_and_capture', 'capture_only')),
             artifact_size INTEGER NOT NULL CHECK (artifact_size >= 0),
@@ -2278,9 +2282,233 @@ fn migrate_v55_to_v56(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v56_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
+    let result = (|| {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let migration = format!(
+            "
+             CREATE TABLE pevcap_imports_new (
+                 artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+                 artifact_path TEXT CHECK (artifact_path IS NULL OR length(artifact_path) BETWEEN 1 AND 4096),
+                 ride_id TEXT REFERENCES rides(id),
+                 outcome TEXT NOT NULL CHECK (outcome IN ('ride_and_capture', 'capture_only')),
+                 artifact_size INTEGER NOT NULL CHECK (artifact_size >= 0),
+                 record_count INTEGER NOT NULL CHECK (record_count >= 0),
+                 location_count INTEGER NOT NULL CHECK (location_count >= 0),
+                 imported_at_ms INTEGER NOT NULL CHECK (imported_at_ms >= 0)
+             );
+             INSERT INTO pevcap_imports_new
+                 (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                  record_count, location_count, imported_at_ms)
+             SELECT artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                    record_count, location_count, imported_at_ms
+             FROM pevcap_imports;
+             DROP TABLE pevcap_imports;
+             ALTER TABLE pevcap_imports_new RENAME TO pevcap_imports;
+             CREATE INDEX pevcap_imports_history
+                 ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);
+             {}",
+            schema_pragmas(CURRENT_SCHEMA_VERSION),
+        );
+        transaction.execute_batch(&migration)?;
+        let violations: u64 =
+            transaction.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if violations != 0 {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+        transaction.commit()?;
+        Ok::<_, StorageError>(())
+    })();
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    let foreign_keys_enabled: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    if !foreign_keys_enabled {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    result?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_v57_makes_legacy_artifact_path_nullable_and_preserves_receipts() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX pevcap_imports_history;
+                 DROP TABLE pevcap_imports;
+                 CREATE TABLE pevcap_imports (
+                     artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+                     artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
+                     ride_id TEXT REFERENCES rides(id),
+                     outcome TEXT NOT NULL CHECK (outcome IN ('ride_and_capture', 'capture_only')),
+                     artifact_size INTEGER NOT NULL CHECK (artifact_size >= 0),
+                     record_count INTEGER NOT NULL CHECK (record_count >= 0),
+                     location_count INTEGER NOT NULL CHECK (location_count >= 0),
+                     imported_at_ms INTEGER NOT NULL CHECK (imported_at_ms >= 0)
+                 );
+                 CREATE INDEX pevcap_imports_history
+                     ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);",
+            )
+            .unwrap();
+        assert!(
+            connection
+                .query_row("SELECT \"notnull\" FROM pragma_table_info('pevcap_imports') WHERE name = 'artifact_path'", [], |row| row.get::<_, bool>(0))
+                .unwrap()
+        );
+        let digest = "a".repeat(64);
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/managed.jsonl', NULL, 'capture_only', 123, 4, 0, 55)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_recordings
+                    (artifact_id, artifact_digest, origin, platform_identifier, started_at_ms)
+                 VALUES ('recording-one', ?1, 'manual', 'platform-one', 55)",
+                [&digest],
+            )
+            .unwrap();
+        let source_id = "a".repeat(36);
+        let operation_id = "b".repeat(36);
+        let status = format!(
+            "{{\"operation_id\":\"{operation_id}\",\"metadata\":{{\"sha256\":\"{digest}\",\"provenance\":{{\"source_artifact_id\":\"{source_id}\"}}}}}}"
+        );
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                (&source_id, &operation_id, &digest, &status),
+            )
+            .unwrap();
+        connection.execute_batch(&schema_pragmas(56)).unwrap();
+
+        migrate_v56_to_current(&mut connection).unwrap();
+
+        let (path, imported_at, version): (Option<String>, u64, i64) = connection
+            .query_row(
+                "SELECT artifact_path, imported_at_ms,
+                        (SELECT user_version FROM pragma_user_version)
+                 FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&digest],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(path.as_deref(), Some("/old/managed.jsonl"));
+        assert_eq!(imported_at, 55);
+        assert_eq!(version, 57);
+        let (chunk, recording_count, submission_count): (Vec<u8>, u64, u64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1),
+                    (SELECT COUNT(*) FROM pevcap_recordings WHERE artifact_digest = ?1),
+                    (SELECT COUNT(*) FROM capture_submissions WHERE snapshot_digest = ?1)",
+                [&digest],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(chunk, [1, 2, 3, 4]);
+        assert_eq!(recording_count, 1);
+        assert_eq!(submission_count, 1);
+        assert_eq!(
+            connection
+                .query_row("PRAGMA index_list(pevcap_imports)", [], |row| row
+                    .get::<_, String>(1))
+                .unwrap(),
+            "pevcap_imports_history"
+        );
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, NULL, NULL, 'capture_only', 0, 0, 0, 56)",
+                ["b".repeat(64)],
+            )
+            .unwrap();
+        let violations: u64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+        verify_current_schema(&connection).unwrap();
+    }
+
+    #[test]
+    fn failed_v56_migration_rolls_back_and_restores_foreign_keys() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE pevcap_imports RENAME TO pevcap_imports_v57;
+                 DROP INDEX pevcap_imports_history;
+                 CREATE TABLE pevcap_imports (
+                     artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+                     artifact_path TEXT NOT NULL,
+                     ride_id TEXT REFERENCES rides(id),
+                     outcome TEXT NOT NULL,
+                     artifact_size INTEGER NOT NULL,
+                     record_count INTEGER NOT NULL,
+                     location_count INTEGER NOT NULL,
+                     imported_at_ms INTEGER NOT NULL
+                 );
+                 INSERT INTO pevcap_imports SELECT * FROM pevcap_imports_v57;
+                 DROP TABLE pevcap_imports_v57;
+                 CREATE INDEX pevcap_imports_history
+                     ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);
+                 CREATE TABLE pevcap_imports_new (artifact_digest TEXT);",
+            )
+            .unwrap();
+        connection.execute_batch(&schema_pragmas(56)).unwrap();
+
+        assert!(migrate_v56_to_current(&mut connection).is_err());
+
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let foreign_keys: bool = connection
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        let table_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 56);
+        assert!(foreign_keys);
+        assert!(table_exists);
+    }
 
     #[test]
     fn classification_migration_rejects_incompatible_existing_table_without_advancing() {

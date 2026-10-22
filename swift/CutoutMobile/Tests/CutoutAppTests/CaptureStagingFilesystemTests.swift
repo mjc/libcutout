@@ -97,7 +97,7 @@
             XCTAssertEqual(preview.recordCount, 3)
         }
 
-        func testLibraryManagedImportPublishesReadonlyBytesAndDuplicateKeepsInode() throws {
+        func testSqliteImportExportsOriginalBytesAndDuplicateIsIdempotent() throws {
             let documents = try privateDirectory(.documentDirectory)
             let library = try privateDirectory(.libraryDirectory)
             defer {
@@ -106,31 +106,34 @@
             }
             let capture = try finishedCapture(in: documents)
             let bytes = try Data(contentsOf: capture)
-            let database = try openRideDatabase(path: library.appendingPathComponent("import.sqlite").path)
+            let databaseURL = library.appendingPathComponent("import.sqlite")
+            let database = try openRideDatabase(path: databaseURL.path)
             defer { try? database.shutdown() }
             let preview = try database.preflightPevcap(path: capture.path, encoding: .jsonl)
             XCTAssertEqual(preview.artifactDigest, sha256(bytes))
             let receipt = try database.confirmPevcapImport(preview: preview, createdAtMilliseconds: 1_700_000_000_100)
             XCTAssertFalse(receipt.duplicate)
-            let managed = URL(fileURLWithPath: receipt.managedArtifactPath)
-            XCTAssertTrue(
-                managed.resolvingSymlinksInPath().path.hasPrefix(library.resolvingSymlinksInPath().path + "/"))
-            XCTAssertEqual(try Data(contentsOf: managed), bytes)
-            XCTAssertEqual(try mode(managed) & 0o222, 0)
-            let originalInode = try inode(managed)
+            XCTAssertEqual(receipt.artifactDigest, preview.artifactDigest)
             let refreshed = try database.preflightPevcap(path: capture.path, encoding: .jsonl)
             let duplicate = try database.confirmPevcapImport(
                 preview: refreshed, createdAtMilliseconds: 1_700_000_000_101)
             XCTAssertTrue(duplicate.duplicate)
-            XCTAssertEqual(duplicate.managedArtifactPath, receipt.managedArtifactPath)
-            XCTAssertEqual(try inode(managed), originalInode)
-            XCTAssertEqual(try Data(contentsOf: managed), bytes)
-            XCTAssertEqual(
-                try FileManager.default.contentsOfDirectory(atPath: managed.deletingLastPathComponent().path),
-                [managed.lastPathComponent])
+            XCTAssertEqual(duplicate.artifactDigest, receipt.artifactDigest)
+
+            let exported = documents.appendingPathComponent("round-trip.jsonl")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: exported.path))
+            let exportedDigest = try database.exportPevcapCapture(
+                artifactDigest: receipt.artifactDigest, path: exported.path)
+            XCTAssertEqual(exportedDigest, receipt.artifactDigest)
+            XCTAssertTrue(
+                exported.resolvingSymlinksInPath().path.hasPrefix(
+                    documents.resolvingSymlinksInPath().path + "/"))
+            XCTAssertEqual(try Data(contentsOf: exported), bytes)
+            XCTAssertEqual(sha256(try Data(contentsOf: exported)), receipt.artifactDigest)
+            try assertNoImportedPayloadFiles(for: databaseURL)
         }
 
-        func testLibraryManagedImportReusesExistingArtifactWithoutReplacingIt() throws {
+        func testSqliteCaptureExportRejectsExistingFilesAndSymlinks() throws {
             let documents = try privateDirectory(.documentDirectory)
             let library = try privateDirectory(.libraryDirectory)
             defer {
@@ -142,24 +145,35 @@
             let database = try openRideDatabase(path: databasePath)
             defer { try? database.shutdown() }
             let preview = try database.preflightPevcap(path: capture.path, encoding: .jsonl)
-            let managedDirectory = URL(fileURLWithPath: databasePath + ".pevcap-imports", isDirectory: true)
-            try FileManager.default.createDirectory(at: managedDirectory, withIntermediateDirectories: false)
-            let managed = managedDirectory.appendingPathComponent(preview.artifactDigest + ".jsonl")
             let bytes = try Data(contentsOf: capture)
             XCTAssertEqual(preview.artifactDigest, sha256(bytes))
-            try bytes.write(to: managed)
-            try FileManager.default.setAttributes([.posixPermissions: 0o440], ofItemAtPath: managed.path)
-            let originalInode = try inode(managed)
             let receipt = try database.confirmPevcapImport(preview: preview, createdAtMilliseconds: 1_700_000_000_100)
             XCTAssertFalse(receipt.duplicate)
-            XCTAssertEqual(
-                URL(fileURLWithPath: receipt.managedArtifactPath).resolvingSymlinksInPath().path,
-                managed.resolvingSymlinksInPath().path)
-            XCTAssertEqual(try inode(managed), originalInode)
-            XCTAssertEqual(try mode(managed), 0o440)
-            XCTAssertEqual(try Data(contentsOf: managed), bytes)
-            XCTAssertEqual(
-                try FileManager.default.contentsOfDirectory(atPath: managedDirectory.path), [managed.lastPathComponent])
+
+            let sentinel = Data("leave this export target untouched\n".utf8)
+            let existing = documents.appendingPathComponent("existing.jsonl")
+            try sentinel.write(to: existing)
+            XCTAssertThrowsError(
+                try database.exportPevcapCapture(artifactDigest: receipt.artifactDigest, path: existing.path))
+            XCTAssertEqual(try Data(contentsOf: existing), sentinel)
+
+            let victim = documents.appendingPathComponent("symlink-victim.jsonl")
+            try sentinel.write(to: victim)
+            let symlink = documents.appendingPathComponent("symlink-export.jsonl")
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: victim)
+            XCTAssertThrowsError(
+                try database.exportPevcapCapture(artifactDigest: receipt.artifactDigest, path: symlink.path))
+            XCTAssertTrue(try symlink.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink ?? false)
+            XCTAssertEqual(try Data(contentsOf: victim), sentinel)
+            try assertNoImportedPayloadFiles(for: URL(fileURLWithPath: databasePath))
+        }
+
+        private func assertNoImportedPayloadFiles(for databaseURL: URL) throws {
+            let staging = URL(
+                fileURLWithPath: databaseURL.path + ".pevcap-imports", isDirectory: true)
+            if FileManager.default.fileExists(atPath: staging.path) {
+                XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: staging.path).isEmpty)
+            }
         }
 
         private func privateDirectory(_ kind: FileManager.SearchPathDirectory) throws -> URL {
@@ -214,9 +228,5 @@
             return try XCTUnwrap(attributes[.posixPermissions] as? NSNumber).uint16Value
         }
 
-        private func inode(_ url: URL) throws -> UInt64 {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            return try XCTUnwrap(attributes[.systemFileNumber] as? NSNumber).uint64Value
-        }
     }
 #endif

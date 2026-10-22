@@ -34,7 +34,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tempfile::NamedTempFile;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -1276,8 +1275,6 @@ pub struct PevcapImportReceipt {
     pub ride_id: Option<RideId>,
     /// SHA-256 digest of the source artifact, as lowercase hexadecimal.
     pub artifact_digest: String,
-    /// Immutable application-managed artifact path.
-    pub managed_artifact_path: PathBuf,
     /// Whether confirmation produced a ride and capture or only a capture.
     pub outcome: PevcapImportOutcome,
     /// Number of transport records read from the artifact.
@@ -1286,6 +1283,13 @@ pub struct PevcapImportReceipt {
     pub location_count: u64,
     /// Whether this digest was already imported.
     pub duplicate: bool,
+    artifact_location: PevcapArtifactLocation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PevcapArtifactLocation {
+    Sqlite,
+    LegacyManaged(PathBuf),
 }
 
 /// Stable identifier for a stored trail definition.
@@ -4067,14 +4071,14 @@ impl RideDatabase {
             CapturePublication::Import => NewPevcapImportOutcome::try_from(preview.outcome)?,
         };
 
-        let managed_path = managed_pevcap_path(self.path.as_ref(), preview);
+        let staged_path = pevcap_staging_path(self.path.as_ref(), preview.artifact_digest());
         #[cfg(test)]
         pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::BEFORE_BEGIN);
         // Reserve the digest before publishing bytes. A rejected competing importer must never
         // own cleanup of the artifact used by the admitted importer.
         let begin = self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
-            managed_path: managed_path.clone(),
+            managed_path: staged_path.clone(),
             outcome,
             created_at_ms,
             reply,
@@ -4088,15 +4092,13 @@ impl RideDatabase {
             };
         };
 
-        let mut created_managed_artifact = false;
         let result = (|| {
-            let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
-            created_managed_artifact = managed.created;
+            let mut staged = stage_pevcap_source(self.path.as_ref(), preview, &staged_path)?;
             #[cfg(test)]
             pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::BEFORE_STORE);
-            capture_data::store(self, preview, &managed.path)?;
+            capture_data::store(self, preview, staged.path())?;
             let location_count = if let Some(ride_id) = ride_id {
-                stream_pevcap_location_batches(&managed.path, preview.encoding(), |samples| {
+                stream_pevcap_location_batches(staged.path(), preview.encoding(), |samples| {
                     self.request(|reply| Command::AppendPevcapLocationBatch {
                         ride_id,
                         samples,
@@ -4106,11 +4108,13 @@ impl RideDatabase {
             } else {
                 0
             };
+            // The work row still owns this path if the process stops before Finish commits.
+            staged.remove()?;
             self.request(|reply| Command::FinishPevcapImport {
                 completion: PevcapImportCompletion {
                     digest: preview.artifact_digest.clone(),
                     ride_id,
-                    managed_path: managed.path.clone(),
+                    managed_path: staged_path.clone(),
                     outcome,
                     artifact_size: preview.artifact_size,
                     record_count: preview.record_count,
@@ -4132,12 +4136,12 @@ impl RideDatabase {
             }) {
                 Ok(Some(receipt)) => {
                     publication.validate_duplicate(&receipt)?;
-                    validate_existing_pevcap_confirmation(
-                        self.path.as_ref(),
-                        &receipt,
-                        preview,
-                        publication,
-                    )?;
+                    validate_existing_pevcap_confirmation(&receipt, preview, publication)?;
+                    self.verify_stored_pevcap(preview)?;
+                    if let PevcapArtifactLocation::LegacyManaged(path) = &receipt.artifact_location
+                    {
+                        retire_legacy_pevcap(self.path.as_ref(), path, preview);
+                    }
                     return Ok(PevcapImportReceipt {
                         duplicate: false,
                         ..receipt
@@ -4150,9 +4154,6 @@ impl RideDatabase {
         if result.is_err() {
             // Keep the digest reserved until cleanup finishes, so a retry cannot reuse these
             // newly owned bytes between the abort and removal.
-            if created_managed_artifact {
-                let _ = fs::remove_file(&managed_path);
-            }
             let _ = self.request(|reply| Command::AbortPevcapImport {
                 digest: preview.artifact_digest.clone(),
                 ride_id,
@@ -4171,13 +4172,47 @@ impl RideDatabase {
         publication: &CapturePublication,
     ) -> Result<PevcapImportReceipt, StorageError> {
         publication.validate_duplicate(&receipt)?;
-        validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview, publication)?;
+        validate_existing_pevcap_confirmation(&receipt, preview, publication)?;
         capture_data::store(self, preview, preview.source_path())?;
         self.request(|reply| Command::PublishCaptureData {
             digest: preview.artifact_digest.clone(),
             reply,
         })?;
+        self.verify_stored_pevcap(preview)?;
+        if let PevcapArtifactLocation::LegacyManaged(path) = &receipt.artifact_location {
+            retire_legacy_pevcap(self.path.as_ref(), path, preview);
+        }
         Ok(receipt)
+    }
+
+    fn verify_stored_pevcap(&self, preview: &PevcapImportPreview) -> Result<(), StorageError> {
+        let mut digest = Sha256::new();
+        let mut total = 0_u64;
+        let mut sequence = 0_u64;
+        while let Some(chunk) = self.pevcap_capture_chunk(preview.artifact_digest(), sequence)? {
+            total = total
+                .checked_add(u64::try_from(chunk.len()).map_err(|_| {
+                    StorageError::PevcapCaptureIntegrity("chunk size overflowed".to_owned())
+                })?)
+                .ok_or_else(|| {
+                    StorageError::PevcapCaptureIntegrity("artifact size overflowed".to_owned())
+                })?;
+            if total > preview.artifact_size() {
+                return Err(StorageError::PevcapPreviewChanged);
+            }
+            digest.update(chunk);
+            sequence = sequence.checked_add(1).ok_or_else(|| {
+                StorageError::PevcapCaptureIntegrity("chunk sequence overflowed".to_owned())
+            })?;
+        }
+        if total != preview.artifact_size()
+            || hex_encode(digest.finalize()) != preview.artifact_digest()
+        {
+            return Err(StorageError::PevcapCaptureIntegrity(
+                "stored byte length or digest does not match capture identity".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// Reads one bounded chunk of an imported capture's original bytes from SQLite.
@@ -5262,11 +5297,6 @@ enum PevcapBegin {
     Duplicate(PevcapImportReceipt),
 }
 
-struct ManagedArtifact {
-    path: PathBuf,
-    created: bool,
-}
-
 #[derive(Clone)]
 enum CapturePublication {
     Import,
@@ -6022,6 +6052,15 @@ fn recover_abandoned_pevcap_imports(
     let mut managed_directory_name = database_path.as_os_str().to_owned();
     managed_directory_name.push(".pevcap-imports");
     let managed_directory = PathBuf::from(managed_directory_name);
+    let directory_metadata = match fs::symlink_metadata(&managed_directory) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
+            metadata
+        }
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(StorageError::Io(error)),
+    };
+    drop(directory_metadata);
     for path in paths {
         let path = Path::new(&path);
         if path.parent() != Some(managed_directory.as_path()) {
@@ -6031,6 +6070,20 @@ fn recover_abandoned_pevcap_imports(
             && error.kind() != std::io::ErrorKind::NotFound
         {
             return Err(StorageError::Io(error));
+        }
+    }
+    for entry in fs::read_dir(&managed_directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(digest) = name
+            .strip_prefix(".stage-")
+            .and_then(|name| name.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            fs::remove_file(entry.path())?;
         }
     }
     Ok(())
@@ -7351,85 +7404,77 @@ fn check_pevcap_limit(resource: &'static str, limit: u64, actual: u64) -> Result
     check_limit_result(check_limit(resource, limit, actual))
 }
 
-fn managed_pevcap_path(database_path: &Path, preview: &PevcapImportPreview) -> PathBuf {
-    let extension = match preview.encoding {
-        PevcapEncoding::Jsonl => "jsonl",
-        PevcapEncoding::Binary => "pevcap",
-    };
-    pevcap_import_directory(database_path)
-        .join(format!("{}.{}", preview.artifact_digest, extension))
-}
-
-fn prepare_managed_pevcap(
+/// Copies a reviewed source into its reserved, digest-named staging file.
+/// The import-work row is installed first, so startup recovery can remove an interrupted copy.
+fn stage_pevcap_source(
     database_path: &Path,
     preview: &PevcapImportPreview,
-) -> Result<ManagedArtifact, StorageError> {
+    destination: &Path,
+) -> Result<StagedPevcap, StorageError> {
     let directory = pevcap_import_directory(database_path);
     ensure_managed_pevcap_directory(&directory)?;
-    let destination = managed_pevcap_path(database_path, preview);
-    match fs::symlink_metadata(&destination) {
-        Ok(_) => {
-            validate_managed_pevcap_artifact(
-                &directory,
-                &destination,
-                preview.artifact_digest(),
-                preview.artifact_size(),
-            )?;
-            return Ok(ManagedArtifact {
-                path: destination,
-                created: false,
-            });
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(StorageError::Io(error)),
-    }
-
-    let mut staging = tempfile::Builder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Match OpenOptions creation permissions, including the process umask.
-        staging.permissions(fs::Permissions::from_mode(0o666));
-    }
-    let mut destination_file = staging.tempfile_in(&directory)?;
-    let source = File::open(&preview.source_path)?;
-    let copied = std::io::copy(&mut BufReader::new(source), destination_file.as_file_mut())?;
-    if copied != preview.artifact_size
-        || artifact_digest(destination_file.path())? != preview.artifact_digest
+    if destination.parent() != Some(directory.as_path())
+        || destination != pevcap_staging_path(database_path, preview.artifact_digest())
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
-    let mut permissions = destination_file.as_file().metadata()?.permissions();
-    permissions.set_readonly(true);
-    destination_file.as_file().set_permissions(permissions)?;
-    destination_file.as_file().sync_all()?;
-    publish_managed_pevcap(destination_file, &directory, destination, preview)
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    let result = (|| {
+        let source = File::open(&preview.source_path)?;
+        let copied = std::io::copy(&mut BufReader::new(source), &mut output)?;
+        output.sync_all()?;
+        if copied != preview.artifact_size
+            || artifact_digest(destination)? != preview.artifact_digest
+        {
+            return Err(StorageError::PevcapPreviewChanged);
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
+    }
+    result?;
+    Ok(StagedPevcap {
+        path: Some(destination.to_owned()),
+    })
 }
 
-fn publish_managed_pevcap(
-    staging: NamedTempFile,
-    directory: &Path,
-    destination: PathBuf,
-    preview: &PevcapImportPreview,
-) -> Result<ManagedArtifact, StorageError> {
-    let created = match staging.persist_noclobber(&destination) {
-        Ok(_) => true,
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            validate_managed_pevcap_artifact(
-                directory,
-                &destination,
-                preview.artifact_digest(),
-                preview.artifact_size(),
-            )?;
-            false
+struct StagedPevcap {
+    path: Option<PathBuf>,
+}
+
+impl StagedPevcap {
+    fn path(&self) -> &Path {
+        self.path
+            .as_deref()
+            .expect("staging file is present before removal")
+    }
+
+    fn remove(&mut self) -> Result<(), StorageError> {
+        let Some(path) = self.path.take() else {
+            return Ok(());
+        };
+        if let Err(error) = fs::remove_file(&path) {
+            self.path = Some(path);
+            return Err(StorageError::Io(error));
         }
-        Err(error) => return Err(StorageError::Io(error.error)),
-    };
-    File::open(directory)?.sync_all()?;
-    Ok(ManagedArtifact {
-        path: destination,
-        created,
-    })
+        Ok(())
+    }
+}
+
+impl Drop for StagedPevcap {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn pevcap_staging_path(database_path: &Path, digest: &str) -> PathBuf {
+    pevcap_import_directory(database_path).join(format!(".stage-{digest}.tmp"))
 }
 
 fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError> {
@@ -7457,13 +7502,18 @@ fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError>
 }
 
 #[cfg(test)]
-mod managed_artifact_tests {
+mod sqlite_canonical_pevcap_tests {
     use super::*;
 
-    fn capture_bytes() -> String {
+    #[test]
+    fn concurrent_same_digest_import_keeps_one_sql_copy_and_cleans_staging() {
         use cutout_core::{
             MonotonicTimestamp, PevcapCapture, PevcapHeader, WallClockUnixTimestamp,
         };
+
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let source_path = directory.path().join("source.jsonl");
         let header = PevcapHeader::new(
             WallClockUnixTimestamp::new(1_700_000_000_000),
             "test",
@@ -7477,27 +7527,18 @@ mod managed_artifact_tests {
             &[],
         )
         .unwrap();
-        PevcapCapture::new(
+        let bytes = PevcapCapture::new(
             header,
             vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
         )
         .to_jsonl()
         .unwrap()
-    }
-
-    #[test]
-    fn rejected_importer_preserves_artifact_owned_by_admitted_importer() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
-        let source_path = directory.path().join("source.jsonl");
-        let bytes = capture_bytes();
+        .into_bytes();
         fs::write(&source_path, &bytes).unwrap();
         let database = RideDatabase::open(&database_path).unwrap();
         let preview = database
             .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
             .unwrap();
-        let accepted_path = pevcap_import_directory(&database_path)
-            .join(format!("{}.jsonl", preview.artifact_digest()));
         let (a_paused, a_ready) = mpsc::channel();
         let (resume_a, a_resume) = mpsc::channel();
         let (b_paused, b_ready) = mpsc::channel();
@@ -7527,249 +7568,100 @@ mod managed_artifact_tests {
             b_ready.recv_timeout(timeout).unwrap();
             resume_a.send(()).unwrap();
             let rejected = a.join().unwrap();
-            let protected_bytes = fs::read(&accepted_path);
             resume_b.send(()).unwrap();
-            let admitted = b.join().unwrap();
-
+            let admitted = b.join().unwrap().unwrap();
             assert!(matches!(
                 rejected,
                 Err(StorageError::PevcapImportInProgress)
             ));
-            assert_eq!(protected_bytes.unwrap(), bytes.as_bytes());
-            let receipt = admitted.unwrap();
-            assert_eq!(receipt.managed_artifact_path, accepted_path);
-            assert_eq!(fs::read(&accepted_path).unwrap(), bytes.as_bytes());
+            assert!(!admitted.duplicate);
         });
-        database.shutdown().unwrap();
-    }
 
-    #[test]
-    fn failed_importer_cleanup_cannot_delete_artifact_of_retrying_importer() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
-        let source_path = directory.path().join("source.jsonl");
-        let bytes = capture_bytes();
-        fs::write(&source_path, &bytes).unwrap();
-        let database = RideDatabase::open(&database_path).unwrap();
-        let preview = database
-            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
-            .unwrap();
-        let accepted_path = managed_pevcap_path(&database_path, &preview);
-        let (a_paused, a_ready) = mpsc::channel();
-        let (resume_a, a_resume) = mpsc::channel();
-        let (b_paused, b_ready) = mpsc::channel();
-        let (resume_b, b_resume) = mpsc::channel();
-        let timeout = Duration::from_secs(5);
-
-        std::thread::scope(|scope| {
-            let a = scope.spawn(|| {
-                pevcap_confirmation_hooks::AFTER_ABORT.with(|slot| {
-                    *slot.borrow_mut() = Some(Box::new(move || {
-                        a_paused.send(()).unwrap();
-                        a_resume.recv_timeout(timeout).unwrap();
-                    }));
-                });
-                database.confirm_pevcap_import(&preview, u64::MAX)
-            });
-            a_ready.recv_timeout(timeout).unwrap();
-            let b = scope.spawn(|| {
-                pevcap_confirmation_hooks::BEFORE_STORE.with(|slot| {
-                    *slot.borrow_mut() = Some(Box::new(move || {
-                        b_paused.send(()).unwrap();
-                        b_resume.recv_timeout(timeout).unwrap();
-                    }));
-                });
-                database.confirm_pevcap_import(&preview, 1_700_000_000_002)
-            });
-            b_ready.recv_timeout(timeout).unwrap();
-            resume_a.send(()).unwrap();
-            let failed = a.join().unwrap();
-            let protected_bytes = fs::read(&accepted_path);
-            resume_b.send(()).unwrap();
-            let admitted = b.join().unwrap();
-
-            assert!(failed.is_err());
-            assert_eq!(protected_bytes.unwrap(), bytes.as_bytes());
-            let receipt = admitted.unwrap();
-            assert_eq!(receipt.managed_artifact_path, accepted_path);
-            assert_eq!(fs::read(&accepted_path).unwrap(), bytes.as_bytes());
-        });
-        database.shutdown().unwrap();
-    }
-
-    #[test]
-    fn failed_prepare_releases_reservation_and_preserves_unowned_path() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
-        let source_path = directory.path().join("source.jsonl");
-        let bytes = capture_bytes();
-        fs::write(&source_path, &bytes).unwrap();
-        let database = RideDatabase::open(&database_path).unwrap();
-        let preview = database
-            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
-            .unwrap();
-        let managed_directory = pevcap_import_directory(&database_path);
-        fs::write(&managed_directory, b"unowned obstruction").unwrap();
-
-        assert!(matches!(
-            database.confirm_pevcap_import(&preview, 1_700_000_000_001),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
         assert_eq!(
-            fs::read(&managed_directory).unwrap(),
-            b"unowned obstruction"
+            database
+                .pevcap_capture_chunk(&preview.artifact_digest, 0)
+                .unwrap()
+                .unwrap(),
+            bytes
         );
-        fs::remove_file(managed_directory).unwrap();
-
-        let receipt = database
-            .confirm_pevcap_import(&preview, 1_700_000_000_002)
-            .unwrap();
         assert_eq!(
-            fs::read(receipt.managed_artifact_path).unwrap(),
-            bytes.as_bytes()
-        );
-        database.shutdown().unwrap();
-    }
-
-    fn preview(directory: &Path) -> PevcapImportPreview {
-        let source = directory.join("source.jsonl");
-        fs::write(&source, b"original capture bytes").unwrap();
-        PevcapImportPreview::from_parts(
-            source.clone(),
-            PevcapEncoding::Jsonl,
-            artifact_digest(&source).unwrap(),
-            fs::metadata(source).unwrap().len(),
-            0,
-            0,
-            0,
-            PevcapImportOutcome::CaptureOnly,
-            vec![],
-        )
-    }
-
-    #[test]
-    fn managed_staging_rejects_changed_source_without_leaving_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let preview = preview(directory.path());
-        fs::write(preview.source_path(), b"changed capture bytes").unwrap();
-        let database = directory.path().join("ride.sqlite");
-        assert!(matches!(
-            prepare_managed_pevcap(&database, &preview),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
-        assert_eq!(
-            fs::read_dir(pevcap_import_directory(&database))
+            fs::read_dir(pevcap_import_directory(&database_path))
                 .unwrap()
                 .count(),
             0
         );
-    }
-
-    #[test]
-    fn managed_staging_preserves_creation_permissions_and_existing_artifact() {
-        let directory = tempfile::tempdir().unwrap();
-        let preview = preview(directory.path());
-        let database = directory.path().join("ride.sqlite");
-        let permissions_reference = directory.path().join("permissions-reference");
-        let reference = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(permissions_reference)
-            .unwrap();
-        let mut expected_permissions = reference.metadata().unwrap().permissions();
-        expected_permissions.set_readonly(true);
-
-        let first = prepare_managed_pevcap(&database, &preview).unwrap();
-        assert!(first.created);
-        assert_eq!(fs::read(&first.path).unwrap(), b"original capture bytes");
-        assert_eq!(
-            fs::metadata(&first.path).unwrap().permissions(),
-            expected_permissions
-        );
-        let second = prepare_managed_pevcap(&database, &preview).unwrap();
-        assert!(!second.created);
-        assert_eq!(second.path, first.path);
-        assert_eq!(fs::read(&first.path).unwrap(), b"original capture bytes");
-        assert_eq!(
-            fs::read_dir(pevcap_import_directory(&database))
-                .unwrap()
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn managed_publication_race_preserves_winner_and_removes_loser_staging() {
-        let directory = tempfile::tempdir().unwrap();
-        let preview = preview(directory.path());
-        let destination = directory.path().join("accepted.jsonl");
-        fs::copy(preview.source_path(), &destination).unwrap();
-        #[cfg(unix)]
-        let original_inode = {
-            use std::os::unix::fs::MetadataExt;
-            fs::metadata(&destination).unwrap().ino()
-        };
-        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
-        staging.write_all(b"original capture bytes").unwrap();
-        let staging_path = staging.path().to_owned();
-        let published =
-            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview)
-                .unwrap();
-        assert!(!published.created);
-        assert_eq!(fs::read(&destination).unwrap(), b"original capture bytes");
-        assert!(!staging_path.exists());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            assert_eq!(fs::metadata(destination).unwrap().ino(), original_inode);
-        }
-    }
-
-    #[test]
-    fn managed_publication_rejects_corrupt_race_winner_without_overwriting_it() {
-        let directory = tempfile::tempdir().unwrap();
-        let preview = preview(directory.path());
-        let destination = directory.path().join("accepted.jsonl");
-        fs::write(&destination, b"corrupt competing artifact").unwrap();
-        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
-        staging.write_all(b"original capture bytes").unwrap();
-        let staging_path = staging.path().to_owned();
-        assert!(matches!(
-            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
-        assert_eq!(
-            fs::read(destination).unwrap(),
-            b"corrupt competing artifact"
-        );
-        assert!(!staging_path.exists());
+        database.shutdown().unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn managed_publication_rejects_symlink_race_winner_without_removing_it() {
+    fn duplicate_retirement_preserves_legacy_symlink_and_external_bytes() {
+        use cutout_core::{
+            MonotonicTimestamp, PevcapCapture, PevcapHeader, WallClockUnixTimestamp,
+        };
+        use std::os::unix::fs::symlink;
+
         let directory = tempfile::tempdir().unwrap();
-        let preview = preview(directory.path());
-        let destination = directory.path().join("accepted.jsonl");
-        std::os::unix::fs::symlink(preview.source_path(), &destination).unwrap();
-        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
-        staging.write_all(b"original capture bytes").unwrap();
-        let staging_path = staging.path().to_owned();
-        assert!(matches!(
-            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
+        let database_path = directory.path().join("ride.sqlite");
+        let source_path = directory.path().join("source.jsonl");
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let bytes = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+        )
+        .to_jsonl()
+        .unwrap();
+        fs::write(&source_path, &bytes).unwrap();
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_001)
+            .unwrap();
+        let managed_directory = pevcap_import_directory(&database_path);
+        let legacy_path = managed_directory.join(format!("{}.jsonl", receipt.artifact_digest));
+        let external_path = directory.path().join("external.jsonl");
+        fs::write(&external_path, b"outside managed storage").unwrap();
+        symlink(&external_path, &legacy_path).unwrap();
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE pevcap_imports SET artifact_path = ?1 WHERE artifact_digest = ?2",
+                params![legacy_path.to_string_lossy(), receipt.artifact_digest],
+            )
+            .unwrap();
+        drop(connection);
+
+        let duplicate_preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
         assert!(
-            fs::symlink_metadata(destination)
+            database
+                .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_002)
+                .unwrap()
+                .duplicate
+        );
+        assert!(
+            fs::symlink_metadata(&legacy_path)
                 .unwrap()
                 .file_type()
                 .is_symlink()
         );
-        assert!(!staging_path.exists());
-        assert_eq!(
-            fs::read(preview.source_path()).unwrap(),
-            b"original capture bytes"
-        );
+        assert_eq!(fs::read(external_path).unwrap(), b"outside managed storage");
+        database.shutdown().unwrap();
     }
 }
 
@@ -7799,26 +7691,29 @@ fn validate_managed_pevcap_artifact(
     Ok(())
 }
 
-/// Checks duplicate receipt facts against the managed artifact and reviewed preview.
+/// Checks duplicate receipt facts against the source-bound reviewed preview.
 /// `AlreadyImported` is a preview classification, never a persisted capture outcome.
 fn validate_existing_pevcap_confirmation(
-    database_path: &Path,
     receipt: &PevcapImportReceipt,
     preview: &PevcapImportPreview,
     publication: &CapturePublication,
 ) -> Result<(), StorageError> {
-    let directory = pevcap_import_directory(database_path);
-    ensure_managed_pevcap_directory(&directory)?;
-    validate_managed_pevcap_artifact(
-        &directory,
-        &receipt.managed_artifact_path,
-        preview.artifact_digest(),
-        preview.artifact_size(),
+    let source_facts = preflight_pevcap(
+        preview.source_path(),
+        preview.encoding,
+        receipt.recording.is_none().then_some(PevcapLimits::IMPORT),
     )?;
-    let limits = receipt.recording.is_none().then_some(PevcapLimits::IMPORT);
-    let managed_preview =
-        preflight_pevcap(&receipt.managed_artifact_path, preview.encoding(), limits)
-            .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    if preview.artifact_digest != source_facts.artifact_digest
+        || preview.artifact_size != source_facts.artifact_size
+        || preview.record_count != source_facts.record_count
+        || preview.location_count != source_facts.location_count
+        || preview.duration_milliseconds != source_facts.duration_milliseconds
+        || preview.warnings != source_facts.warnings
+        || (preview.outcome != PevcapImportOutcome::AlreadyImported
+            && preview.outcome != source_facts.outcome)
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
     // A submission derivative retains GPS bytes without deriving a ride. An existing ordinary
     // import of the same bytes still has its original ride and must retain import validation.
     let submission_capture_only = match publication {
@@ -7833,27 +7728,44 @@ fn validate_existing_pevcap_confirmation(
             && receipt.ride_id.is_none()
             && receipt.outcome == PevcapImportOutcome::CaptureOnly
     } else {
-        receipt.location_count == managed_preview.location_count
-            && receipt.outcome == managed_preview.outcome
+        receipt.location_count == source_facts.location_count
+            && receipt.outcome == source_facts.outcome
     };
-    if receipt.artifact_digest != managed_preview.artifact_digest
-        || receipt.record_count != managed_preview.record_count
+    if receipt.artifact_digest != preview.artifact_digest
+        || receipt.record_count != preview.record_count
         || !outcome_matches
-        || managed_preview.artifact_digest != preview.artifact_digest
-        || managed_preview.artifact_size != preview.artifact_size
-        || managed_preview.record_count != preview.record_count
-        || managed_preview.location_count != preview.location_count
-        || managed_preview.duration_milliseconds != preview.duration_milliseconds
-        || managed_preview.warnings != preview.warnings
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
-    if preview.outcome != PevcapImportOutcome::AlreadyImported
-        && managed_preview.outcome != preview.outcome
+    if !capture_only
+        && preview.outcome != PevcapImportOutcome::AlreadyImported
+        && preview.outcome != receipt.outcome
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
     Ok(())
+}
+
+fn retire_legacy_pevcap(database_path: &Path, legacy_path: &Path, preview: &PevcapImportPreview) {
+    let directory = pevcap_import_directory(database_path);
+    if !fs::symlink_metadata(&directory)
+        .is_ok_and(|metadata| metadata.file_type().is_dir() && !metadata.file_type().is_symlink())
+    {
+        return;
+    }
+    if validate_managed_pevcap_artifact(
+        &directory,
+        legacy_path,
+        preview.artifact_digest(),
+        preview.artifact_size(),
+    )
+    .is_err()
+    {
+        return;
+    }
+    if fs::remove_file(legacy_path).is_ok() {
+        let _ = fs::remove_dir(&directory);
+    }
 }
 
 fn pevcap_import_directory(database_path: &Path) -> PathBuf {
@@ -8091,7 +8003,7 @@ fn pevcap_import_receipt(
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, u64>(3)?,
                     row.get::<_, u64>(4)?,
@@ -8099,7 +8011,7 @@ fn pevcap_import_receipt(
             },
         )
         .optional()?;
-    let Some((ride_id, path, outcome, record_count, location_count)) = row else {
+    let Some((ride_id, artifact_location, outcome, record_count, location_count)) = row else {
         return Ok(None);
     };
     let ride_id = ride_id
@@ -8116,12 +8028,19 @@ fn pevcap_import_receipt(
         recording: recorded_capture::lookup(connection, digest)?,
         ride_id,
         artifact_digest: digest.to_owned(),
-        managed_artifact_path: PathBuf::from(path),
         outcome: pevcap_outcome_from_db(&outcome)?,
         record_count,
         location_count,
         duplicate,
+        artifact_location: pevcap_artifact_location(artifact_location),
     }))
+}
+
+fn pevcap_artifact_location(value: Option<String>) -> PevcapArtifactLocation {
+    match value {
+        Some(path) => PevcapArtifactLocation::LegacyManaged(PathBuf::from(path)),
+        None => PevcapArtifactLocation::Sqlite,
+    }
 }
 
 fn pevcap_outcome_from_db(value: &str) -> Result<PevcapImportOutcome, StorageError> {
@@ -8251,7 +8170,7 @@ fn finish_pevcap_import(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             digest,
-            managed_path.to_string_lossy(),
+            Option::<String>::None,
             ride_id.map(|id| id.uuid().to_string()),
             outcome.as_db(),
             artifact_size,
@@ -8273,11 +8192,11 @@ fn finish_pevcap_import(
         recording: publication.recording().cloned(),
         ride_id: *ride_id,
         artifact_digest: digest.to_owned(),
-        managed_artifact_path: managed_path.to_owned(),
         outcome: outcome.as_public(),
         record_count: *record_count,
         location_count: *location_count,
         duplicate: false,
+        artifact_location: PevcapArtifactLocation::Sqlite,
     })
 }
 

@@ -7739,8 +7739,6 @@ pub struct MobilePevcapImportReceiptDto {
     pub ride_id: Option<MobileRideIdDto>,
     /// SHA-256 digest of the source artifact.
     pub artifact_digest: String,
-    /// Immutable application-managed artifact path.
-    pub managed_artifact_path: String,
     /// Whether confirmation produced a ride and capture or only a capture.
     pub outcome: MobilePevcapImportOutcomeDto,
     /// Number of transport records read.
@@ -8472,7 +8470,6 @@ fn mobile_pevcap_receipt(
         recording: receipt.recording.map(Into::into),
         ride_id: receipt.ride_id.map(mobile_ride_id),
         artifact_digest: receipt.artifact_digest,
-        managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
         outcome: receipt.outcome.into(),
         record_count: receipt.record_count,
         location_count: receipt.location_count,
@@ -9218,6 +9215,26 @@ impl RideDatabaseHandle {
         self.inner
             .confirm_pevcap_import(&current, created_at_milliseconds)
             .map(mobile_pevcap_receipt)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Exports a retained import's exact original bytes to a new file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the digest is invalid, the source is missing or
+    /// corrupt, or the destination already exists or cannot be synced.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns the boundary strings"
+    )]
+    pub fn export_pevcap_capture(
+        &self,
+        artifact_digest: String,
+        path: String,
+    ) -> Result<String, MobileRideDatabaseError> {
+        self.inner
+            .export_pevcap_capture(&artifact_digest, Path::new(&path))
             .map_err(map_ride_database_error)
     }
 
@@ -25928,7 +25945,6 @@ mod tests {
         assert_eq!(receipt.ride_id, None);
         assert!(source.exists());
         fs::remove_file(source).unwrap();
-        fs::remove_file(&receipt.managed_artifact_path).unwrap();
         assert!(retain().unwrap().duplicate);
         let history = database.list_pevcap_captures(None, 1).unwrap();
         let recording = history.captures[0].recording.as_ref().unwrap();
@@ -27562,7 +27578,8 @@ mod tests {
             header,
             vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
         );
-        fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+        let bytes = capture.to_jsonl().unwrap().into_bytes();
+        fs::write(&artifact_path, &bytes).unwrap();
         let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
 
         let preview = database
@@ -27581,14 +27598,31 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.ride_id, None);
         assert_eq!(receipt.outcome, MobilePevcapImportOutcomeDto::CaptureOnly);
-        let managed_path = PathBuf::from(&receipt.managed_artifact_path);
-        assert!(managed_path.exists());
-
+        fs::remove_file(&artifact_path).unwrap();
+        let export_path = artifact_path.with_extension("export.jsonl");
+        assert_eq!(
+            database
+                .export_pevcap_capture(
+                    receipt.artifact_digest.clone(),
+                    export_path.to_string_lossy().into_owned(),
+                )
+                .unwrap(),
+            receipt.artifact_digest
+        );
+        assert_eq!(fs::read(&export_path).unwrap(), bytes);
+        assert!(
+            database
+                .export_pevcap_capture(
+                    receipt.artifact_digest,
+                    export_path.to_string_lossy().into_owned(),
+                )
+                .is_err()
+        );
+        assert_eq!(fs::read(&export_path).unwrap(), bytes);
         database.shutdown().unwrap();
-        let _ = fs::remove_file(&managed_path);
-        let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
+        let _ = fs::remove_file(export_path);
     }
 
     #[test]
@@ -27632,7 +27666,6 @@ mod tests {
                 .unwrap();
             let receipt = database.confirm_pevcap_import(preview, 1234).unwrap();
             digests.push(receipt.artifact_digest);
-            fs::remove_file(receipt.managed_artifact_path).unwrap();
         }
         database.shutdown().unwrap();
         fs::remove_file(source).unwrap();
@@ -27721,10 +27754,7 @@ mod tests {
             MobileRideSegmentStartReasonDto::ImportBoundary
         );
 
-        let managed_path = PathBuf::from(&receipt.managed_artifact_path);
         database.shutdown().unwrap();
-        let _ = fs::remove_file(&managed_path);
-        let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
     }

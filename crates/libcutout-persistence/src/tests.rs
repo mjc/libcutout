@@ -3332,11 +3332,7 @@ fn device_names_normalize_lookup_and_bound_text() {
 }
 
 #[test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "one end-to-end test keeps managed-artifact integrity failures in a single audit trail"
-)]
-fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
+fn database_preflights_confirms_and_deduplicates_sqlite_canonical_pevcap_artifacts() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
         "libcutout-persistence-pevcap-db-{}.sqlite",
@@ -3369,16 +3365,15 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     assert_eq!(first.outcome, PevcapImportOutcome::RideAndCapture);
     let ride_id = first.ride_id.unwrap();
     assert_eq!(database.summary(ride_id).unwrap().point_count().as_u64(), 1);
-    assert!(first.managed_artifact_path.exists());
+    let mut staging_directory = database_path.as_os_str().to_owned();
+    staging_directory.push(".pevcap-imports");
+    let staging_directory = std::path::PathBuf::from(staging_directory);
     assert!(
-        first
-            .managed_artifact_path
-            .metadata()
+        std::fs::read_dir(&staging_directory)
             .unwrap()
-            .permissions()
-            .readonly()
+            .next()
+            .is_none()
     );
-    assert_ne!(first.managed_artifact_path, artifact_path);
     let duplicate_preview = database
         .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
         .unwrap();
@@ -3416,54 +3411,37 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         .unwrap();
     assert!(second.duplicate);
     assert_eq!(second.ride_id, first.ride_id);
-    assert_eq!(second.managed_artifact_path, first.managed_artifact_path);
-    std::fs::remove_file(&first.managed_artifact_path).unwrap();
-    assert!(matches!(
-        database.confirm_pevcap_import(&preview, 1_700_000_000_002),
-        Err(StorageError::PevcapPreviewChanged)
-    ));
-    std::fs::write(&first.managed_artifact_path, b"tampered").unwrap();
-    assert!(matches!(
-        database.confirm_pevcap_import(&preview, 1_700_000_000_003),
-        Err(StorageError::PevcapPreviewChanged)
-    ));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-
-        let external_file = artifact_path.with_extension("external");
-        std::fs::remove_file(&first.managed_artifact_path).unwrap();
-        std::fs::write(&external_file, b"keep").unwrap();
-        symlink(&external_file, &first.managed_artifact_path).unwrap();
-        assert!(matches!(
-            database.confirm_pevcap_import(&preview, 1_700_000_000_004),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
-        assert_eq!(std::fs::read(&external_file).unwrap(), b"keep");
-        std::fs::remove_file(&first.managed_artifact_path).unwrap();
-
-        let managed_directory = first.managed_artifact_path.parent().unwrap();
-        let external_directory = artifact_path.with_extension("external-directory");
-        std::fs::remove_dir(managed_directory).unwrap();
-        std::fs::create_dir(&external_directory).unwrap();
-        let sentinel = external_directory.join("sentinel");
-        std::fs::write(&sentinel, b"keep").unwrap();
-        symlink(&external_directory, managed_directory).unwrap();
-        assert!(matches!(
-            database.confirm_pevcap_import(&preview, 1_700_000_000_005),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
-        std::fs::remove_file(managed_directory).unwrap();
-        std::fs::remove_file(sentinel).unwrap();
-        std::fs::remove_dir(external_directory).unwrap();
-        std::fs::remove_file(external_file).unwrap();
-    }
+    let retry_path = artifact_path.with_extension("retry.jsonl");
+    std::fs::write(&retry_path, &artifact_bytes).unwrap();
+    std::fs::remove_file(&artifact_path).unwrap();
+    let retry_preview = database
+        .preflight_pevcap(&retry_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert!(
+        database
+            .confirm_pevcap_import(&retry_preview, 1_700_000_000_002)
+            .unwrap()
+            .duplicate
+    );
+    let export_path = artifact_path.with_extension("export.jsonl");
+    database
+        .export_pevcap_capture(&first.artifact_digest, &export_path)
+        .unwrap();
+    assert_eq!(
+        std::fs::read(&export_path).unwrap(),
+        artifact_bytes.as_bytes()
+    );
+    assert!(
+        std::fs::read_dir(&staging_directory)
+            .unwrap()
+            .next()
+            .is_none()
+    );
     database.shutdown().unwrap();
-    let _ = std::fs::remove_file(&first.managed_artifact_path);
-    let _ = std::fs::remove_dir(first.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_dir(staging_directory);
     let _ = std::fs::remove_file(database_path);
-    let _ = std::fs::remove_file(artifact_path);
+    let _ = std::fs::remove_file(retry_path);
+    let _ = std::fs::remove_file(export_path);
 }
 
 #[test]
@@ -3530,9 +3508,6 @@ fn pevcap_import_keeps_a_valid_location_without_horizontal_accuracy() {
         .unwrap();
     assert_eq!(accuracy, None);
     database.shutdown().unwrap();
-    let managed_artifact_path = receipt.managed_artifact_path;
-    let _ = std::fs::remove_file(&managed_artifact_path);
-    let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -3599,9 +3574,6 @@ fn pevcap_import_deduplicates_repeated_attached_location_context() {
         1
     );
     database.shutdown().unwrap();
-    let managed_artifact_path = receipt.managed_artifact_path;
-    let _ = std::fs::remove_file(&managed_artifact_path);
-    let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -3675,9 +3647,6 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
             ride.segment_count(),
         ));
         database.shutdown().unwrap();
-        let managed_artifact_path = receipt.managed_artifact_path;
-        let _ = std::fs::remove_file(&managed_artifact_path);
-        let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
         let _ = std::fs::remove_file(database_path);
         let _ = std::fs::remove_file(artifact_path);
     }
@@ -3779,7 +3748,6 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
     );
     database.shutdown().unwrap();
     std::fs::remove_file(source).unwrap();
-    std::fs::remove_file(&receipt.managed_artifact_path).unwrap();
     let database = RideDatabase::open(&path).unwrap();
     let retry = database
         .retain_finished_capture(
@@ -3908,6 +3876,15 @@ fn recorded_capture_is_not_cut_off_at_the_import_duration_limit() {
         )
         .unwrap();
     assert_eq!(receipt.record_count, 3);
+    let duplicate = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(10_000),
+        )
+        .unwrap();
+    assert!(duplicate.duplicate);
     database.shutdown().unwrap();
 }
 
@@ -4261,7 +4238,6 @@ fn stored_capture_history_survives_restart_and_missing_files() {
         let preview = database.preflight_pevcap(&source, encoding).unwrap();
         let receipt = database.confirm_pevcap_import(&preview, 1234).unwrap();
         expected.push((receipt.artifact_digest, encoding, bytes, receipt.ride_id));
-        std::fs::remove_file(receipt.managed_artifact_path).unwrap();
     }
     std::fs::remove_file(&source).unwrap();
     database.shutdown().unwrap();
@@ -4338,10 +4314,23 @@ fn capture_only_bytes_survive_without_external_files() {
             .confirm_pevcap_import(&preview, 1_700_000_000_000)
             .unwrap();
         assert_eq!(receipt.outcome, PevcapImportOutcome::CaptureOnly);
+        let staging_directory = path.with_file_name("ride.sqlite.pevcap-imports");
+        assert_eq!(
+            std::fs::read_dir(&staging_directory).unwrap().count(),
+            0,
+            "a successful SQL-backed import must not retain a second full-size artifact"
+        );
         database.shutdown().unwrap();
         std::fs::remove_file(&source).unwrap();
-        std::fs::remove_file(&receipt.managed_artifact_path).unwrap();
         let database = RideDatabase::open(&path).unwrap();
+        let retry_source = directory.join("retry-source.pevcap");
+        std::fs::write(&retry_source, &bytes).unwrap();
+        let retry_preview = database.preflight_pevcap(&retry_source, encoding).unwrap();
+        let duplicate = database
+            .confirm_pevcap_import(&retry_preview, 1_700_000_000_001)
+            .unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.artifact_digest, receipt.artifact_digest);
         let mut reconstructed = Vec::new();
         let mut sequence = 0;
         while let Some(chunk) = database
@@ -4399,7 +4388,6 @@ fn original_capture_exports_from_sqlite_byte_identically_without_overwriting() {
             .confirm_pevcap_import(&preview, 1_700_000_000_000)
             .unwrap();
         std::fs::remove_file(source_path).unwrap();
-        std::fs::remove_file(receipt.managed_artifact_path).unwrap();
 
         assert_eq!(
             database
@@ -4606,8 +4594,6 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
     assert_eq!(duplicate_receipt.ride_id, None);
     assert_eq!(duplicate_receipt.outcome, PevcapImportOutcome::CaptureOnly);
     database.shutdown().unwrap();
-    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
-    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -4790,22 +4776,17 @@ fn pevcap_confirmation_reconciles_a_committed_finish_response_loss() {
         .unwrap();
     assert!(!receipt.duplicate);
     assert_eq!(receipt.location_count, 1);
-    assert_eq!(
-        std::fs::read(&receipt.managed_artifact_path).unwrap(),
-        source_bytes
-    );
+    let export_path = artifact_path.with_extension("export.jsonl");
+    database
+        .export_pevcap_capture(&receipt.artifact_digest, &export_path)
+        .unwrap();
+    assert_eq!(std::fs::read(&export_path).unwrap(), source_bytes);
     let duplicate = database
         .confirm_pevcap_import(&preview, 1_700_000_000_001)
         .unwrap();
     assert!(duplicate.duplicate);
-    assert_eq!(
-        duplicate.managed_artifact_path,
-        receipt.managed_artifact_path
-    );
 
     database.shutdown().unwrap();
-    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
-    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -4930,10 +4911,25 @@ fn duplicate_pevcap_confirmation_rejects_tampered_reviewed_facts() {
             .ride_id,
         receipt.ride_id
     );
-
     database.shutdown().unwrap();
-    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
-    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+
+    let connection = Connection::open(&database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET location_count = 0 WHERE artifact_digest = ?1",
+            [&receipt.artifact_digest],
+        )
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&database_path).unwrap();
+    let duplicate_preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert!(matches!(
+        database.confirm_pevcap_import(&duplicate_preview, 1_700_000_000_003),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    database.shutdown().unwrap();
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -5097,11 +5093,13 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
     let managed_directory = std::path::PathBuf::from(managed_directory);
     std::fs::create_dir_all(&managed_directory).unwrap();
     let managed_path = managed_directory.join("abandoned.jsonl");
+    let committed_stage_path = managed_directory.join(format!(".stage-{}.tmp", "2".repeat(64)));
     let external_path = std::env::temp_dir().join(format!(
         "libcutout-persistence-unmanaged-pevcap-{}.jsonl",
         uuid::Uuid::new_v4()
     ));
     std::fs::write(&managed_path, b"abandoned").unwrap();
+    std::fs::write(&committed_stage_path, b"orphaned post-commit stage").unwrap();
     std::fs::write(&external_path, b"outside managed storage").unwrap();
     let database = RideDatabase::open(&database_path).unwrap();
     database.shutdown().unwrap();
@@ -5133,6 +5131,7 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
 
     let reopened = RideDatabase::open(&database_path).unwrap();
     assert!(!managed_path.exists());
+    assert!(!committed_stage_path.exists());
     assert!(external_path.exists());
     assert_eq!(
         reopened
