@@ -4040,11 +4040,12 @@ impl RideDatabase {
     }
 
     /// Confirms a reviewed PEVCAP preview using bounded byte and location batches.
-    /// Original bytes, the receipt, and any derived ride become visible together;
-    /// GPS-free captures do not create an empty ride. Managed source copies are also retained.
+    /// Original bytes and the receipt are retained in SQLite, and any derived ride becomes
+    /// visible with them; GPS-free captures do not create an empty ride. Source files are staged
+    /// temporarily during import and are not retained as a second permanent copy.
     ///
-    /// Reconfirmation preserves the receipt and ride identity and backfills older
-    /// file-only receipts into SQLite. It still requires a valid source and managed copy.
+    /// Reconfirmation preserves the receipt and ride identity and can backfill older
+    /// file-only receipts into SQLite from the supplied source.
     /// `created_at_ms` is Unix milliseconds used for a new import, not its capture timestamp.
     ///
     /// # Errors
@@ -4104,9 +4105,9 @@ impl RideDatabase {
             let mut staged = stage_pevcap_source(self.path.as_ref(), preview, &staged_path)?;
             #[cfg(test)]
             pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::BEFORE_STORE);
-            capture_data::store(self, preview, staged.path())?;
+            capture_data::store(self, preview, staged.path()?)?;
             let location_count = if let Some(ride_id) = ride_id {
-                stream_pevcap_location_batches(staged.path(), preview.encoding(), |samples| {
+                stream_pevcap_location_batches(staged.path()?, preview.encoding(), |samples| {
                     self.request(|reply| Command::AppendPevcapLocationBatch {
                         ride_id,
                         samples,
@@ -4136,8 +4137,8 @@ impl RideDatabase {
         })();
         if let Err(StorageError::ResponseDropped) = &result {
             // The finish transaction may have committed before its reply was lost. Reconcile the
-            // durable receipt before cleanup; deleting the managed artifact in that case would
-            // leave a successful import pointing at missing bytes.
+            // durable SQLite receipt before aborting the reservation, because the transaction may
+            // already own the canonical bytes and receipt.
             match self.request(|reply| Command::PevcapImportLookup {
                 digest: preview.artifact_digest.clone(),
                 reply,
@@ -6086,15 +6087,12 @@ fn recover_abandoned_pevcap_imports(
     let mut managed_directory_name = database_path.as_os_str().to_owned();
     managed_directory_name.push(".pevcap-imports");
     let managed_directory = PathBuf::from(managed_directory_name);
-    let directory_metadata = match fs::symlink_metadata(&managed_directory) {
-        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
-            metadata
-        }
+    match fs::symlink_metadata(&managed_directory) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {}
         Ok(_) => return Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(StorageError::Io(error)),
-    };
-    drop(directory_metadata);
+    }
     for path in paths {
         let path = Path::new(&path);
         if path.parent() != Some(managed_directory.as_path()) {
@@ -7481,10 +7479,10 @@ struct StagedPevcap {
 }
 
 impl StagedPevcap {
-    fn path(&self) -> &Path {
+    fn path(&self) -> Result<&Path, StorageError> {
         self.path
             .as_deref()
-            .expect("staging file is present before removal")
+            .ok_or(StorageError::PevcapPreviewChanged)
     }
 
     fn remove(&mut self) -> Result<(), StorageError> {
@@ -7629,7 +7627,7 @@ mod sqlite_canonical_pevcap_tests {
 
     #[cfg(unix)]
     #[test]
-    fn duplicate_retirement_preserves_legacy_symlink_and_external_bytes() {
+    fn legacy_archive_worker_preserves_symlink_and_external_bytes() {
         use cutout_core::{
             MonotonicTimestamp, PevcapCapture, PevcapHeader, WallClockUnixTimestamp,
         };
@@ -7688,6 +7686,31 @@ mod sqlite_canonical_pevcap_tests {
                 .unwrap()
                 .duplicate
         );
+        let digest = receipt.artifact_digest.clone();
+        database.shutdown().unwrap();
+        Connection::open(&database_path)
+            .unwrap()
+            .execute_batch("DROP TABLE storage_normalization_progress; PRAGMA user_version = 57;")
+            .unwrap();
+        let reopened = RideDatabase::open(&database_path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut completed = false;
+        while Instant::now() < deadline {
+            let connection = Connection::open(&database_path).unwrap();
+            completed = connection
+                .query_row(
+                    "SELECT artifact_complete AND artifact_digest = ?1
+                     FROM storage_normalization_progress WHERE singleton = 1",
+                    [&digest],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            if completed {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(completed, "archive worker advances past the unsafe symlink");
         assert!(
             fs::symlink_metadata(&legacy_path)
                 .unwrap()
@@ -7695,7 +7718,7 @@ mod sqlite_canonical_pevcap_tests {
                 .is_symlink()
         );
         assert_eq!(fs::read(external_path).unwrap(), b"outside managed storage");
-        database.shutdown().unwrap();
+        reopened.shutdown().unwrap();
     }
 }
 

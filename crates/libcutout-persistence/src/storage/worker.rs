@@ -97,7 +97,7 @@ pub(super) fn run(
                     && Instant::now() >= next_compaction_attempt
                 {
                     let compacted = super::normalization::compact_if_safe(
-                        &worker.connection,
+                        &mut worker.connection,
                         &worker.database_path,
                         worker.maintenance_demand,
                         observed_demand,
@@ -105,7 +105,7 @@ pub(super) fn run(
                     next_compaction_attempt = Instant::now()
                         + match compacted {
                             Ok(super::normalization::CompactionState::Complete) => {
-                                Duration::from_secs(86_400)
+                                Duration::from_hours(24)
                             }
                             Ok(super::normalization::CompactionState::Deferred) | Err(_) => {
                                 Duration::from_secs(60)
@@ -131,9 +131,31 @@ struct DatabaseWorker<'a> {
 
 impl DatabaseWorker<'_> {
     fn normalize_maintenance_batch(&mut self) -> super::normalization::BatchState {
+        let Ok(mut busy_timeout) =
+            super::normalization::MaintenanceBusyTimeout::enter(&mut self.connection)
+        else {
+            return super::normalization::BatchState::Deferred;
+        };
+        let state = Self::normalize_maintenance_batch_with_timeout(
+            busy_timeout.connection_mut(),
+            &self.database_path,
+            &mut self.legacy_artifact_scan,
+        );
+        if busy_timeout.restore().is_err() {
+            super::normalization::BatchState::Deferred
+        } else {
+            state
+        }
+    }
+
+    fn normalize_maintenance_batch_with_timeout(
+        connection: &mut Connection,
+        database_path: &std::path::Path,
+        legacy_artifact_scan: &mut Option<super::normalization::LegacyArtifactScan>,
+    ) -> super::normalization::BatchState {
         match super::normalization::remove_redundant_semantic_batch(
-            &mut self.connection,
-            self.legacy_artifact_scan
+            connection,
+            legacy_artifact_scan
                 .as_ref()
                 .and_then(super::normalization::LegacyArtifactScan::backfill_digest),
         ) {
@@ -145,9 +167,9 @@ impl DatabaseWorker<'_> {
             }
             Ok(super::normalization::BatchState::Finished) => {
                 match super::normalization::normalize_legacy_artifact_batch(
-                    &mut self.connection,
-                    &self.database_path,
-                    &mut self.legacy_artifact_scan,
+                    connection,
+                    database_path,
+                    legacy_artifact_scan,
                 ) {
                     Ok(super::normalization::ArchiveState::Pending) => {
                         super::normalization::BatchState::Pending

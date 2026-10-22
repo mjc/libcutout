@@ -136,6 +136,14 @@ enum ManagedArtifactSource {
     Unsafe,
 }
 
+struct LegacyArtifactCandidate {
+    digest: String,
+    stored_path: String,
+    size: u64,
+    encoding: String,
+    backfill: bool,
+}
+
 impl LegacyArtifactScan {
     pub(super) fn backfill_digest(&self) -> Option<&str> {
         (self.phase == LegacyArtifactPhase::CopyLegacy && self.file.is_some())
@@ -159,6 +167,23 @@ pub(super) enum CompactionState {
 /// Reclaims pages freed by semantic and archive normalization after a quiet period.
 /// Failures keep the durable pending flag set for a later retry.
 pub(super) fn compact_if_safe(
+    connection: &mut Connection,
+    database_path: &Path,
+    demand: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    observed_demand: u64,
+) -> Result<CompactionState, StorageError> {
+    let mut busy_timeout = MaintenanceBusyTimeout::enter(connection)?;
+    let result = compact_if_safe_nonblocking(
+        busy_timeout.connection(),
+        database_path,
+        demand,
+        observed_demand,
+    );
+    busy_timeout.restore()?;
+    result
+}
+
+fn compact_if_safe_nonblocking(
     connection: &Connection,
     database_path: &Path,
     demand: &std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -175,18 +200,20 @@ pub(super) fn compact_if_safe(
         .f_bavail
         .checked_mul(filesystem.f_frsize)
         .ok_or(StorageError::InvalidDatabaseIdentity)?;
-    compact_with_available_space(
+    compact_with_interrupt_observer(
         connection,
         database_path,
         demand,
         observed_demand,
         available,
         || {},
+        None,
     )
 }
 
+#[cfg(test)]
 fn compact_with_available_space<F>(
-    connection: &Connection,
+    connection: &mut Connection,
     database_path: &Path,
     demand: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     observed_demand: u64,
@@ -196,7 +223,7 @@ fn compact_with_available_space<F>(
 where
     F: FnOnce(),
 {
-    compact_with_interrupt_observer(
+    compact_with_available_space_and_observer(
         connection,
         database_path,
         demand,
@@ -207,6 +234,33 @@ where
     )
 }
 
+#[cfg(test)]
+fn compact_with_available_space_and_observer<F>(
+    connection: &mut Connection,
+    database_path: &Path,
+    demand: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    observed_demand: u64,
+    available: u64,
+    on_vacuum_start: F,
+    interrupt_observed: Option<&std::sync::Arc<std::sync::atomic::AtomicU64>>,
+) -> Result<CompactionState, StorageError>
+where
+    F: FnOnce(),
+{
+    let mut busy_timeout = MaintenanceBusyTimeout::enter(connection)?;
+    let result = compact_with_interrupt_observer(
+        busy_timeout.connection(),
+        database_path,
+        demand,
+        observed_demand,
+        available,
+        on_vacuum_start,
+        interrupt_observed,
+    );
+    busy_timeout.restore()?;
+    result
+}
+
 fn compact_with_interrupt_observer<F>(
     connection: &Connection,
     database_path: &Path,
@@ -214,11 +268,13 @@ fn compact_with_interrupt_observer<F>(
     observed_demand: u64,
     available: u64,
     on_vacuum_start: F,
-    interrupt_observed: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    interrupt_observed: Option<&std::sync::Arc<std::sync::atomic::AtomicU64>>,
 ) -> Result<CompactionState, StorageError>
 where
     F: FnOnce(),
 {
+    #[cfg(not(test))]
+    let _ = interrupt_observed;
     if demand.load(std::sync::atomic::Ordering::Acquire) != observed_demand {
         return Ok(CompactionState::Deferred);
     }
@@ -250,24 +306,26 @@ where
     let watcher_stop = std::sync::Arc::clone(&stop_watcher);
     let watcher_demand = std::sync::Arc::clone(demand);
     let watcher_interrupt = std::sync::Arc::clone(&interrupt);
-    let watcher = match std::thread::Builder::new()
+    #[cfg(test)]
+    let watcher_observer = interrupt_observed.map(std::sync::Arc::clone);
+    #[cfg(not(test))]
+    let _ = interrupt_observed;
+    let Ok(watcher) = std::thread::Builder::new()
         .name("capture-vacuum-interrupt".to_owned())
         .spawn(move || {
             while !watcher_stop.load(std::sync::atomic::Ordering::Acquire) {
                 if watcher_demand.load(std::sync::atomic::Ordering::Acquire) != observed_demand {
                     watcher_interrupt.interrupt();
                     #[cfg(test)]
-                    if let Some(observed) = &interrupt_observed {
+                    if let Some(observed) = &watcher_observer {
                         observed.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-        }) {
-        Ok(watcher) => watcher,
-        Err(_) => {
-            return Ok(CompactionState::Deferred);
-        }
+        })
+    else {
+        return Ok(CompactionState::Deferred);
     };
     let mut watcher = InterruptWatcher::new(stop_watcher, watcher);
     on_vacuum_start();
@@ -290,6 +348,47 @@ struct InterruptWatcher {
     join: Option<std::thread::JoinHandle<()>>,
 }
 
+pub(super) struct MaintenanceBusyTimeout<'connection> {
+    connection: &'connection mut Connection,
+    original: Option<std::time::Duration>,
+}
+
+impl<'connection> MaintenanceBusyTimeout<'connection> {
+    pub(super) fn enter(connection: &'connection mut Connection) -> Result<Self, StorageError> {
+        let timeout_millis: i64 =
+            connection.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+        let timeout_millis =
+            u64::try_from(timeout_millis).map_err(|_| StorageError::InvalidDatabaseIdentity)?;
+        let original = std::time::Duration::from_millis(timeout_millis);
+        connection.busy_timeout(std::time::Duration::ZERO)?;
+        Ok(Self {
+            connection,
+            original: Some(original),
+        })
+    }
+
+    pub(super) fn restore(&mut self) -> Result<(), StorageError> {
+        if let Some(original) = self.original.take() {
+            self.connection.busy_timeout(original)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn connection(&self) -> &Connection {
+        self.connection
+    }
+
+    pub(super) fn connection_mut(&mut self) -> &mut Connection {
+        self.connection
+    }
+}
+
+impl Drop for MaintenanceBusyTimeout<'_> {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
 impl InterruptWatcher {
     fn new(
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -310,305 +409,6 @@ impl InterruptWatcher {
 impl Drop for InterruptWatcher {
     fn drop(&mut self) {
         let _ = self.stop_and_join();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        CompactionState, LegacyArtifactPhase, LegacyArtifactScan, compact_with_available_space,
-        compact_with_interrupt_observer, reject_artifact,
-    };
-    use rusqlite::{
-        Connection,
-        hooks::{AuthAction, Authorization},
-    };
-    use sha2::{Digest, Sha256};
-    use std::{
-        path::PathBuf,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicU64, Ordering},
-        },
-        time::Duration,
-    };
-
-    fn pending_database(path: &std::path::Path) -> Connection {
-        let mut connection = Connection::open(path).unwrap();
-        super::super::configure_connection(&mut connection, path).unwrap();
-        connection
-            .execute_batch(
-                "UPDATE storage_normalization_progress
-                 SET semantic_complete = 1, artifact_complete = 1,
-                     compaction_pending = 1, compaction_complete = 0
-                 WHERE singleton = 1;
-                 CREATE TABLE filler (payload BLOB NOT NULL);
-                 INSERT INTO filler VALUES (zeroblob(16777216));",
-            )
-            .unwrap();
-        connection
-    }
-
-    fn compaction_is_pending(connection: &Connection) -> bool {
-        connection
-            .query_row(
-                "SELECT compaction_pending FROM storage_normalization_progress WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap()
-    }
-
-    #[test]
-    fn failed_backfill_abort_retains_scan_until_retry_commits() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().join("backfill-abort.sqlite");
-        let mut connection = Connection::open(&database_path).unwrap();
-        connection.busy_timeout(Duration::ZERO).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE pevcap_captures (
-                    artifact_digest TEXT PRIMARY KEY,
-                    receipt_digest TEXT
-                 );
-                 CREATE TABLE storage_normalization_progress (
-                    singleton INTEGER PRIMARY KEY,
-                    artifact_digest TEXT
-                 );
-                 INSERT INTO storage_normalization_progress VALUES (1, 'previous');
-                 INSERT INTO pevcap_captures VALUES (lower(hex(zeroblob(32))), NULL);",
-            )
-            .unwrap();
-        let digest = "0".repeat(64);
-        let mut scan = Some(LegacyArtifactScan {
-            digest: digest.clone(),
-            path: PathBuf::from("managed-sidecar.jsonl"),
-            file: Some(tempfile::tempfile().unwrap()),
-            hasher: Sha256::new(),
-            offset: 0,
-            sequence: 0,
-            size: 1,
-            phase: LegacyArtifactPhase::CopyLegacy,
-            original_file: None,
-        });
-        let lock = Connection::open(&database_path).unwrap();
-        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
-
-        assert!(reject_artifact(&mut connection, &mut scan).is_err());
-        assert!(scan.is_some(), "worker retains its source and digest owner");
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM pevcap_captures WHERE artifact_digest = ?1",
-                    [&digest],
-                    |row| row.get::<_, u64>(0),
-                )
-                .unwrap(),
-            1,
-            "the incomplete manifest remains until abort succeeds"
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT artifact_digest FROM storage_normalization_progress WHERE singleton = 1",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "previous",
-            "cursor is not advanced before cleanup commits"
-        );
-
-        lock.execute_batch("ROLLBACK").unwrap();
-        reject_artifact(&mut connection, &mut scan).unwrap();
-        assert!(scan.is_none());
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM pevcap_captures WHERE artifact_digest = ?1",
-                    [&digest],
-                    |row| row.get::<_, u64>(0),
-                )
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT artifact_digest FROM storage_normalization_progress WHERE singleton = 1",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            digest
-        );
-    }
-
-    #[test]
-    fn low_space_defers_compaction_and_keeps_database_usable() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().join("low-space.sqlite");
-        let connection = pending_database(&database_path);
-        let result = compact_with_available_space(
-            &connection,
-            &database_path,
-            &Arc::new(AtomicU64::new(0)),
-            0,
-            0,
-            || panic!("VACUUM must not start without required free space"),
-        )
-        .unwrap();
-        assert_eq!(result, CompactionState::Deferred);
-        assert!(compaction_is_pending(&connection));
-        assert_eq!(
-            connection
-                .query_row("SELECT length(payload) FROM filler", [], |row| row
-                    .get::<_, u64>(0))
-                .unwrap(),
-            16 * 1024 * 1024
-        );
-    }
-
-    #[test]
-    fn command_demand_interrupts_vacuum_and_later_retry_completes() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().join("interrupted-vacuum.sqlite");
-        let connection = pending_database(&database_path);
-        let demand = Arc::new(AtomicU64::new(0));
-        let cancel = Arc::clone(&demand);
-        let interruptions = Arc::new(AtomicU64::new(0));
-        let observed_interruptions = Arc::clone(&interruptions);
-        let gated = Arc::new(AtomicBool::new(false));
-        let gate_once = Arc::clone(&gated);
-        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        connection
-            .authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
-                if let AuthAction::Attach { .. } = context.action
-                    && !gate_once.swap(true, Ordering::AcqRel)
-                {
-                    entered_tx
-                        .send(observed_interruptions.load(Ordering::Acquire))
-                        .unwrap();
-                    release_rx.recv().unwrap();
-                }
-                Authorization::Allow
-            }))
-            .unwrap();
-        // Model a producer which has published intent and is paused just before enqueue.
-        // The worker may take this value as its baseline, so a successful enqueue must publish
-        // demand again after sending.
-        demand.fetch_add(1, Ordering::AcqRel);
-        let observed_demand = demand.load(Ordering::Acquire);
-        let worker_demand = Arc::clone(&demand);
-        let worker_interruptions = Arc::clone(&interruptions);
-        let worker_database_path = database_path.clone();
-        let worker = std::thread::spawn(move || {
-            let result = compact_with_interrupt_observer(
-                &connection,
-                &worker_database_path,
-                &worker_demand,
-                observed_demand,
-                u64::MAX,
-                move || {
-                    // This is the post-enqueue publication, after the worker captured the
-                    // pre-enqueue baseline but before VACUUM's VM begins.
-                    cancel.fetch_add(1, Ordering::AcqRel);
-                },
-                Some(worker_interruptions),
-            )
-            .unwrap();
-            // The watcher is joined before regular database work resumes.
-            assert_eq!(
-                connection
-                    .query_row("SELECT length(payload) FROM filler", [], |row| row
-                        .get::<_, u64>(0))
-                    .unwrap(),
-                16 * 1024 * 1024
-            );
-            connection
-                .execute("INSERT INTO filler VALUES (zeroblob(1))", [])
-                .unwrap();
-            (connection, result)
-        });
-        let pre_gate_interrupts = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while interruptions.load(Ordering::Acquire) <= pre_gate_interrupts {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "watcher did not interrupt inside VACUUM's ATTACH gate"
-            );
-            std::thread::yield_now();
-        }
-        release_tx.send(()).unwrap();
-        let (connection, result) = worker.join().unwrap();
-        assert_eq!(result, CompactionState::Deferred);
-        assert!(compaction_is_pending(&connection));
-        assert_eq!(
-            compact_with_available_space(
-                &connection,
-                &database_path,
-                &demand,
-                demand.load(Ordering::Acquire),
-                u64::MAX,
-                || {},
-            )
-            .unwrap(),
-            CompactionState::Complete
-        );
-        assert!(!compaction_is_pending(&connection));
-    }
-
-    #[test]
-    fn busy_checkpoint_defers_compaction_without_losing_pending_work() {
-        let directory = tempfile::tempdir().unwrap();
-        let database_path = directory.path().join("busy-checkpoint.sqlite");
-        let connection = pending_database(&database_path);
-        let reader = Connection::open(&database_path).unwrap();
-        reader.execute_batch("BEGIN").unwrap();
-        reader
-            .query_row("SELECT count(*) FROM filler", [], |row| {
-                row.get::<_, u64>(0)
-            })
-            .unwrap();
-        connection
-            .execute("INSERT INTO filler VALUES (zeroblob(1))", [])
-            .unwrap();
-
-        assert_eq!(
-            compact_with_available_space(
-                &connection,
-                &database_path,
-                &Arc::new(AtomicU64::new(0)),
-                0,
-                u64::MAX,
-                || panic!("VACUUM must wait for a successful WAL checkpoint"),
-            )
-            .unwrap(),
-            CompactionState::Deferred
-        );
-        assert!(compaction_is_pending(&connection));
-        assert_eq!(
-            connection
-                .query_row("SELECT count(*) FROM filler", [], |row| row
-                    .get::<_, u64>(0))
-                .unwrap(),
-            2
-        );
-        reader.execute_batch("ROLLBACK").unwrap();
-        assert_eq!(
-            compact_with_available_space(
-                &connection,
-                &database_path,
-                &Arc::new(AtomicU64::new(0)),
-                0,
-                u64::MAX,
-                || {},
-            )
-            .unwrap(),
-            CompactionState::Complete
-        );
-        assert!(!compaction_is_pending(&connection));
     }
 }
 
@@ -670,7 +470,9 @@ pub(super) fn remove_redundant_semantic_batch(
         return Ok(BatchState::Finished);
     };
     for (capture_id, sequence, snapshot_size, payload, encoding, original_bytes) in &entries {
-        if !(1..=live_capture::LIVE_CAPTURE_EVENT_LIMIT_BYTES as i64).contains(snapshot_size) {
+        let semantic_limit = i64::try_from(live_capture::LIVE_CAPTURE_EVENT_LIMIT_BYTES)
+            .map_err(|_| StorageError::InvalidDatabaseIdentity)?;
+        if !(1..=semantic_limit).contains(snapshot_size) {
             continue;
         }
         let (Some(payload), Some(encoding)) = (payload.as_ref(), *encoding) else {
@@ -715,6 +517,31 @@ pub(super) fn normalize_legacy_artifact_batch(
     database_path: &Path,
     scan: &mut Option<LegacyArtifactScan>,
 ) -> Result<ArchiveState, StorageError> {
+    let cursor = match archive_progress(connection, scan.as_ref())? {
+        ArchiveProgress::Deferred => return Ok(ArchiveState::Deferred),
+        ArchiveProgress::Finished => return Ok(ArchiveState::Finished),
+        ArchiveProgress::Ready(cursor) => cursor,
+    };
+    if scan.is_none() {
+        let result =
+            start_legacy_artifact_scan(connection, database_path, scan, cursor.as_deref())?;
+        if result == ArchiveState::Finished || scan.is_none() {
+            return Ok(result);
+        }
+    }
+    process_legacy_artifact_chunk(connection, database_path, scan)
+}
+
+enum ArchiveProgress {
+    Deferred,
+    Finished,
+    Ready(Option<String>),
+}
+
+fn archive_progress(
+    connection: &mut Connection,
+    scan: Option<&LegacyArtifactScan>,
+) -> Result<ArchiveProgress, StorageError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let semantic_complete: bool = transaction.query_row(
         "SELECT semantic_complete FROM storage_normalization_progress WHERE singleton = 1",
@@ -722,13 +549,13 @@ pub(super) fn normalize_legacy_artifact_batch(
         |row| row.get(0),
     )?;
     if !semantic_complete {
-        return Ok(ArchiveState::Deferred);
+        return Ok(ArchiveProgress::Deferred);
     }
     if has_active_work(
         &transaction,
-        scan.as_ref().and_then(LegacyArtifactScan::backfill_digest),
+        scan.and_then(LegacyArtifactScan::backfill_digest),
     )? {
-        return Ok(ArchiveState::Deferred);
+        return Ok(ArchiveProgress::Deferred);
     }
     let (cursor, complete): (Option<String>, bool) = transaction.query_row(
         "SELECT artifact_digest, artifact_complete
@@ -737,125 +564,138 @@ pub(super) fn normalize_legacy_artifact_batch(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     if complete {
-        return Ok(ArchiveState::Finished);
+        return Ok(ArchiveProgress::Finished);
     }
     drop(transaction);
+    Ok(ArchiveProgress::Ready(cursor))
+}
 
-    if scan.is_none() {
-        let candidate: Option<(String, String, u64, String, bool, Option<u64>)> = connection
-            .query_row(
-                "SELECT imports.artifact_digest, imports.artifact_path,
-                        imports.artifact_size, captures.encoding,
-                        captures.artifact_digest IS NULL, captures.artifact_size
-                 FROM pevcap_imports AS imports
-                 LEFT JOIN pevcap_captures AS captures
-                   ON captures.artifact_digest = imports.artifact_digest
-                 WHERE imports.artifact_path IS NOT NULL
-                   AND (?1 IS NULL OR imports.artifact_digest > ?1)
-                 ORDER BY imports.artifact_digest LIMIT 1",
-                [cursor.as_deref()],
-                |row| {
-                    let size: i64 = row.get(2)?;
-                    let encoding: Option<String> = row.get(3)?;
-                    let canonical_size: Option<i64> = row.get(5)?;
-                    let size = if size == 0 {
-                        canonical_size.unwrap_or(0)
-                    } else {
-                        size
-                    };
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        u64::try_from(size).map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                2,
-                                rusqlite::types::Type::Integer,
-                                Box::new(error),
-                            )
-                        })?,
-                        encoding.unwrap_or_default(),
-                        row.get(4)?,
-                        canonical_size
-                            .map(u64::try_from)
-                            .transpose()
-                            .map_err(|error| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    5,
-                                    rusqlite::types::Type::Integer,
-                                    Box::new(error),
-                                )
-                            })?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((digest, stored_path, size, stored_encoding, backfill, _canonical_size)) =
-            candidate
-        else {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            transaction.execute(
-                "UPDATE storage_normalization_progress
-                 SET artifact_complete = 1, compaction_pending = 1
-                 WHERE singleton = 1",
-                [],
-            )?;
-            transaction.commit()?;
-            return Ok(ArchiveState::Finished);
-        };
-        let Some((path, encoding)) = expected_legacy_path(database_path, &digest, &stored_path)
-        else {
-            advance_artifact_cursor(connection, &digest)?;
-            return Ok(ArchiveState::Pending);
-        };
-        let unknown_size = size == 0;
-        let source =
-            open_verified_managed_file(database_path, &path, (!unknown_size).then_some(size))?;
-        let (file, size, original_file) = match source {
-            ManagedArtifactSource::Present(file, actual_size, fingerprint) => {
-                if actual_size == 0 || actual_size > 536_870_912 {
-                    advance_artifact_cursor(connection, &digest)?;
-                    return Ok(ArchiveState::Pending);
-                }
-                (Some(file), actual_size, Some(fingerprint))
-            }
-            ManagedArtifactSource::Missing if !backfill => (None, size, None),
-            ManagedArtifactSource::Missing | ManagedArtifactSource::Unsafe => {
-                advance_artifact_cursor(connection, &digest)?;
+fn start_legacy_artifact_scan(
+    connection: &mut Connection,
+    database_path: &Path,
+    scan: &mut Option<LegacyArtifactScan>,
+    cursor: Option<&str>,
+) -> Result<ArchiveState, StorageError> {
+    let Some(candidate) = next_legacy_artifact_candidate(connection, cursor)? else {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "UPDATE storage_normalization_progress
+             SET artifact_complete = 1, compaction_pending = 1
+             WHERE singleton = 1",
+            [],
+        )?;
+        transaction.commit()?;
+        return Ok(ArchiveState::Finished);
+    };
+    let Some((path, encoding)) =
+        expected_legacy_path(database_path, &candidate.digest, &candidate.stored_path)
+    else {
+        advance_artifact_cursor(connection, &candidate.digest)?;
+        return Ok(ArchiveState::Pending);
+    };
+    let unknown_size = candidate.size == 0;
+    let source = open_verified_managed_file(
+        database_path,
+        &path,
+        (!unknown_size).then_some(candidate.size),
+    )?;
+    let (file, size, original_file) = match source {
+        ManagedArtifactSource::Present(file, actual_size, fingerprint) => {
+            if actual_size == 0 || actual_size > 536_870_912 {
+                advance_artifact_cursor(connection, &candidate.digest)?;
                 return Ok(ArchiveState::Pending);
             }
-        };
-        if backfill && file.is_some() {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            super::capture_data::begin(&transaction, &digest, encoding, size)?;
-            transaction.commit()?;
-        } else if !backfill && !matches!(stored_encoding.as_str(), "jsonl" | "binary") {
-            advance_artifact_cursor(connection, &digest)?;
-            return Ok(ArchiveState::Pending);
-        } else if !backfill && !verify_stored_metadata(connection, &digest, size, &stored_encoding)?
-        {
-            advance_artifact_cursor(connection, &digest)?;
+            (Some(file), actual_size, Some(fingerprint))
+        }
+        ManagedArtifactSource::Missing if !candidate.backfill => (None, candidate.size, None),
+        ManagedArtifactSource::Missing | ManagedArtifactSource::Unsafe => {
+            advance_artifact_cursor(connection, &candidate.digest)?;
             return Ok(ArchiveState::Pending);
         }
-        let phase = if backfill && file.is_some() {
-            LegacyArtifactPhase::CopyLegacy
-        } else {
-            LegacyArtifactPhase::VerifyExisting
-        };
-        *scan = Some(LegacyArtifactScan {
-            digest,
-            path,
-            file,
-            hasher: Sha256::new(),
-            offset: 0,
-            sequence: 0,
-            size,
-            phase,
-            original_file,
-        });
+    };
+    if candidate.backfill && file.is_some() {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        super::capture_data::begin(&transaction, &candidate.digest, encoding, size)?;
+        transaction.commit()?;
+    } else if !candidate.backfill
+        && ((candidate.encoding != "jsonl" && candidate.encoding != "binary")
+            || !verify_stored_metadata(connection, &candidate.digest, size, &candidate.encoding)?)
+    {
+        advance_artifact_cursor(connection, &candidate.digest)?;
+        return Ok(ArchiveState::Pending);
     }
+    let phase = if candidate.backfill && file.is_some() {
+        LegacyArtifactPhase::CopyLegacy
+    } else {
+        LegacyArtifactPhase::VerifyExisting
+    };
+    *scan = Some(LegacyArtifactScan {
+        digest: candidate.digest,
+        path,
+        file,
+        hasher: Sha256::new(),
+        offset: 0,
+        sequence: 0,
+        size,
+        phase,
+        original_file,
+    });
+    Ok(ArchiveState::Pending)
+}
 
+type LegacyArtifactCandidateRow = (String, String, i64, Option<String>, bool, Option<i64>);
+
+fn next_legacy_artifact_candidate(
+    connection: &mut Connection,
+    cursor: Option<&str>,
+) -> Result<Option<LegacyArtifactCandidate>, StorageError> {
+    let candidate: Option<LegacyArtifactCandidateRow> = connection
+        .query_row(
+            "SELECT imports.artifact_digest, imports.artifact_path,
+                    imports.artifact_size, captures.encoding,
+                    captures.artifact_digest IS NULL, captures.artifact_size
+             FROM pevcap_imports AS imports
+             LEFT JOIN pevcap_captures AS captures
+               ON captures.artifact_digest = imports.artifact_digest
+             WHERE imports.artifact_path IS NOT NULL
+               AND (?1 IS NULL OR imports.artifact_digest > ?1)
+             ORDER BY imports.artifact_digest LIMIT 1",
+            [cursor],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((digest, stored_path, imported_size, encoding, backfill, canonical_size)) = candidate
+    else {
+        return Ok(None);
+    };
+    let stored_size = if imported_size == 0 {
+        canonical_size.unwrap_or(0)
+    } else {
+        imported_size
+    };
+    Ok(Some(LegacyArtifactCandidate {
+        digest,
+        stored_path,
+        size: u64::try_from(stored_size).map_err(|_| StorageError::InvalidDatabaseIdentity)?,
+        encoding: encoding.unwrap_or_default(),
+        backfill,
+    }))
+}
+
+fn process_legacy_artifact_chunk(
+    connection: &mut Connection,
+    database_path: &Path,
+    scan: &mut Option<LegacyArtifactScan>,
+) -> Result<ArchiveState, StorageError> {
     let Some(active) = scan.as_mut() else {
         return Ok(ArchiveState::Pending);
     };
@@ -870,82 +710,7 @@ pub(super) fn normalize_legacy_artifact_batch(
         0
     };
     if chunk_limit == 0 {
-        let mut extra = [0_u8; 1];
-        if let Some(file) = &mut active.file {
-            file.seek(SeekFrom::Start(active.offset))?;
-            match file.read(&mut extra) {
-                Ok(0) => {}
-                Ok(_) => {
-                    reject_artifact(connection, scan)?;
-                    return Ok(ArchiveState::Pending);
-                }
-                Err(error) => return Err(StorageError::Io(error)),
-            }
-        }
-        if active.offset != active.size || !digest_matches(&active.hasher, &active.digest) {
-            reject_artifact(connection, scan)?;
-            return Ok(ArchiveState::Pending);
-        }
-        let already_unlinked = if active.file.is_some()
-            && !managed_file_still_matches(database_path, active)?
-        {
-            let missing_after_verified_unlink = active.phase != LegacyArtifactPhase::CopyLegacy
-                && matches!(fs::symlink_metadata(&active.path), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
-            if !missing_after_verified_unlink {
-                reject_artifact(connection, scan)?;
-                return Ok(ArchiveState::Pending);
-            }
-            true
-        } else {
-            false
-        };
-        if active.phase == LegacyArtifactPhase::CopyLegacy && active.file.is_some() {
-            let transaction =
-                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            super::capture_data::publish(&transaction, &active.digest)?;
-            transaction.commit()?;
-            active.phase = LegacyArtifactPhase::VerifyCopied;
-            active.hasher = Sha256::new();
-            active.offset = 0;
-            active.sequence = 0;
-            if let Some(file) = &mut active.file {
-                file.seek(SeekFrom::Start(0))?;
-            }
-            return Ok(ArchiveState::Pending);
-        }
-        let digest = active.digest.clone();
-        let path = active.path.clone();
-        let size = active.size;
-        if active.file.is_some() && !already_unlinked {
-            fs::remove_file(&path)?;
-        }
-        if active.file.is_some()
-            && let Some(parent) = path.parent()
-        {
-            if !managed_directory(database_path, parent)? {
-                return Ok(ArchiveState::Deferred);
-            }
-            File::open(parent)?.sync_all()?;
-        } else if let Some(parent) = path.parent() {
-            if !managed_directory(database_path, parent)? {
-                return Ok(ArchiveState::Deferred);
-            }
-            File::open(parent)?.sync_all()?;
-        }
-        *scan = None;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "UPDATE pevcap_imports SET artifact_path = NULL, artifact_size = ?2
-             WHERE artifact_digest = ?1",
-            rusqlite::params![&digest, size],
-        )?;
-        transaction.execute(
-            "UPDATE storage_normalization_progress SET artifact_digest = ?1
-             WHERE singleton = 1",
-            [&digest],
-        )?;
-        transaction.commit()?;
-        return Ok(ArchiveState::Pending);
+        return complete_legacy_artifact_scan(connection, database_path, scan);
     }
     let mut file_chunk = vec![0; chunk_limit];
     if let Some(file) = &mut active.file {
@@ -960,11 +725,9 @@ pub(super) fn normalize_legacy_artifact_batch(
         }
     }
     if let Some(expected_chunk) = expected_chunk {
-        if expected_chunk != file_chunk {
-            if active.file.is_some() {
-                reject_artifact(connection, scan)?;
-                return Ok(ArchiveState::Pending);
-            }
+        if expected_chunk != file_chunk && active.file.is_some() {
+            reject_artifact(connection, scan)?;
+            return Ok(ArchiveState::Pending);
         }
         if active.file.is_none() {
             file_chunk = expected_chunk;
@@ -993,6 +756,118 @@ pub(super) fn normalize_legacy_artifact_batch(
     if let Some(active) = scan.as_ref() {
         pause_if_requested(active);
     }
+    Ok(ArchiveState::Pending)
+}
+
+fn complete_legacy_artifact_scan(
+    connection: &mut Connection,
+    database_path: &Path,
+    scan: &mut Option<LegacyArtifactScan>,
+) -> Result<ArchiveState, StorageError> {
+    if scan.is_none() {
+        return Ok(ArchiveState::Pending);
+    }
+    verify_scan_end(connection, scan)?;
+    let Some(active) = scan.as_mut() else {
+        return Ok(ArchiveState::Pending);
+    };
+    if active.phase == LegacyArtifactPhase::CopyLegacy && active.file.is_some() {
+        publish_legacy_backfill(connection, active)?;
+        return Ok(ArchiveState::Pending);
+    }
+    retire_verified_legacy_artifact(connection, database_path, scan)
+}
+
+fn verify_scan_end(
+    connection: &mut Connection,
+    scan: &mut Option<LegacyArtifactScan>,
+) -> Result<(), StorageError> {
+    let Some(active) = scan.as_mut() else {
+        return Ok(());
+    };
+    let mut extra = [0_u8; 1];
+    if let Some(file) = &mut active.file {
+        file.seek(SeekFrom::Start(active.offset))?;
+        match file.read(&mut extra) {
+            Ok(0) => {}
+            Ok(_) => {
+                reject_artifact(connection, scan)?;
+                return Ok(());
+            }
+            Err(error) => return Err(StorageError::Io(error)),
+        }
+    }
+    if active.offset != active.size || !digest_matches(&active.hasher, &active.digest) {
+        reject_artifact(connection, scan)?;
+    }
+    Ok(())
+}
+
+fn publish_legacy_backfill(
+    connection: &mut Connection,
+    active: &mut LegacyArtifactScan,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    super::capture_data::publish(&transaction, &active.digest)?;
+    transaction.commit()?;
+    active.phase = LegacyArtifactPhase::VerifyCopied;
+    active.hasher = Sha256::new();
+    active.offset = 0;
+    active.sequence = 0;
+    if let Some(file) = &mut active.file {
+        file.seek(SeekFrom::Start(0))?;
+    }
+    Ok(())
+}
+
+fn retire_verified_legacy_artifact(
+    connection: &mut Connection,
+    database_path: &Path,
+    scan: &mut Option<LegacyArtifactScan>,
+) -> Result<ArchiveState, StorageError> {
+    let Some(active) = scan.as_ref() else {
+        return Ok(ArchiveState::Pending);
+    };
+    let already_unlinked =
+        if active.file.is_some() && !managed_file_still_matches(database_path, active)? {
+            let missing_after_verified_unlink = active.phase != LegacyArtifactPhase::CopyLegacy
+                && match fs::symlink_metadata(&active.path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                    _ => false,
+                };
+            if !missing_after_verified_unlink {
+                reject_artifact(connection, scan)?;
+                return Ok(ArchiveState::Pending);
+            }
+            true
+        } else {
+            false
+        };
+    let digest = active.digest.clone();
+    let path = active.path.clone();
+    let size = active.size;
+    if active.file.is_some() && !already_unlinked {
+        fs::remove_file(&path)?;
+    }
+    if let Some(parent) = path.parent() {
+        if !managed_directory(database_path, parent)? {
+            return Ok(ArchiveState::Deferred);
+        }
+        File::open(parent)?.sync_all()?;
+    }
+    *scan = None;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute(
+        "UPDATE pevcap_imports SET artifact_path = NULL, artifact_size = ?2
+         WHERE artifact_digest = ?1",
+        rusqlite::params![&digest, size],
+    )?;
+    transaction.execute(
+        "UPDATE storage_normalization_progress SET artifact_digest = ?1
+         WHERE singleton = 1",
+        [&digest],
+    )?;
+    transaction.commit()?;
     Ok(ArchiveState::Pending)
 }
 
@@ -1291,4 +1166,368 @@ fn read_projection(
         library_version,
         snapshot_json,
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::{
+        CompactionState, LegacyArtifactPhase, LegacyArtifactScan, MaintenanceBusyTimeout,
+        compact_with_available_space, compact_with_available_space_and_observer, reject_artifact,
+    };
+    use rusqlite::{
+        Connection,
+        hooks::{AuthAction, Authorization},
+    };
+    use sha2::{Digest, Sha256};
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
+
+    fn pending_database(path: &std::path::Path) -> Connection {
+        let mut connection = Connection::open(path).unwrap();
+        super::super::configure_connection(&mut connection, path).unwrap();
+        connection
+            .execute_batch(
+                "UPDATE storage_normalization_progress
+                 SET semantic_complete = 1, artifact_complete = 1,
+                     compaction_pending = 1, compaction_complete = 0
+                 WHERE singleton = 1;
+                 CREATE TABLE filler (payload BLOB NOT NULL);
+                 INSERT INTO filler VALUES (zeroblob(16777216));",
+            )
+            .unwrap();
+        connection
+    }
+
+    fn compaction_is_pending(connection: &Connection) -> bool {
+        connection
+            .query_row(
+                "SELECT compaction_pending FROM storage_normalization_progress WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn failed_backfill_abort_retains_scan_until_retry_commits() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("backfill-abort.sqlite");
+        let mut connection = Connection::open(&database_path).unwrap();
+        connection.busy_timeout(Duration::ZERO).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE pevcap_captures (
+                    artifact_digest TEXT PRIMARY KEY,
+                    receipt_digest TEXT
+                 );
+                 CREATE TABLE storage_normalization_progress (
+                    singleton INTEGER PRIMARY KEY,
+                    artifact_digest TEXT
+                 );
+                 INSERT INTO storage_normalization_progress VALUES (1, 'previous');
+                 INSERT INTO pevcap_captures VALUES (lower(hex(zeroblob(32))), NULL);",
+            )
+            .unwrap();
+        let digest = "0".repeat(64);
+        let mut scan = Some(LegacyArtifactScan {
+            digest: digest.clone(),
+            path: PathBuf::from("managed-sidecar.jsonl"),
+            file: Some(tempfile::tempfile().unwrap()),
+            hasher: Sha256::new(),
+            offset: 0,
+            sequence: 0,
+            size: 1,
+            phase: LegacyArtifactPhase::CopyLegacy,
+            original_file: None,
+        });
+        let lock = Connection::open(&database_path).unwrap();
+        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        assert!(reject_artifact(&mut connection, &mut scan).is_err());
+        assert!(scan.is_some(), "worker retains its source and digest owner");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pevcap_captures WHERE artifact_digest = ?1",
+                    [&digest],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            1,
+            "the incomplete manifest remains until abort succeeds"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT artifact_digest FROM storage_normalization_progress WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "previous",
+            "cursor is not advanced before cleanup commits"
+        );
+
+        lock.execute_batch("ROLLBACK").unwrap();
+        reject_artifact(&mut connection, &mut scan).unwrap();
+        assert!(scan.is_none());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pevcap_captures WHERE artifact_digest = ?1",
+                    [&digest],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT artifact_digest FROM storage_normalization_progress WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            digest
+        );
+    }
+
+    #[test]
+    fn low_space_defers_compaction_and_keeps_database_usable() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("low-space.sqlite");
+        let mut connection = pending_database(&database_path);
+        let result = compact_with_available_space(
+            &mut connection,
+            &database_path,
+            &Arc::new(AtomicU64::new(0)),
+            0,
+            0,
+            || panic!("VACUUM must not start without required free space"),
+        )
+        .unwrap();
+        assert_eq!(result, CompactionState::Deferred);
+        assert!(compaction_is_pending(&connection));
+        assert_eq!(
+            connection
+                .query_row("SELECT length(payload) FROM filler", [], |row| row
+                    .get::<_, u64>(0))
+                .unwrap(),
+            16 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn command_demand_interrupts_vacuum_and_later_retry_completes() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("interrupted-vacuum.sqlite");
+        let mut connection = pending_database(&database_path);
+        let demand = Arc::new(AtomicU64::new(0));
+        let cancel = Arc::clone(&demand);
+        let interruptions = Arc::new(AtomicU64::new(0));
+        let observed_interruptions = Arc::clone(&interruptions);
+        let gated = Arc::new(AtomicBool::new(false));
+        let gate_once = Arc::clone(&gated);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        connection
+            .authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+                if let AuthAction::Attach { .. } = context.action
+                    && !gate_once.swap(true, Ordering::AcqRel)
+                {
+                    entered_tx
+                        .send(observed_interruptions.load(Ordering::Acquire))
+                        .unwrap();
+                    release_rx.recv().unwrap();
+                }
+                Authorization::Allow
+            }))
+            .unwrap();
+        // Model a producer which has published intent and is paused just before enqueue.
+        // The worker may take this value as its baseline, so a successful enqueue must publish
+        // demand again after sending.
+        demand.fetch_add(1, Ordering::AcqRel);
+        let observed_demand = demand.load(Ordering::Acquire);
+        let worker_demand = Arc::clone(&demand);
+        let worker_interruptions = Arc::clone(&interruptions);
+        let worker_database_path = database_path.clone();
+        let worker = std::thread::spawn(move || {
+            let result = compact_with_available_space_and_observer(
+                &mut connection,
+                &worker_database_path,
+                &worker_demand,
+                observed_demand,
+                u64::MAX,
+                move || {
+                    // This is the post-enqueue publication, after the worker captured the
+                    // pre-enqueue baseline but before VACUUM's VM begins.
+                    cancel.fetch_add(1, Ordering::AcqRel);
+                },
+                Some(&worker_interruptions),
+            )
+            .unwrap();
+            // The watcher is joined before regular database work resumes.
+            assert_eq!(
+                connection
+                    .query_row("SELECT length(payload) FROM filler", [], |row| row
+                        .get::<_, u64>(0))
+                    .unwrap(),
+                16 * 1024 * 1024
+            );
+            connection
+                .execute("INSERT INTO filler VALUES (zeroblob(1))", [])
+                .unwrap();
+            (connection, result)
+        });
+        let pre_gate_interrupts = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while interruptions.load(Ordering::Acquire) <= pre_gate_interrupts {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher did not interrupt inside VACUUM's ATTACH gate"
+            );
+            std::thread::yield_now();
+        }
+        release_tx.send(()).unwrap();
+        let (mut connection, result) = worker.join().unwrap();
+        assert_eq!(result, CompactionState::Deferred);
+        assert!(compaction_is_pending(&connection));
+        assert_eq!(
+            compact_with_available_space(
+                &mut connection,
+                &database_path,
+                &demand,
+                demand.load(Ordering::Acquire),
+                u64::MAX,
+                || {},
+            )
+            .unwrap(),
+            CompactionState::Complete
+        );
+        assert!(!compaction_is_pending(&connection));
+    }
+
+    #[test]
+    fn busy_checkpoint_defers_compaction_without_losing_pending_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("busy-checkpoint.sqlite");
+        let mut connection = pending_database(&database_path);
+        let reader = Connection::open(&database_path).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        reader
+            .query_row("SELECT count(*) FROM filler", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .unwrap();
+        connection
+            .execute("INSERT INTO filler VALUES (zeroblob(1))", [])
+            .unwrap();
+
+        let original_busy_timeout: i64 = connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        let gated = Arc::new(AtomicBool::new(false));
+        let gate_once = Arc::clone(&gated);
+        let (checkpoint_entered_tx, checkpoint_entered_rx) = std::sync::mpsc::channel();
+        let (checkpoint_release_tx, checkpoint_release_rx) = std::sync::mpsc::channel();
+        connection
+            .authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+                if let AuthAction::Pragma { pragma_name, .. } = context.action
+                    && pragma_name.eq_ignore_ascii_case("wal_checkpoint")
+                    && !gate_once.swap(true, Ordering::AcqRel)
+                {
+                    checkpoint_entered_tx.send(()).unwrap();
+                    checkpoint_release_rx.recv().unwrap();
+                }
+                Authorization::Allow
+            }))
+            .unwrap();
+        let demand = Arc::new(AtomicU64::new(0));
+        let worker_demand = Arc::clone(&demand);
+        let worker_database_path = database_path.clone();
+        let checkpoint_started = std::time::Instant::now();
+        let worker = std::thread::spawn(move || {
+            let result = compact_with_available_space(
+                &mut connection,
+                &worker_database_path,
+                &worker_demand,
+                0,
+                u64::MAX,
+                || panic!("VACUUM must wait for a successful WAL checkpoint"),
+            )
+            .unwrap();
+            let timeout_after: i64 = connection
+                .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+                .unwrap();
+            let readable_rows = connection
+                .query_row("SELECT count(*) FROM filler", [], |row| {
+                    row.get::<_, u64>(0)
+                })
+                .unwrap();
+            (connection, result, timeout_after, readable_rows)
+        });
+        checkpoint_entered_rx.recv().unwrap();
+        demand.fetch_add(1, Ordering::AcqRel);
+        checkpoint_release_tx.send(()).unwrap();
+        let (mut connection, compacted, restored_busy_timeout, readable_rows) =
+            worker.join().unwrap();
+        assert_eq!(compacted, CompactionState::Deferred);
+        assert!(
+            checkpoint_started.elapsed() < Duration::from_millis(500),
+            "a queued command must not wait through the connection's normal busy timeout"
+        );
+        assert_eq!(restored_busy_timeout, original_busy_timeout);
+        assert!(compaction_is_pending(&connection));
+        assert_eq!(readable_rows, 2);
+        reader.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(
+            compact_with_available_space(
+                &mut connection,
+                &database_path,
+                &Arc::new(AtomicU64::new(0)),
+                0,
+                u64::MAX,
+                || {},
+            )
+            .unwrap(),
+            CompactionState::Complete
+        );
+        assert!(!compaction_is_pending(&connection));
+    }
+
+    #[test]
+    fn idle_normalization_uses_nonblocking_busy_timeout_and_restores_connection_setting() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("busy-normalization.sqlite");
+        let mut connection = Connection::open(&database_path).unwrap();
+        super::super::configure_connection(&mut connection, &database_path).unwrap();
+        let original_busy_timeout: i64 = connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(original_busy_timeout, 5_000);
+
+        let lock = Connection::open(&database_path).unwrap();
+        lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let maintenance_started = std::time::Instant::now();
+        let mut busy_timeout = MaintenanceBusyTimeout::enter(&mut connection).unwrap();
+        let result = super::remove_redundant_semantic_batch(busy_timeout.connection_mut(), None);
+        busy_timeout.restore().unwrap();
+        drop(busy_timeout);
+        assert!(result.is_err(), "the competing writer keeps its lock");
+        assert!(
+            maintenance_started.elapsed() < Duration::from_millis(500),
+            "idle normalization yields to a queued command instead of waiting five seconds"
+        );
+        let restored_busy_timeout: i64 = connection
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(restored_busy_timeout, original_busy_timeout);
+        lock.execute_batch("ROLLBACK").unwrap();
+    }
 }

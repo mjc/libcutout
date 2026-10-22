@@ -1992,6 +1992,56 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     if application_id != APPLICATION_ID {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
+    verify_required_tables(connection)?;
+    if !table_has_column(
+        connection,
+        "live_capture_sessions",
+        "recording_context_json",
+    )? || !table_has_column(connection, "live_capture_sessions", "integrity")?
+        || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
+        || !table_has_column(connection, "live_capture_events", "payload_encoding")?
+        || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    let normalization_progress: u64 = connection.query_row(
+        "SELECT COUNT(*) FROM storage_normalization_progress WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if normalization_progress != 1 {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    for column in [
+        "source_artifact_id",
+        "operation_id",
+        "snapshot_digest",
+        "status_json",
+    ] {
+        if !table_has_column(connection, "capture_submissions", column)? {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
+    if !table_has_column(connection, "charging_outbox", "blocked_kind")?
+        || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    verify_elapsed_time_schema(connection)?;
+    verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
+    verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
+    verify_singleton_schema(connection, "ride_session_marker", "marker")?;
+    verify_device_schema(connection)?;
+    super::device_vehicle::verify_schema(connection)?;
+    super::device_drivetrain::verify_schema(connection)?;
+    super::phone_control::verify_schema(connection)?;
+    verify_last_recorded_point_duration_schema(connection)?;
+    verify_ride_segment_schema(connection)?;
+    verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
     for table in [
         "rides",
         "ride_points",
@@ -2045,51 +2095,6 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
             return Err(StorageError::InvalidDatabaseIdentity);
         }
     }
-    if !table_has_column(
-        connection,
-        "live_capture_sessions",
-        "recording_context_json",
-    )? || !table_has_column(connection, "live_capture_sessions", "integrity")?
-        || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
-        || !table_has_column(connection, "live_capture_events", "payload_encoding")?
-        || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
-    {
-        return Err(StorageError::InvalidDatabaseIdentity);
-    }
-    let normalization_progress: u64 = connection.query_row(
-        "SELECT COUNT(*) FROM storage_normalization_progress WHERE singleton = 1",
-        [],
-        |row| row.get(0),
-    )?;
-    if normalization_progress != 1 {
-        return Err(StorageError::InvalidDatabaseIdentity);
-    }
-    for column in [
-        "source_artifact_id",
-        "operation_id",
-        "snapshot_digest",
-        "status_json",
-    ] {
-        if !table_has_column(connection, "capture_submissions", column)? {
-            return Err(StorageError::InvalidDatabaseIdentity);
-        }
-    }
-    if !table_has_column(connection, "charging_outbox", "blocked_kind")?
-        || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?
-    {
-        return Err(StorageError::InvalidDatabaseIdentity);
-    }
-    verify_elapsed_time_schema(connection)?;
-    verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
-    verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
-    verify_singleton_schema(connection, "ride_session_marker", "marker")?;
-    verify_device_schema(connection)?;
-    super::device_vehicle::verify_schema(connection)?;
-    super::device_drivetrain::verify_schema(connection)?;
-    super::phone_control::verify_schema(connection)?;
-    verify_last_recorded_point_duration_schema(connection)?;
-    verify_ride_segment_schema(connection)?;
-    verify_spatial_identity_schema(connection)?;
     Ok(())
 }
 
@@ -2382,6 +2387,61 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
 mod tests {
     use super::*;
 
+    fn insert_v56_import_fixture(connection: &Connection, digest: &str) {
+        connection
+            .execute(
+                "INSERT INTO rides (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-one', 'pevcap_import', 'imported', 50, 55, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/managed.jsonl', 'ride-one', 'ride_and_capture', 123, 4, 1, 55)",
+                [digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_recordings
+                    (artifact_id, artifact_digest, origin, platform_identifier, started_at_ms)
+                 VALUES ('recording-one', ?1, 'manual', 'platform-one', 55)",
+                [digest],
+            )
+            .unwrap();
+        let source_id = "a".repeat(36);
+        let operation_id = "b".repeat(36);
+        let status = format!(
+            "{{\"operation_id\":\"{operation_id}\",\"metadata\":{{\"sha256\":\"{digest}\",\"provenance\":{{\"source_artifact_id\":\"{source_id}\"}}}}}}"
+        );
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                (&source_id, &operation_id, digest, &status),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn schema_v58_makes_legacy_artifact_path_nullable_and_preserves_receipts() {
         let mut connection = Connection::open_in_memory().unwrap();
@@ -2411,58 +2471,7 @@ mod tests {
                 .unwrap()
         );
         let digest = "a".repeat(64);
-        connection
-            .execute(
-                "INSERT INTO rides (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
-                 VALUES ('ride-one', 'pevcap_import', 'imported', 50, 55, 1, 10)",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO pevcap_imports
-                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
-                     record_count, location_count, imported_at_ms)
-                 VALUES (?1, '/old/managed.jsonl', 'ride-one', 'ride_and_capture', 123, 4, 1, 55)",
-                [&digest],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO pevcap_captures
-                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
-                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
-                [&digest],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
-                 VALUES (?1, 0, X'01020304')",
-                [&digest],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO pevcap_recordings
-                    (artifact_id, artifact_digest, origin, platform_identifier, started_at_ms)
-                 VALUES ('recording-one', ?1, 'manual', 'platform-one', 55)",
-                [&digest],
-            )
-            .unwrap();
-        let source_id = "a".repeat(36);
-        let operation_id = "b".repeat(36);
-        let status = format!(
-            "{{\"operation_id\":\"{operation_id}\",\"metadata\":{{\"sha256\":\"{digest}\",\"provenance\":{{\"source_artifact_id\":\"{source_id}\"}}}}}}"
-        );
-        connection
-            .execute(
-                "INSERT INTO capture_submissions
-                    (source_artifact_id, operation_id, snapshot_digest, status_json)
-                 VALUES (?1, ?2, ?3, ?4)",
-                (&source_id, &operation_id, &digest, &status),
-            )
-            .unwrap();
+        insert_v56_import_fixture(&connection, &digest);
         connection.execute_batch(&schema_pragmas(56)).unwrap();
 
         migrate(&mut connection).unwrap();
