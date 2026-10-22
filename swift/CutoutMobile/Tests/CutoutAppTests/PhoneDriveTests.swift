@@ -1,9 +1,10 @@
-import CutoutMobile
 import CutoutMobileFFI
 import Foundation
+import SQLite3
 import XCTest
 
 @testable import CutoutApp
+@testable import CutoutMobile
 
 #if os(iOS)
     import UIKit
@@ -136,11 +137,10 @@ final class PhoneDriveTests: XCTestCase {
 
     @MainActor
     func testSavedLayoutReloadsWithoutEnablingProductionInput() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let database = try openRideDatabase(path: directory.appendingPathComponent("ride.sqlite").path)
-        defer { try? database.shutdown() }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preferences = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preferences.loadPhoneControlMode()
+        defer { restorePhonePreferences(previous, state: preferences) }
         let model = PhoneDriveModel(
             core: CutoutSessionCore(
                 testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
@@ -160,19 +160,35 @@ final class PhoneDriveTests: XCTestCase {
         XCTAssertFalse(reopened.capturesInput)
         if case .pressed = reopened.snapshot.phase { XCTFail("Restoring a layout must not restore a held gesture") }
 
-        try database.shutdown()
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(MobileRideMapState.debugDatabasePath, &connection), SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        XCTAssertEqual(
+            sqlite3_exec(
+                connection,
+                "CREATE TRIGGER reject_phone_mode_update BEFORE UPDATE OF mode ON phone_control_preferences BEGIN SELECT RAISE(ABORT, 'phone mode write denied'); END",
+                nil, nil, nil), SQLITE_OK)
+        defer {
+            sqlite3_exec(connection, "DROP TRIGGER IF EXISTS reject_phone_mode_update", nil, nil, nil)
+        }
         await reopened.saveMode(.area)
         XCTAssertTrue(reopened.settingsError)
         XCTAssertEqual(reopened.snapshot.mode, .buttons)
         XCTAssertFalse(reopened.capturesInput)
+        XCTAssertEqual(try preferences.loadPhoneControlMode().mode, .buttons)
+        XCTAssertEqual(sqlite3_exec(connection, "DROP TRIGGER reject_phone_mode_update", nil, nil, nil), SQLITE_OK)
+        await reopened.saveMode(.area)
+        XCTAssertFalse(reopened.settingsError)
+        XCTAssertEqual(reopened.snapshot.mode, .area)
+        XCTAssertFalse(reopened.capturesInput)
     }
     @MainActor
     func testBudgetDraftsUseRustValidationAndRestoreCanonicalSavedLimits() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let database = try openRideDatabase(path: directory.appendingPathComponent("ride.sqlite").path)
-        defer { try? database.shutdown() }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let preferences = CutoutSessionStateHandle.withDatabase(database: database)
+        let previous = try preferences.loadPhoneControlMode()
+        defer { restorePhonePreferences(previous, state: preferences) }
+        _ = try preferences.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
         let model = PhoneDriveModel(
             core: CutoutSessionCore(
                 testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
@@ -231,6 +247,14 @@ final class PhoneDriveTests: XCTestCase {
         XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 2_500)
         XCTAssertEqual(model.throttleAmpsText, "4", "An older durable receipt must not erase a newer draft")
         try await fixture.finish()
+    }
+
+    private func restorePhonePreferences(_ snapshot: MobilePhoneDriveSnapshotDto, state: CutoutSessionStateHandle) {
+        XCTAssertNoThrow(try state.savePhoneControlMode(mode: snapshot.mode))
+        XCTAssertNoThrow(
+            try state.savePhoneDriveLimits(
+                throttleAmpsText: String(Double(snapshot.limits.throttleMilliamps) / 1_000),
+                brakeAmpsText: String(Double(snapshot.limits.brakeMilliamps) / 1_000)))
     }
 
 }

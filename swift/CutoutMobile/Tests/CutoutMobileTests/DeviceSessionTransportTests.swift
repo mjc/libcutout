@@ -75,14 +75,19 @@ final class DeviceSessionTransportTests: XCTestCase {
         _ test: (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink, borrowing Mutex<UInt64>) throws ->
             Void
     ) throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let database = try openRideDatabase(path: directory.appendingPathComponent("ride.sqlite").path)
-        defer { try? database.shutdown() }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         try queue.sync {
             let state = CutoutSessionStateHandle.withDatabase(database: database)
+            let previous = try state.loadPhoneControlMode()
+            defer {
+                XCTAssertNoThrow(try state.savePhoneControlMode(mode: previous.mode))
+                XCTAssertNoThrow(
+                    try state.savePhoneDriveLimits(
+                        throttleAmpsText: String(Double(previous.limits.throttleMilliamps) / 1_000),
+                        brakeAmpsText: String(Double(previous.limits.brakeMilliamps) / 1_000)))
+            }
             _ = try state.savePhoneControlMode(mode: .buttons)
+            _ = try state.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
             let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "phone-vesc", nowMs: 0).token)
             _ = state.connectionLinkEstablished(token: token)
             _ = state.observeConnectionNotification(token: token, bytes: vescReply)
@@ -99,6 +104,10 @@ final class DeviceSessionTransportTests: XCTestCase {
             transport.handleTimer()
             XCTAssertTrue(state.configureConnectionVehicleKind(token: token, kind: .eskate))
             XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            let generation = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            _ = transport.observePhoneDriveContacts(
+                generation: generation, contacts: .released, observedAtMs: 3_000)
+            XCTAssertEqual(state.phoneDriveSnapshot().phase, .idle)
             sink.writes.removeAll()
             sink.submittedWrites.removeAll()
             try test(state, transport, sink, now)
