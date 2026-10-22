@@ -4381,7 +4381,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             observedCandidates.compactMap { $0?.detail },
             ["NOSFET Aero confirmed by model id 43"]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
+        XCTAssertEqual(
+            core.records.filter { $0.hasPrefix("protocol_identity=") },
+            ["protocol_identity=NOSFET Aero confirmed by model id 43"]
+        )
     }
 
     func testProtocolIdentityFallbackDisplayNameUsesDetectedFamily() {
@@ -4879,7 +4882,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             observedCandidates.compactMap { $0?.detail },
             [detail]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=\(detail)")
+        XCTAssertEqual(core.records.filter { $0.hasPrefix("protocol_identity=") }, ["protocol_identity=\(detail)"])
         XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
         XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
         XCTAssertTrue(core.scanState.rows.first?.detail.contains("Typed Begode Falcon") == true)
@@ -4926,7 +4929,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             observedCandidates.compactMap { $0?.detail },
             ["Begode/GotWay identity probe collected; code GW-FALCON"]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=Begode/GotWay identity probe collected; code GW-FALCON")
+        XCTAssertEqual(
+            core.records.filter { $0.hasPrefix("protocol_identity=") },
+            ["protocol_identity=Begode/GotWay identity probe collected; code GW-FALCON"]
+        )
     }
 
     func testBegodeImuProbeResponseUpdatesProtocolIdentityCandidate() {
@@ -4956,7 +4962,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             observedCandidates.compactMap { $0?.detail },
             ["Begode/GotWay identity probe collected; imu MPU6500"]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=Begode/GotWay identity probe collected; imu MPU6500")
+        XCTAssertEqual(
+            core.records.filter { $0.hasPrefix("protocol_identity=") },
+            ["protocol_identity=Begode/GotWay identity probe collected; imu MPU6500"]
+        )
     }
 
     func testFragmentedBegodeFrameUpdatesProtocolIdentityCandidate() {
@@ -4993,8 +5002,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             observedCandidates.compactMap { $0?.detail },
             ["Begode/Gotway protocol detected; model identity probe required"])
         XCTAssertEqual(
-            core.records.last,
-            "protocol_identity=Begode/Gotway protocol detected; model identity probe required"
+            core.records.filter { $0.hasPrefix("protocol_identity=") },
+            ["protocol_identity=Begode/Gotway protocol detected; model identity probe required"]
         )
     }
 
@@ -5035,7 +5044,13 @@ final class CutoutSessionCoreTests: XCTestCase {
                 "Conflicting protocol family evidence",
             ]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=Conflicting protocol family evidence")
+        XCTAssertEqual(
+            core.records.filter { $0.hasPrefix("protocol_identity=") },
+            [
+                "protocol_identity=NOSFET Aero confirmed by model id 43",
+                "protocol_identity=Conflicting protocol family evidence",
+            ]
+        )
     }
 
     func testMalformedBegodeProbeResponseIsLabeledFromDetectionSession() {
