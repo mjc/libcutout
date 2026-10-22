@@ -327,23 +327,19 @@ struct PevRideSpeedReading: View {
     var muted: Color = PevColors.muted
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(speed.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
-                .font(.system(size: pointSize, weight: .bold))
-                .monospacedDigit()
-                .tracking(-pointSize * 0.055)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .accessibilityLabel(caption)
-                .accessibilityValue(speed.accessibilityValue)
-                .accessibilityIdentifier("ride.hero.speed")
-            Text(speed.displayUnit ?? RideUnits.speedUnit)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(muted)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .accessibilityHidden(true)
-        }
+        let value = Text(speed.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
+            .font(.system(size: pointSize, weight: .bold))
+            .monospacedDigit()
+            .tracking(-pointSize * 0.055)
+        let unit = Text(speed.displayUnit ?? RideUnits.speedUnit)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(muted)
+        Text("\(value) \(unit)")
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .accessibilityLabel(caption)
+            .accessibilityValue(speed.accessibilityValue)
+            .accessibilityIdentifier("ride.hero.speed")
     }
 }
 

@@ -397,7 +397,7 @@ import Foundation
             guard self == .populatedEskate else { return nil }
             return VescBoardProfile(
                 motorPolePairs: 7,
-                gearRatioMilli: 2_500,
+                gearRatioMilli: 1_000,
                 wheelCircumference: Distance(value: 283),
                 batteryType: .liIon,
                 batteryCells: 13,
