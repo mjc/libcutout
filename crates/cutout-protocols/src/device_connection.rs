@@ -4,6 +4,7 @@ mod actions;
 pub use actions::{DeviceActionSubmissionError, DeviceActionsSnapshot};
 mod settings;
 pub use settings::{DeviceSettingRequestError, DeviceSettingsSnapshot};
+mod phone_drive;
 
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness, CutoutSessionState,
@@ -441,6 +442,7 @@ impl DeviceConnectionSession {
     }
 
     fn reset_for_attempt(&mut self, platform_identifier: &str, at: MonotonicTimestamp) {
+        self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
         self.retain_detection();
         self.invalidated_capture_attempt = None;
         self.last_input_at = at;
@@ -616,6 +618,9 @@ impl DeviceConnectionSession {
     fn install_user_drivetrain(&mut self, profile: cutout_core::VescDrivetrainProfile) {
         let target = profile.target();
         let previous = self.user_vesc_drivetrains.get(&target).copied();
+        if previous != Some(profile) {
+            self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
+        }
         self.user_vesc_drivetrains
             .retain(|key, _| key.request_target() != target.request_target());
         self.user_vesc_drivetrains.insert(target, profile);
@@ -787,6 +792,9 @@ impl DeviceConnectionSession {
         {
             return false;
         }
+        if self.user_vehicle_classification != Some(classification) {
+            self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
+        }
         self.user_vehicle_classification = Some(classification);
         true
     }
@@ -805,6 +813,7 @@ impl DeviceConnectionSession {
 
     /// Ends the attempt before native cancellation or explicit selection replacement.
     pub fn disconnect(&mut self) {
+        self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
         self.retain_detection();
         self.state.connection.disconnect();
         self.state.settings.disconnect();
@@ -816,12 +825,18 @@ impl DeviceConnectionSession {
 
     /// Records link availability and invalidates verified-session work after link loss.
     pub fn link_down(&mut self, token: &ConnectionAttemptToken) {
+        if self.state.connection.is_current(token) {
+            self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
+        }
         self.state.connection.link_down(token);
         self.clear_failed_device();
     }
 
     /// Preserves pending detection as record-only; established-session failures are terminal.
     pub fn transport_failed(&mut self, token: &ConnectionAttemptToken) {
+        if self.state.connection.is_current(token) {
+            self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
+        }
         self.state.connection.transport_failed(token);
         self.clear_failed_device();
     }
@@ -831,6 +846,7 @@ impl DeviceConnectionSession {
         if !self.state.connection.conflict(token) {
             return false;
         }
+        self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
         self.invalidated_capture_attempt = Some(token.clone());
         self.device = None;
         self.validation_grant = None;
@@ -989,6 +1005,7 @@ impl DeviceConnectionSession {
                 );
             }
         }
+        let identity_before = device.identity();
         let framing_before = device.notification_buffer_state();
         let result = device.ingest_typed(input);
         if let Some(operation) = device.take_failed_setting_operation() {
@@ -1030,6 +1047,17 @@ impl DeviceConnectionSession {
                     }
                 }
             }
+        }
+        let identity_after = device.identity();
+        if identity_before.classification != identity_after.classification
+            || identity_before.vesc_application != identity_after.vesc_application
+            || if let SessionInputDto::LinkDown = input {
+                true
+            } else {
+                false
+            }
+        {
+            self.cancel_phone_drive(cutout_core::PhoneDriveCancelReason::ConnectionChanged);
         }
         Some(DeviceConnectionStep {
             notification_framing,
@@ -1103,6 +1131,130 @@ impl DeviceConnectionSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phone_drive_generic_vesc_classification_never_qualifies_motor_authority() {
+        use cutout_core::{
+            PhoneControlMode, PhoneDriveContacts, PhoneDriveUnavailableReason, VehicleKind,
+        };
+        let mut owner = DeviceConnectionSession::default();
+        assert_eq!(
+            owner.phone_drive_unavailability(),
+            PhoneDriveUnavailableReason::Disconnected
+        );
+        let token = begin(&mut owner, "phone-board");
+        assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        assert_eq!(
+            owner.snapshot().identity.unwrap().vehicle_kind(),
+            VehicleKind::Eskate
+        );
+        for mode in [
+            PhoneControlMode::Disabled,
+            PhoneControlMode::Buttons,
+            PhoneControlMode::Area,
+        ] {
+            owner.set_phone_control_mode(mode);
+            let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+            owner.observe_phone_drive_contacts(&token, generation, PhoneDriveContacts::Released);
+            assert_eq!(
+                owner.phone_drive_unavailability(),
+                PhoneDriveUnavailableReason::ControllerUnqualified
+            );
+        }
+    }
+
+    #[test]
+    fn phone_drive_contacts_cannot_change_transport_transcripts_or_survive_replacement() {
+        use cutout_core::{
+            PhoneControlMode, PhoneDriveAction, PhoneDriveCancelReason, PhoneDriveContactId,
+            PhoneDriveContacts, PhoneDriveInputPhase, VehicleKind,
+        };
+        fn board() -> (DeviceConnectionSession, ConnectionAttemptToken) {
+            let mut owner = DeviceConnectionSession::default();
+            let token = begin(&mut owner, "phone-board");
+            assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
+            identify_vesc(&mut owner, &token);
+            let _ = drivetrain_tick(&mut owner, &token, 3_000);
+            owner.set_phone_control_mode(PhoneControlMode::Buttons);
+            (owner, token)
+        }
+        let (mut owner, first) = board();
+        let (mut baseline, baseline_token) = board();
+        let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+        owner.observe_phone_drive_contacts(&first, generation, PhoneDriveContacts::Released);
+        owner.observe_phone_drive_contacts(
+            &first,
+            generation,
+            PhoneDriveContacts::Single {
+                contact: PhoneDriveContactId::new(1).unwrap(),
+                region: Some(PhoneDriveAction::Throttle),
+            },
+        );
+        assert_eq!(
+            owner.phone_drive_input_snapshot().phase,
+            PhoneDriveInputPhase::Pressed(PhoneDriveAction::Throttle)
+        );
+        for at in [3_001, 3_100, 4_000] {
+            let observed = drivetrain_tick(&mut owner, &first, at);
+            let unchanged = drivetrain_tick(&mut baseline, &baseline_token, at);
+            assert_eq!(observed.result.outputs, unchanged.result.outputs);
+            assert_eq!(observed.telemetry, unchanged.telemetry);
+        }
+        let replacement = begin(&mut owner, "phone-board");
+        assert_eq!(
+            owner.phone_drive_input_snapshot().phase,
+            PhoneDriveInputPhase::Cancelled(PhoneDriveCancelReason::ConnectionChanged)
+        );
+        let replaced = owner.phone_drive_input_snapshot();
+        owner.observe_phone_drive_contacts(&first, generation, PhoneDriveContacts::Released);
+        owner.link_down(&first);
+        assert_eq!(owner.phone_drive_input_snapshot(), replaced);
+        assert_ne!(replacement, first);
+    }
+
+    #[test]
+    fn phone_drive_disconnect_and_geometry_edits_retire_held_semantic_input() {
+        use cutout_core::{
+            PhoneControlMode, PhoneDriveAction, PhoneDriveCancelReason, PhoneDriveContactId,
+            PhoneDriveContacts, PhoneDriveInputPhase, PhoneDriveUnavailableReason, VehicleKind,
+        };
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "phone-board");
+        assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
+        identify_vesc(&mut owner, &token);
+        let _ = drivetrain_tick(&mut owner, &token, 3_000);
+        owner.set_phone_control_mode(PhoneControlMode::Area);
+        let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+        owner.observe_phone_drive_contacts(&token, generation, PhoneDriveContacts::Released);
+        owner.observe_phone_drive_contacts(
+            &token,
+            generation,
+            PhoneDriveContacts::Single {
+                contact: PhoneDriveContactId::new(1).unwrap(),
+                region: Some(PhoneDriveAction::Brake),
+            },
+        );
+        let profile = drivetrain_profile("90", 1);
+        let selection = owner
+            .prepare_vesc_drivetrain_selection(&token, profile.value())
+            .unwrap();
+        assert!(owner.apply_vesc_drivetrain_selection(selection, profile));
+        assert_eq!(
+            owner.phone_drive_input_snapshot().phase,
+            PhoneDriveInputPhase::Cancelled(PhoneDriveCancelReason::ConnectionChanged)
+        );
+        owner.disconnect();
+        assert_eq!(
+            owner.phone_drive_unavailability(),
+            PhoneDriveUnavailableReason::Disconnected
+        );
+        assert_ne!(
+            owner.phone_drive_input_snapshot().generation,
+            Some(generation)
+        );
+    }
 
     const VESC_REPLY: &[u8] = &[
         2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,

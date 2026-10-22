@@ -39,6 +39,8 @@ impl PhoneDriveContactId {
 /// Complete native contact observation; native owns framework touch objects only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhoneDriveContacts {
+    /// A native contact identity was malformed; no gesture may start before release.
+    Invalid,
     /// No contact remains on this surface.
     Released,
     /// One contact and its current region; `None` means outside both regions.
@@ -55,6 +57,10 @@ pub enum PhoneDriveContacts {
 /// Why an input generation or held gesture ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhoneDriveCancelReason {
+    /// Native touch delivery was cancelled by the platform.
+    TouchCancelled,
+    /// A native contact identity was malformed.
+    InvalidContact,
     /// Saved input mode changed.
     ModeChanged,
     /// Rotation or input-region bounds changed.
@@ -136,6 +142,9 @@ impl Gesture {
         match (self, contacts) {
             (_, PhoneDriveContacts::Released) => Self::Idle,
             (Self::Suppressed(reason), _) => Self::Suppressed(reason),
+            (_, PhoneDriveContacts::Invalid) => {
+                Self::Suppressed(PhoneDriveCancelReason::InvalidContact)
+            }
             (_, PhoneDriveContacts::Multiple) => {
                 Self::Suppressed(PhoneDriveCancelReason::MultipleContacts)
             }

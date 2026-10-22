@@ -23,6 +23,8 @@ mod raw_settings;
 pub use raw_settings::*;
 mod phone_alarm;
 pub use phone_alarm::*;
+mod phone_drive;
+pub use phone_drive::*;
 mod controller_battery;
 pub use controller_battery::*;
 mod capture_labels;
@@ -2071,7 +2073,7 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
     capture_identity_owner_id: Uuid,
-    vehicle_selection: Mutex<()>,
+    configuration_updates: Mutex<()>,
     diagnostic_database: Option<persistence::RideDatabase>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
     novatek_session: Mutex<NovatekCameraSessionState>,
@@ -2800,7 +2802,7 @@ impl CutoutSessionStateHandle {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
             capture_identity_owner_id: Uuid::new_v4(),
-            vehicle_selection: Mutex::new(()),
+            configuration_updates: Mutex::new(()),
             diagnostic_database: None,
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
             novatek_session: Mutex::new(NovatekCameraSessionState::default()),
@@ -2818,7 +2820,7 @@ impl CutoutSessionStateHandle {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
             capture_identity_owner_id: Uuid::new_v4(),
-            vehicle_selection: Mutex::new(()),
+            configuration_updates: Mutex::new(()),
             diagnostic_database: Some(database.inner.clone()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState {
                 database: Some(database.inner.clone()),

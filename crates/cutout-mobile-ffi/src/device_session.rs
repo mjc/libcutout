@@ -933,7 +933,7 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileVescDrivetrainDraft, MobileVescDrivetrainError> {
         // Reuse the durable device-selection ordering lock; snapshots never acquire it.
         let _selection = self
-            .vehicle_selection
+            .configuration_updates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let token: cutout_core::ConnectionAttemptToken = token.into();
@@ -1008,7 +1008,7 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileDeviceSessionSnapshotDto, MobileVehicleSelectionError> {
         // Serialize durable selections without blocking telemetry or snapshot readers on storage.
         let _selection = self
-            .vehicle_selection
+            .configuration_updates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let selection = self
