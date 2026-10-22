@@ -42,7 +42,8 @@ struct PhoneDriveRideSurface<Content: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let height = RideViewportLayout.visibleHeight(
-                in: geometry, musicPlayerFrame: musicCompactPlayerFrame)
+                in: geometry, musicPlayerFrame: musicCompactPlayerFrame,
+                bottomSafeAreaInset: geometry.safeAreaInsets.bottom)
             VStack(spacing: 0) {
                 content
                     .allowsHitTesting(!(model.capturesInput && model.snapshot.mode == .area))

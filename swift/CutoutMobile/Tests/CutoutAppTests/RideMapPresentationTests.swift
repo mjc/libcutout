@@ -581,6 +581,21 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
+    func testRideControlsUseNativeTabInsetOnlyWithoutMeasuredPlayer() {
+        let frame = CGRect(x: 0, y: 59, width: 430, height: 839)
+        XCTAssertEqual(
+            RideViewportLayout.visibleHeight(
+                contentFrame: frame, musicPlayerFrame: nil, bottomSafeAreaInset: 49),
+            790)
+        XCTAssertEqual(
+            RideViewportLayout.visibleHeight(
+                contentFrame: frame,
+                musicPlayerFrame: CGRect(x: 33, y: 795, width: 364, height: 44),
+                bottomSafeAreaInset: 244),
+            736,
+            "Measured player clearance replaces, rather than adds to, the native inset")
+    }
+
     func testHistoryDetailWaitsForTheRequestedProjectionInsteadOfShowingEmptyHistory() {
         let requestedRide = "october-4"
         for previousProjection in [nil, "another-ride"] {

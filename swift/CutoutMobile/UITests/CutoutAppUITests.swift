@@ -9440,8 +9440,11 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertEqual(Set(crossing.map(\.generation)).count, 1)
         XCTAssertFalse(crossing.contains { $0.phase == "pressed:brake" })
         keepPhoneScreenshot("active-preview-buttons")
+        let status = phoneApp.staticTexts["phone-control.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertFalse(status.frame.isEmpty)
         XCTAssertLessThanOrEqual(
-            phoneApp.staticTexts["phone-control.status"].frame.maxY,
+            status.frame.maxY,
             phoneApp.tabBars.firstMatch.frame.minY - 8,
             "The phone-control footer must stay clear of the floating tab bar")
         try openPhoneReadings()
