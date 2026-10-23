@@ -173,9 +173,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
         try ingest(.tick, at: at)
     }
 
-    func activatePhoneDrive() throws -> MobilePhoneDriveSnapshotDto {
+    func activatePhoneDrive(expectedInputGeneration: UInt64) throws -> MobilePhoneDriveSnapshotDto {
         guard !invalidated else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
-        let snapshot = try state.activatePhoneDrive(token: token, monotonicMs: clock.now().rawValue)
+        let snapshot = try state.activatePhoneDrive(
+            token: token,
+            expectedInputGeneration: expectedInputGeneration,
+            monotonicMs: clock.now().rawValue
+        )
         publishPhoneDriveSnapshot()
         rescheduleTimer()
         return snapshot

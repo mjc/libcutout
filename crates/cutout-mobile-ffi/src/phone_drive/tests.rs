@@ -288,6 +288,124 @@ fn phone_drive_ffi_invalid_atomic_save_preserves_the_last_complete_device_record
 }
 
 #[test]
+fn phone_drive_ffi_rejects_activation_after_the_requested_input_generation_is_cancelled() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    let saved = handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    let requested_generation = saved.generation.unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    let cancelled =
+        handle.cancel_phone_drive_at(MobilePhoneDriveCancelReasonDto::Navigation, 12_000);
+    let current_generation = cancelled.generation.unwrap();
+    assert_ne!(requested_generation, current_generation);
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token.clone(),
+                current_generation,
+                MobilePhoneDriveContactsDto::Released,
+                12_001,
+                12_001,
+            )
+            .is_some()
+    );
+
+    let activation = handle.activate_phone_drive(token, requested_generation, 12_002);
+    let snapshot = handle.phone_drive_snapshot();
+    database.shutdown().unwrap();
+    assert!(matches!(
+        activation,
+        Err(MobilePhoneControlError::Activation {
+            reason: MobilePhoneDriveActivationRefusalDto::InputGenerationChanged
+        })
+    ));
+    assert!(matches!(
+        snapshot.availability,
+        MobilePhoneDriveAvailabilityDto::Ready
+    ));
+}
+
+#[test]
+fn phone_drive_ffi_rejects_a_save_completion_after_same_attempt_cancellation() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = std::sync::Arc::new(CutoutSessionStateHandle::with_database(database.clone()));
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+
+    let (stored_tx, stored_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    let saving_handle = handle.clone();
+    let saving_database = database.clone();
+    let saving_token = token.clone();
+    let save = std::thread::spawn(move || {
+        save_phone_drive_preferences_with(
+            &saving_handle,
+            saving_token,
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+            |identity, record| {
+                saving_database
+                    .inner
+                    .save_phone_drive_preferences(identity, record)
+                    .map_err(|error| MobilePhoneControlError::Persistence {
+                        error: crate::map_ride_database_error(error),
+                    })?;
+                stored_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                Ok(())
+            },
+        )
+    });
+
+    stored_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("actual SQL write must finish before the controlled owner-publication pause");
+    let durable = database.inner.phone_drive_preferences("board-a").unwrap();
+    assert_eq!(durable.mode(), core::PhoneControlMode::Buttons);
+    let before_cancel = handle.phone_drive_snapshot();
+    let cancelled =
+        handle.cancel_phone_drive_at(MobilePhoneDriveCancelReasonDto::Navigation, 12_000);
+    assert_ne!(before_cancel.generation, cancelled.generation);
+    assert_eq!(cancelled.mode, MobilePhoneControlModeDto::Disabled);
+
+    resume_tx.send(()).unwrap();
+    let completed = save.join().unwrap();
+    let final_snapshot = handle.phone_drive_snapshot();
+    database.shutdown().unwrap();
+    assert!(matches!(
+        completed,
+        Err(MobilePhoneControlError::InputGenerationChanged)
+    ));
+    assert_eq!(final_snapshot.generation, cancelled.generation);
+    assert_eq!(final_snapshot.mode, MobilePhoneControlModeDto::Disabled);
+    assert_eq!(final_snapshot.phase, cancelled.phase);
+}
+
+#[test]
 fn phone_drive_ffi_concurrent_loads_and_saves_keep_one_complete_record() {
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()

@@ -86,14 +86,15 @@ struct VescRideScreenView: View {
         .sheet(
             isPresented: $showsPhoneDriveSettings,
             onDismiss: {
-                guard let phoneDrive, let token = phoneDrive.dismissSettings() else { return }
-                guard !phoneDrive.activateAfterSettingsDismissal(token) else { return }
-                guard phoneDrive.presentSettings(for: token, activationFailed: true) else { return }
+                guard let phoneDrive, let request = phoneDrive.dismissSettings() else { return }
+                guard !phoneDrive.activateAfterSettingsDismissal(request) else { return }
+                guard phoneDrive.presentSettings(for: request.token, activationFailed: true) else { return }
                 showsPhoneDriveSettings = true
             }
         ) {
             if let phoneDrive {
-                PhoneDriveSettingsSheet(model: phoneDrive) {
+                PhoneDriveSettingsSheet(model: phoneDrive) { request in
+                    guard phoneDrive.claimActivationDismissal(request) else { return }
                     showsPhoneDriveSettings = false
                 }
             }

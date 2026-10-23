@@ -1163,6 +1163,7 @@ mod tests {
         let activation = owner
             .activate_phone_drive(
                 &token,
+                unarmed_generation,
                 PhoneDriveLimits::new(3_000, 3_000).unwrap(),
                 MonotonicTimestamp::new(3_000),
             )

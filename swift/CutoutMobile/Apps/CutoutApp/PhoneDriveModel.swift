@@ -7,6 +7,13 @@ import Observation
 @MainActor
 @Observable
 final class PhoneDriveModel {
+    struct ActivationRequest {
+        let id: UUID
+        let presentationID: UUID
+        let token: MobileConnectionAttemptTokenDto
+        let expectedInputGeneration: UInt64
+    }
+
     typealias PreferencesLoader =
         @MainActor (
             CutoutSessionStateHandle, MobileConnectionAttemptTokenDto
@@ -29,7 +36,9 @@ final class PhoneDriveModel {
     var throttleAmpsText = "3"
     var brakeAmpsText = "3"
     private var settingsToken: MobileConnectionAttemptTokenDto?
-    private var pendingActivationToken: MobileConnectionAttemptTokenDto?
+    private var settingsPresentationID: UUID?
+    private var pendingActivationRequest: ActivationRequest?
+    private var activationDismissalClaimed = false
     private var settingsOperationID: UUID?
     let isInputPreview: Bool
     #if os(iOS)
@@ -90,12 +99,6 @@ final class PhoneDriveModel {
         return false
     }
 
-    var canActivate: Bool {
-        guard snapshot.deviceIdentity != nil, !settingsBusy, snapshot.mode != .disabled else { return false }
-        if case .ready = snapshot.availability { return true }
-        return false
-    }
-
     var canPresentSettings: Bool {
         guard core.connectionSnapshot.token != nil else { return false }
         return switch snapshot.availability {
@@ -107,23 +110,6 @@ final class PhoneDriveModel {
     func updateSettingsMode(_ mode: MobilePhoneControlModeDto) {
         guard settingsLoaded, !settingsBusy else { return }
         settingsMode = mode
-    }
-
-    func activate() {
-        guard canActivate, let token = core.connectionSnapshot.token else { return }
-        do {
-            #if os(iOS)
-                nativeContacts.reobserveAllUp()
-            #endif
-            applySnapshot(try core.activatePhoneDrive(token: token))
-            #if os(iOS)
-                nativeContacts.reobserveAllUp()
-            #endif
-            activationError = false
-        } catch {
-            activationError = true
-            refresh()
-        }
     }
 
     func presentSettings(
@@ -139,7 +125,10 @@ final class PhoneDriveModel {
                     token: token, presented: true
                 ))
             invalidateSettingsOperation()
+            pendingActivationRequest = nil
+            activationDismissalClaimed = false
             settingsToken = token
+            settingsPresentationID = UUID()
             settingsLoaded = false
             settingsError = false
             limitsError = false
@@ -155,12 +144,14 @@ final class PhoneDriveModel {
         }
     }
 
-    func dismissSettings() -> MobileConnectionAttemptTokenDto? {
-        let activationToken = pendingActivationToken
-        pendingActivationToken = nil
+    func dismissSettings() -> ActivationRequest? {
+        let activationRequest = activationDismissalClaimed ? pendingActivationRequest : nil
+        pendingActivationRequest = nil
+        activationDismissalClaimed = false
         invalidateSettingsOperation()
         guard let token = settingsToken else { return nil }
         settingsToken = nil
+        settingsPresentationID = nil
         settingsLoaded = false
         do {
             applySnapshot(
@@ -171,11 +162,37 @@ final class PhoneDriveModel {
             refresh()
             return nil
         }
-        return core.connectionSnapshot.token == token ? activationToken : nil
+        guard let activationRequest,
+            activationRequest.token == token,
+            activationRequest.expectedInputGeneration == snapshot.generation,
+            core.connectionSnapshot.token == token
+        else { return nil }
+        return activationRequest
     }
 
     func saveSettings() async -> Bool {
-        guard !settingsBusy, settingsLoaded, let token = settingsToken else { return false }
+        if case .saved = await performSaveSettings(requestActivation: false) { return true }
+        return false
+    }
+
+    func saveSettingsAndRequestActivation() async -> ActivationRequest? {
+        guard case .activationRequest(let request) = await performSaveSettings(requestActivation: true) else {
+            return nil
+        }
+        return request
+    }
+
+    private enum SaveResult {
+        case saved
+        case activationRequest(ActivationRequest)
+        case rejected
+    }
+
+    private func performSaveSettings(requestActivation: Bool) async -> SaveResult {
+        guard !settingsBusy, settingsLoaded, let token = settingsToken,
+            let presentationID = settingsPresentationID,
+            !requestActivation || settingsMode != .disabled
+        else { return .rejected }
         let operationID = beginSettingsOperation()
         defer { finishSettingsOperation(operationID) }
         let mode = settingsMode
@@ -186,42 +203,66 @@ final class PhoneDriveModel {
                 core.rideSessionStateHandle, token, mode, throttle, brake)
             refresh()
             guard ownsSettingsOperation(operationID, token: token) else {
-                return false
+                return .rejected
             }
             guard snapshotMatchesCurrentProjection(saved, token: token) else {
-                return false
+                return .rejected
             }
             if settingsMode == mode,
                 throttleAmpsText == throttle, brakeAmpsText == brake
             {
                 restoreBudgetDrafts()
             }
+            if requestActivation {
+                guard let expectedInputGeneration = snapshot.generation else { return .rejected }
+                let request = ActivationRequest(
+                    id: UUID(), presentationID: presentationID, token: token,
+                    expectedInputGeneration: expectedInputGeneration)
+                pendingActivationRequest = request
+                activationDismissalClaimed = false
+                limitsError = false
+                settingsError = false
+                return .activationRequest(request)
+            }
             limitsError = false
             settingsError = false
-            return true
+            return .saved
         } catch {
             refresh()
             guard ownsSettingsOperation(operationID, token: token) else {
-                return false
+                return .rejected
             }
-            limitsError = true
-            refresh()
-            return false
+            if let phoneDriveError = error as? MobilePhoneControlError,
+                case .InvalidLimits = phoneDriveError
+            {
+                limitsError = true
+                settingsError = false
+            } else {
+                settingsError = true
+                limitsError = false
+            }
+            return .rejected
         }
     }
 
-    func saveSettingsAndRequestActivation() async -> Bool {
-        guard settingsMode != .disabled, let token = settingsToken else { return false }
-        guard await saveSettings(), settingsToken == token,
-            core.connectionSnapshot.token == token
+    func claimActivationDismissal(_ request: ActivationRequest) -> Bool {
+        guard !activationDismissalClaimed,
+            let pendingActivationRequest,
+            pendingActivationRequest.id == request.id,
+            request.presentationID == settingsPresentationID,
+            request.token == settingsToken,
+            request.expectedInputGeneration == snapshot.generation,
+            core.connectionSnapshot.token == request.token
         else { return false }
-        pendingActivationToken = token
+        activationDismissalClaimed = true
         return true
     }
 
     @discardableResult
-    func activateAfterSettingsDismissal(_ token: MobileConnectionAttemptTokenDto) -> Bool {
-        guard core.connectionSnapshot.token == token else {
+    func activateAfterSettingsDismissal(_ request: ActivationRequest) -> Bool {
+        guard core.connectionSnapshot.token == request.token,
+            snapshot.generation == request.expectedInputGeneration
+        else {
             refresh()
             return false
         }
@@ -229,7 +270,9 @@ final class PhoneDriveModel {
             nativeContacts.reobserveAllUp()
         #endif
         do {
-            applySnapshot(try core.activatePhoneDrive(token: token))
+            applySnapshot(
+                try core.activatePhoneDrive(
+                    token: request.token, expectedInputGeneration: request.expectedInputGeneration))
             #if os(iOS)
                 nativeContacts.reobserveAllUp()
             #endif
@@ -262,8 +305,10 @@ final class PhoneDriveModel {
             core.connectionSnapshot.token != settingsToken
         {
             invalidateSettingsOperation()
-            pendingActivationToken = nil
+            pendingActivationRequest = nil
+            activationDismissalClaimed = false
             self.settingsToken = nil
+            settingsPresentationID = nil
             settingsLoaded = false
             settingsMode = .disabled
             throttleAmpsText = "3"
@@ -337,6 +382,9 @@ final class PhoneDriveModel {
     }
 
     func cancel(_ reason: MobilePhoneDriveCancelReasonDto) {
+        pendingActivationRequest = nil
+        activationDismissalClaimed = false
+        invalidateSettingsOperation()
         applySnapshot(core.cancelPhoneDrive(reason: reason))
     }
 

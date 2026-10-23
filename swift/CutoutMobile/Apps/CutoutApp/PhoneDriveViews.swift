@@ -203,7 +203,7 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
 struct PhoneDriveSettingsSheet: View {
     let model: PhoneDriveModel
-    let requestActivation: () -> Void
+    let requestActivation: (PhoneDriveModel.ActivationRequest) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -247,8 +247,8 @@ struct PhoneDriveSettingsSheet: View {
                     if model.settingsMode != .disabled, model.settingsLoaded {
                         Button(localizedAppText("phone_control.arm")) {
                             Task {
-                                if await model.saveSettingsAndRequestActivation() {
-                                    requestActivation()
+                                if let request = await model.saveSettingsAndRequestActivation() {
+                                    requestActivation(request)
                                 }
                             }
                         }
@@ -266,9 +266,12 @@ struct PhoneDriveSettingsSheet: View {
                             .accessibilityIdentifier("ride.phone-control.limits-error")
                     }
                     if model.settingsError {
-                        Text(localizedAppText("phone_control.save_failed"))
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("ride.phone-control.error")
+                        Text(
+                            localizedAppText(
+                                model.settingsLoaded ? "phone_control.save_failed" : "phone_control.load_failed")
+                        )
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("ride.phone-control.error")
                     }
                     if !model.settingsLoaded && model.settingsBusy {
                         ProgressView(localizedAppText("phone_control.input_mode"))

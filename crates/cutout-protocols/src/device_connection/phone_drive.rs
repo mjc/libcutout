@@ -42,6 +42,9 @@ pub enum PhoneDriveActivationError {
     /// The caller's host clock moved backwards.
     #[error("phone control clock moved backwards")]
     ClockRegression,
+    /// The native activation request belongs to a retired input generation.
+    #[error("phone control activation request is stale")]
+    InputGenerationChanged,
     /// No unused activation identifier remains.
     #[error("phone control activation identifier exhausted")]
     IdentifierExhausted,
@@ -121,11 +124,15 @@ impl DeviceConnectionSession {
     pub fn activate_phone_drive(
         &mut self,
         token: &ConnectionAttemptToken,
+        expected_input_generation: u64,
         limits: PhoneDriveLimits,
         at: MonotonicTimestamp,
     ) -> Result<PhoneDriveActivationId, PhoneDriveActivationError> {
         if !self.state.connection.is_verified(token) {
             return Err(PhoneDriveActivationError::ConnectionUnavailable);
+        }
+        if self.phone_drive_input_snapshot().generation != Some(expected_input_generation) {
+            return Err(PhoneDriveActivationError::InputGenerationChanged);
         }
         if self.phone_drive_preferences_token.as_ref() != Some(token) {
             return Err(PhoneDriveActivationError::SettingsNotLoaded);

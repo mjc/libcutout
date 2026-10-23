@@ -1257,13 +1257,15 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    public func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto {
+    public func activatePhoneDrive(
+        token: ConnectionAttemptToken, expectedInputGeneration: UInt64
+    ) throws -> MobilePhoneDriveSnapshotDto {
         try onBleQueue {
             Result {
                 guard let owner = liveOwner, owner.token == token else {
                     throw DeviceSettingSubmissionError.ConnectionUnavailable
                 }
-                return try owner.activatePhoneDrive()
+                return try owner.activatePhoneDrive(expectedInputGeneration: expectedInputGeneration)
             }
         }.get()
     }

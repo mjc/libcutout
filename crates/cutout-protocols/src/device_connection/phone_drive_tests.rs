@@ -25,9 +25,10 @@ fn active() -> (DeviceConnectionSession, ConnectionAttemptToken, u64) {
         at(3_000),
         at(3_000),
     );
-    owner
+    let _ = owner
         .activate_phone_drive(
             &token,
+            unarmed_generation,
             PhoneDriveLimits::new(3_000, 3_000).unwrap(),
             at(3_000),
         )
@@ -43,11 +44,58 @@ fn active() -> (DeviceConnectionSession, ConnectionAttemptToken, u64) {
     (owner, token, generation)
 }
 
+#[test]
+fn cancelled_activation_request_cannot_be_reused_after_a_fresh_all_up() {
+    let (mut owner, token, request_generation) = active();
+    owner.cancel_phone_drive_at(PhoneDriveCancelReason::Navigation, at(3_001));
+    let release = drives(&owner.tick_phone_drive(&token, at(3_002), true).unwrap())[0].0;
+    assert_eq!(release.kind, PhoneDriveWriteKind::Release);
+    assert!(owner.mark_phone_drive_transport(
+        &token,
+        release,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_002)
+    ));
+    let current_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    assert_ne!(request_generation, current_generation);
+    owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            current_generation,
+            PhoneDriveContacts::Released,
+            at(3_003),
+            at(3_003),
+        )
+        .unwrap();
+
+    assert_eq!(
+        owner.activate_phone_drive(
+            &token,
+            request_generation,
+            PhoneDriveLimits::default(),
+            at(3_004),
+        ),
+        Err(PhoneDriveActivationError::InputGenerationChanged),
+        "all-up after cancellation must not validate a request captured in generation {request_generation}"
+    );
+    assert_eq!(owner.phone_drive_activation(), None);
+}
+
 fn held(action: PhoneDriveAction) -> PhoneDriveContacts {
     PhoneDriveContacts::Single {
         contact: PhoneDriveContactId::new(1).unwrap(),
         region: Some(action),
     }
+}
+
+fn activate_current(
+    owner: &mut DeviceConnectionSession,
+    token: &ConnectionAttemptToken,
+    limits: PhoneDriveLimits,
+    at: MonotonicTimestamp,
+) -> Result<PhoneDriveActivationId, PhoneDriveActivationError> {
+    let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    owner.activate_phone_drive(token, generation, limits, at)
 }
 
 fn drives(step: &DeviceConnectionStep) -> Vec<(PhoneDriveWrite, Vec<u8>)> {
@@ -137,9 +185,8 @@ fn phone_drive_platform_cancellation_requires_explicit_reactivation_in_a_fresh_i
         at(3_005),
         at(3_005),
     );
-    let new_activation = owner
-        .activate_phone_drive(&token, PhoneDriveLimits::default(), at(3_005))
-        .unwrap();
+    let new_activation =
+        activate_current(&mut owner, &token, PhoneDriveLimits::default(), at(3_005)).unwrap();
     assert_ne!(new_activation, first.activation_id);
     let new_generation = owner.phone_drive_input_snapshot().generation.unwrap();
     let _ = owner.observe_phone_drive_contacts_at(
@@ -178,7 +225,12 @@ fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_dis
         PhoneDriveInputPhase::Cancelled(PhoneDriveCancelReason::Navigation)
     ));
     assert_eq!(
-        owner.activate_phone_drive(&first_token, PhoneDriveLimits::default(), at(3_001)),
+        activate_current(
+            &mut owner,
+            &first_token,
+            PhoneDriveLimits::default(),
+            at(3_001)
+        ),
         Err(PhoneDriveActivationError::Busy),
         "activation is refused while the Ride settings sheet covers the input surface"
     );
@@ -219,9 +271,13 @@ fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_dis
         )
         .unwrap();
     assert!(owner.phone_drive_activation().is_none());
-    owner
-        .activate_phone_drive(&first_token, PhoneDriveLimits::default(), at(3_003))
-        .unwrap();
+    activate_current(
+        &mut owner,
+        &first_token,
+        PhoneDriveLimits::default(),
+        at(3_003),
+    )
+    .unwrap();
 
     let replacement = begin(&mut owner, "another-board");
     assert_eq!(
@@ -251,7 +307,12 @@ fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_dis
         PhoneDriveLimits::default()
     );
     assert_eq!(
-        owner.activate_phone_drive(&replacement, PhoneDriveLimits::default(), at(3_004)),
+        activate_current(
+            &mut owner,
+            &replacement,
+            PhoneDriveLimits::default(),
+            at(3_004)
+        ),
         Err(PhoneDriveActivationError::SettingsNotLoaded)
     );
     assert!(owner.apply_phone_drive_preferences(
@@ -468,13 +529,13 @@ fn phone_drive_reconnect_and_stale_generations_cannot_restore_activation_or_canc
         at(3_003),
         at(3_003),
     );
-    let next = owner
-        .activate_phone_drive(
-            &token,
-            PhoneDriveLimits::new(3_000, 3_000).unwrap(),
-            at(3_003),
-        )
-        .unwrap();
+    let next = activate_current(
+        &mut owner,
+        &token,
+        PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+        at(3_003),
+    )
+    .unwrap();
     assert_ne!(next, old.activation_id);
     let _ = owner.observe_phone_drive_contacts_at(
         &token,
@@ -517,7 +578,8 @@ fn phone_drive_controller_fault_retires_activation_and_refuses_rearming_until_cl
     assert_eq!(owner.phone_drive_activation(), None);
     assert!(!owner.phone_drive_transport_is_current(&token, first, at(3_002)));
     assert_eq!(
-        owner.activate_phone_drive(
+        activate_current(
+            &mut owner,
             &token,
             PhoneDriveLimits::new(3_000, 3_000).unwrap(),
             at(3_002)
@@ -567,7 +629,8 @@ fn phone_drive_reactivation_cannot_discard_a_pending_neutral_release() {
     ));
     owner.cancel_phone_drive_at(PhoneDriveCancelReason::Navigation, at(3_002));
     assert_eq!(
-        owner.activate_phone_drive(
+        activate_current(
+            &mut owner,
             &token,
             PhoneDriveLimits::new(3_000, 3_000).unwrap(),
             at(3_003)
@@ -589,13 +652,13 @@ fn phone_drive_reactivation_cannot_discard_a_pending_neutral_release() {
         at(3_004),
         at(3_004),
     );
-    let next = owner
-        .activate_phone_drive(
-            &token,
-            PhoneDriveLimits::new(3_000, 3_000).unwrap(),
-            at(3_004),
-        )
-        .unwrap();
+    let next = activate_current(
+        &mut owner,
+        &token,
+        PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+        at(3_004),
+    )
+    .unwrap();
     assert_ne!(next, first.activation_id);
     let stale = owner
         .observe_phone_drive_contacts_at(
@@ -734,7 +797,8 @@ fn phone_drive_activation_requires_an_observed_complete_release_after_cancellati
         at(3_001)
     ));
     assert_eq!(
-        owner.activate_phone_drive(
+        activate_current(
+            &mut owner,
             &token,
             PhoneDriveLimits::new(3_000, 3_000).unwrap(),
             at(3_002)
@@ -751,12 +815,12 @@ fn phone_drive_activation_requires_an_observed_complete_release_after_cancellati
         at(3_003),
     );
     assert!(
-        owner
-            .activate_phone_drive(
-                &token,
-                PhoneDriveLimits::new(3_000, 3_000).unwrap(),
-                at(3_003)
-            )
-            .is_ok()
+        activate_current(
+            &mut owner,
+            &token,
+            PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+            at(3_003)
+        )
+        .is_ok()
     );
 }

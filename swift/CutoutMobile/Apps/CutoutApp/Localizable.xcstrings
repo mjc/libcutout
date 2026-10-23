@@ -24,7 +24,7 @@
     "phone_control.unavailable.disconnected" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Connect a skateboard to use phone control."}}}},
     "phone_control.unavailable.vehicle" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Phone control is unavailable for this vehicle."}}}},
     "phone_control.load_failed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Phone control preferences could not be loaded."}}}},
-    "phone_control.save_failed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Phone control preferences could not be saved."}}}},
+    "phone_control.save_failed" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Could not apply these settings. Try again."}}}},
     "phone_control.retry" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Retry"}}}},
     "phone_control.preview" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Preview · no drive commands"}}}},
     "phone_control.area_hint" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Hold left · Brake     Hold right · Throttle"}}}},

@@ -55,7 +55,9 @@ protocol CutoutSessionDriving: AnyObject {
     func observePhoneDriveContacts(
         token: ConnectionAttemptToken, generation: UInt64, contacts: MobilePhoneDriveContactsDto, observedAtMs: UInt64
     ) -> MobilePhoneDriveSnapshotDto
-    func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto
+    func activatePhoneDrive(
+        token: ConnectionAttemptToken, expectedInputGeneration: UInt64
+    ) throws -> MobilePhoneDriveSnapshotDto
     func cancelPhoneDrive(reason: MobilePhoneDriveCancelReasonDto) -> MobilePhoneDriveSnapshotDto
     func selectVehicleKind(_ kind: MobileVehicleKindDto, token: ConnectionAttemptToken) async throws
         -> MobileDeviceSessionSnapshotDto
@@ -89,8 +91,11 @@ extension CutoutSessionDriving {
         set {}
     }
 
-    func activatePhoneDrive(token: ConnectionAttemptToken) throws -> MobilePhoneDriveSnapshotDto {
-        try rideSessionStateHandle.activatePhoneDrive(token: token, monotonicMs: now().rawValue)
+    func activatePhoneDrive(
+        token: ConnectionAttemptToken, expectedInputGeneration: UInt64
+    ) throws -> MobilePhoneDriveSnapshotDto {
+        try rideSessionStateHandle.activatePhoneDrive(
+            token: token, expectedInputGeneration: expectedInputGeneration, monotonicMs: now().rawValue)
     }
 
     func observePhoneDriveContacts(

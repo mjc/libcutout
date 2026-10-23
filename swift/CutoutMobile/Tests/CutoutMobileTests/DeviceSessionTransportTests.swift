@@ -27,7 +27,8 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     func testPhoneDriveQueuedSetpointExpiresBeforeActualNativeSubmission() throws {
         try withReadyPhoneDriveTransport { state, transport, sink, now in
-            let activated = try transport.activatePhoneDrive()
+            let expectedGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            let activated = try transport.activatePhoneDrive(expectedInputGeneration: expectedGeneration)
             let generation = try XCTUnwrap(activated.generation)
             _ = transport.observePhoneDriveContacts(generation: generation, contacts: .released, observedAtMs: 3_000)
             sink.dispositions = [.queued]
@@ -60,7 +61,8 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     func testPhoneDriveTimerExpiresInputWithoutRenewingContactAndSubmitsBoundedRelease() throws {
         try withReadyPhoneDriveTransport { state, transport, sink, now in
-            let activated = try transport.activatePhoneDrive()
+            let expectedGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            let activated = try transport.activatePhoneDrive(expectedInputGeneration: expectedGeneration)
             let generation = try XCTUnwrap(activated.generation)
             _ = transport.observePhoneDriveContacts(generation: generation, contacts: .released, observedAtMs: 3_000)
             _ = transport.observePhoneDriveContacts(

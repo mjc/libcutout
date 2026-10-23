@@ -2500,7 +2500,11 @@ final class CutoutAppModelTests: XCTestCase {
                 fault.result.outputs.contains { output in
                     output.rawTelemetry?.fields.contains { $0.id == 0x8004 && $0.value == 4 } == true
                 })
-            XCTAssertThrowsError(try state.activatePhoneDrive(token: token, monotonicMs: 3_001)) { error in
+            let initialGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            XCTAssertThrowsError(
+                try state.activatePhoneDrive(
+                    token: token, expectedInputGeneration: initialGeneration, monotonicMs: 3_001)
+            ) { error in
                 XCTAssertEqual(error as? MobilePhoneControlError, .Activation(reason: .controllerFault))
             }
             driver.nowValue = 3_002
@@ -2515,7 +2519,11 @@ final class CutoutAppModelTests: XCTestCase {
             _ = state.observePhoneDriveContactsAt(
                 token: token, generation: generation, contacts: .released,
                 observedAtMs: 3_003, monotonicMs: 3_003)
-            XCTAssertThrowsError(try state.activatePhoneDrive(token: token, monotonicMs: 3_003)) { error in
+            let currentGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
+            XCTAssertThrowsError(
+                try state.activatePhoneDrive(
+                    token: token, expectedInputGeneration: currentGeneration, monotonicMs: 3_003)
+            ) { error in
                 XCTAssertEqual(error as? MobilePhoneControlError, .Activation(reason: .controllerFault))
             }
         }
@@ -2633,7 +2641,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLatePhoneDriveSaveDoesNotPublishSnapshotAfterSameAttemptCancellation() async throws {
+    func testCancelledPhoneDriveSaveCannotQueueActivationAfterItsLateCompletion() async throws {
         try await withActivePhoneDrive { state, token, _, driver, _ in
             let gate = PhoneDriveOperationGate()
             let model = PhoneDriveModel(
@@ -2653,19 +2661,211 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertTrue(model.settingsLoaded)
             model.updateSettingsMode(.area)
 
-            let save = Task { await model.saveSettings() }
+            let save = Task { await model.saveSettingsAndRequestActivation() }
             await gate.waitUntilEntered()
             XCTAssertTrue(model.settingsBusy)
-            _ = state.cancelPhoneDriveAt(reason: .navigation, monotonicMs: 3_001)
+            model.cancel(.navigation)
             let cancelledProjection = state.phoneDriveSnapshot()
             await gate.release()
             let accepted = await save.value
 
-            XCTAssertFalse(accepted)
+            XCTAssertNil(accepted)
+            XCTAssertNil(model.dismissSettings())
             XCTAssertFalse(model.settingsBusy)
             XCTAssertEqual(model.snapshot.generation, cancelledProjection.generation)
             XCTAssertEqual(model.snapshot.phase, cancelledProjection.phase)
             XCTAssertEqual(model.snapshot.mode, cancelledProjection.mode)
+            XCTAssertFalse(model.capturesInput)
+        }
+    }
+
+    @MainActor
+    func testCancellationAfterSaveBeforeDismissalDiscardsQueuedActivation() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let model = PhoneDriveModel(core: driver)
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            XCTAssertTrue(model.settingsLoaded)
+
+            let queuedValue = await model.saveSettingsAndRequestActivation()
+            let queued = try XCTUnwrap(queuedValue)
+            let requestedGeneration = try XCTUnwrap(model.snapshot.generation)
+            model.cancel(.navigation)
+
+            XCTAssertNil(model.dismissSettings())
+            XCTAssertFalse(model.capturesInput)
+            XCTAssertEqual(model.snapshot.availability, .ready)
+            let currentGeneration = try XCTUnwrap(model.snapshot.generation)
+            XCTAssertNotEqual(requestedGeneration, currentGeneration)
+            _ = state.observePhoneDriveContactsAt(
+                token: token, generation: currentGeneration, contacts: .released,
+                observedAtMs: 3_002, monotonicMs: 3_002)
+            XCTAssertThrowsError(
+                try state.activatePhoneDrive(
+                    token: token, expectedInputGeneration: requestedGeneration, monotonicMs: 3_003)
+            ) { error in
+                XCTAssertEqual(
+                    error as? MobilePhoneControlError,
+                    .Activation(reason: .inputGenerationChanged))
+            }
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            XCTAssertFalse(model.claimActivationDismissal(queued))
+        }
+    }
+
+    @MainActor
+    func testClaimedActivationReceiptDismissesAndActivatesItsOwnSettingsSheet() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let model = PhoneDriveModel(core: driver)
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            model.updateSettingsMode(.area)
+            let requestValue = await model.saveSettingsAndRequestActivation()
+            let request = try XCTUnwrap(requestValue)
+
+            XCTAssertTrue(model.claimActivationDismissal(request))
+            XCTAssertFalse(model.claimActivationDismissal(request))
+            let dismissal = try XCTUnwrap(model.dismissSettings())
+            XCTAssertEqual(dismissal.id, request.id)
+            driver.nowValue = 3_001
+            let releaseOutput = try XCTUnwrap(
+                state.tickPhoneDrive(token: token, monotonicMs: 3_001, canSubmit: true)?
+                    .result.outputs.first { $0.phoneDrive != nil })
+            let neutral = try XCTUnwrap(releaseOutput.phoneDrive)
+            XCTAssertEqual(neutral.kind, .release)
+            XCTAssertTrue(
+                state.markPhoneDriveTransport(
+                    token: token, write: neutral, status: .submitted, monotonicMs: 3_001))
+            _ = state.observePhoneDriveContactsAt(
+                token: token, generation: request.expectedInputGeneration, contacts: .released,
+                observedAtMs: 3_001, monotonicMs: 3_001)
+            XCTAssertTrue(model.activateAfterSettingsDismissal(dismissal))
+            guard case .active = state.phoneDriveSnapshot().availability else {
+                XCTFail("the claimed activation receipt should arm its current attempt")
+                return
+            }
+        }
+    }
+
+    @MainActor
+    func testLateActivationCompletionCannotDismissReopenedSettingsForSameDevice() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let model = PhoneDriveModel(core: driver)
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            model.updateSettingsMode(.area)
+            let requestValue = await model.saveSettingsAndRequestActivation()
+            let oldRequest = try XCTUnwrap(requestValue)
+
+            XCTAssertNil(model.dismissSettings())
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            XCTAssertTrue(model.settingsLoaded)
+
+            var newSheetPresented = true
+            if model.claimActivationDismissal(oldRequest) {
+                newSheetPresented = false
+            }
+
+            XCTAssertTrue(newSheetPresented)
+            XCTAssertTrue(model.settingsLoaded)
+            XCTAssertEqual(model.snapshot.availability, .ready)
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+        }
+    }
+
+    @MainActor
+    func testLateActivationCompletionCannotDismissSettingsForReplacementDevice() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let model = PhoneDriveModel(core: driver)
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            model.updateSettingsMode(.area)
+            let requestValue = await model.saveSettingsAndRequestActivation()
+            let oldRequest = try XCTUnwrap(requestValue)
+            XCTAssertNil(model.dismissSettings())
+
+            let replacement = try XCTUnwrap(
+                state.beginConnectionAttempt(platformIdentifier: "replacement-\(UUID().uuidString)", nowMs: 4_000)
+                    .token)
+            _ = state.connectionLinkEstablished(token: replacement)
+            _ = state.observeConnectionNotification(
+                token: replacement,
+                bytes: Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38,
+                    208, 3,
+                ]))
+            _ = state.resolveDeviceSession(token: replacement, identificationComplete: false, nowMs: 4_001)
+            let linked = try XCTUnwrap(
+                state.ingestDeviceSession(
+                    token: replacement,
+                    input: MobileSessionInputDto(
+                        kind: .linkUp, monotonicMs: .init(milliseconds: 4_001), maxWriteLen: nil,
+                        channel: Data(), bytes: Data())))
+            let query = try XCTUnwrap(linked.result.outputs.compactMap(\.applicationQuery).first)
+            XCTAssertTrue(
+                state.markApplicationQueryTransport(
+                    token: replacement, queryId: query.queryId, fragmentIndex: 0,
+                    fragmentCount: 1, status: .submitted, monotonicMs: 4_001))
+            _ = state.ingestDeviceSession(
+                token: replacement,
+                input: MobileSessionInputDto(
+                    kind: .tick, monotonicMs: .init(milliseconds: 7_001), maxWriteLen: nil,
+                    channel: Data(), bytes: Data()))
+            XCTAssertTrue(state.configureConnectionVehicleKind(token: replacement, kind: .eskate))
+            model.refresh()
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            XCTAssertTrue(model.presentSettings(for: replacement))
+            await model.loadSettings()
+
+            var newSheetPresented = true
+            if model.claimActivationDismissal(oldRequest) {
+                newSheetPresented = false
+            }
+
+            XCTAssertTrue(newSheetPresented)
+            XCTAssertTrue(model.settingsLoaded)
+            XCTAssertEqual(model.snapshot.deviceIdentity, replacement.platformIdentifier)
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+        }
+    }
+
+    @MainActor
+    func testPhoneDriveSaveShowsSettingsErrorForInputCancellation() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let model = PhoneDriveModel(
+                core: driver,
+                savePreferences: { _, _, _, _, _ in
+                    throw MobilePhoneControlError.InputGenerationChanged
+                })
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            XCTAssertTrue(model.settingsLoaded)
+
+            let saved = await model.saveSettings()
+
+            XCTAssertFalse(saved)
+            XCTAssertTrue(model.settingsError)
+            XCTAssertFalse(model.limitsError)
+            XCTAssertFalse(model.capturesInput)
+            XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+        }
+    }
+
+    @MainActor
+    func testPhoneDriveSaveShowsLimitsErrorOnlyForInvalidLimits() async throws {
+        try await withActivePhoneDrive { _, token, _, driver, _ in
+            let model = PhoneDriveModel(core: driver)
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            XCTAssertTrue(model.settingsLoaded)
+            model.throttleAmpsText = "NaN"
+
+            let saved = await model.saveSettings()
+
+            XCTAssertFalse(saved)
+            XCTAssertTrue(model.limitsError)
+            XCTAssertFalse(model.settingsError)
         }
     }
     @MainActor
@@ -2712,7 +2912,8 @@ final class CutoutAppModelTests: XCTestCase {
         _ = state.observePhoneDriveContactsAt(
             token: token, generation: idleGeneration, contacts: .released,
             observedAtMs: 3_000, monotonicMs: 3_000)
-        let activated = try state.activatePhoneDrive(token: token, monotonicMs: 3_000)
+        let activated = try state.activatePhoneDrive(
+            token: token, expectedInputGeneration: idleGeneration, monotonicMs: 3_000)
         let generation = try XCTUnwrap(activated.generation)
         _ = state.observePhoneDriveContactsAt(
             token: token, generation: generation, contacts: .released,
