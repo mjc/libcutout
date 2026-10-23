@@ -487,6 +487,10 @@ fn capture_submission_explicit_send_retains_raw_bytes_and_validates_receipt() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep receipt validation, bounded cleanup, reopen, and remote deletion in one lifecycle regression."
+)]
 fn matching_receipt_authorizes_bounded_reopenable_local_payload_cleanup() {
     let directory = tempfile::tempdir().unwrap();
     let database_path = directory.path().join("ride.sqlite");
@@ -562,6 +566,11 @@ fn matching_receipt_authorizes_bounded_reopenable_local_payload_cleanup() {
         recovered.local_payload_state,
         CaptureSubmissionLocalPayloadState::Removed
     );
+    reopened
+        .capture_evidence(CaptureSubmissionSource::RecordedArtifact(
+            source_artifact_id,
+        ))
+        .expect("evidence lookup retains receipt provenance after payload cleanup");
     let deleted = ready(reopened.delete_capture_submission(
         &prepared.operation_id,
         ACCOUNT,
@@ -573,6 +582,81 @@ fn matching_receipt_authorizes_bounded_reopenable_local_payload_cleanup() {
     assert!(
         deleted.receipt.is_some(),
         "server deletion keeps the receipt detail reachable"
+    );
+
+    let late_edit = CaptureAttachments {
+        note: "late native evidence edit".into(),
+        screenshots: Vec::new(),
+    };
+    assert!(matches!(
+        reopened.save_capture_evidence(CaptureSubmissionSource::LiveCapture(id), late_edit),
+        Err(CaptureSubmissionError::InvalidState)
+    ));
+    let retained = reopened
+        .capture_submission(CaptureSubmissionSource::RecordedArtifact(
+            source_artifact_id,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.phase, CaptureSubmissionPhase::Deleted);
+    assert_eq!(
+        retained.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert_eq!(retained.receipt, deleted.receipt);
+    assert_eq!(retained.metadata.evidence, deleted.metadata.evidence);
+}
+
+#[test]
+fn deleted_submission_with_retained_payload_can_be_edited_and_reprepared() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let original = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&database_path).unwrap();
+    let mut status: serde_json::Value = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&original.operation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|json| serde_json::from_str(&json).unwrap())
+        .unwrap();
+    status["phase"] = serde_json::json!("deleted");
+    assert_eq!(status["local_payload_state"], "retained");
+    connection
+        .execute(
+            "UPDATE capture_submissions SET status_json = ?2 WHERE operation_id = ?1",
+            rusqlite::params![original.operation_id, status.to_string()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let edited = CaptureAttachments {
+        note: "edit while canonical payload remains".into(),
+        screenshots: Vec::new(),
+    };
+    assert_eq!(
+        database
+            .save_capture_evidence(CaptureSubmissionSource::LiveCapture(id), edited.clone())
+            .unwrap(),
+        edited
+    );
+    let reprepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    assert_ne!(reprepared.operation_id, original.operation_id);
+    assert_eq!(reprepared.phase, CaptureSubmissionPhase::Prepared);
+    assert_eq!(
+        reprepared.metadata.evidence.as_ref().unwrap().note_bytes,
+        u32::try_from(edited.note.len()).unwrap()
     );
 }
 

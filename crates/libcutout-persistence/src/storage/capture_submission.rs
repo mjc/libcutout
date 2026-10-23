@@ -1710,19 +1710,19 @@ fn evidence_command(
     if let Some(evidence) = save {
         evidence.validate()?;
         if let Some(status) = lookup_status(&transaction, Some(&artifact), None)? {
-            match status.phase {
-                CaptureSubmissionPhase::Prepared
-                | CaptureSubmissionPhase::Cancelled
-                | CaptureSubmissionPhase::Deleted => {
-                    transaction
-                        .execute(
-                            "DELETE FROM capture_submissions WHERE source_artifact_id=?1",
-                            [&artifact],
-                        )
-                        .map_err(StorageError::from)?;
-                }
-                _ => return Err(CaptureSubmissionError::InvalidState),
+            if status.local_payload_state != CaptureSubmissionLocalPayloadState::Retained
+                || (status.phase != CaptureSubmissionPhase::Prepared
+                    && status.phase != CaptureSubmissionPhase::Cancelled
+                    && status.phase != CaptureSubmissionPhase::Deleted)
+            {
+                return Err(CaptureSubmissionError::InvalidState);
             }
+            transaction
+                .execute(
+                    "DELETE FROM capture_submissions WHERE source_artifact_id=?1",
+                    [&artifact],
+                )
+                .map_err(StorageError::from)?;
         }
         let json = serde_json::to_string(&evidence).map_err(|_| invalid_status())?;
         transaction.execute("INSERT INTO capture_evidence(source_artifact_id,evidence_json) VALUES(?1,?2) ON CONFLICT(source_artifact_id) DO UPDATE SET evidence_json=excluded.evidence_json", params![artifact,json]).map_err(StorageError::from)?;

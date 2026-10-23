@@ -936,6 +936,19 @@ mod tests {
         reopened.shutdown().unwrap();
     }
 
+    #[test]
+    fn statusless_export_io_failure_is_not_mislabeled_as_retired_payload() {
+        let (directory, database, artifact_id, _bytes) = retained_writer_capture();
+        let destination = directory.path().join("missing-parent/export.jsonl");
+
+        assert!(matches!(
+            database.export_recorded_capture(artifact_id, &destination),
+            Err(StorageError::PevcapCaptureIntegrity(_))
+        ));
+
+        database.shutdown().unwrap();
+    }
+
     fn seed_sent_status_and_cleanup(
         database_path: &Path,
         prepared: &crate::CaptureSubmissionStatus,
