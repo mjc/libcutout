@@ -22,6 +22,7 @@
     <string name="capture_load_more">Load more</string>
     <string name="capture_interrupted">Recording interrupted</string>
     <string name="capture_share">Share capture</string>
+    <string name="capture_file_unavailable">Capture file is unavailable.</string>
     <string name="capture_loading">Loading…</string>
     <string name="capture_error">Capture operation failed</string>
     <string name="capture_not_admitted">Recording is unavailable right now.</string>

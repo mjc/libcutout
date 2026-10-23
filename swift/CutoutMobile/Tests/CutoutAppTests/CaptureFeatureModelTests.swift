@@ -143,6 +143,18 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertNil(model.error)
     }
 
+    func testRecordedCapturePayloadUnavailableUsesCaptureFileMessage() async {
+        let model = CaptureExportModel(recordedCaptureExport: { _, _ in
+            throw MobileRideDatabaseError.CapturePayloadUnavailable
+        })
+
+        await model.export(
+            recordedArtifactID: "recorded-capture", fallbackSource: URL(fileURLWithPath: "/tmp/removed.pevcap"))
+
+        XCTAssertEqual(model.error, localizedAppText("captures.file_unavailable"))
+        XCTAssertNil(model.fileURL, "A removed original file must not become an export fallback")
+    }
+
     func testLabelAdmissionLossKeepsRecordingUsableAndAllowsRetry() {
         var requests = 0
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in

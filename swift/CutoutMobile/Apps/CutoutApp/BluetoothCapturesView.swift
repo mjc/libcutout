@@ -175,6 +175,10 @@ struct CaptureArtifactDetailView: View {
         return id
     }
 
+    private var hasExportSource: Bool {
+        recordedArtifactID != nil || fileExists
+    }
+
     var body: some View {
         List {
             Section {
@@ -209,7 +213,7 @@ struct CaptureArtifactDetailView: View {
                     Button(localizedAppText("captures.share")) {
                         Task { await prepareExport() }
                     }
-                    .disabled(export.isExporting)
+                    .disabled(export.isExporting || !hasExportSource)
                     .accessibilityIdentifier("captures.share")
                 }
             } footer: {

@@ -239,6 +239,8 @@ class AndroidDiagnosticCaptureClient internal constructor(
                         }
                         source.copyTo(destination, overwrite = false)
                         destination
+                    } catch (error: MobileRideDatabaseException.CapturePayloadUnavailable) {
+                        throw IllegalStateException(context.getString(R.string.capture_file_unavailable), error)
                     }
                 }
                 main.post { completed(result) }
