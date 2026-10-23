@@ -509,6 +509,43 @@ fn inactive_live_settlement_rechecks_evidence_and_closes_at_last_material_point(
 }
 
 #[test]
+fn legacy_waiting_location_keeps_inactivity_evidence_absent() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_001_000,
+        None,
+        LocationSource::Live,
+    );
+
+    let result = database
+        .queue_location_with_moving_time_waiting_for_capacity(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(8_000), 1_000, 1_000),
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(database.ride_inactivity_evidence(ride).unwrap(), None);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn inactive_live_settlement_requires_expiry_and_canonical_parked_motion() {
     let _guard = test_guard();
     let path = music_test_path();

@@ -1867,7 +1867,7 @@ pub enum LocationQueueMode {
 pub struct RideLocationCheckpoint {
     moving_time_observation: Option<MovingTimeObservation>,
     latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
-    inactivity_evidence: RideInactivityEvidence,
+    inactivity_evidence: Option<RideInactivityEvidence>,
 }
 
 impl RideLocationCheckpoint {
@@ -1881,7 +1881,18 @@ impl RideLocationCheckpoint {
         Self {
             moving_time_observation,
             latest_vehicle_moving_time_observation,
-            inactivity_evidence,
+            inactivity_evidence: Some(inactivity_evidence),
+        }
+    }
+
+    const fn without_inactivity_evidence(
+        moving_time_observation: Option<MovingTimeObservation>,
+        latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+    ) -> Self {
+        Self {
+            moving_time_observation,
+            latest_vehicle_moving_time_observation,
+            inactivity_evidence: None,
         }
     }
 }
@@ -4885,22 +4896,15 @@ impl RideDatabase {
         start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationAsync {
+        self.queue_location_with_mode(
             ride_id,
             sample,
             segment_id,
             start_reason,
             telemetry_state,
-            moving_time_observation: None,
-            latest_vehicle_moving_time_observation: None,
-            inactivity_evidence: None,
-            reply,
-        })?;
-        Ok(PendingLocationWrite {
-            response,
-            consumed: false,
-        })
+            RideLocationCheckpoint::without_inactivity_evidence(None, None),
+            LocationQueueMode::Bounded,
+        )
     }
 
     /// Queues an accepted location with receipt-causal moving-time evidence in the same write.
@@ -4925,27 +4929,18 @@ impl RideDatabase {
         moving_time_observation: MovingTimeObservation,
         latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
     ) -> Result<PendingLocationWrite, StorageError> {
-        validate_paired_moving_time_observations(
-            sample,
-            Some(moving_time_observation),
-            latest_vehicle_moving_time_observation,
-        )?;
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationAsync {
+        self.queue_location_with_mode(
             ride_id,
             sample,
             segment_id,
             start_reason,
             telemetry_state,
-            moving_time_observation: Some(moving_time_observation),
-            latest_vehicle_moving_time_observation,
-            inactivity_evidence: None,
-            reply,
-        })?;
-        Ok(PendingLocationWrite {
-            response,
-            consumed: false,
-        })
+            RideLocationCheckpoint::without_inactivity_evidence(
+                Some(moving_time_observation),
+                latest_vehicle_moving_time_observation,
+            ),
+            LocationQueueMode::Bounded,
+        )
     }
 
     /// Queues a location with moving-time evidence, waiting until bounded worker capacity is
@@ -4968,27 +4963,18 @@ impl RideDatabase {
         moving_time_observation: MovingTimeObservation,
         latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
     ) -> Result<PendingLocationWrite, StorageError> {
-        validate_paired_moving_time_observations(
-            sample,
-            Some(moving_time_observation),
-            latest_vehicle_moving_time_observation,
-        )?;
-        let (reply, response) = response_channel();
-        self.enqueue_blocking(Command::AppendLocationAsync {
+        self.queue_location_with_mode(
             ride_id,
             sample,
             segment_id,
             start_reason,
             telemetry_state,
-            moving_time_observation: Some(moving_time_observation),
-            latest_vehicle_moving_time_observation,
-            inactivity_evidence: None,
-            reply,
-        })?;
-        Ok(PendingLocationWrite {
-            response,
-            consumed: false,
-        })
+            RideLocationCheckpoint::without_inactivity_evidence(
+                Some(moving_time_observation),
+                latest_vehicle_moving_time_observation,
+            ),
+            LocationQueueMode::WaitForCapacity,
+        )
     }
 
     /// Queues a location from a background recorder, waiting for worker queue capacity.
@@ -5008,22 +4994,15 @@ impl RideDatabase {
         start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue_blocking(Command::AppendLocationAsync {
+        self.queue_location_with_mode(
             ride_id,
             sample,
             segment_id,
             start_reason,
             telemetry_state,
-            moving_time_observation: None,
-            latest_vehicle_moving_time_observation: None,
-            inactivity_evidence: None,
-            reply,
-        })?;
-        Ok(PendingLocationWrite {
-            response,
-            consumed: false,
-        })
+            RideLocationCheckpoint::without_inactivity_evidence(None, None),
+            LocationQueueMode::WaitForCapacity,
+        )
     }
 
     /// Queues one location with its moving-time and inactivity checkpoint in the same write.
@@ -5035,6 +5014,27 @@ impl RideDatabase {
     /// Returns a storage error for inconsistent motion evidence, queue saturation in bounded
     /// mode, or an unavailable worker.
     pub fn queue_location_with_checkpoint(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        start_reason: RideSegmentStartReason,
+        telemetry_state: RouteTelemetryState,
+        checkpoint: RideLocationCheckpoint,
+        queue_mode: LocationQueueMode,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        self.queue_location_with_mode(
+            ride_id,
+            sample,
+            segment_id,
+            start_reason,
+            telemetry_state,
+            checkpoint,
+            queue_mode,
+        )
+    }
+
+    fn queue_location_with_mode(
         &self,
         ride_id: RideId,
         sample: LocationSample,
@@ -5059,7 +5059,7 @@ impl RideDatabase {
             moving_time_observation: checkpoint.moving_time_observation,
             latest_vehicle_moving_time_observation: checkpoint
                 .latest_vehicle_moving_time_observation,
-            inactivity_evidence: Some(checkpoint.inactivity_evidence),
+            inactivity_evidence: checkpoint.inactivity_evidence,
             reply,
         };
         match queue_mode {
