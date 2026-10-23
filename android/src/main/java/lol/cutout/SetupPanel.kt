@@ -30,11 +30,6 @@ class SetupPanel(
             finishSettingChange(result)
         }
     }
-    private val diagnostics = toggle(context.getString(R.string.setup_diagnostics_automatic)) { enabled ->
-        app.bluetooth.setDiagnosticRecordingEnabled(enabled) { result ->
-            finishSettingChange(result)
-        }
-    }
     private val accountStatus = ui.text(context.getString(R.string.setup_account_loading), 14f, color = ui.muted)
     private val accountError = ui.text("", 13f, color = ui.red)
     private val accountReload = ui.action(context.getString(R.string.setup_account_reload)) { refreshAccount() }.apply { visibility = View.GONE }
@@ -59,9 +54,6 @@ class SetupPanel(
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.music), onClick = onMusic))
         page.addView(ui.space(20))
-        page.addView(ui.text(context.getString(R.string.setup_diagnostics), 17f, true))
-        page.addView(diagnostics)
-        page.addView(ui.text(context.getString(R.string.setup_diagnostics_detail), 14f, color = ui.muted))
         page.addView(ui.action(context.getString(R.string.captures), onClick = onCaptures))
         page.addView(ui.space(20))
         page.addView(ui.action(context.getString(R.string.setup_location), onClick = onLocation))
@@ -88,13 +80,9 @@ class SetupPanel(
             retrySettings.visibility = View.GONE
             refreshAccount()
         }
-        autostart.isEnabled = false; diagnostics.isEnabled = false
+        autostart.isEnabled = false
         app.rides.withCore({ it.rideAutostartEnabled() }) { result ->
             result.onSuccess { binding = true; autostart.isChecked = it; binding = false; autostart.isEnabled = true }
-                .onFailure { showFailure(R.string.setup_load_failed) }
-        }
-        app.bluetooth.diagnosticRecordingEnabled { result ->
-            result.onSuccess { binding = true; diagnostics.isChecked = it; binding = false; diagnostics.isEnabled = true }
                 .onFailure { showFailure(R.string.setup_load_failed) }
         }
     }

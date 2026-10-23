@@ -58,6 +58,29 @@ pub enum MobileCaptureSubmissionPhaseDto {
     Deleted,
 }
 
+/// Availability of the private payload in the current local database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureSubmissionLocalPayloadStateDto {
+    /// Bytes are retained locally.
+    Retained,
+    /// Receipt-confirmed cleanup is still in progress.
+    RemovalPending,
+    /// Payload bytes were removed; receipt details remain available.
+    Removed,
+}
+
+impl From<persistence::CaptureSubmissionLocalPayloadState>
+    for MobileCaptureSubmissionLocalPayloadStateDto
+{
+    fn from(state: persistence::CaptureSubmissionLocalPayloadState) -> Self {
+        match state {
+            persistence::CaptureSubmissionLocalPayloadState::Retained => Self::Retained,
+            persistence::CaptureSubmissionLocalPayloadState::RemovalPending => Self::RemovalPending,
+            persistence::CaptureSubmissionLocalPayloadState::Removed => Self::Removed,
+        }
+    }
+}
+
 impl From<persistence::CaptureSubmissionPhase> for MobileCaptureSubmissionPhaseDto {
     fn from(phase: persistence::CaptureSubmissionPhase) -> Self {
         use persistence::CaptureSubmissionPhase as Phase;
@@ -215,6 +238,8 @@ pub struct MobileCaptureSubmissionStatusDto {
     pub operation_id: String,
     /// Current persisted phase, including unconfirmed remote removal.
     pub phase: MobileCaptureSubmissionPhaseDto,
+    /// Local capture payload availability, independent from remote deletion state.
+    pub local_payload_state: MobileCaptureSubmissionLocalPayloadStateDto,
     /// Actual included categories, independent of native presentation flags.
     pub categories: MobileCaptureSubmissionCategoriesDto,
     /// Known observation loss disclosed with incomplete durable recordings.
@@ -236,6 +261,7 @@ impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatu
         Self {
             operation_id: status.operation_id,
             phase: status.phase.into(),
+            local_payload_state: status.local_payload_state.into(),
             categories: status.categories.into(),
             dropped_messages,
             byte_count: status.metadata.bytes,
@@ -835,7 +861,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ffi_send_receives_an_authenticated_server_receipt_then_deletes_only_the_remote_copy()
+    async fn ffi_send_receives_a_receipt_removes_local_payload_and_deletes_remote_copy()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = TestDirectory::new()?;
         let (database, source) = finished_capture(&directory.0)?;
@@ -884,18 +910,55 @@ mod tests {
             )
             .await?;
         assert_eq!(sent.phase, MobileCaptureSubmissionPhaseDto::Sent);
+        assert_eq!(
+            sent.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::RemovalPending
+        );
         let receipt = sent.receipt.clone().ok_or("durable receipt missing")?;
         assert_eq!(receipt.operation_id, prepared.operation_id);
         assert_eq!(receipt.bytes, prepared.byte_count);
-        assert_eq!(
-            client
-                .send(
-                    prepared.operation_id.clone(),
-                    account_id.clone(),
-                    token.clone()
-                )
-                .await?,
-            sent
+        let repeated_send = client
+            .send(
+                prepared.operation_id.clone(),
+                account_id.clone(),
+                token.clone(),
+            )
+            .await?;
+        assert_eq!(repeated_send.phase, sent.phase);
+        assert_eq!(repeated_send.operation_id, sent.operation_id);
+        assert_eq!(repeated_send.receipt, sent.receipt);
+        assert!(matches!(
+            repeated_send.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::RemovalPending
+                | MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        ));
+        let cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let removed = loop {
+            let status = client
+                .status(source.clone())
+                .await?
+                .ok_or("sent submission status disappeared during cleanup")?;
+            if status.local_payload_state == MobileCaptureSubmissionLocalPayloadStateDto::Removed {
+                break status;
+            }
+            if tokio::time::Instant::now() >= cleanup_deadline {
+                return Err(
+                    "receipt-confirmed local payload cleanup did not finish before deadline".into(),
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        assert_eq!(removed.phase, MobileCaptureSubmissionPhaseDto::Sent);
+        assert_eq!(removed.receipt, Some(receipt.clone()));
+        let persistence::CaptureSubmissionSource::LiveCapture(id) = source.clone().try_into()?
+        else {
+            return Err("expected live source".into());
+        };
+        assert!(
+            database
+                .inner
+                .export_live_capture(id, &directory.0.join("after-send.jsonl"))
+                .is_err()
         );
         let wrong_account = client
             .delete(
@@ -912,7 +975,24 @@ mod tests {
             .delete(prepared.operation_id.clone(), account_id, token.clone())
             .await?;
         assert_eq!(deleted.phase, MobileCaptureSubmissionPhaseDto::Deleted);
-        assert_eq!(client.status(source.clone()).await?, Some(deleted));
+        assert_eq!(deleted.receipt.as_ref(), Some(&receipt));
+        assert_eq!(
+            deleted.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        );
+        let deleted_status = client
+            .status(source.clone())
+            .await?
+            .ok_or("deleted submission status disappeared")?;
+        assert_eq!(
+            deleted_status.phase,
+            MobileCaptureSubmissionPhaseDto::Deleted
+        );
+        assert_eq!(deleted_status.receipt, Some(receipt.clone()));
+        assert_eq!(
+            deleted_status.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        );
         let remote = http
             .get(format!(
                 "{base_url}v1/capture-submissions/{}",
@@ -922,16 +1002,6 @@ mod tests {
             .send()
             .await?;
         assert_eq!(remote.status(), reqwest::StatusCode::NOT_FOUND);
-        let persistence::CaptureSubmissionSource::LiveCapture(id) = source.try_into()? else {
-            return Err("expected live source".into());
-        };
-        let exported = database
-            .inner
-            .export_live_capture(id, &directory.0.join("after-delete.jsonl"))?;
-        assert_eq!(
-            exported, receipt.sha256,
-            "remote deletion must preserve every local capture byte"
-        );
         task.abort();
         database.inner.clone().shutdown()?;
         Ok(())

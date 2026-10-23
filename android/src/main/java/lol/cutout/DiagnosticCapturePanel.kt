@@ -117,12 +117,12 @@ class DiagnosticCapturePanel(
                 else chooseDevice(lifecycle)
             }.apply {
                 tag = "captures.manual.start"
-                isEnabled = captureState.ready && lifecycle.canStart && bleState.phase == NativePhase.IDLE
+                isEnabled = canStartManual(lifecycle)
             })
             if (!lifecycle.canStart) addView(ui.text(stageLabel(attempt?.stage), 14f, color = ui.muted))
         }
 
-        (captureState.error ?: captureState.historyError)?.let { message ->
+        (captureState.error ?: captureState.historyError ?: captureState.managedCaptureCleanupError)?.let { message ->
             content.addView(ui.space(12))
             content.addView(ui.text(message, 14f, color = ui.red))
         }
@@ -215,7 +215,13 @@ class DiagnosticCapturePanel(
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         charging?.let { community ->
             row.addView(ui.action("Notes and private Send") {
-                CaptureEvidenceDialog(context, community, MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId), pickScreenshots).show()
+                CaptureEvidenceDialog(
+                    context,
+                    community,
+                    MobileCaptureSubmissionSourceDto.LiveCapture(entry.liveCaptureId),
+                    pickScreenshots,
+                    onReceiptConfirmed = { bluetooth.diagnostics.deduplicateManagedCaptureFiles() },
+                ).show()
             }.apply { tag = "captures.history.${entry.liveCaptureId}.notes" })
         }
         row.addView(buttons)
@@ -223,7 +229,20 @@ class DiagnosticCapturePanel(
     }
 
     private fun chooseDevice(lifecycle: MobileCaptureLifecycleSnapshotDto) {
-        val candidates = bleState.devices.filter { !it.id.isBlank() }
+        if (!canStartManual(lifecycle)) return
+        val connectedId = connectedCapturePlatformIdentifier()
+        val connectedCandidate = connectedId?.let { id ->
+            bleState.devices.firstOrNull { it.id == id } ?: NearbyPev(
+                id = id,
+                name = bleState.session?.identity?.model ?: "Connected device",
+                rssi = 0,
+                suggested = false,
+                advertisedName = bleState.session?.identity?.model,
+            )
+        }
+        val candidates = (bleState.devices + listOfNotNull(connectedCandidate)).distinctBy(NearbyPev::id).filter { item ->
+            item.id.isNotBlank() && (connectedId == null || item.id == connectedId)
+        }
         if (candidates.isEmpty()) {
             AlertDialog.Builder(context).setMessage(R.string.capture_no_devices)
                 .setPositiveButton(R.string.capture_scan) { _, _ -> requestBluetoothOrScan() }
@@ -260,7 +279,7 @@ class DiagnosticCapturePanel(
             .create().also { dialog ->
                 dialog.setOnShowListener {
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        if (!lifecycle.canStart || bleState.phase != NativePhase.IDLE) return@setOnClickListener
+                        if (!canStartManual(lifecycle, device.id)) return@setOnClickListener
                         bluetooth.startManualCapture(device.id, null, input.text.toString()) { started ->
                             if (!started) Toast.makeText(context, R.string.capture_start_failed, Toast.LENGTH_LONG).show()
                             refresh()
@@ -274,5 +293,24 @@ class DiagnosticCapturePanel(
     private fun requestBluetoothOrScan() {
         if (!bluetooth.hasPermissions() || !bluetooth.isEnabled()) onRequestBluetooth()
         else bluetooth.scan()
+    }
+
+    private fun connectedCapturePlatformIdentifier(): String? =
+        bleState.session?.connection?.takeIf {
+            it.transport == MobileConnectionTransportStateDto.CONNECTED &&
+                it.readiness == MobileConnectionReadinessDto.VERIFIED
+        }?.token?.platformIdentifier
+
+    private fun canStartManual(
+        lifecycle: MobileCaptureLifecycleSnapshotDto,
+        platformId: String? = null,
+    ): Boolean {
+        if (!captureState.ready || !lifecycle.canStart) return false
+        val connectedId = connectedCapturePlatformIdentifier()
+        return when {
+            connectedId != null -> platformId == null || platformId == connectedId
+            bleState.phase == NativePhase.IDLE -> true
+            else -> false
+        }
     }
 }

@@ -1,7 +1,8 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 61;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 62;
+const ARCHIVE_REPAIR_SCHEMA_VERSION: i64 = 61;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -80,6 +81,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         58 => migrate_v58_to_current(connection)?,
         59 => migrate_v59_to_current(connection)?,
         60 => migrate_v60_to_current(connection)?,
+        61 => migrate_v61_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -156,6 +158,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 58 {
             migrate_v58_to_current(connection)?;
         }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 61 {
+            migrate_v61_to_current(connection)?;
+        }
     }
     Ok(())
 }
@@ -204,6 +209,7 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         })
         .and_then(|()| ensure_capture_payload_encoding(connection))
         .and_then(|()| super::ride_inactivity::verify_schema(connection))
+        .and_then(|()| create_compact_bms_schema(connection))
     {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
@@ -705,7 +711,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
-    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2094,7 +2100,11 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         "ride_music_history",
         "ride_music_event",
         "ride_inactivity_evidence",
-        "bms_voltage_samples",
+        "bms_voltage_samples_legacy",
+        "bms_devices",
+        "bms_sessions",
+        "bms_cell_samples",
+        "bms_voltage_backfill_progress",
         "last_connected_device",
     ] {
         let exists: bool = connection.query_row(
@@ -2105,6 +2115,14 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    let bms_view: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'bms_voltage_samples')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !bms_view {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
 }
@@ -2395,7 +2413,7 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
     transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
-    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2407,7 +2425,7 @@ fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
     requeue_legacy_archives(&transaction)?;
-    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2417,7 +2435,7 @@ fn migrate_v59_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
     requeue_legacy_archives(&transaction)?;
-    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2425,9 +2443,37 @@ fn migrate_v59_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v60_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     requeue_legacy_archives(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v61_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    create_compact_bms_schema(&transaction)?;
     transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
+}
+
+fn create_compact_bms_schema(connection: &Connection) -> Result<(), StorageError> {
+    let kind: Option<String> = connection
+        .query_row(
+            "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match kind.as_deref() {
+        Some("table") => {
+            connection.execute_batch(
+                "ALTER TABLE bms_voltage_samples RENAME TO bms_voltage_samples_legacy;",
+            )?;
+            super::bms_voltage::create_compact_schema(connection)
+        }
+        Some("view") => Ok(()),
+        _ => Err(StorageError::InvalidDatabaseIdentity),
+    }
 }
 
 fn requeue_legacy_archives(connection: &Connection) -> Result<(), StorageError> {
@@ -2444,6 +2490,205 @@ fn requeue_legacy_archives(connection: &Connection) -> Result<(), StorageError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_v61_bms_table(connection: &Connection) {
+        initialize_current_schema(connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP VIEW bms_voltage_samples;
+                 DROP TABLE bms_voltage_backfill_progress;
+                 DROP TABLE bms_cell_samples;
+                 DROP TABLE bms_sessions;
+                 DROP TABLE bms_devices;
+                 DROP TABLE bms_voltage_samples_legacy;
+                 CREATE TABLE bms_voltage_samples (
+                    device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+                    session_identifier TEXT NOT NULL CHECK (length(session_identifier) BETWEEN 1 AND 512),
+                    event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
+                    monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+                    wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+                    observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
+                    pack_index INTEGER CHECK (pack_index IS NULL OR pack_index BETWEEN 0 AND 65535),
+                    pack_observation_index INTEGER CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
+                    millivolts INTEGER NOT NULL,
+                    PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
+                 );
+                 CREATE INDEX bms_voltage_samples_history
+                    ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);
+                 PRAGMA user_version = 61;",
+            )
+            .unwrap();
+    }
+
+    type BmsMigrationRow = (
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        i64,
+    );
+
+    fn bms_rows(connection: &Connection) -> Vec<BmsMigrationRow> {
+        let mut statement = connection
+            .prepare(
+                "SELECT device_identity, session_identifier, event_sequence, monotonic_ms,
+                        wall_clock_ms, observation_index, pack_index, pack_observation_index,
+                        millivolts
+                 FROM bms_voltage_samples
+                 ORDER BY device_identity, session_identifier, event_sequence, observation_index",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn v61_bms_table_migrates_losslessly_through_compaction_and_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v61-bms.sqlite");
+        let expected = vec![
+            (
+                "device-a".to_owned(),
+                "session-a".to_owned(),
+                12,
+                345,
+                678,
+                4,
+                Some(2),
+                Some(9),
+                4_123,
+            ),
+            (
+                "device-b".to_owned(),
+                "session-b".to_owned(),
+                13,
+                346,
+                679,
+                5,
+                None,
+                None,
+                3_987,
+            ),
+        ];
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            create_v61_bms_table(&connection);
+            for row in &expected {
+                connection
+                    .execute(
+                        "INSERT INTO bms_voltage_samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8],
+                    )
+                    .unwrap();
+            }
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                61
+            );
+
+            migrate(&mut connection).unwrap();
+            verify_current_schema(&connection).unwrap();
+            assert_eq!(bms_rows(&connection), expected);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM bms_voltage_samples_legacy",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                2
+            );
+
+            assert_eq!(
+                super::super::bms_voltage::normalize_legacy_batch(&mut connection, None).unwrap(),
+                super::super::normalization::BatchState::Finished
+            );
+            assert_eq!(bms_rows(&connection), expected);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM bms_voltage_samples_legacy",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM bms_cell_samples", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+        }
+
+        let mut reopened = Connection::open(path).unwrap();
+        migrate(&mut reopened).unwrap();
+        verify_current_schema(&reopened).unwrap();
+        assert_eq!(bms_rows(&reopened), expected);
+    }
+
+    #[test]
+    fn v61_bms_migration_rolls_back_rename_when_compact_schema_creation_fails() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        create_v61_bms_table(&connection);
+        connection
+            .execute(
+                "INSERT INTO bms_voltage_samples VALUES ('device', 'session', 1, 2, 3, 4, 5, 6, 4100)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute_batch("CREATE TABLE bms_devices (collision INTEGER);")
+            .unwrap();
+
+        assert!(migrate(&mut connection).is_err());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            61
+        );
+        let kind: String = connection
+            .query_row(
+                "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kind, "table");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM bms_voltage_samples", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(!table_exists(&connection, "bms_voltage_samples_legacy").unwrap());
+    }
 
     #[test]
     fn legacy_archive_path_repair_requeues_remaining_archives_once() {

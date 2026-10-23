@@ -17,6 +17,7 @@ internal class CaptureEvidenceDialog(
     private val charging: AndroidChargingClient,
     private val source: MobileCaptureSubmissionSourceDto,
     private val pickImages: (((List<Uri>) -> Unit) -> Unit)?,
+    private val onReceiptConfirmed: () -> Unit = {},
 ) {
     private val ui = CutoutUi(context)
     private val content = ui.column()
@@ -44,7 +45,7 @@ internal class CaptureEvidenceDialog(
         val next = status
         if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT || next?.phase == MobileCaptureSubmissionPhaseDto.DELETING) {
             AlertDialog.Builder(context).setTitle("Delete the sent copy?")
-                .setMessage("Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain.")
+                .setMessage("Remove the private server copy. Local payload removal is handled separately after receipt confirmation. Operator backups and copies already downloaded may remain.")
                 .setNegativeButton("Keep sent copy", null).setPositiveButton("Delete sent copy") { _, _ -> removeSent(true) }.show()
         } else removeSent(false)
     }
@@ -131,7 +132,11 @@ internal class CaptureEvidenceDialog(
         status = next; note.setText(evidence.note); screenshots = evidence.screenshots
         noteLimit = evidence.noteLimitBytes.toInt(); screenshotLimit = evidence.screenshotLimit.toInt()
         loaded = true; dirty = false
-        message.text = if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT) "Received privately · ${next.receipt?.operationId.orEmpty()}" else ""
+        message.text = when (next?.localPayloadState) {
+            MobileCaptureSubmissionLocalPayloadStateDto.REMOVAL_PENDING -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Removing local capture payload"
+            MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Local capture payload removed"
+            else -> if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT) "Received privately · ${next.receipt?.operationId.orEmpty()}" else ""
+        }
     }
 
     private fun save() {
@@ -159,7 +164,7 @@ internal class CaptureEvidenceDialog(
             if (screenshots.isNotEmpty()) add("${screenshots.size} selected screenshots")
         }
         AlertDialog.Builder(context).setTitle("Send this capture privately?")
-            .setMessage("Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. Your original recording stays on this device.")
+            .setMessage("Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. A matching receipt starts removal of the local capture payload.")
             .setNegativeButton("Not now", null)
             .setPositiveButton("Send privately") { _, _ ->
                 message.text = ""
@@ -173,7 +178,12 @@ internal class CaptureEvidenceDialog(
                     sendProgress.clear()
                 }) { next ->
                     status = next
-                    message.text = if (next.receipt != null) "Received privately · ${next.receipt!!.operationId}" else "Send has not completed. Retry to confirm its receipt."
+                    if (next.phase == MobileCaptureSubmissionPhaseDto.SENT && next.receipt != null) {
+                        onReceiptConfirmed()
+                        message.text = "Received privately · ${next.receipt!!.operationId} · Removing local capture payload"
+                    } else {
+                        message.text = "Send has not completed. Retry to confirm its receipt."
+                    }
                 }
             }.show()
     }

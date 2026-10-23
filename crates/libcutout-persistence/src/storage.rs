@@ -42,8 +42,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod capture_data;
+mod capture_file_dedup;
 mod capture_history;
 mod capture_settings;
+pub use capture_file_dedup::CaptureFileDeduplication;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
 pub(crate) use capture_settings::CaptureTransportReadPrefix;
 mod live_capture_history;
@@ -64,6 +66,7 @@ mod capture_submission;
 pub use capture_submission::*;
 mod charging;
 pub use charging::*;
+pub(super) mod bms_voltage;
 mod device_drivetrain;
 mod device_vehicle;
 mod migrations;
@@ -1784,6 +1787,9 @@ pub enum StorageError {
     /// A published original-byte capture could not be found.
     #[error("PEVCAP capture was not found")]
     PevcapCaptureNotFound,
+    /// A recorded capture exists, but its local payload has been retired or is being removed.
+    #[error("recorded capture payload is unavailable locally")]
+    CapturePayloadUnavailable,
     /// Stored capture bytes failed export integrity verification.
     #[error("PEVCAP capture export integrity check failed: {0}")]
     PevcapCaptureIntegrity(String),
@@ -7379,33 +7385,7 @@ fn record_bms_voltage_samples(
     connection: &mut Connection,
     samples: &[BmsVoltageSampleRecord],
 ) -> Result<(), StorageError> {
-    if samples.is_empty() {
-        return Ok(());
-    }
-    let transaction = connection.transaction()?;
-    {
-        let mut insert = transaction.prepare_cached(
-            "INSERT OR IGNORE INTO bms_voltage_samples
-                (device_identity, session_identifier, event_sequence, monotonic_ms, wall_clock_ms, observation_index,
-                 pack_index, pack_observation_index, millivolts)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        )?;
-        for sample in samples {
-            insert.execute(params![
-                sample.device_identity,
-                sample.session_identifier,
-                bms_sqlite_integer(sample.event_sequence, "BMS event sequence")?,
-                bms_sqlite_integer(sample.monotonic_milliseconds, "BMS monotonic timestamp")?,
-                bms_sqlite_integer(sample.wall_clock_milliseconds, "BMS wall clock timestamp")?,
-                sample.observation_index,
-                sample.pack_index,
-                sample.pack_observation_index,
-                sample.millivolts,
-            ])?;
-        }
-    }
-    transaction.commit()?;
-    Ok(())
+    bms_voltage::record_samples(connection, samples)
 }
 
 fn bms_sqlite_integer(value: u64, field: &'static str) -> Result<i64, StorageError> {

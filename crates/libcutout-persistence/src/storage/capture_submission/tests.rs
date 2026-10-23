@@ -7,6 +7,7 @@ use cutout_core::{
     CaptureOrigin, GattChannel, MonotonicTimestamp, PevcapHeader, PevcapRecord,
     WallClockUnixTimestamp,
 };
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -32,6 +33,7 @@ struct Transport {
     deleted: Mutex<Vec<String>>,
     pause: AtomicBool,
     pause_lookup: AtomicBool,
+    pause_delete: AtomicBool,
 }
 impl CaptureSubmissionTransport for Transport {
     fn upload<'a>(
@@ -101,6 +103,14 @@ impl CaptureSubmissionTransport for Transport {
     ) -> CaptureSubmissionFuture<'a, ()> {
         Box::pin(async move {
             self.deleted.lock().unwrap().push(operation_id.to_owned());
+            std::future::poll_fn(|_| {
+                if self.pause_delete.load(Ordering::Acquire) {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            })
+            .await;
             if let Some(error) = self.failure.lock().unwrap().take() {
                 Err(error)
             } else {
@@ -112,7 +122,7 @@ impl CaptureSubmissionTransport for Transport {
 
 const ACCOUNT: &str = "3a61d30c-669a-4a98-8b76-ddbb2b766e14";
 
-fn recording(database: &RideDatabase, directory: &std::path::Path) -> CaptureWriter {
+fn recording(database: &RideDatabase, directory: &Path) -> CaptureWriter {
     let writer = CaptureWriter::start_with_database(
         directory.join("private-original.jsonl"),
         WallClockUnixTimestamp::new(1_700_000_000_000),
@@ -163,7 +173,7 @@ fn retain(database: &RideDatabase, receipt: &SavedDatabaseCapture, origin: Captu
         .unwrap();
 }
 
-fn gps_recording(database: &RideDatabase, directory: &std::path::Path) -> LiveCaptureId {
+fn gps_recording(database: &RideDatabase, directory: &Path) -> LiveCaptureId {
     let writer = recording(database, directory);
     assert_eq!(
         writer.record_location(
@@ -477,6 +487,750 @@ fn capture_submission_explicit_send_retains_raw_bytes_and_validates_receipt() {
 }
 
 #[test]
+fn matching_receipt_authorizes_bounded_reopenable_local_payload_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    let source_artifact_id = receipt.artifact_id();
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    database
+        .save_capture_evidence(
+            CaptureSubmissionSource::LiveCapture(id),
+            CaptureAttachments {
+                note: "private attachment note".into(),
+                screenshots: vec![cutout_core::CaptureScreenshot {
+                    jpeg: vec![0xff, 0xd8, 0xff, 0xd9],
+                }],
+            },
+        )
+        .unwrap();
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(
+        sent.local_payload_state,
+        CaptureSubmissionLocalPayloadState::RemovalPending
+    );
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let mut cursor = None;
+    for _ in 0..4 {
+        if cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap()
+            == crate::storage::normalization::BatchState::Finished
+        {
+            break;
+        }
+    }
+    let status_json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&prepared.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let status = decode_status(&status_json).unwrap();
+    assert_cleanup_retains_receipt_and_catalog(
+        &connection,
+        &status,
+        id,
+        &source_artifact_id,
+        &prepared,
+    );
+    drop(connection);
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    let recovered = reopened
+        .capture_submission(CaptureSubmissionSource::RecordedArtifact(
+            source_artifact_id,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recovered.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    let deleted = ready(reopened.delete_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(deleted.phase, CaptureSubmissionPhase::Deleted);
+    assert!(
+        deleted.receipt.is_some(),
+        "server deletion keeps the receipt detail reachable"
+    );
+}
+
+fn assert_cleanup_retains_receipt_and_catalog(
+    connection: &Connection,
+    status: &CaptureSubmissionStatus,
+    id: LiveCaptureId,
+    source_artifact_id: &CaptureArtifactId,
+    prepared: &CaptureSubmissionStatus,
+) {
+    assert_eq!(
+        status.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert_eq!(status.phase, CaptureSubmissionPhase::Sent);
+    let capture_id = id.to_string();
+    assert_eq!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM live_capture_sessions WHERE capture_id = ?1",
+                [&capture_id],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        1,
+        "the recording catalog row remains"
+    );
+    assert_eq!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+                [&capture_id],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        0,
+        "event payload rows are removed"
+    );
+    assert_eq!(
+        connection
+            .query_row::<i64, _, _>("SELECT COUNT(*) FROM pevcap_capture_chunks", [], |row| row
+                .get(0),)
+            .unwrap(),
+        0,
+        "snapshot and original archive chunks are removed"
+    );
+    assert_eq!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM capture_evidence WHERE source_artifact_id = ?1",
+                [source_artifact_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        0,
+        "source evidence JSON is removed"
+    );
+    assert_eq!(
+        connection
+            .query_row::<Option<String>, _, _>(
+                "SELECT evidence_json FROM capture_submissions WHERE operation_id = ?1",
+                [&prepared.operation_id],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        None,
+        "submission evidence JSON copy is removed"
+    );
+    assert!(
+        status.metadata.evidence.is_some(),
+        "receipt metadata retains the evidence manifest"
+    );
+    assert!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM pevcap_imports WHERE artifact_digest = ?1",
+                [prepared.metadata.capture_sha256()],
+                |row| row.get(0),
+            )
+            .unwrap()
+            > 0,
+        "import metadata remains for the submission foreign key"
+    );
+}
+
+#[test]
+fn confirmed_send_makes_local_capture_export_unavailable() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let transport = Transport::default();
+    ready(database.send_capture_submission(&prepared.operation_id, ACCOUNT, "secret", &transport))
+        .unwrap();
+    let recorded_destination = directory.path().join("after-send-recorded.jsonl");
+    assert!(matches!(
+        database.export_recorded_capture(receipt.artifact_id(), &recorded_destination),
+        Err(StorageError::CapturePayloadUnavailable)
+    ));
+    assert!(!recorded_destination.exists());
+    let destination = directory.path().join("after-send.jsonl");
+    assert!(database.export_live_capture(id, &destination).is_err());
+    assert!(
+        !destination.exists(),
+        "unavailable data never publishes a partial export"
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn confirmed_send_wakes_finished_worker_maintenance() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let mut connection = Connection::open(&path).unwrap();
+    super::super::configure_connection(&mut connection, &path).unwrap();
+    connection.execute_batch(
+        "UPDATE storage_normalization_progress SET semantic_complete = 1, artifact_complete = 1,
+            compaction_pending = 0, compaction_complete = 1;
+         UPDATE bms_voltage_backfill_progress SET complete = 1;"
+    ).unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &Transport::default(),
+    ))
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let status = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+            .unwrap()
+            .unwrap();
+        if status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            database.shutdown().unwrap();
+            panic!("confirmed Send did not wake completed worker maintenance");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+            .unwrap()
+            .unwrap()
+            .receipt
+            .is_some()
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn sent_sidecar_is_archived_before_cleanup_can_remove_its_backfill_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+
+    let exported = directory.path().join("canonical-before-send.jsonl");
+    database
+        .export_pevcap_capture(prepared.metadata.capture_sha256(), &exported)
+        .unwrap();
+    let canonical_bytes = std::fs::read(&exported).unwrap();
+    database.shutdown().unwrap();
+
+    let digest = prepared.metadata.capture_sha256();
+    let sidecar = seed_sent_managed_sidecar(&database_path, &prepared, &canonical_bytes);
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let status = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+            .unwrap()
+            .unwrap();
+        let connection = Connection::open(&database_path).unwrap();
+        let artifact_complete: bool = connection
+            .query_row(
+                "SELECT artifact_complete FROM storage_normalization_progress WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed
+            && artifact_complete
+            && !sidecar.exists()
+        {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            database.shutdown().unwrap();
+            panic!("Sent sidecar was not normalized before local payload cleanup");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&database_path).unwrap();
+    assert_eq!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap(),
+        0,
+        "archive normalization must not resurrect removed Sent payload"
+    );
+    let status_json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&prepared.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let status = decode_status(&status_json).unwrap();
+    assert_eq!(status.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(
+        status.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert!(
+        status.receipt.is_some(),
+        "the receipt remains available after cleanup"
+    );
+}
+
+fn seed_sent_managed_sidecar(
+    database_path: &Path,
+    prepared: &CaptureSubmissionStatus,
+    canonical_bytes: &[u8],
+) -> PathBuf {
+    let digest = prepared.metadata.capture_sha256();
+    let mut managed_directory = database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = PathBuf::from(managed_directory);
+    std::fs::create_dir_all(&managed_directory).unwrap();
+    let sidecar = managed_directory.join(format!("{digest}.jsonl"));
+    std::fs::write(&sidecar, canonical_bytes).unwrap();
+
+    let mut status = serde_json::to_value(prepared).unwrap();
+    status["phase"] = serde_json::json!("sent");
+    status["local_payload_state"] = serde_json::json!("removal_pending");
+    status["account_id"] = serde_json::json!(ACCOUNT);
+    status["receipt"] = serde_json::json!({
+        "operation_id": prepared.operation_id,
+        "sha256": prepared.metadata.sha256,
+        "bytes": prepared.metadata.bytes,
+        "received_at_milliseconds": 1_700_000_002_000_u64,
+    });
+
+    let connection = Connection::open(database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE capture_submissions SET status_json = ?2 WHERE operation_id = ?1",
+            rusqlite::params![prepared.operation_id, status.to_string()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE pevcap_imports SET artifact_path = ?2, artifact_size = ?3
+         WHERE artifact_digest = ?1",
+            rusqlite::params![
+                digest,
+                sidecar.to_string_lossy(),
+                i64::try_from(canonical_bytes.len()).unwrap(),
+            ],
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "UPDATE storage_normalization_progress SET semantic_complete = 1,
+            artifact_complete = 0, compaction_pending = 0, compaction_complete = 1;
+         UPDATE bms_voltage_backfill_progress SET complete = 1;",
+        )
+        .unwrap();
+    sidecar
+}
+
+#[test]
+fn invalid_persisted_receipt_never_authorizes_local_payload_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let mut invalid_sent = serde_json::to_value(&prepared).unwrap();
+    invalid_sent["phase"] = serde_json::json!("sent");
+    invalid_sent["local_payload_state"] = serde_json::json!("removal_pending");
+    invalid_sent["account_id"] = serde_json::json!(ACCOUNT);
+    invalid_sent["receipt"] = serde_json::json!({
+        "operation_id": prepared.operation_id,
+        "sha256": "f".repeat(64),
+        "bytes": prepared.metadata.bytes,
+        "received_at_milliseconds": 1_700_000_002_000_u64,
+    });
+    connection
+        .execute(
+            "UPDATE capture_submissions SET status_json = ?2 WHERE operation_id = ?1",
+            rusqlite::params![prepared.operation_id, invalid_sent.to_string()],
+        )
+        .unwrap();
+    let mut cursor = None;
+    assert_eq!(
+        cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap(),
+        crate::storage::normalization::BatchState::Finished,
+        "an invalid receipt cannot authorize cleanup or keep maintenance pending",
+    );
+    assert!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+                [id.to_string()],
+                |row| row.get(0)
+            )
+            .unwrap()
+            > 0
+    );
+}
+
+#[test]
+fn unsent_submission_sharing_capture_keeps_shared_local_payload() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let mut shared = prepared.clone();
+    shared.operation_id = Uuid::new_v4().to_string();
+    shared.metadata.provenance.source_artifact_id = Uuid::new_v4().to_string();
+    let connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let shared_json = serde_json::to_string(&shared).unwrap();
+    connection
+        .execute(
+            "INSERT INTO capture_submissions
+         (source_artifact_id, operation_id, snapshot_digest, status_json)
+         VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                shared.metadata.provenance.source_artifact_id,
+                shared.operation_id,
+                shared.metadata.capture_sha256(),
+                shared_json,
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+
+    let mut cursor = None;
+    assert_eq!(
+        cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap(),
+        crate::storage::normalization::BatchState::Finished,
+    );
+    assert!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+                [id.to_string()],
+                |row| row.get(0)
+            )
+            .unwrap()
+            > 0
+    );
+    assert!(
+        connection
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
+                [&prepared.metadata.capture_sha256()],
+                |row| row.get(0)
+            )
+            .unwrap()
+            > 0
+    );
+    let shared_json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&shared.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        decode_status(&shared_json).unwrap().phase,
+        CaptureSubmissionPhase::Prepared
+    );
+    let json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&prepared.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        decode_status(&json).unwrap().local_payload_state,
+        CaptureSubmissionLocalPayloadState::RemovalPending,
+    );
+}
+
+#[test]
+fn local_cleanup_does_not_invalidate_in_flight_remote_delete() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let transport = Transport::default();
+    ready(database.send_capture_submission(&prepared.operation_id, ACCOUNT, "secret", &transport))
+        .unwrap();
+
+    transport.pause_delete.store(true, Ordering::Release);
+    let mut deletion = Box::pin(database.delete_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ));
+    assert!(poll_once(deletion.as_mut()).is_pending());
+    assert_eq!(
+        transport.deleted.lock().unwrap().as_slice(),
+        std::slice::from_ref(&prepared.operation_id),
+        "Delete has been submitted and is waiting for its remote result",
+    );
+
+    let deletion_pending_json: String = {
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .query_row(
+                "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+                [&prepared.operation_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let deletion_pending = decode_status(&deletion_pending_json).unwrap();
+    assert_eq!(
+        deletion_pending.phase,
+        CaptureSubmissionPhase::DeletionPending
+    );
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    // Reproduce a historical cleanup candidate after Delete has captured its
+    // revision. Maintenance changes only local payload state, so it must not
+    // invalidate the in-flight remote deletion.
+    connection
+        .execute(
+            "UPDATE capture_submissions
+             SET status_json = json_set(status_json, '$.local_payload_state', 'removal_pending')
+             WHERE operation_id = ?1",
+            [&prepared.operation_id],
+        )
+        .unwrap();
+    let mut cursor = None;
+    assert_eq!(
+        cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap(),
+        crate::storage::normalization::BatchState::Pending,
+    );
+    let after_maintenance_json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&prepared.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let after_maintenance = decode_status(&after_maintenance_json).unwrap();
+    assert_eq!(
+        after_maintenance.phase,
+        CaptureSubmissionPhase::DeletionPending
+    );
+    assert_eq!(
+        after_maintenance.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert_eq!(after_maintenance.revision, deletion_pending.revision);
+    drop(connection);
+
+    transport.pause_delete.store(false, Ordering::Release);
+    let deleted = ready(deletion).unwrap();
+    assert_eq!(deleted.phase, CaptureSubmissionPhase::Deleted);
+    assert_eq!(
+        transport.deleted.lock().unwrap().as_slice(),
+        std::slice::from_ref(&prepared.operation_id)
+    );
+    assert_eq!(
+        deleted.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert!(deleted.receipt.is_some());
+}
+
+#[test]
+fn metadata_invalid_rows_before_page_limit_do_not_starve_later_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let transport = Transport::default();
+    let mut target = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let invalid_digest = format!("{:064x}", 1);
+    connection.execute(
+        "INSERT INTO pevcap_imports
+         (artifact_digest, artifact_path, ride_id, outcome, artifact_size, record_count, location_count, imported_at_ms)
+         VALUES (?1, NULL, NULL, 'capture_only', 0, 0, 0, 1)",
+        [&invalid_digest],
+    ).unwrap();
+
+    // Put the only valid cleanup after more metadata-invalid, otherwise valid
+    // receipt rows than the helper's bounded candidate page.
+    target.operation_id = "ffffffff-ffff-4fff-bfff-ffffffffffff".into();
+    target.receipt.as_mut().unwrap().operation_id = target.operation_id.clone();
+    let target_json = serde_json::to_string(&target).unwrap();
+    connection.execute(
+        "UPDATE capture_submissions SET operation_id = ?2, status_json = ?3 WHERE operation_id = ?1",
+        rusqlite::params![prepared.operation_id, target.operation_id, target_json],
+    ).unwrap();
+
+    for n in 1..=70_u128 {
+        let operation_id = format!("00000000-0000-4000-8000-{n:012x}");
+        let source_artifact_id = Uuid::new_v4().to_string();
+        let mut invalid = target.clone();
+        invalid.operation_id.clone_from(&operation_id);
+        invalid.metadata.sha256.clone_from(&invalid_digest);
+        invalid.metadata.bytes = 0;
+        invalid
+            .metadata
+            .provenance
+            .source_artifact_id
+            .clone_from(&source_artifact_id);
+        invalid.metadata.provenance.source_sha256 = None;
+        invalid.metadata.provenance.live_capture_id = None;
+        invalid.receipt.as_mut().unwrap().operation_id = operation_id.clone();
+        invalid
+            .receipt
+            .as_mut()
+            .unwrap()
+            .sha256
+            .clone_from(&invalid_digest);
+        invalid.receipt.as_mut().unwrap().bytes = 0;
+        // Receipt fields match, but zero-byte metadata is invalid under the
+        // typed Rust validator. These rows have unrelated payload identities.
+        let status_json = serde_json::to_string(&invalid).unwrap();
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+             (source_artifact_id, operation_id, snapshot_digest, status_json)
+             VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    source_artifact_id,
+                    operation_id,
+                    invalid_digest,
+                    status_json
+                ],
+            )
+            .unwrap();
+    }
+
+    let mut cursor = None;
+    for _ in 0..4 {
+        cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap();
+        let removed: bool = connection
+            .query_row(
+                "SELECT json_extract(status_json, '$.local_payload_state') = 'removed'
+             FROM capture_submissions WHERE operation_id = ?1",
+                [&target.operation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if removed {
+            break;
+        }
+    }
+    let cleaned_json: String = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&target.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        decode_status(&cleaned_json).unwrap().local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed,
+    );
+}
+
+#[test]
 fn capture_submission_lost_response_retry_recovers_same_receipt_without_reupload() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
@@ -627,7 +1381,7 @@ fn capture_submission_cancel_during_receipt_lookup_does_not_start_upload() {
 }
 
 #[test]
-fn capture_submission_sent_delete_requires_owner_and_preserves_local_capture() {
+fn capture_submission_sent_delete_requires_owner_and_preserves_receipt() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     let (id, receipt) = finished(recording(&database, directory.path()));
@@ -680,9 +1434,16 @@ fn capture_submission_sent_delete_requires_owner_and_preserves_local_capture() {
         .phase,
         CaptureSubmissionPhase::Deleted
     );
-    let path = directory.path().join("original-still-exportable.jsonl");
-    database.export_live_capture(id, &path).unwrap();
-    assert_ne!(std::fs::read(path).unwrap(), [] as [u8; 0]);
+    let path = directory.path().join("removed-after-confirmed-send.jsonl");
+    assert!(database.export_live_capture(id, &path).is_err());
+    assert!(!path.exists());
+    let status = database
+        .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.phase, CaptureSubmissionPhase::Deleted);
+    assert!(status.receipt.is_some());
+    database.shutdown().unwrap();
 }
 
 #[test]
@@ -1057,11 +1818,16 @@ fn capture_notes_screenshots_survive_save_reopen_and_exact_send() {
     );
     let decoded: CaptureAttachments = serde_json::from_slice(&bytes[raw_length..]).unwrap();
     assert_eq!(decoded, edited);
-    assert_eq!(database.capture_evidence(source).unwrap(), edited);
+    assert!(sent.metadata.evidence.is_some());
+    assert!(matches!(
+        sent.local_payload_state,
+        CaptureSubmissionLocalPayloadState::RemovalPending
+            | CaptureSubmissionLocalPayloadState::Removed
+    ));
 }
 
 #[test]
-fn capture_evidence_v49_migration_preserves_existing_receipt_and_raw_capture() {
+fn capture_evidence_v49_migration_preserves_receipt_metadata_and_removes_local_payload() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ride.sqlite");
     let database = RideDatabase::open(&path).unwrap();
@@ -1081,18 +1847,30 @@ fn capture_evidence_v49_migration_preserves_existing_receipt_and_raw_capture() {
     connection.execute_batch("BEGIN; ALTER TABLE capture_submissions RENAME TO current_submissions; CREATE TABLE capture_submissions(source_artifact_id TEXT PRIMARY KEY NOT NULL, operation_id TEXT NOT NULL UNIQUE, snapshot_digest TEXT NOT NULL REFERENCES pevcap_imports(artifact_digest), status_json TEXT NOT NULL CHECK(json_valid(status_json)) CHECK(json_extract(status_json, '$.metadata.sha256') = snapshot_digest)); INSERT INTO capture_submissions SELECT source_artifact_id,operation_id,snapshot_digest,status_json FROM current_submissions; DROP TABLE current_submissions; DROP TABLE capture_evidence; PRAGMA user_version=49; COMMIT;").unwrap();
     drop(connection);
     let reopened = RideDatabase::open(&path).unwrap();
-    assert_eq!(reopened.capture_submission(source).unwrap().unwrap(), sent);
+    let migrated = reopened.capture_submission(source).unwrap().unwrap();
+    assert_eq!(migrated.phase, sent.phase);
+    assert_eq!(migrated.metadata, sent.metadata);
+    assert_eq!(migrated.account_id, sent.account_id);
+    assert_eq!(migrated.receipt, sent.receipt);
+    assert_eq!(migrated.revision, sent.revision);
+    assert!(matches!(
+        migrated.local_payload_state,
+        CaptureSubmissionLocalPayloadState::RemovalPending
+            | CaptureSubmissionLocalPayloadState::Removed
+    ));
     assert_eq!(
         reopened.capture_evidence(source).unwrap(),
         CaptureAttachments::default()
     );
     let raw = directory.path().join("original.jsonl");
-    reopened
-        .export_pevcap_capture(&sent.metadata.sha256, &raw)
-        .unwrap();
-    assert_eq!(
-        cutout_core::capture_evidence_digest(&std::fs::read(raw).unwrap()),
-        sent.metadata.sha256
+    assert!(
+        reopened
+            .export_pevcap_capture(&sent.metadata.sha256, &raw)
+            .is_err()
+    );
+    assert!(
+        !raw.exists(),
+        "a sent capture is unavailable for local export"
     );
 }
 

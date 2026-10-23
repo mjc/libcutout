@@ -127,7 +127,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         let lateSent = status(.sent)
         let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
         let entered = expectation(description: "Send is in flight")
-        let gate = CaptureSubmissionSendGate(entered: entered)
+        let gate = CaptureOperationGate(entered: entered)
         var sends = 0
         let source = MobileCaptureSubmissionSourceDto.liveCapture(id: UUID().uuidString)
         let model = CaptureSubmissionModel(
@@ -207,8 +207,8 @@ final class CaptureSubmissionModelTests: XCTestCase {
         let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
         let uploading = expectation(description: "Partial upload")
         let verifying = expectation(description: "Body uploaded; receipt pending")
-        let uploadGate = CaptureSubmissionSendGate(entered: uploading)
-        let receiptGate = CaptureSubmissionSendGate(entered: verifying)
+        let uploadGate = CaptureOperationGate(entered: uploading)
+        let receiptGate = CaptureOperationGate(entered: verifying)
         let sent = status(.sent)
         let model = CaptureSubmissionModel(
             source: .liveCapture(id: UUID().uuidString), loadStatus: { _ in prepared },
@@ -246,7 +246,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         let cancelled = status(.cancelled)
         let credential = ChargingCommunityCredential(identityID: UUID().uuidString, token: "test-token")
         let entered = expectation(description: "Retry uploading")
-        let gate = CaptureSubmissionSendGate(entered: entered)
+        let gate = CaptureOperationGate(entered: entered)
         var callbacks: [CaptureSubmissionModel.Progress] = []
         let model = CaptureSubmissionModel(
             source: .liveCapture(id: UUID().uuidString), loadStatus: { _ in prepared },
@@ -306,9 +306,34 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertEqual(export.fileURL, shared)
         XCTAssertEqual(exports, 1)
     }
+
+    func testInvalidatedExportRequestsCleanupAfterItsStaleFileCompletes() async {
+        let entered = expectation(description: "Export started")
+        let cleanupCompleted = expectation(description: "Receipt-aware cleanup completed")
+        let gate = CaptureOperationGate(entered: entered)
+        let destination = URL(fileURLWithPath: "/tmp/stale-share-capture.jsonl")
+        let export = CaptureExportModel(
+            sourceExport: { _ in
+                await gate.suspend()
+                return destination
+            },
+            staleExportCleanup: {
+                cleanupCompleted.fulfill()
+            }
+        )
+
+        let pendingExport = Task { await export.export(source: URL(fileURLWithPath: "/tmp/local-capture.jsonl")) }
+        await fulfillment(of: [entered], timeout: 2)
+        export.invalidate()
+        await gate.release()
+        await pendingExport.value
+
+        XCTAssertNil(export.fileURL, "The completed stale export must not become shareable")
+        await fulfillment(of: [cleanupCompleted], timeout: 2)
+    }
 }
 
-private actor CaptureSubmissionSendGate {
+private actor CaptureOperationGate {
     let entered: XCTestExpectation
     private var continuation: CheckedContinuation<Void, Never>?
 
