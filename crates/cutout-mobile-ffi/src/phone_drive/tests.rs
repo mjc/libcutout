@@ -193,7 +193,7 @@ fn phone_drive_ffi_discards_a_completed_sql_load_after_attempt_replacement() {
     let loading_handle = handle.clone();
     let loading_database = database.clone();
     let load = std::thread::spawn(move || {
-        load_phone_drive_preferences_with(&loading_handle, first, |identity| {
+        load_phone_drive_preferences_with(&loading_handle, &first, |identity| {
             let record = loading_database
                 .inner
                 .phone_drive_preferences(identity)
@@ -363,10 +363,10 @@ fn phone_drive_ffi_rejects_a_save_completion_after_same_attempt_cancellation() {
     let save = std::thread::spawn(move || {
         save_phone_drive_preferences_with(
             &saving_handle,
-            saving_token,
+            &saving_token,
             MobilePhoneControlModeDto::Buttons,
-            "7".into(),
-            "4".into(),
+            "7",
+            "4",
             |identity, record| {
                 saving_database
                     .inner

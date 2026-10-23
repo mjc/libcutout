@@ -467,7 +467,7 @@ fn validate_phone_drive_target(
 
 fn load_phone_drive_preferences_with(
     handle: &CutoutSessionStateHandle,
-    token: MobileConnectionAttemptTokenDto,
+    token: &MobileConnectionAttemptTokenDto,
     load: impl FnOnce(&str) -> Result<persistence::PhoneDriveSettingsRecord, MobilePhoneControlError>,
 ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
     let _ordering = handle
@@ -477,11 +477,11 @@ fn load_phone_drive_preferences_with(
     let attempt: core::ConnectionAttemptToken = token.clone().into();
     {
         let owner = handle.lock_inner();
-        validate_phone_drive_target(&owner, &token, &attempt)?;
+        validate_phone_drive_target(&owner, token, &attempt)?;
     }
     let preferences = load(&token.platform_identifier)?;
     let mut owner = handle.lock_inner();
-    validate_phone_drive_target(&owner, &token, &attempt)?;
+    validate_phone_drive_target(&owner, token, &attempt)?;
     if !owner.apply_phone_drive_preferences(&attempt, preferences.mode(), preferences.limits()) {
         return Err(MobilePhoneControlError::DeviceChanged);
     }
@@ -490,10 +490,10 @@ fn load_phone_drive_preferences_with(
 
 fn save_phone_drive_preferences_with(
     handle: &CutoutSessionStateHandle,
-    token: MobileConnectionAttemptTokenDto,
+    token: &MobileConnectionAttemptTokenDto,
     mode: MobilePhoneControlModeDto,
-    throttle_amps_text: String,
-    brake_amps_text: String,
+    throttle_amps_text: &str,
+    brake_amps_text: &str,
     save: impl FnOnce(
         &str,
         persistence::PhoneDriveSettingsRecord,
@@ -506,7 +506,7 @@ fn save_phone_drive_preferences_with(
     let attempt: core::ConnectionAttemptToken = token.clone().into();
     let expected_input_generation = {
         let mut owner = handle.lock_inner();
-        validate_phone_drive_target(&owner, &token, &attempt)?;
+        validate_phone_drive_target(&owner, token, &attempt)?;
         if !owner.phone_drive_settings_are_presented(&attempt) {
             return Err(MobilePhoneControlError::SettingsNotPresented);
         }
@@ -519,7 +519,7 @@ fn save_phone_drive_preferences_with(
             .generation
             .ok_or(MobilePhoneControlError::DeviceChanged)?
     };
-    let limits = core::PhoneDriveLimits::from_amp_text(&throttle_amps_text, &brake_amps_text)
+    let limits = core::PhoneDriveLimits::from_amp_text(throttle_amps_text, brake_amps_text)
         .map_err(|_| MobilePhoneControlError::InvalidLimits)?;
     let mode = mode.into();
     save(
@@ -527,7 +527,7 @@ fn save_phone_drive_preferences_with(
         persistence::PhoneDriveSettingsRecord::new(mode, limits),
     )?;
     let mut owner = handle.lock_inner();
-    validate_phone_drive_target(&owner, &token, &attempt)?;
+    validate_phone_drive_target(&owner, token, &attempt)?;
     if !owner.phone_drive_settings_are_presented(&attempt) {
         return Err(MobilePhoneControlError::SettingsNotPresented);
     }
@@ -564,7 +564,7 @@ impl CutoutSessionStateHandle {
             .diagnostic_database
             .as_ref()
             .ok_or(MobilePhoneControlError::PersistenceUnavailable)?;
-        load_phone_drive_preferences_with(self, token, |identity| {
+        load_phone_drive_preferences_with(self, &token, |identity| {
             database.phone_drive_preferences(identity).map_err(|error| {
                 MobilePhoneControlError::Persistence {
                     error: crate::map_ride_database_error(error),
@@ -590,10 +590,10 @@ impl CutoutSessionStateHandle {
             .ok_or(MobilePhoneControlError::PersistenceUnavailable)?;
         save_phone_drive_preferences_with(
             self,
-            token,
+            &token,
             mode,
-            throttle_amps_text,
-            brake_amps_text,
+            &throttle_amps_text,
+            &brake_amps_text,
             |identity, record| {
                 database
                     .save_phone_drive_preferences(identity, record)
