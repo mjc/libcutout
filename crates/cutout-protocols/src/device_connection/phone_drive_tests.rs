@@ -213,7 +213,7 @@ fn phone_drive_platform_cancellation_requires_explicit_reactivation_in_a_fresh_i
 }
 
 #[test]
-fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_disarms_input() {
+fn phone_drive_settings_sheet_disarms_input_until_dismissal_and_fresh_all_up() {
     let (mut owner, first_token, _) = active();
     let first_settings = owner.phone_drive_input_snapshot().mode;
     assert_eq!(first_settings, PhoneControlMode::Buttons);
@@ -278,7 +278,11 @@ fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_dis
         at(3_003),
     )
     .unwrap();
+}
 
+#[test]
+fn phone_drive_preferences_are_bound_to_the_exact_attempt() {
+    let (mut owner, first_token, _) = active();
     let replacement = begin(&mut owner, "another-board");
     assert_eq!(
         owner.phone_drive_input_snapshot().mode,

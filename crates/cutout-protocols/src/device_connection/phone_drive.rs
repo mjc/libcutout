@@ -489,12 +489,7 @@ impl DeviceConnectionSession {
         mode: PhoneControlMode,
         limits: PhoneDriveLimits,
     ) -> bool {
-        if !self.state.connection.is_verified(token)
-            || matches!(
-                self.phone_drive_availability(),
-                PhoneDriveAvailability::Unavailable(_)
-            )
-        {
+        if !self.phone_drive_target_is_current(token) {
             return false;
         }
         if self.phone_drive_input_snapshot().mode != mode {
@@ -511,11 +506,12 @@ impl DeviceConnectionSession {
     /// Whether this attempt is currently eligible to show device-scoped phone settings.
     #[must_use]
     pub fn phone_drive_target_is_current(&self, token: &ConnectionAttemptToken) -> bool {
-        self.state.connection.is_verified(token)
-            && !matches!(
-                self.phone_drive_availability(),
-                PhoneDriveAvailability::Unavailable(_)
-            )
+        match self.phone_drive_availability() {
+            PhoneDriveAvailability::Unavailable(_) => false,
+            PhoneDriveAvailability::Ready | PhoneDriveAvailability::Active(_) => {
+                self.state.connection.is_verified(token)
+            }
+        }
     }
 
     /// Whether the full saved configuration belongs to this verified attempt.
