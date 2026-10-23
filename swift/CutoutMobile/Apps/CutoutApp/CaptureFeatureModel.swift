@@ -528,6 +528,9 @@ final class CaptureExportModel {
                 return
             }
             fileURL = exported
+        } catch MobileRideDatabaseError.CapturePayloadUnavailable {
+            guard generation == exportGeneration else { return }
+            self.error = localizedAppText("captures.file_unavailable")
         } catch {
             guard generation == exportGeneration else { return }
             self.error = error.localizedDescription

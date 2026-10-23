@@ -33,7 +33,8 @@ class DiagnosticCapturePanel(
         if (!disposed) { captureState = next; scheduleRender() }
     }
     private val bleObserver = bluetooth.addObserver { next ->
-        val relevantChange = next.phase != bleState.phase || next.devices.map { it.id to (it.advertisedName ?: it.name) } !=
+        val relevantChange = next.phase != bleState.phase || next.session?.connection != bleState.session?.connection ||
+            next.devices.map { it.id to (it.advertisedName ?: it.name) } !=
             bleState.devices.map { it.id to (it.advertisedName ?: it.name) }
         if (!disposed) { bleState = next; if (relevantChange) scheduleRender() }
     }

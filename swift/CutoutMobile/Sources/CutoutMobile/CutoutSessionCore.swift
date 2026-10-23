@@ -1055,7 +1055,7 @@ public final class CutoutSessionCore: NSObject {
             }
         #endif
         return onBleQueue {
-            if let active = connectionAttempt {
+            if let active = connectionAttempt, active.peripheral.state != .disconnected {
                 guard active.token.platformIdentifier == platformIdentifier,
                     active.peripheral.state == .connected,
                     rustSessionState.connectionAttemptIsCurrent(token: active.token)
