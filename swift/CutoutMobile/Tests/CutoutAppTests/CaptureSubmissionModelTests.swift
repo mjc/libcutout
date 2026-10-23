@@ -12,7 +12,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         -> MobileCaptureSubmissionStatusDto
     {
         MobileCaptureSubmissionStatusDto(
-            operationId: operationID, phase: phase,
+            operationId: operationID, phase: phase, localPayloadState: .retained,
             categories: MobileCaptureSubmissionCategoriesDto(
                 deviceIdentifiers: true, location: false, notes: true, annotations: true, settingsObservations: false
             ), droppedMessages: 2, byteCount: 100, receipt: nil, failure: nil

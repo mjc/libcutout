@@ -2486,12 +2486,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             let capture = CaptureRecorderSpy()
             let core = CutoutSessionCore(
                 clock: MonotonicClock { now.withLock { $0 } },
-                captureRecorder: capture,
                 testScript: CutoutSessionTestScript(
                     candidate: candidate, telemetry: nil, connectionDelayMilliseconds: 60_000
                 ),
                 reconnectScheduler: scheduler,
-                reconnectJitter: { 0 }
+                reconnectJitter: { 0 },
+                captureRecorder: capture
             )
             defer { core.disconnectAndScan() }
             core.start()

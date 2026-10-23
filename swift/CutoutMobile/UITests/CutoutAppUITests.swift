@@ -2807,8 +2807,19 @@ final class CutoutAppUITests: XCTestCase {
 
     func testFinishCaptureOpensSavedArtifactAndShareSheet() throws {
         _ = try finishCaptureAndOpenArtifact()
-        let share = app.descendants(matching: .any)["captures.share"]
-        XCTAssertTrue(share.isHittable)
+        let prepareShare = app.buttons["captures.share"]
+        let prepareReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate {
+                _, _ in prepareShare.exists && prepareShare.isEnabled && prepareShare.isHittable
+            }, object: prepareShare
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [prepareReady], timeout: 10), .completed, app.debugDescription)
+        prepareShare.tap()
+        let share = app.buttons["captures.share.link"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in share.exists && share.isEnabled && share.isHittable }, object: share
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
         share.tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
     }
@@ -2854,7 +2865,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(disclosure.label.contains("raw Bluetooth evidence"), disclosure.label)
         XCTAssertTrue(disclosure.label.contains("event order and timing"), disclosure.label)
         XCTAssertTrue(disclosure.label.contains("device and platform identifiers"), disclosure.label)
-        XCTAssertTrue(disclosure.label.contains("Your original recording stays on this device."), disclosure.label)
+        XCTAssertTrue(
+            disclosure.label.contains("A matching receipt starts removal of the local capture payload."),
+            disclosure.label)
         let decline = app.buttons["Not now"]
         if decline.waitForExistence(timeout: 2) {
             waitForReady(decline)
@@ -3174,7 +3187,7 @@ final class CutoutAppUITests: XCTestCase {
         finish.tap()
         let detail = app.descendants(matching: .any)["captures.detail"]
         XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
-        let share = app.descendants(matching: .any)["captures.share"]
+        let share = app.buttons["captures.share"]
         scrollElementFrameIntoViewport(share, in: detail, maxScrolls: 8)
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].exists)
         retainCaptureScreenshot("Saved capture")

@@ -124,8 +124,7 @@ public enum RustPersistenceStore {
             }.value
             if result.0 > 0 {
                 logger.info(
-                    "Removed \(result.0, privacy: .public) duplicate managed capture files "
-                        + "(\(result.1, privacy: .public) bytes)"
+                    "Removed \(result.0, privacy: .public) duplicate managed capture files (\(result.1, privacy: .public) bytes)"
                 )
             }
         } catch {
