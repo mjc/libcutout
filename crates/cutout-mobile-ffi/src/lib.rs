@@ -11472,11 +11472,11 @@ impl MobileRideMapCore {
             0
         };
 
-        let autostart_enabled = state.ride_autostart_enabled()?;
         let should_auto_record = state.database.is_some()
             && !connection_generation_consumed
             && state.automatic_policy_for_vehicle(identity.as_str())?
                 == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume;
+        let autostart_enabled = should_auto_record && state.ride_autostart_enabled()?;
         if should_auto_record {
             plan_verified_connection_auto_recording(
                 &mut selected_preview,
@@ -29814,6 +29814,43 @@ mod tests {
             .expect("the original ride snapshot remains available");
         assert_eq!(repeated, first);
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn manual_connection_admission_does_not_require_autostart_storage() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-manual-admission-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("DROP TABLE ride_recording_preferences;")
+            .unwrap();
+
+        let pending = state
+            .begin_verified_connection_admission(
+                "pev-1",
+                1_000,
+                1,
+                CoreMusicHistoryPolicy::Disabled,
+            )
+            .expect("manual admission does not read the unavailable autostart preference");
+        assert!(
+            state
+                .finish_verified_connection_admission(pending)
+                .unwrap()
+                .is_none()
+        );
+
+        database.shutdown().unwrap();
         let _ = fs::remove_file(path);
     }
 
