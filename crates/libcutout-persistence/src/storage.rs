@@ -3359,6 +3359,10 @@ impl RideDatabase {
     ///
     /// Call this only when an already accepted metadata/telemetry checkpoint is being written;
     /// it does not create an extra write for each device packet.
+    ///
+    /// # Errors
+    /// Returns a storage error when metadata is invalid, the ride is missing, or the worker
+    /// cannot commit the checkpoint and inactivity evidence together.
     #[allow(
         clippy::too_many_arguments,
         reason = "the metadata boundary keeps the complete checkpoint and evidence snapshot explicit"
@@ -5013,6 +5017,10 @@ impl RideDatabase {
     /// # Errors
     /// Returns a storage error for inconsistent motion evidence, queue saturation in bounded
     /// mode, or an unavailable worker.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the location boundary carries the sample, segment, and checkpoint atomically"
+    )]
     pub fn queue_location_with_checkpoint(
         &self,
         ride_id: RideId,
@@ -5034,6 +5042,10 @@ impl RideDatabase {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the location boundary carries the sample, segment, and checkpoint atomically"
+    )]
     fn queue_location_with_mode(
         &self,
         ride_id: RideId,
@@ -6812,16 +6824,16 @@ fn settle_recovered_ride_in_transaction(
 ) -> Result<Option<CommittedRideMovingTimeCheckpoint>, StorageError> {
     if discard_empty {
         transition_ride(
-            &transaction,
+            transaction,
             ride_id,
             RideEvent::Discard,
             occurred_at_ms,
             Some(monotonic_at_ms),
         )?;
     } else {
-        let write_state = load_ride_write_state(&transaction, ride_id)?;
+        let write_state = load_ride_write_state(transaction, ride_id)?;
         let interrupted_ride = if write_state.lifecycle() == RideLifecycleState::Interrupted {
-            find_ride(&transaction, ride_id)?
+            find_ride(transaction, ride_id)?
         } else {
             None
         };
@@ -6832,7 +6844,7 @@ fn settle_recovered_ride_in_transaction(
             if write_state.lifecycle() == RideLifecycleState::Interrupted {
                 if write_state.paused_at_milliseconds().is_some() {
                     Some(
-                        load_moving_time_checkpoint(&transaction, ride_id)?
+                        load_moving_time_checkpoint(transaction, ride_id)?
                             .elapsed_time
                             .summary(),
                     )
@@ -6867,7 +6879,7 @@ fn settle_recovered_ride_in_transaction(
             && write_state.paused_at_milliseconds().is_some()
         {
             transition_ride(
-                &transaction,
+                transaction,
                 ride_id,
                 RideEvent::Stop,
                 occurred_at_ms,
@@ -6875,7 +6887,7 @@ fn settle_recovered_ride_in_transaction(
             )?;
         }
         transition_ride(
-            &transaction,
+            transaction,
             ride_id,
             RideEvent::Save,
             occurred_at_ms,
@@ -6888,7 +6900,7 @@ fn settle_recovered_ride_in_transaction(
             )?;
         }
         if let Some(prefix) = interrupted_moving_prefix {
-            let checkpoint = load_moving_time_checkpoint(&transaction, ride_id)?;
+            let checkpoint = load_moving_time_checkpoint(transaction, ride_id)?;
             let mut parts = checkpoint.continuation.state_parts();
             parts.moving_milliseconds = prefix.moving.as_u64();
             parts.observed_milliseconds = prefix.observed.as_u64();
@@ -6909,7 +6921,7 @@ fn settle_recovered_ride_in_transaction(
                 }
             })?;
             save_moving_time_checkpoint(
-                &transaction,
+                transaction,
                 ride_id,
                 revision,
                 continuation,
@@ -6924,7 +6936,7 @@ fn settle_recovered_ride_in_transaction(
     }
     let replacement = replacement_candidate_vehicle.map(|candidate| {
         create_started_live_ride_in_transaction(
-            &transaction,
+            transaction,
             occurred_at_ms,
             monotonic_at_ms,
             Some(candidate),
@@ -6945,7 +6957,7 @@ fn settle_recovered_ride_in_transaction(
     };
     let committed = result_ride
         .map(|result_ride_id| {
-            committed_ride_moving_time_checkpoint(&transaction, result_ride_id, result_lifecycle)
+            committed_ride_moving_time_checkpoint(transaction, result_ride_id, result_lifecycle)
         })
         .transpose()?;
     Ok(committed)
