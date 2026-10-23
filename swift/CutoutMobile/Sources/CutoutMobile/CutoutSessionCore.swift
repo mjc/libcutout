@@ -1021,7 +1021,7 @@ public final class CutoutSessionCore: NSObject {
     @discardableResult
     public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
         #if DEBUG
-            if let testScript {
+            if let testScript, !testScript.startsLive {
                 guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
                 return onBleQueue {
                     guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
@@ -1041,6 +1041,25 @@ public final class CutoutSessionCore: NSObject {
             }
         #endif
         return onBleQueue {
+            if let active = connectionAttempt {
+                guard active.token.platformIdentifier == platformIdentifier,
+                    active.peripheral.state == .connected,
+                    rustSessionState.captureLifecycleSnapshot().canStart
+                else { return false }
+                let captureAnnotations =
+                    ["route=record_only"] + annotations
+                    + (note.map { [pevcapAnnotation(key: "user_note", value: $0)] } ?? [])
+                let started = startCapture(
+                    reason: note ?? "record-only",
+                    annotations: captureAnnotations,
+                    origin: .manual
+                )
+                if started {
+                    _ = acceptCaptureWrite(recordCaptureLinkUp())
+                    publishCaptureProgress()
+                }
+                return started
+            }
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             guard
@@ -1186,8 +1205,13 @@ public final class CutoutSessionCore: NSObject {
                 publishCaptureProgress()
                 return false
             }
-            // Admission and disconnect share the BLE queue turn: a replacement cannot interleave.
-            disconnectAndScanOnBleQueue()
+            // A capture borrowed by a live ride owns only its writer. A record-only
+            // route owns its transport and may release it when the user finishes.
+            if isRecordOnly {
+                disconnectAndScanOnBleQueue()
+            } else {
+                finishCaptureWriter()
+            }
             return true
         }
     }
@@ -2305,7 +2329,6 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        _ = startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -2577,10 +2600,6 @@ public final class CutoutSessionCore: NSObject {
                     )
                 }
                 self.publishConnectionSnapshot()
-                _ = self.startCapture(
-                    reason: "protocol-detection",
-                    annotations: ["intent=previously_connected"]
-                )
                 reconnect()
                 self.admittedRetryTokenForPreparation = nil
             }
@@ -2971,7 +2990,7 @@ public final class CutoutSessionCore: NSObject {
         reason: String,
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested",
-        origin: MobileCaptureOriginDto = .automatic
+        origin: MobileCaptureOriginDto
     ) -> Bool {
         guard let identity = rustSessionState.beginConsentedCapture(origin: origin) else { return false }
         let generation = CaptureGeneration(rawValue: identity.value)
@@ -3338,7 +3357,6 @@ extension CutoutSessionCore {
 
     @discardableResult
     fileprivate func prepareRestoredRide() -> Bool {
-        _ = startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()

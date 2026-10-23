@@ -53,7 +53,13 @@ class AndroidBleClient(
             state = { state },
             database = { (context.applicationContext as CutoutApplication).rides.databaseForNativeOwner() },
             postOwner = ::postOnOwner,
-            onFinishManual = { connection?.finishTransport(failed = false) },
+            onFinishManual = { token, ownership ->
+                val active = connection?.takeIf { it.token == token }
+                when (ownership) {
+                    CaptureTransportOwnership.BORROWED -> active?.captureLinkUp = false
+                    CaptureTransportOwnership.CAPTURE_OWNED -> active?.finishTransport(failed = false)
+                }
+            },
         )
     }
     // Saved editor drafts belong to this native owner, not merely a reusable attempt number.
@@ -261,15 +267,6 @@ class AndroidBleClient(
     private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto, recordOnly: Boolean = false) {
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
             session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL)
-        if (!recordOnly) {
-            val advertisement = found[device.address]?.second
-            diagnostics.start(
-                MobileCaptureOriginDto.AUTOMATIC, device.address,
-                advertisement?.advertisedServices ?: emptyList(),
-                advertisement?.advertisedName ?: runCatching { device.name }.getOrNull(),
-                null, token,
-            )
-        }
         val next = Connection(token, device, recordOnly)
         connection = next
         try {
@@ -302,7 +299,39 @@ class AndroidBleClient(
         completed: (Boolean) -> Unit,
     ) = postOnOwner {
         val selected = found[platformId]
-        if (selected == null || connection != null || !state.captureLifecycleSnapshot().canStart) {
+        if (forgettingSavedDevice || !state.captureLifecycleSnapshot().canStart) {
+            main.post { completed(false) }
+            return@postOnOwner
+        }
+        val active = connection
+        if (active != null) {
+            if (active.device.address != platformId ||
+                state.connectionAttemptSnapshot().transport != MobileConnectionTransportStateDto.CONNECTED ||
+                state.deviceSessionSnapshot().connection.readiness != MobileConnectionReadinessDto.VERIFIED) {
+                main.post { completed(false) }
+                return@postOnOwner
+            }
+            val annotation = listOfNotNull(note?.takeIf(String::isNotBlank), description?.takeIf(String::isNotBlank))
+                .joinToString(" — ").ifBlank { null }
+            val generation = diagnostics.start(
+                origin = MobileCaptureOriginDto.MANUAL,
+                platformId = platformId,
+                advertisedServices = selected?.second?.advertisedServices ?: emptyList(),
+                advertisedName = selected?.second?.advertisedName
+                    ?: view.session?.identity?.model
+                    ?: runCatching { active.device.name }.getOrNull(),
+                description = annotation,
+                connectionToken = active.token,
+                transportOwnership = CaptureTransportOwnership.BORROWED,
+            )
+            if (generation != null) {
+                diagnostics.linkUp(active.token, active.session.writeLimit.toInt())
+                active.captureLinkUp = diagnostics.hasWriter(active.token)
+            }
+            main.post { completed(generation != null) }
+            return@postOnOwner
+        }
+        if (selected == null) {
             main.post { completed(false) }
             return@postOnOwner
         }
@@ -327,6 +356,7 @@ class AndroidBleClient(
             advertisedName = selected.second.advertisedName,
             description = annotation,
             connectionToken = token,
+            transportOwnership = CaptureTransportOwnership.CAPTURE_OWNED,
         )
         if (generation == null) {
             state.disconnectConnectionAttempt()
@@ -526,7 +556,7 @@ class AndroidBleClient(
         var gatt: BluetoothGatt? = null
         private var nativeNotificationCount = 0UL
         private var captureWriteId = 0UL
-        private var captureLinkUp = false
+        var captureLinkUp = false
         private var retired = false
         private var ending = false
         private var draining = false

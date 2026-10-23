@@ -28,7 +28,7 @@ use cutout_ride_maps::{
     RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport, VehicleIdentity,
     WallClockUnixMilliseconds,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
@@ -256,34 +256,7 @@ fn accepted_location_persists_ride_inactivity_snapshot_in_the_same_write() {
         Some(evidence)
     );
 
-    let later_evidence = {
-        let mut later = evidence;
-        assert!(later.observe_app_presence(
-            RideAppPresenceOrder::new(2).unwrap(),
-            RideAppPresence::Background,
-            WallClockUnixMilliseconds::new(1_700_000_000_300),
-        ));
-        later
-    };
-    let duplicate = database
-        .queue_location_with_checkpoint(
-            ride,
-            sample,
-            RideMapSegmentId::new(0),
-            RideSegmentStartReason::Initial,
-            RouteTelemetryState::GpsOnly,
-            RideLocationCheckpoint::new(None, None, later_evidence),
-            LocationQueueMode::Bounded,
-        )
-        .unwrap()
-        .wait_result()
-        .unwrap()
-        .unwrap();
-    assert_eq!(duplicate.admission(), LocationAdmission::Duplicate);
-    assert_eq!(
-        database.ride_inactivity_evidence(ride).unwrap(),
-        Some(evidence)
-    );
+    assert_duplicate_location_keeps_evidence(&database, ride, sample, evidence);
 
     let foreground = database
         .observe_ride_app_presence(
@@ -324,6 +297,39 @@ fn accepted_location_persists_ride_inactivity_snapshot_in_the_same_write() {
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+fn assert_duplicate_location_keeps_evidence(
+    database: &RideDatabase,
+    ride: RideId,
+    sample: LocationSample,
+    evidence: RideInactivityEvidence,
+) {
+    let mut later_evidence = evidence;
+    assert!(later_evidence.observe_app_presence(
+        RideAppPresenceOrder::new(2).unwrap(),
+        RideAppPresence::Background,
+        WallClockUnixMilliseconds::new(1_700_000_000_300),
+    ));
+    let duplicate = database
+        .queue_location_with_checkpoint(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            RideLocationCheckpoint::new(None, None, later_evidence),
+            LocationQueueMode::Bounded,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(duplicate.admission(), LocationAdmission::Duplicate);
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(evidence)
+    );
 }
 
 #[test]
@@ -1852,6 +1858,37 @@ fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Removes the current normalized BMS view and storage from fixtures for schemas
+/// written before BMS history existed.
+fn remove_current_bms_storage(connection: &Connection) {
+    let object_type: Option<String> = connection
+        .query_row(
+            "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap();
+    match object_type.as_deref() {
+        Some("view") => connection
+            .execute_batch("DROP VIEW bms_voltage_samples;")
+            .unwrap(),
+        Some("table") => connection
+            .execute_batch("DROP TABLE bms_voltage_samples;")
+            .unwrap(),
+        _ => {}
+    }
+    connection
+        .execute_batch(
+            "DROP TABLE IF EXISTS bms_cell_samples;
+             DROP TABLE IF EXISTS bms_sessions;
+             DROP TABLE IF EXISTS bms_devices;
+             DROP TABLE IF EXISTS bms_voltage_backfill_progress;
+             DROP TABLE IF EXISTS bms_voltage_samples_legacy;",
+        )
+        .unwrap();
+}
+
 fn music_test_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("libcutout-music-{}.sqlite", uuid::Uuid::new_v4()))
 }
@@ -1870,12 +1907,12 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
         .unwrap();
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "ALTER TABLE ride_music_event DROP COLUMN observed_at_ms;
          ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
          ALTER TABLE ride_music_history DROP COLUMN deleted;
-         DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
          DROP TABLE IF EXISTS ride_recording_preferences;
          DROP TABLE live_capture_ble_semantic_telemetry;
@@ -1918,10 +1955,10 @@ fn schema_v19_migration_adds_music_history_state() {
         .expect("ride creates");
     database.shutdown().expect("database shuts down");
     let connection = Connection::open(&path).expect("sqlite opens");
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "ALTER TABLE ride_music_history DROP COLUMN state;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences;
              DROP TABLE live_capture_ble_semantic_telemetry;
@@ -1951,11 +1988,11 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
     database.shutdown().unwrap();
 
     let connection = Connection::open(&path).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "DROP TABLE ride_music_event;
              DROP TABLE ride_music_history;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences;
              DROP TABLE live_capture_ble_semantic_telemetry;
@@ -2078,6 +2115,7 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
     database.shutdown().unwrap();
 
     let connection = Connection::open(&path).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "ALTER TABLE ride_music_event RENAME TO ride_music_event_current;
@@ -2117,7 +2155,6 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
             "DROP TABLE ride_music_event_current;
              ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
              ALTER TABLE ride_music_history DROP COLUMN deleted;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences;
              DROP TABLE live_capture_ble_semantic_telemetry;
@@ -4480,30 +4517,29 @@ fn backfill_contention_does_not_block_later_receipts() {
     for (_, _, _, source_path) in &imports {
         std::fs::remove_file(source_path).unwrap();
     }
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    crate::storage::pause_legacy_archive_for_test(bad_digest.clone(), entered_tx, resume_rx);
     let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
-
-    let deadline = Instant::now() + Duration::from_secs(5);
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("backfill pauses after staging the damaged source");
     let lock_connection = Connection::open(&database_path).unwrap();
-    loop {
-        let staged: bool = lock_connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pevcap_captures
-                 WHERE artifact_digest = ?1 AND receipt_digest IS NULL
-                   AND written_bytes = artifact_size)",
-                [bad_digest],
-                |row| row.get(0),
-            )
-            .unwrap();
-        if staged {
-            lock_connection.execute_batch("BEGIN IMMEDIATE").unwrap();
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "backfill reached its final decision"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    let staged: bool = lock_connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pevcap_captures
+             WHERE artifact_digest = ?1 AND receipt_digest IS NULL
+               AND written_bytes = artifact_size)",
+            [bad_digest],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        staged,
+        "the damaged source is staged before final verification"
+    );
+    lock_connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+    resume_tx.send(()).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     lock_connection.execute_batch("ROLLBACK").unwrap();
 
@@ -4567,41 +4603,42 @@ fn file_only_backfill_keeps_sidecar_if_published_chunks_fail_readback() {
     database.shutdown().unwrap();
     std::fs::remove_file(&source_path).unwrap();
 
+    let (first_entered_tx, first_entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (first_resume_tx, first_resume_rx) = std::sync::mpsc::sync_channel(0);
+    crate::storage::pause_legacy_archive_for_test(
+        digest.clone(),
+        first_entered_tx,
+        first_resume_rx,
+    );
     let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut corrupted = false;
-    while Instant::now() < deadline && sidecar_path.exists() {
-        let connection = Connection::open(&database_path).unwrap();
-        let published: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pevcap_captures
-                 WHERE artifact_digest = ?1 AND receipt_digest = ?1)",
-                [&digest],
-                |row| row.get(0),
-            )
-            .unwrap();
-        if published {
-            connection
-                .execute(
-                    "UPDATE pevcap_capture_chunks SET payload = zeroblob(length(payload))
-                     WHERE artifact_digest = ?1 AND sequence = 0",
-                    [&digest],
-                )
-                .unwrap();
-            corrupted = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert!(corrupted, "test observed publication before SQL readback");
+    first_entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("backfill pauses after writing its first canonical chunk");
+    let (second_entered_tx, second_entered_rx) = std::sync::mpsc::sync_channel(0);
+    let (second_resume_tx, second_resume_rx) = std::sync::mpsc::sync_channel(0);
+    crate::storage::pause_legacy_archive_for_test(
+        digest.clone(),
+        second_entered_tx,
+        second_resume_rx,
+    );
+    first_resume_tx.send(()).unwrap();
+    second_entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("backfill pauses after writing the next canonical chunk");
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "UPDATE pevcap_capture_chunks SET payload = zeroblob(length(payload))
+             WHERE artifact_digest = ?1 AND sequence = 0",
+            [&digest],
+        )
+        .unwrap();
+    second_resume_tx.send(()).unwrap();
     assert!(
         wait_for_legacy_archive_completion(&database_path, &digest),
         "corrupt canonical bytes reach a durable rejection decision"
     );
-    assert!(
-        sidecar_path.exists(),
-        "the only known-good source is retained"
-    );
+    assert!(sidecar_path.exists(), "the good source is retained");
     assert_eq!(
         std::fs::read(&sidecar_path).unwrap(),
         artifact_bytes.as_bytes()
@@ -6032,10 +6069,10 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
             .unwrap();
         database.shutdown().unwrap();
         let connection = Connection::open(&path).unwrap();
+        remove_current_bms_storage(&connection);
         connection
             .execute_batch(
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences;
              DROP TABLE live_capture_ble_semantic_telemetry;
@@ -7622,10 +7659,10 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
-            "DROP TABLE bms_voltage_samples;
-             DROP TABLE last_connected_device;
+            "DROP TABLE last_connected_device;
              DROP TABLE phone_alarm_preferences;
              PRAGMA application_id = 1129665615;
              DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 20;",
@@ -7641,14 +7678,26 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
-    let table: String = connection
+    let object_type: String = connection
         .query_row(
-            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bms_voltage_samples'",
+            "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(table, "bms_voltage_samples");
+    assert_eq!(object_type, "view");
+    for table in ["bms_devices", "bms_sessions", "bms_cell_samples"] {
+        assert!(
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap(),
+            "normalized BMS storage table {table} exists"
+        );
+    }
     drop(connection);
     let _ = std::fs::remove_file(path);
 }
@@ -7662,10 +7711,10 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
-            "DROP TABLE bms_voltage_samples;
-             DROP TABLE last_connected_device;
+            "DROP TABLE last_connected_device;
              CREATE TABLE bms_voltage_samples (
                  device_identity TEXT NOT NULL,
                  monotonic_ms INTEGER NOT NULL,
@@ -7736,10 +7785,10 @@ fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
-            "DROP TABLE bms_voltage_samples;
-             DROP TABLE last_connected_device;
+            "DROP TABLE last_connected_device;
              CREATE TABLE bms_voltage_samples (
                  device_identity TEXT NOT NULL,
                  session_identifier TEXT NOT NULL,
@@ -8050,6 +8099,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
@@ -8094,7 +8144,6 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
              PRAGMA application_id = 1129665615;
              DROP TABLE pevcap_capture_chunks;
              DROP TABLE pevcap_captures;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 13;",
         )
@@ -8153,6 +8202,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "DROP TABLE selected_device;
@@ -8172,7 +8222,6 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
              PRAGMA application_id = 1129665615;
              DROP TABLE pevcap_capture_chunks;
              DROP TABLE pevcap_captures;
-             DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
              DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 12;",
         )
@@ -9386,6 +9435,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
     ));
     let connection = Connection::open(&path).unwrap();
     crate::storage::create_current_schema(&connection).unwrap();
+    remove_current_bms_storage(&connection);
     connection
         .execute_batch(
             "
@@ -9398,7 +9448,6 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             PRAGMA application_id = 1129665615;
             DROP TABLE pevcap_capture_chunks;
             DROP TABLE pevcap_captures;
-            DROP TABLE bms_voltage_samples;
             DROP TABLE phone_alarm_preferences;
             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 8;
             ",

@@ -160,9 +160,19 @@ private struct CaptureArtifactRow: View {
 struct CaptureArtifactDetailView: View {
     let artifact: CaptureArtifact
     @State private var export = CaptureExportModel()
+    @State private var localPayloadState: MobileCaptureSubmissionLocalPayloadStateDto?
 
     private var fileExists: Bool {
         artifact.fileURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    }
+
+    private var localPayloadAvailable: Bool {
+        localPayloadState != .removalPending && localPayloadState != .removed
+    }
+
+    private var recordedArtifactID: String? {
+        guard case .recordedArtifact(id: let id) = artifact.submissionSource else { return nil }
+        return id
     }
 
     var body: some View {
@@ -180,25 +190,26 @@ struct CaptureArtifactDetailView: View {
                 }
             }
             Section {
-                if fileExists, let source = artifact.fileURL {
-                    if let fileURL = export.fileURL {
-                        ShareLink(item: fileURL) {
-                            Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
-                        }
-                        .accessibilityIdentifier("captures.share")
-                    } else if export.isExporting {
-                        ProgressView(localizedAppText("captures.preparing"))
-                    } else if let error = export.error {
-                        Text(error).foregroundStyle(PevColors.warningText)
-                        Button(localizedAppText("captures.share")) {
-                            Task { await export.export(source: source) }
-                        }
-                        .disabled(export.isExporting)
-                    } else {
-                        ProgressView(localizedAppText("captures.preparing"))
+                if !localPayloadAvailable {
+                    Text(
+                        localPayloadState == .removed
+                            ? "Local capture payload was removed after receipt confirmation."
+                            : "Local capture payload removal is in progress.")
+                } else if let fileURL = export.fileURL {
+                    ShareLink(item: fileURL) {
+                        Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
                     }
+                    .accessibilityIdentifier("captures.share")
+                } else if export.isExporting {
+                    ProgressView(localizedAppText("captures.preparing"))
                 } else {
-                    Label(localizedAppText("captures.file_unavailable"), systemImage: "doc.badge.ellipsis")
+                    if let error = export.error {
+                        Text(error).foregroundStyle(PevColors.warningText)
+                    }
+                    Button(localizedAppText("captures.share")) {
+                        Task { await prepareExport() }
+                    }
+                    .disabled(export.isExporting)
                 }
             } footer: {
                 Text(localizedAppText("captures.privacy"))
@@ -220,16 +231,26 @@ struct CaptureArtifactDetailView: View {
             }
             if let source = artifact.submissionSource {
                 CaptureSavedSettingsSection(source: source)
-                CaptureSubmissionSection(source: source)
-                    .id(artifact.id)
+                CaptureSubmissionSection(source: source) { state in
+                    localPayloadState = state
+                    if state == .removalPending || state == .removed {
+                        export.invalidate()
+                    }
+                }
+                .id(artifact.id)
             }
         }
         .scrollContentBackground(.hidden)
         .background(PevColors.pageBackground)
         .navigationTitle(localizedAppText(detailTitleKey))
         .accessibilityIdentifier("captures.detail")
-        .task(id: artifact.fileURL) {
-            if fileExists, let source = artifact.fileURL { await export.export(source: source) }
+    }
+
+    private func prepareExport() async {
+        if let recordedArtifactID {
+            await export.export(recordedArtifactID: recordedArtifactID, fallbackSource: artifact.fileURL)
+        } else if fileExists, let source = artifact.fileURL {
+            await export.export(source: source)
         }
     }
 
@@ -272,6 +293,12 @@ private struct DatabaseCaptureRow: View {
 private struct DatabaseCaptureDetailView: View {
     let capture: MobileLiveCaptureHistoryEntryDto
     @State private var export = CaptureExportModel()
+    @State private var localPayloadState: MobileCaptureSubmissionLocalPayloadStateDto?
+
+    private var localPayloadAvailable: Bool {
+        localPayloadState != .removalPending && localPayloadState != .removed
+    }
+
     var body: some View {
         List {
             Section { DatabaseCaptureRow(capture: capture) }
@@ -281,7 +308,12 @@ private struct DatabaseCaptureDetailView: View {
                 if let model = capture.recording?.model { LabeledContent("Model", value: model.value) }
             }
             Section {
-                if let fileURL = export.fileURL {
+                if !localPayloadAvailable {
+                    Text(
+                        localPayloadState == .removed
+                            ? "Local capture payload was removed after receipt confirmation."
+                            : "Local capture payload removal is in progress.")
+                } else if let fileURL = export.fileURL {
                     ShareLink(item: fileURL) { Label("Share recording", systemImage: "square.and.arrow.up") }
                 } else {
                     Button {
@@ -292,15 +324,20 @@ private struct DatabaseCaptureDetailView: View {
                         } else {
                             Label("Export recording", systemImage: "square.and.arrow.up")
                         }
-                    }.disabled(export.isExporting)
+                    }.disabled(export.isExporting || !localPayloadAvailable)
                 }
                 if let error = export.error { Text(error).foregroundStyle(PevColors.warningText) }
             } footer: {
-                Text("The recording is saved on this device. Export creates a shareable file from its retained data.")
+                Text("Export creates a shareable file from locally retained capture data.")
             }
             CaptureSavedSettingsSection(source: .liveCapture(id: capture.liveCaptureId))
-            CaptureSubmissionSection(source: .liveCapture(id: capture.liveCaptureId))
-                .id(capture.liveCaptureId)
+            CaptureSubmissionSection(source: .liveCapture(id: capture.liveCaptureId)) { state in
+                localPayloadState = state
+                if state == .removalPending || state == .removed {
+                    export.invalidate()
+                }
+            }
+            .id(capture.liveCaptureId)
         }
         .navigationTitle("Recording")
         .scrollContentBackground(.hidden)

@@ -90,7 +90,7 @@ enum LegacyArtifactPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileFingerprint {
+pub(super) struct FileFingerprint {
     len: u64,
     #[cfg(not(unix))]
     modified: Option<std::time::SystemTime>,
@@ -109,7 +109,7 @@ struct FileFingerprint {
 }
 
 impl FileFingerprint {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
+    pub(super) fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
             len: metadata.len(),
             #[cfg(not(unix))]
@@ -127,6 +127,10 @@ impl FileFingerprint {
             #[cfg(unix)]
             ctime_nsec: metadata.ctime_nsec(),
         }
+    }
+
+    pub(super) const fn len(self) -> u64 {
+        self.len
     }
 }
 
@@ -871,7 +875,7 @@ fn retire_verified_legacy_artifact(
     Ok(ArchiveState::Pending)
 }
 
-fn has_active_work(
+pub(super) fn has_active_work(
     connection: &Connection,
     own_backfill: Option<&str>,
 ) -> Result<bool, StorageError> {
@@ -1028,7 +1032,7 @@ fn managed_file_still_matches(
     )
 }
 
-fn same_file_identity(expected: FileFingerprint, actual: FileFingerprint) -> bool {
+pub(super) fn same_file_identity(expected: FileFingerprint, actual: FileFingerprint) -> bool {
     #[cfg(unix)]
     {
         expected.dev == actual.dev
@@ -1249,7 +1253,7 @@ mod tests {
         let original_database = original.join("ride.sqlite");
         let bytes = b"original capture bytes, including unknown fields\n";
         let digest = hex::encode(Sha256::digest(bytes));
-        let archive_directory = super::legacy_import_directory(&original_database);
+        let archive_directory = legacy_import_directory(&original_database);
         std::fs::create_dir(&archive_directory).unwrap();
         let original_archive = archive_directory.join(format!("{digest}.jsonl"));
         std::fs::write(&original_archive, bytes).unwrap();
@@ -1284,8 +1288,7 @@ mod tests {
         std::fs::create_dir_all(&archive_directory).unwrap();
         std::fs::write(&original_archive, b"external file at the previous location").unwrap();
         let database_path = relocated.join("ride.sqlite");
-        let local_archive =
-            super::legacy_import_directory(&database_path).join(format!("{digest}.jsonl"));
+        let local_archive = legacy_import_directory(&database_path).join(format!("{digest}.jsonl"));
         let mut connection = Connection::open(&database_path).unwrap();
         let mut scan = None;
         for _ in 0..8 {
@@ -1322,7 +1325,7 @@ mod tests {
         );
     }
 
-    fn pending_database(path: &std::path::Path) -> Connection {
+    fn pending_database(path: &Path) -> Connection {
         let mut connection = Connection::open(path).unwrap();
         super::super::configure_connection(&mut connection, path).unwrap();
         connection

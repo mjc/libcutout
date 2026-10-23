@@ -53,8 +53,21 @@ pub enum CaptureSubmissionPhase {
     Sent,
     /// Remote deletion must be confirmed before reporting deletion.
     DeletionPending,
-    /// Remote deletion completed; the original local recording remains.
+    /// Remote deletion completed; local payload removal is tracked separately.
     Deleted,
+}
+
+/// Whether the private payload bytes remain available in this local database.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSubmissionLocalPayloadState {
+    /// Existing data defaults to retained until a valid receipt authorizes cleanup.
+    #[default]
+    Retained,
+    /// A validated receipt authorizes bounded local payload removal.
+    RemovalPending,
+    /// Payload rows were removed; receipt and source metadata remain available.
+    Removed,
 }
 
 /// Current durable operation, projected without granting access to its bytes.
@@ -68,6 +81,9 @@ pub struct CaptureSubmissionStatus {
     pub categories: CaptureSubmissionCategories,
     /// Current durable phase.
     pub phase: CaptureSubmissionPhase,
+    /// Local payload retention after receipt-confirmed Send.
+    #[serde(default)]
+    pub local_payload_state: CaptureSubmissionLocalPayloadState,
     /// Credential identity bound by the first explicit Send.
     pub account_id: Option<String>,
     /// Receipt of durable remote completion, if confirmed.
@@ -435,6 +451,11 @@ pub(super) enum Command {
         operation_id: String,
         reply: Reply<Option<CaptureSubmissionStatus>>,
     },
+    ManagedFileRemovalAuthorization {
+        digest: String,
+        size: u64,
+        reply: Reply<bool>,
+    },
     Insert {
         status: Box<CaptureSubmissionStatus>,
         evidence_json: Option<String>,
@@ -448,6 +469,20 @@ pub(super) enum Command {
 }
 
 impl RideDatabase {
+    pub(super) fn managed_capture_file_removal_authorized(
+        &self,
+        digest: &str,
+        size: u64,
+    ) -> Result<bool, StorageError> {
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::ManagedFileRemovalAuthorization {
+                digest: digest.to_owned(),
+                size,
+                reply,
+            })
+        })
+    }
+
     pub(super) fn submission_source(
         &self,
         source: CaptureSubmissionSource,
@@ -609,6 +644,7 @@ impl RideDatabase {
             metadata,
             categories,
             phase: CaptureSubmissionPhase::Prepared,
+            local_payload_state: CaptureSubmissionLocalPayloadState::Retained,
             account_id: None,
             receipt: None,
             failure: None,
@@ -1056,6 +1092,7 @@ fn apply(
                 .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
             status.receipt = Some(receipt);
             status.phase = CaptureSubmissionPhase::Sent;
+            status.local_payload_state = CaptureSubmissionLocalPayloadState::RemovalPending;
             status.failure = None;
         }
         Action::Failure { revision, failure } => {
@@ -1126,6 +1163,9 @@ fn start(
         CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => {}
         _ => return Err(CaptureSubmissionError::InvalidState),
     }
+    if status.local_payload_state != CaptureSubmissionLocalPayloadState::Retained {
+        return Err(CaptureSubmissionError::InvalidState);
+    }
     status.account_id = Some(account_id);
     status.phase = CaptureSubmissionPhase::Sending;
     status.failure = None;
@@ -1169,6 +1209,436 @@ pub(super) fn recover(connection: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+/// Scans one bounded status page and removes at most one receipt-authorized payload batch.
+///
+/// The cursor belongs to the worker. It advances over skipped rows and completed
+/// operations, stays before a partially removed operation, and resets at end-of-scan.
+#[allow(
+    clippy::too_many_lines,
+    reason = "receipt validation, bounded deletion and its progress commit share one transaction"
+)]
+pub(super) fn cleanup_sent_capture_batch(
+    connection: &mut Connection,
+    cursor: &mut Option<String>,
+) -> Result<super::normalization::BatchState, StorageError> {
+    use CaptureSubmissionLocalPayloadState as PayloadState;
+    use CaptureSubmissionPhase as Phase;
+
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let candidates = {
+        let mut statement = transaction.prepare(
+            "SELECT operation_id, status_json FROM capture_submissions
+             WHERE operation_id > ?1
+               AND json_extract(status_json, '$.phase')
+                    IN ('sent', 'deleted', 'cancellation_pending', 'cancelled', 'deletion_pending')
+               AND coalesce(json_extract(status_json, '$.local_payload_state'), 'retained')
+                    IN ('retained', 'removal_pending')
+             ORDER BY operation_id LIMIT 64",
+        )?;
+        let rows = statement.query_map([cursor.as_deref().unwrap_or("")], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let page_is_full = candidates.len() == 64;
+    let mut scanned_through = cursor.clone();
+    let mut selected = None;
+    for (operation_id, json) in &candidates {
+        let before_candidate = scanned_through.clone();
+        scanned_through = Some(operation_id.clone());
+        let Ok(mut status) = decode_status(json) else {
+            continue;
+        };
+        if status.operation_id.as_str() != operation_id.as_str()
+            || (status.phase != Phase::Sent
+                && status.phase != Phase::Deleted
+                && status.phase != Phase::CancellationPending
+                && status.phase != Phase::Cancelled
+                && status.phase != Phase::DeletionPending)
+            || status.receipt.is_none()
+            || status.local_payload_state == PayloadState::Removed
+        {
+            continue;
+        }
+        if !submission_payload_is_exclusive(&transaction, &status)? {
+            continue;
+        }
+        if status.local_payload_state == PayloadState::Retained {
+            status.local_payload_state = PayloadState::RemovalPending;
+            persist_status(&transaction, &status)?;
+        }
+        let mut has_payload = false;
+        let mut removable_payload = false;
+        if let Some(live_id) = status.metadata.provenance.live_capture_id.as_deref() {
+            let exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM live_capture_events WHERE capture_id = ?1)",
+                [live_id],
+                |row| row.get(0),
+            )?;
+            has_payload |= exists;
+            removable_payload |= exists
+                && no_unfinished_submission_references(
+                    &transaction,
+                    &status.operation_id,
+                    None,
+                    Some(live_id),
+                )?;
+        }
+        for digest in cleanup_digests(&transaction, &status)? {
+            let exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pevcap_capture_chunks WHERE artifact_digest = ?1)",
+                [&digest],
+                |row| row.get(0),
+            )?;
+            has_payload |= exists;
+            removable_payload |= exists
+                && no_unfinished_submission_references(
+                    &transaction,
+                    &status.operation_id,
+                    Some(&digest),
+                    None,
+                )?;
+        }
+        if has_payload && !removable_payload {
+            continue;
+        }
+        selected = Some((status, before_candidate));
+        break;
+    }
+    let Some((mut status, cursor_before_selected)) = selected else {
+        transaction.commit()?;
+        *cursor = if page_is_full { scanned_through } else { None };
+        return Ok(if page_is_full {
+            super::normalization::BatchState::Pending
+        } else {
+            super::normalization::BatchState::Finished
+        });
+    };
+
+    // Evidence attachments are payload too. Keep their manifest and digest in the
+    // durable status, but clear both stored JSON copies once the validated receipt
+    // and exclusive source ownership authorize cleanup.
+    transaction.execute(
+        "UPDATE capture_submissions SET evidence_json = NULL WHERE operation_id = ?1",
+        [&status.operation_id],
+    )?;
+    transaction.execute(
+        "DELETE FROM capture_evidence WHERE source_artifact_id = ?1",
+        [&status.metadata.provenance.source_artifact_id],
+    )?;
+
+    let live_id = status.metadata.provenance.live_capture_id.as_deref();
+    let mut payload_removed = false;
+    if let Some(live_id) = live_id
+        && no_unfinished_submission_references(
+            &transaction,
+            &status.operation_id,
+            None,
+            Some(live_id),
+        )?
+    {
+        let removed = transaction.execute(
+            "DELETE FROM live_capture_events
+                 WHERE capture_id = ?1 AND sequence IN (
+                    SELECT sequence FROM live_capture_events WHERE capture_id = ?1
+                    ORDER BY sequence LIMIT 64
+                 )",
+            [live_id],
+        )?;
+        payload_removed |= removed != 0;
+    }
+
+    let digests = cleanup_digests(&transaction, &status)?;
+    let mut remaining_chunk_budget = 64_i64;
+    for digest in &digests {
+        if remaining_chunk_budget == 0 {
+            break;
+        }
+        if no_unfinished_submission_references(
+            &transaction,
+            &status.operation_id,
+            Some(digest),
+            None,
+        )? {
+            let removed = transaction.execute(
+                "DELETE FROM pevcap_capture_chunks
+                 WHERE artifact_digest = ?1 AND sequence IN (
+                    SELECT sequence FROM pevcap_capture_chunks
+                    WHERE artifact_digest = ?1 ORDER BY sequence LIMIT ?2
+                 )",
+                params![digest, remaining_chunk_budget],
+            )?;
+            payload_removed |= removed != 0;
+            remaining_chunk_budget -= i64::try_from(removed).map_err(|_| invalid_status())?;
+        }
+    }
+
+    let live_payload_remains = if let Some(live_id) = live_id {
+        transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM live_capture_events WHERE capture_id = ?1)",
+            [live_id],
+            |row| row.get::<_, bool>(0),
+        )?
+    } else {
+        false
+    };
+    let mut archive_payload_remains = false;
+    for digest in &digests {
+        let exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pevcap_capture_chunks WHERE artifact_digest = ?1)",
+            [digest],
+            |row| row.get::<_, bool>(0),
+        )?;
+        archive_payload_remains |= exists;
+        if !exists
+            && no_unfinished_submission_references(
+                &transaction,
+                &status.operation_id,
+                Some(digest),
+                None,
+            )?
+        {
+            let removed = transaction.execute(
+                "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+                [digest],
+            )?;
+            payload_removed |= removed != 0;
+        }
+    }
+    if !live_payload_remains && !archive_payload_remains {
+        status.local_payload_state = PayloadState::Removed;
+        // `revision` fences an in-flight Send/Delete transport action. Local
+        // maintenance must not invalidate a remote delete already in progress.
+        persist_status(&transaction, &status)?;
+    }
+    if payload_removed {
+        transaction.execute(
+            "UPDATE storage_normalization_progress
+             SET compaction_pending = 1, compaction_complete = 0 WHERE singleton = 1",
+            [],
+        )?;
+    }
+    transaction.commit()?;
+    *cursor = if !live_payload_remains && !archive_payload_remains {
+        Some(status.operation_id)
+    } else {
+        cursor_before_selected
+    };
+    Ok(super::normalization::BatchState::Pending)
+}
+
+fn managed_file_removal_authorized(
+    connection: &Connection,
+    digest: &str,
+    size: u64,
+) -> Result<bool, StorageError> {
+    let file_size = size;
+    let size = i64::try_from(file_size).map_err(|_| invalid_status())?;
+    let mut cursor = String::new();
+    loop {
+        let candidates = {
+            let mut statement = connection.prepare(
+                "SELECT operation_id, status_json FROM capture_submissions
+                 WHERE operation_id > ?1
+                   AND json_extract(status_json, '$.phase') IN
+                       ('sent', 'deleted', 'cancellation_pending', 'cancelled', 'deletion_pending')
+                   AND coalesce(json_extract(status_json, '$.local_payload_state'), 'retained')
+                       IN ('retained', 'removal_pending', 'removed')
+                   AND (json_extract(status_json, '$.metadata.sha256') = ?2
+                        OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?2)
+                   AND json_extract(status_json, '$.receipt.sha256') =
+                       json_extract(status_json, '$.metadata.sha256')
+                   AND json_extract(status_json, '$.receipt.bytes') =
+                       json_extract(status_json, '$.metadata.bytes')
+                 ORDER BY operation_id LIMIT 64",
+            )?;
+            let rows = statement.query_map(params![cursor, digest], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let page_is_full = candidates.len() == 64;
+        for (operation_id, json) in &candidates {
+            cursor.clone_from(operation_id);
+            let Ok(status) = decode_status(json) else {
+                continue;
+            };
+            let has_confirmed_receipt_phase = match status.phase {
+                CaptureSubmissionPhase::Sent
+                | CaptureSubmissionPhase::Deleted
+                | CaptureSubmissionPhase::CancellationPending
+                | CaptureSubmissionPhase::Cancelled
+                | CaptureSubmissionPhase::DeletionPending => true,
+                CaptureSubmissionPhase::Prepared
+                | CaptureSubmissionPhase::Sending
+                | CaptureSubmissionPhase::Retryable
+                | CaptureSubmissionPhase::Rejected => false,
+            };
+            if status.operation_id.as_str() != operation_id.as_str() || !has_confirmed_receipt_phase
+            {
+                continue;
+            }
+            let Some(receipt) = status.receipt.as_ref() else {
+                continue;
+            };
+            if receipt
+                .validate_for(&status.operation_id, &status.metadata)
+                .is_err()
+            {
+                continue;
+            }
+            let snapshot_match =
+                status.metadata.sha256 == digest && status.metadata.bytes == file_size;
+            let source_match = status.metadata.provenance.source_sha256.as_deref() == Some(digest)
+                && source_artifact_owns_file(connection, &status, digest, size)?;
+            if (snapshot_match || source_match)
+                && submission_payload_is_exclusive(connection, &status)?
+            {
+                return Ok(true);
+            }
+        }
+        if !page_is_full {
+            return Ok(false);
+        }
+    }
+}
+
+fn source_artifact_owns_file(
+    connection: &Connection,
+    status: &CaptureSubmissionStatus,
+    digest: &str,
+    size: i64,
+) -> Result<bool, StorageError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM pevcap_recordings AS recording
+            JOIN pevcap_imports AS imports USING (artifact_digest)
+            WHERE recording.artifact_id = ?1 AND recording.artifact_digest = ?2
+              AND imports.artifact_size = ?3
+         )",
+        params![
+            status.metadata.provenance.source_artifact_id.as_str(),
+            digest,
+            size
+        ],
+        |row| row.get(0),
+    )?)
+}
+
+fn submission_payload_is_exclusive(
+    connection: &Connection,
+    status: &CaptureSubmissionStatus,
+) -> Result<bool, StorageError> {
+    if let Some(live_id) = status.metadata.provenance.live_capture_id.as_deref() {
+        let active_capture: bool = connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM live_capture_sessions WHERE capture_id = ?1 AND state = 'active'
+             )",
+            [live_id],
+            |row| row.get(0),
+        )?;
+        if active_capture
+            || !no_unfinished_submission_references(
+                connection,
+                &status.operation_id,
+                None,
+                Some(live_id),
+            )?
+        {
+            return Ok(false);
+        }
+    }
+    for digest in cleanup_digests(connection, status)? {
+        if !no_unfinished_submission_references(
+            connection,
+            &status.operation_id,
+            Some(&digest),
+            None,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn cleanup_digests(
+    connection: &Connection,
+    status: &CaptureSubmissionStatus,
+) -> Result<Vec<String>, StorageError> {
+    let mut digests = vec![status.metadata.capture_sha256().to_owned()];
+    if let Some(source_digest) = status.metadata.provenance.source_sha256.as_deref()
+        && source_digest != digests[0]
+    {
+        digests.push(source_digest.to_owned());
+    }
+    let recorded_digest: Option<String> = connection
+        .query_row(
+            "SELECT artifact_digest FROM pevcap_recordings WHERE artifact_id = ?1",
+            [&status.metadata.provenance.source_artifact_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(source_digest) = recorded_digest
+        && !digests.contains(&source_digest)
+    {
+        digests.push(source_digest);
+    }
+    Ok(digests)
+}
+
+fn no_unfinished_submission_references(
+    connection: &Connection,
+    own_operation_id: &str,
+    digest: Option<&str>,
+    live_capture_id: Option<&str>,
+) -> Result<bool, StorageError> {
+    if let Some(digest) = digest {
+        let import_work_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pevcap_import_work WHERE artifact_digest = ?1)",
+            [digest],
+            |row| row.get(0),
+        )?;
+        if import_work_exists {
+            return Ok(false);
+        }
+    }
+    let mut statement = connection.prepare(
+        "SELECT operation_id, status_json FROM capture_submissions
+         WHERE operation_id != ?1 AND (
+            (?2 IS NOT NULL AND (snapshot_digest = ?2 OR
+                json_extract(status_json, '$.metadata.provenance.source_sha256') = ?2 OR
+                json_extract(status_json, '$.metadata.provenance.source_artifact_id') IN
+                    (SELECT artifact_id FROM pevcap_recordings WHERE artifact_digest = ?2) OR
+                json_extract(status_json, '$.metadata.provenance.live_capture_id') IN
+                    (SELECT capture_id FROM live_capture_sessions WHERE
+                     json_extract(recording_context_json, '$.artifact_id') IN
+                        (SELECT artifact_id FROM pevcap_recordings WHERE artifact_digest = ?2))))
+            OR (?3 IS NOT NULL AND
+                json_extract(status_json, '$.metadata.provenance.live_capture_id') = ?3)
+         )",
+    )?;
+    let rows = statement.query_map(params![own_operation_id, digest, live_capture_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (_, json) = row?;
+        let Ok(status) = decode_status(&json) else {
+            return Ok(false);
+        };
+        if (status.phase != CaptureSubmissionPhase::Sent
+            && status.phase != CaptureSubmissionPhase::Deleted
+            && status.phase != CaptureSubmissionPhase::CancellationPending
+            && status.phase != CaptureSubmissionPhase::Cancelled
+            && status.phase != CaptureSubmissionPhase::DeletionPending)
+            || status.receipt.is_none()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(super) fn dispatch(connection: &mut Connection, command: Command) {
     match command {
         Command::Evidence {
@@ -1196,6 +1666,13 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(lookup_status(connection, None, Some(&operation_id)));
+        }
+        Command::ManagedFileRemovalAuthorization {
+            digest,
+            size,
+            reply,
+        } => {
+            let _ = reply.send(managed_file_removal_authorized(connection, &digest, size));
         }
         Command::Insert {
             status,

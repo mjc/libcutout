@@ -12,6 +12,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class DiagnosticCapturePresentation(
     val ready: Boolean = false,
@@ -23,6 +24,7 @@ data class DiagnosticCapturePresentation(
     val note: String? = null,
     val error: String? = null,
     val historyError: String? = null,
+    val managedCaptureCleanupError: String? = null,
     val captures: List<MobileLiveCaptureHistoryEntryDto> = emptyList(),
     val sessionArtifacts: List<DiagnosticCaptureArtifact> = emptyList(),
     val nextCursor: MobileLiveCaptureHistoryCursorDto? = null,
@@ -40,13 +42,18 @@ data class DiagnosticCaptureArtifact(
     val error: String?,
 )
 
+internal fun localCapturePayloadMayBeShared(state: MobileCaptureSubmissionLocalPayloadStateDto?): Boolean =
+    state == null || state == MobileCaptureSubmissionLocalPayloadStateDto.RETAINED
+
+internal enum class CaptureTransportOwnership { BORROWED, CAPTURE_OWNED }
+
 /** Native writer/filesystem effects; Rust remains the lifecycle, admission, and history owner. */
 class AndroidDiagnosticCaptureClient internal constructor(
     private val context: Context,
     private val state: () -> CutoutSessionStateHandle,
     private val database: () -> RideDatabaseHandle,
     private val postOwner: (() -> Unit) -> Boolean,
-    private val onFinishManual: () -> Unit,
+    private val onFinishManual: (MobileConnectionAttemptTokenDto?, CaptureTransportOwnership) -> Unit,
 ) {
     private data class Writer(
         val generation: MobileCaptureGenerationDto,
@@ -57,6 +64,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
         val origin: MobileCaptureOriginDto,
         val description: String?,
         val connectionToken: MobileConnectionAttemptTokenDto?,
+        val transportOwnership: CaptureTransportOwnership,
         var priorOutcome: MobileCaptureWriteOutcomeDto = MobileCaptureWriteOutcomeDto.Accepted,
         var notificationCount: ULong = 0UL,
         var finalizationStarted: Boolean = false,
@@ -65,6 +73,8 @@ class AndroidDiagnosticCaptureClient internal constructor(
 
     private val main = Handler(Looper.getMainLooper())
     private val observers = CopyOnWriteArrayList<(DiagnosticCapturePresentation) -> Unit>()
+    private val managedCaptureDeduplicationQueued = AtomicBoolean(false)
+    private val managedCaptureDeduplicationRerunRequested = AtomicBoolean(false)
     private val io = ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(16),
         { Thread(it, "CutoutCaptureIO") }, ThreadPoolExecutor.AbortPolicy(),
@@ -129,10 +139,72 @@ class AndroidDiagnosticCaptureClient internal constructor(
         }
     }
 
+    /** Reconciles only app-managed capture files with Rust's exact durable SQLite bytes. */
+    fun deduplicateManagedCaptureFiles() {
+        if (!managedCaptureDeduplicationQueued.compareAndSet(false, true)) {
+            managedCaptureDeduplicationRerunRequested.set(true)
+            return
+        }
+        try {
+            enqueueIo {
+                var runAgain: Boolean
+                do {
+                    managedCaptureDeduplicationRerunRequested.set(false)
+                    val outcome = runCatching {
+                        val originals = File(context.filesDir, "DiagnosticCaptures")
+                        check(originals.isDirectory || originals.mkdirs()) {
+                            "Could not create app capture directory"
+                        }
+                        val exports = File(context.cacheDir, "diagnostic-exports")
+                        val database = database()
+                        listOf(originals, exports).fold(0UL to 0UL) { totals, directory ->
+                            val pass = database.deduplicateManagedCaptureFiles(directory.absolutePath)
+                            (totals.first + pass.removedFiles) to (totals.second + pass.removedBytes)
+                        }
+                    }
+                    postOwner {
+                        outcome.onSuccess { result ->
+                            publish(presentation.copy(managedCaptureCleanupError = null))
+                            if (result.first > 0UL) {
+                                Log.i(
+                                    TAG,
+                                    "Removed ${result.first} duplicate managed capture files " +
+                                        "(${result.second} bytes)",
+                                )
+                            }
+                        }.onFailure { error ->
+                            publish(presentation.copy(
+                                managedCaptureCleanupError = error.message ?: context.getString(R.string.capture_error),
+                            ))
+                        }
+                    }
+                    runAgain = managedCaptureDeduplicationRerunRequested.getAndSet(false)
+                } while (runAgain)
+                managedCaptureDeduplicationQueued.set(false)
+                if (managedCaptureDeduplicationRerunRequested.getAndSet(false)) {
+                    deduplicateManagedCaptureFiles()
+                }
+            }
+        } catch (error: Exception) {
+            managedCaptureDeduplicationQueued.set(false)
+            postOwner {
+                publish(presentation.copy(
+                    managedCaptureCleanupError = error.message ?: context.getString(R.string.capture_error),
+                ))
+            }
+            if (managedCaptureDeduplicationRerunRequested.getAndSet(false)) {
+                deduplicateManagedCaptureFiles()
+            }
+        }
+    }
+
     fun export(liveCaptureId: String, completed: (Result<File>) -> Unit) {
         try {
             enqueueIo {
                 val result = runCatching {
+                    requireLocalPayloadRetained(
+                        database(), MobileCaptureSubmissionSourceDto.LiveCapture(liveCaptureId),
+                    )
                     val directory = File(context.cacheDir, "diagnostic-exports").apply { mkdirs() }
                     val destination = File(directory, "cutout-capture-${UUID.randomUUID()}.jsonl").canonicalFile
                     val exported = database().exportLiveCapture(liveCaptureId, destination.absolutePath)
@@ -151,13 +223,23 @@ class AndroidDiagnosticCaptureClient internal constructor(
         try {
             enqueueIo {
                 val result = runCatching {
-                    val source = artifact.file.canonicalFile
-                    val captures = File(context.filesDir, "DiagnosticCaptures").canonicalFile
-                    require(source.parentFile == captures && source.isFile) { "Capture artifact is unavailable" }
+                    requireLocalPayloadRetained(
+                        database(), MobileCaptureSubmissionSourceDto.RecordedArtifact(artifact.id),
+                    )
                     val directory = File(context.cacheDir, "diagnostic-exports").apply { mkdirs() }.canonicalFile
                     val destination = File(directory, "cutout-capture-${UUID.randomUUID()}.jsonl").canonicalFile
-                    source.copyTo(destination, overwrite = false)
-                    destination
+                    try {
+                        val exported = database().exportRecordedCapture(artifact.id, destination.absolutePath)
+                        File(exported.path)
+                    } catch (error: MobileRideDatabaseException.PevcapCaptureNotFound) {
+                        val source = artifact.file.canonicalFile
+                        val captures = File(context.filesDir, "DiagnosticCaptures").canonicalFile
+                        require(source.parentFile == captures && source.isFile) {
+                            "Capture artifact is unavailable"
+                        }
+                        source.copyTo(destination, overwrite = false)
+                        destination
+                    }
                 }
                 main.post { completed(result) }
             }
@@ -174,6 +256,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
         description: String?,
         connectionToken: MobileConnectionAttemptTokenDto?,
         evidence: String = "hardware_tested",
+        transportOwnership: CaptureTransportOwnership = CaptureTransportOwnership.CAPTURE_OWNED,
     ): MobileCaptureGenerationDto? {
         if (writer != null) return null
         val owner = state()
@@ -205,7 +288,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
             val started = prepared.start(SystemClock.elapsedRealtime().toULong())
             val writer = Writer(
                 generation, started.builder, started.path, platformId, advertisedName,
-                origin, description, connectionToken,
+                origin, description, connectionToken, transportOwnership,
             )
             if (!owner.captureWriterStarted(generation)) {
                 started.builder.finishWriterAndPublishCapture(null)
@@ -332,7 +415,10 @@ class AndroidDiagnosticCaptureClient internal constructor(
                         val receipt = outcome.getOrElse { MobileCaptureFlushOutcomeDto.Failed(it.message ?: "flush failed") }
                         state().applyCaptureFlushOutcome(active.generation, receipt)
                         val admitted = state().finishCaptureFlush(token, receipt)
-                        if (admitted) onFinishManual()
+                        if (admitted) {
+                            onFinishManual(active.connectionToken, active.transportOwnership)
+                            if (active.transportOwnership == CaptureTransportOwnership.BORROWED) finish(active)
+                        }
                         else update(lifecycle = state().captureLifecycleSnapshot(), error = context.getString(R.string.capture_save_failed))
                         main.post { completed(admitted) }
                     }
@@ -501,6 +587,19 @@ class AndroidDiagnosticCaptureClient internal constructor(
                 throw java.util.concurrent.RejectedExecutionException("Capture work queue is reserved for writer finalization")
             }
             io.execute(action)
+        }
+    }
+
+    /** A receipt may remove only the immutable submission payload; that payload cannot be shared after cleanup starts. */
+    private fun requireLocalPayloadRetained(
+        database: RideDatabaseHandle,
+        source: MobileCaptureSubmissionSourceDto,
+    ) {
+        val status = kotlinx.coroutines.runBlocking {
+            CaptureSubmissionClientHandle(database).use { it.status(source) }
+        }
+        check(localCapturePayloadMayBeShared(status?.localPayloadState)) {
+            "The local capture payload is being removed or has already been removed. Receipt and server-delete details remain available."
         }
     }
 

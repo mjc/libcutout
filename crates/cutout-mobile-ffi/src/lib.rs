@@ -7862,6 +7862,9 @@ pub enum MobileRideDatabaseError {
     /// The requested original-byte capture is not retained.
     #[error("PEVCAP capture was not found")]
     PevcapCaptureNotFound,
+    /// A recorded artifact exists, but receipt-confirmed cleanup has removed or is removing its payload.
+    #[error("capture payload is unavailable")]
+    CapturePayloadUnavailable,
     /// Retained original bytes failed their length or digest check.
     #[error("PEVCAP capture integrity check failed")]
     PevcapCaptureIntegrity,
@@ -7971,6 +7974,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::PevcapCaptureNotFound => {
             MobileRideDatabaseError::PevcapCaptureNotFound
+        }
+        persistence::StorageError::CapturePayloadUnavailable => {
+            MobileRideDatabaseError::CapturePayloadUnavailable
         }
         persistence::StorageError::PevcapCaptureIntegrity(_) => {
             MobileRideDatabaseError::PevcapCaptureIntegrity
@@ -20207,6 +20213,10 @@ mod tests {
         assert_eq!(
             map_ride_database_error(persistence::StorageError::PevcapCaptureNotFound),
             MobileRideDatabaseError::PevcapCaptureNotFound
+        );
+        assert_eq!(
+            map_ride_database_error(persistence::StorageError::CapturePayloadUnavailable),
+            MobileRideDatabaseError::CapturePayloadUnavailable
         );
         assert_eq!(
             map_ride_database_error(persistence::StorageError::PevcapCaptureIntegrity(

@@ -12,10 +12,15 @@ struct CaptureSubmissionSection: View {
     @State private var evidence: CaptureEvidenceEditorModel
     @State private var showsSendConfirmation = false
     @State private var showsDeleteConfirmation = false
+    let onLocalPayloadStateChange: (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void
 
-    init(source: MobileCaptureSubmissionSourceDto) {
+    init(
+        source: MobileCaptureSubmissionSourceDto,
+        onLocalPayloadStateChange: @escaping (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void = { _ in }
+    ) {
         _model = State(initialValue: CaptureSubmissionModel(source: source))
         _evidence = State(initialValue: CaptureEvidenceEditorModel(source: source))
+        self.onLocalPayloadStateChange = onLocalPayloadStateChange
     }
 
     var body: some View {
@@ -25,7 +30,11 @@ struct CaptureSubmissionSection: View {
         }
         .task {
             await model.refresh()
+            onLocalPayloadStateChange(model.status?.localPayloadState)
             await evidence.refresh()
+        }
+        .onChange(of: model.status?.localPayloadState) { _, state in
+            onLocalPayloadStateChange(state)
         }
     }
 
@@ -42,7 +51,7 @@ struct CaptureSubmissionSection: View {
                 .confirmationDialog(
                     "Send this capture privately?", isPresented: $showsSendConfirmation, titleVisibility: .visible
                 ) {
-                    Button("Send to CutOut maintainer") { Task { await model.send() } }
+                    Button("Send to CutOut maintainer") { Task { await sendConfirmed() } }
                         .accessibilityIdentifier("captures.send.confirm")
                     Button("Not now", role: .cancel) {}
                 } message: {
@@ -55,7 +64,7 @@ struct CaptureSubmissionSection: View {
                     Button("Keep sent copy", role: .cancel) {}
                 } message: {
                     Text(
-                        "Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain."
+                        "Remove the private server copy. Local payload removal is handled separately after receipt confirmation. Operator backups and copies already downloaded may remain."
                     )
                 }
             if let status = model.status {
@@ -89,7 +98,7 @@ struct CaptureSubmissionSection: View {
             Text("Private protocol support")
         } footer: {
             Text(
-                "Sending is optional. Your original recording stays on this device. Music and provider listening metadata are excluded. Raw Bluetooth bytes can contain identifiers that CutOut cannot recognize."
+                "Sending is optional. Music and provider listening metadata are excluded. Raw Bluetooth bytes can contain identifiers that CutOut cannot recognize."
             )
         }
     }
@@ -117,6 +126,13 @@ struct CaptureSubmissionSection: View {
             DisclosureGroup("Sent snapshot") {
                 Text(receipt.sha256).font(.footnote.monospaced()).textSelection(.enabled)
             }
+        }
+        if status.localPayloadState == .removalPending {
+            Text("Local capture payload removal is in progress.")
+                .accessibilityIdentifier("captures.send.localRemovalPending")
+        } else if status.localPayloadState == .removed {
+            Text("Local capture payload was removed after receipt confirmation.")
+                .accessibilityIdentifier("captures.send.localPayloadRemoved")
         }
     }
 
@@ -167,6 +183,13 @@ struct CaptureSubmissionSection: View {
         .accessibilityIdentifier("captures.send")
     }
 
+    private func sendConfirmed() async {
+        await model.send()
+        guard let status = model.status, status.phase == .sent, status.receipt != nil else { return }
+        onLocalPayloadStateChange(status.localPayloadState)
+        await RustPersistenceStore.deduplicateManagedCaptureFiles()
+    }
+
     private var cancelButton: some View {
         Button("Cancel Send", role: .cancel) { Task { await model.cancel() } }
             .disabled(model.isCancelling || (model.isWorking && !model.isSending))
@@ -178,7 +201,7 @@ struct CaptureSubmissionSection: View {
         let categories = (["raw Bluetooth evidence", "event order and timing"] + includedCategories(status)).joined(
             separator: ", ")
         return
-            "Send \(categories) to the CutOut maintainer for protocol support. Music is excluded. Your original recording stays on this device."
+            "Send \(categories) to the CutOut maintainer for protocol support. Music is excluded. A matching receipt starts removal of the local capture payload."
     }
 
     private func includedCategories(_ status: MobileCaptureSubmissionStatusDto) -> [String] {

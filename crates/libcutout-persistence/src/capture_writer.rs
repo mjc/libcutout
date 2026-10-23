@@ -1737,6 +1737,16 @@ impl RideDatabase {
     /// # Errors
     /// Returns storage, active-capture, output or sync failures. Database contents are preserved.
     pub fn export_live_capture(&self, id: LiveCaptureId, path: &Path) -> Result<String, String> {
+        if self
+            .capture_submission(crate::storage::CaptureSubmissionSource::LiveCapture(id))
+            .map_err(|error| error.to_string())?
+            .is_some_and(|status| {
+                status.local_payload_state
+                    != crate::storage::CaptureSubmissionLocalPayloadState::Retained
+            })
+        {
+            return Err("local capture payload was removed after confirmed Send".into());
+        }
         let capture = DatabaseCapture {
             database: self.clone(),
             id,
@@ -1793,6 +1803,7 @@ fn export_database_capture_from_pages(
 
         let mut page = Some(first_page);
         let mut after_sequence = None;
+        let mut next_sequence = 0;
         loop {
             let snapshot = match page.take() {
                 Some(snapshot) => snapshot,
@@ -1803,6 +1814,10 @@ fn export_database_capture_from_pages(
                 return Err("live capture changed during export".into());
             }
             for event in &snapshot.events {
+                if event.sequence != next_sequence || next_sequence >= expected_next_sequence {
+                    return Err("live capture payload is incomplete".into());
+                }
+                next_sequence += 1;
                 let retained = &event.payload;
                 output
                     .write_all(retained)
@@ -1817,6 +1832,9 @@ fn export_database_capture_from_pages(
                 .and_then(|sequence| sequence.checked_add(1))
                 .is_some_and(|next_sequence| next_sequence < snapshot.next_sequence);
             if !has_more {
+                if next_sequence != expected_next_sequence {
+                    return Err("live capture payload is incomplete".into());
+                }
                 break;
             }
             after_sequence = cursor;
@@ -2232,6 +2250,30 @@ mod tests {
             .unwrap()
             .into_bytes();
         (LiveCaptureId::new(), header, first, second)
+    }
+
+    #[test]
+    fn live_export_rejects_missing_rows_during_payload_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let (id, header, first, _) = export_test_inputs();
+        let limit = QueryLimit::new(1).unwrap();
+        let path = directory.path().join("missing-row.jsonl");
+        let result = export_database_capture_from_pages(
+            &path,
+            export_test_page(id, header.clone(), 0, first),
+            &CaptureWriterState::default(),
+            limit,
+            |_, _| {
+                let mut page = export_test_page(id, header.clone(), 1, vec![]);
+                page.events.clear();
+                Ok(page)
+            },
+        );
+        assert!(
+            result.is_err(),
+            "a removed page must not publish a truncated capture"
+        );
+        assert!(!path.exists());
     }
 
     #[test]
