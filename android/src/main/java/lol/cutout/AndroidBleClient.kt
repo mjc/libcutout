@@ -291,7 +291,7 @@ class AndroidBleClient(
         }
     }
 
-    /** Starts the Swift-style diagnostic-only route; it never promotes this link to protocol control. */
+    /** Starts a manual diagnostic capture, borrowing a verified live link when available. */
     fun startManualCapture(
         platformId: String,
         note: String?,
@@ -299,14 +299,16 @@ class AndroidBleClient(
         completed: (Boolean) -> Unit,
     ) = postOnOwner {
         val selected = found[platformId]
-        if (forgettingSavedDevice || !state.captureLifecycleSnapshot().canStart) {
+        if (!state.captureLifecycleSnapshot().canStart) {
             main.post { completed(false) }
             return@postOnOwner
         }
         val active = connection
         if (active != null) {
+            val currentConnection = state.connectionAttemptSnapshot()
             if (active.device.address != platformId ||
-                state.connectionAttemptSnapshot().transport != MobileConnectionTransportStateDto.CONNECTED ||
+                currentConnection.token != active.token ||
+                currentConnection.transport != MobileConnectionTransportStateDto.CONNECTED ||
                 state.deviceSessionSnapshot().connection.readiness != MobileConnectionReadinessDto.VERIFIED) {
                 main.post { completed(false) }
                 return@postOnOwner

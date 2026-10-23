@@ -94,7 +94,7 @@ class LocalDiagnosticCaptureClientTest {
     }
 
     @Test
-    fun automaticVescCaptureUsesVerifiedOwnerBeforeTelemetryAndWhenWriterStartsLater() {
+    fun manualVescCaptureUsesVerifiedOwnerBeforeTelemetryAndWhenWriterStartsLater() {
         val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
         val application = context as CutoutApplication
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
@@ -104,12 +104,10 @@ class LocalDiagnosticCaptureClientTest {
         )
         for (identifyBeforeStart in listOf(false, true)) {
             val state = CutoutSessionStateHandle.withDatabase(database)
-            val priorConsent = state.automaticDiagnosticRecordingEnabled()
             val platformId = "capture-vesc-${UUID.randomUUID()}"
             val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, { _, _ -> })
             var exported: File? = null
             try {
-                state.setAutomaticDiagnosticRecordingEnabled(true)
                 val token = checkNotNull(state.beginConnectionAttempt(platformId, android.os.SystemClock.elapsedRealtime().toULong()).token)
                 state.connectionLinkEstablished(token)
                 val session = lol.cutout.PevSession(state, token, { android.os.SystemClock.elapsedRealtime().toULong() }, {},
@@ -119,7 +117,7 @@ class LocalDiagnosticCaptureClientTest {
                 ) { _, _, _ -> client.updateIdentity(token) }
                 if (identifyBeforeStart) session.notification(ByteArray(16), ByteArray(16), reply)
                 checkNotNull(client.start(
-                    MobileCaptureOriginDto.AUTOMATIC, platformId, emptyList(), "VESC", null, token,
+                    MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "VESC", null, token,
                 ))
                 // The pre-start case verifies the shared identity without requiring another telemetry frame.
                 if (!identifyBeforeStart) session.notification(ByteArray(16), ByteArray(16), reply)
@@ -152,7 +150,6 @@ class LocalDiagnosticCaptureClientTest {
                 exported?.delete()
                 try { await { done -> client.close { done(Result.success(Unit)) } } }
                 finally {
-                    state.setAutomaticDiagnosticRecordingEnabled(priorConsent)
                     state.close()
                 }
             }
@@ -272,16 +269,25 @@ class LocalDiagnosticCaptureClientTest {
         val application = context as CutoutApplication
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
         val state = CutoutSessionStateHandle.withDatabase(database)
+        val priorConsent = state.automaticDiagnosticRecordingEnabled()
         val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, { _, _ -> })
         try {
-            check(client.start(
-                MobileCaptureOriginDto.AUTOMATIC, "capture-test-no-consent", emptyList(), null, null, null,
-            ) == null)
-            check(state.captureLifecycleSnapshot().attempt == null)
-            check(client.current().error == context.getString(R.string.capture_not_admitted))
+            for (legacyConsent in listOf(false, true)) {
+                state.setAutomaticDiagnosticRecordingEnabled(legacyConsent)
+                check(client.start(
+                    MobileCaptureOriginDto.AUTOMATIC,
+                    "capture-test-legacy-consent-$legacyConsent",
+                    emptyList(), null, null, null,
+                ) == null) { "Automatic diagnostic capture must remain refused with legacy consent=$legacyConsent" }
+                check(state.captureLifecycleSnapshot().attempt == null)
+                check(client.current().error == context.getString(R.string.capture_not_admitted))
+            }
         } finally {
             try { await { done -> client.close { done(Result.success(Unit)) } } }
-            finally { state.close() }
+            finally {
+                state.setAutomaticDiagnosticRecordingEnabled(priorConsent)
+                state.close()
+            }
             // Do not close or delete the shared app-owned database.
         }
     }

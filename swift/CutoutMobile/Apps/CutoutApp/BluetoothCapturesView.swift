@@ -199,7 +199,7 @@ struct CaptureArtifactDetailView: View {
                     ShareLink(item: fileURL) {
                         Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
                     }
-                    .accessibilityIdentifier("captures.share")
+                    .accessibilityIdentifier("captures.share.link")
                 } else if export.isExporting {
                     ProgressView(localizedAppText("captures.preparing"))
                 } else {
@@ -210,6 +210,7 @@ struct CaptureArtifactDetailView: View {
                         Task { await prepareExport() }
                     }
                     .disabled(export.isExporting)
+                    .accessibilityIdentifier("captures.share")
                 }
             } footer: {
                 Text(localizedAppText("captures.privacy"))
