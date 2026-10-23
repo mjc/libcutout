@@ -2585,7 +2585,7 @@ mod tests {
         assert_eq!(path.as_deref(), Some("/old/managed.jsonl"));
         assert_eq!(ride_id.as_deref(), Some("ride-one"));
         assert_eq!(imported_at, 55);
-        assert_eq!(version, 58);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
         let progress_rows: u64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM storage_normalization_progress WHERE singleton = 1",
@@ -2744,7 +2744,7 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            CURRENT_SCHEMA_VERSION - 1
+            57
         );
     }
 
