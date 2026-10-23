@@ -84,8 +84,9 @@ pub use projection::{
 };
 mod recovery;
 pub use recovery::{
-    EXPLICIT_PAUSE_PERSISTENCE_WINDOW, INTERRUPTED_RIDE_RESUME_WINDOW, RideRecoveryDecision,
-    RideRecoveryKind, ride_recovery_decision,
+    EXPLICIT_PAUSE_PERSISTENCE_WINDOW, INTERRUPTED_RIDE_RESUME_WINDOW, RideAppPresence,
+    RideAppPresenceOrder, RideInactivityEligibility, RideInactivityEvidence,
+    RideInactivityEvidenceError, RideRecoveryDecision, RideRecoveryKind, ride_recovery_decision,
 };
 
 #[cfg(test)]

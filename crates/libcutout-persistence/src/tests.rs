@@ -24,8 +24,9 @@ use cutout_music::{
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
     MonotonicMilliseconds, MovingTimeAvailability, MovingTimeObservation, MovingTimeSource,
-    RideEvent, RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState,
-    RouteViewport, VehicleIdentity, WallClockUnixMilliseconds,
+    RideAppPresence, RideAppPresenceOrder, RideEvent, RideInactivityEvidence, RouteDisplayBudget,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport, VehicleIdentity,
+    WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -34,17 +35,557 @@ use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartRea
 use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind, LiveCaptureId,
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
-    LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
-    PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase,
-    RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideLocationObservationCheckpoint,
-    RideMotionObservation, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
-    StoredPevcapCapture, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    LiveCaptureLocationValidation, LiveCaptureState, LocationQueueMode, PevcapImportOutcome,
+    PevcapImportPreview, PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit,
+    RideDatabase, RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideLocationCheckpoint,
+    RideLocationObservationCheckpoint, RideMotionObservation, RideRecord, RideSource,
+    RouteProjectionCancellation, StorageError, StoredPevcapCapture,
+    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 const LEGACY_NORMALIZATION_RECORDS: u64 = 130;
 const PHYSICAL_DEDUP_RECORDS: u64 = 256;
+
+#[test]
+fn ride_inactivity_evidence_orders_events_survives_reopen_and_ignores_gps() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+
+    let background_at = WallClockUnixMilliseconds::new(1_700_000_000_100);
+    let first = database
+        .observe_ride_app_presence(
+            ride,
+            RideAppPresenceOrder::new(1).unwrap(),
+            RideAppPresence::Background,
+            background_at,
+        )
+        .unwrap();
+    assert_eq!(first.presence_observed_at(), Some(background_at));
+    assert_eq!(first.app_inactive_since(), Some(background_at));
+
+    // Receipt order, not wall-clock order, owns lifecycle ordering when the clock moves back.
+    let repeated_background = WallClockUnixMilliseconds::new(1_700_000_000_050);
+    let second = database
+        .observe_ride_app_presence(
+            ride,
+            RideAppPresenceOrder::new(2).unwrap(),
+            RideAppPresence::Background,
+            repeated_background,
+        )
+        .unwrap();
+    assert_eq!(second.presence_observed_at(), Some(repeated_background));
+    assert_eq!(second.app_inactive_since(), Some(background_at));
+
+    let stale_foreground = WallClockUnixMilliseconds::new(1_700_000_000_150);
+    assert_eq!(
+        database
+            .observe_ride_app_presence(
+                ride,
+                RideAppPresenceOrder::new(2).unwrap(),
+                RideAppPresence::Foreground,
+                stale_foreground,
+            )
+            .unwrap(),
+        second
+    );
+
+    let verified_device_at = WallClockUnixMilliseconds::new(1_700_000_000_300);
+    let third = database
+        .observe_verified_device_seen(ride, verified_device_at)
+        .unwrap();
+    assert_eq!(third.app_inactive_since(), Some(background_at));
+    assert_eq!(third.last_verified_device_seen(), Some(verified_device_at));
+    assert_eq!(
+        database
+            .observe_verified_device_seen(ride, WallClockUnixMilliseconds::new(1_700_000_000_250),)
+            .unwrap(),
+        third
+    );
+
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        2_000,
+        1_700_000_004_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(third)
+    );
+
+    database.shutdown().unwrap();
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        reopened.ride_inactivity_evidence(ride).unwrap(),
+        Some(third)
+    );
+    let snapshot = reopened
+        .queue_restore_snapshot()
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    assert_eq!(snapshot.ride().map(RideRecord::id), Some(ride));
+    assert_eq!(snapshot.inactivity_evidence(), Some(&third));
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_inactivity_evidence_is_scoped_to_ride_and_cascades_on_delete() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let first_ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+    let second_ride = database
+        .create_started_live_ride(1_700_000_000_001, 1_001, None)
+        .unwrap();
+    let first_seen = WallClockUnixMilliseconds::new(1_700_000_000_100);
+    let second_seen = WallClockUnixMilliseconds::new(1_700_000_000_200);
+    let first_evidence = database
+        .observe_ride_app_presence(
+            first_ride,
+            RideAppPresenceOrder::new(1).unwrap(),
+            RideAppPresence::Background,
+            first_seen,
+        )
+        .unwrap();
+    let second_evidence = database
+        .observe_ride_app_presence(
+            second_ride,
+            RideAppPresenceOrder::new(1).unwrap(),
+            RideAppPresence::Background,
+            second_seen,
+        )
+        .unwrap();
+    assert_ne!(first_evidence, second_evidence);
+    assert_eq!(
+        database.ride_inactivity_evidence(first_ride).unwrap(),
+        Some(first_evidence)
+    );
+    assert_eq!(
+        database.ride_inactivity_evidence(second_ride).unwrap(),
+        Some(second_evidence)
+    );
+
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    connection
+        .execute(
+            "DELETE FROM rides WHERE id = ?1",
+            [first_ride.uuid().to_string()],
+        )
+        .unwrap();
+    let evidence_count: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM ride_inactivity_evidence WHERE ride_id = ?1",
+            [first_ride.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(evidence_count, 0);
+    let retained: (Option<i64>, Option<i64>) = connection
+        .query_row(
+            "SELECT presence_observed_at_ms, app_inactive_since_ms
+             FROM ride_inactivity_evidence WHERE ride_id = ?1",
+            [second_ride.uuid().to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(retained, (Some(1_700_000_000_200), Some(1_700_000_000_200)));
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn accepted_location_persists_ride_inactivity_snapshot_in_the_same_write() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+    let mut evidence = RideInactivityEvidence::default();
+    let background_at = WallClockUnixMilliseconds::new(1_700_000_000_100);
+    assert!(evidence.observe_app_presence(
+        RideAppPresenceOrder::new(1).unwrap(),
+        RideAppPresence::Background,
+        background_at,
+    ));
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        2_000,
+        1_700_000_000_200,
+        None,
+        LocationSource::Live,
+    );
+
+    let result = database
+        .queue_location_with_checkpoint(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            RideLocationCheckpoint::new(None, None, evidence),
+            LocationQueueMode::Bounded,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(evidence)
+    );
+
+    let later_evidence = {
+        let mut later = evidence;
+        assert!(later.observe_app_presence(
+            RideAppPresenceOrder::new(2).unwrap(),
+            RideAppPresence::Background,
+            WallClockUnixMilliseconds::new(1_700_000_000_300),
+        ));
+        later
+    };
+    let duplicate = database
+        .queue_location_with_checkpoint(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            RideLocationCheckpoint::new(None, None, later_evidence),
+            LocationQueueMode::Bounded,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(duplicate.admission(), LocationAdmission::Duplicate);
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(evidence)
+    );
+
+    let foreground = database
+        .observe_ride_app_presence(
+            ride,
+            RideAppPresenceOrder::new(2).unwrap(),
+            RideAppPresence::Foreground,
+            WallClockUnixMilliseconds::new(1_700_000_000_250),
+        )
+        .unwrap();
+    let later_sample = LocationSample::new(
+        Coordinate::from_degrees(40.0001, -105.0001).unwrap(),
+        3_000,
+        1_700_000_000_300,
+        None,
+        LocationSource::Live,
+    );
+    let stale_context_result = database
+        .queue_location_with_checkpoint(
+            ride,
+            later_sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            RideLocationCheckpoint::new(None, None, evidence),
+            LocationQueueMode::Bounded,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stale_context_result.admission(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(foreground)
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn verified_device_seen_is_persisted_with_the_existing_metadata_checkpoint() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+    let mut evidence = RideInactivityEvidence::default();
+    assert!(evidence.observe_app_presence(
+        RideAppPresenceOrder::new(1).unwrap(),
+        RideAppPresence::Background,
+        WallClockUnixMilliseconds::new(1_700_000_000_100),
+    ));
+    assert!(
+        evidence.observe_verified_device_seen(WallClockUnixMilliseconds::new(1_700_000_000_200,))
+    );
+
+    database
+        .update_ride_map_metadata_with_inactivity_evidence(
+            ride, None, None, None, None, None, None, evidence,
+        )
+        .unwrap();
+
+    assert_eq!(
+        database.ride_inactivity_evidence(ride).unwrap(),
+        Some(evidence)
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_inactivity_rejects_ignored_insert_and_update() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride-inactivity.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let insert_ride = database
+        .create_started_live_ride(1_700_000_000_000, 1_000, None)
+        .unwrap();
+    let update_ride = database
+        .create_started_live_ride(1_700_000_000_001, 1_001, None)
+        .unwrap();
+    let previous = database
+        .observe_ride_app_presence(
+            update_ride,
+            RideAppPresenceOrder::new(1).unwrap(),
+            RideAppPresence::Background,
+            WallClockUnixMilliseconds::new(1_700_000_000_100),
+        )
+        .unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER ignore_ride_inactivity_insert
+                 BEFORE INSERT ON ride_inactivity_evidence
+                 WHEN NEW.ride_id = '{}'
+                 BEGIN SELECT RAISE(IGNORE); END;
+             CREATE TRIGGER ignore_ride_inactivity_update
+                 BEFORE UPDATE ON ride_inactivity_evidence
+                 WHEN OLD.ride_id = '{}'
+                 BEGIN SELECT RAISE(IGNORE); END;",
+            insert_ride.uuid(),
+            update_ride.uuid()
+        ))
+        .unwrap();
+
+    let ignored_insert = database.observe_ride_app_presence(
+        insert_ride,
+        RideAppPresenceOrder::new(1).unwrap(),
+        RideAppPresence::Background,
+        WallClockUnixMilliseconds::new(1_700_000_000_200),
+    );
+    let ignored_update = database.observe_verified_device_seen(
+        update_ride,
+        WallClockUnixMilliseconds::new(1_700_000_000_300),
+    );
+    drop(connection);
+    database.shutdown().unwrap();
+
+    assert!(matches!(
+        ignored_insert,
+        Err(StorageError::InvalidDatabaseIdentity)
+    ));
+    assert!(matches!(
+        ignored_update,
+        Err(StorageError::InvalidDatabaseIdentity)
+    ));
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        reopened.ride_inactivity_evidence(insert_ride).unwrap(),
+        None
+    );
+    assert_eq!(
+        reopened.ride_inactivity_evidence(update_ride).unwrap(),
+        Some(previous),
+        "an ignored update must leave the last complete evidence intact"
+    );
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn inactive_live_settlement_rechecks_evidence_and_closes_at_last_material_point() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, None)
+        .unwrap();
+    for (at_ms, latitude) in [(1_000_u64, 40.0), (2_000, 40.0001)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            at_ms,
+            1_700_000_000_000 + at_ms,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+    database
+        .update_ride_map_metadata_with_motion(
+            ride,
+            Some("wheel-a"),
+            Some("wheel-a"),
+            Some(2_000),
+            Some(2_000),
+            Some(RideMotionObservation {
+                parked: true,
+                observed_at_milliseconds: 2_000,
+                last_stationary_at_milliseconds: Some(2_000),
+            }),
+        )
+        .unwrap();
+    let expected_evidence = database
+        .observe_ride_app_presence(
+            ride,
+            RideAppPresenceOrder::new(1).unwrap(),
+            RideAppPresence::Background,
+            WallClockUnixMilliseconds::new(1_700_000_000_100),
+        )
+        .unwrap();
+    database
+        .observe_verified_device_seen(ride, WallClockUnixMilliseconds::new(1_700_000_000_300))
+        .unwrap();
+
+    assert!(matches!(
+        database.settle_inactive_live_ride_with_checkpoint(
+            ride,
+            expected_evidence,
+            1_700_010_801_000,
+            2_000,
+            None,
+        ),
+        Err(StorageError::RideInactivityConflict)
+    ));
+    let current_evidence = database.ride_inactivity_evidence(ride).unwrap().unwrap();
+    let settled = database
+        .settle_inactive_live_ride_with_checkpoint(
+            ride,
+            current_evidence,
+            1_700_010_801_000,
+            2_000,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(settled.lifecycle(), RideLifecycleState::Saved);
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 1_000);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn inactive_live_settlement_requires_expiry_and_canonical_parked_motion() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let base_wall = 1_700_000_000_000_u64;
+    let start_ride = |at_ms: u64, motion: Option<RideMotionObservation>| {
+        let ride = database
+            .create_started_live_ride(at_ms, at_ms, Some("wheel"))
+            .unwrap();
+        if let Some(motion) = motion {
+            database
+                .update_ride_map_metadata_with_motion(
+                    ride,
+                    Some("wheel"),
+                    Some("wheel"),
+                    Some(at_ms),
+                    Some(at_ms),
+                    Some(motion),
+                )
+                .unwrap();
+        }
+        let evidence = database
+            .observe_ride_app_presence(
+                ride,
+                RideAppPresenceOrder::new(1).unwrap(),
+                RideAppPresence::Background,
+                WallClockUnixMilliseconds::new(base_wall),
+            )
+            .unwrap();
+        (ride, evidence)
+    };
+    let parked = |at_ms| {
+        Some(RideMotionObservation {
+            parked: true,
+            observed_at_milliseconds: at_ms,
+            last_stationary_at_milliseconds: Some(at_ms),
+        })
+    };
+    let within_window = start_ride(1_000, parked(1_000));
+    let unknown_motion = start_ride(2_000, None);
+    let moving = start_ride(
+        3_000,
+        Some(RideMotionObservation {
+            parked: false,
+            observed_at_milliseconds: 3_000,
+            last_stationary_at_milliseconds: None,
+        }),
+    );
+    let recently_seen = start_ride(4_000, parked(4_000));
+    let recently_seen_evidence = database
+        .observe_verified_device_seen(
+            recently_seen.0,
+            WallClockUnixMilliseconds::new(base_wall + 3 * 60 * 60 * 1_000),
+        )
+        .unwrap();
+
+    for ((ride, evidence), now) in [
+        (within_window, base_wall + 2 * 60 * 60 * 1_000),
+        (unknown_motion, base_wall + 4 * 60 * 60 * 1_000),
+        (moving, base_wall + 4 * 60 * 60 * 1_000),
+        (
+            (recently_seen.0, recently_seen_evidence),
+            base_wall + 4 * 60 * 60 * 1_000,
+        ),
+    ] {
+        assert!(matches!(
+            database.settle_inactive_live_ride_with_checkpoint(ride, evidence, now, 10_000, None,),
+            Err(StorageError::RideInactivityConflict)
+        ));
+        assert_eq!(
+            database.find_ride(ride).unwrap().unwrap().state(),
+            RideLifecycleState::Active
+        );
+    }
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
 
 #[test]
 fn charging_save_and_outbox_survive_reopen_without_changing_legacy_points() {
