@@ -82,6 +82,11 @@ pub use projection::{
     project_route_points_cancellable, project_route_points_from_iter, route_camera_region,
     route_camera_region_with_privacy, route_endpoint_metadata, route_segment_display_metadata,
 };
+mod recovery;
+pub use recovery::{
+    EXPLICIT_PAUSE_PERSISTENCE_WINDOW, INTERRUPTED_RIDE_RESUME_WINDOW, RideRecoveryDecision,
+    RideRecoveryKind, ride_recovery_decision,
+};
 
 #[cfg(test)]
 mod tests {

@@ -10821,14 +10821,6 @@ impl MobileRideMapConnectionAdmission {
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
 const MAX_LOCATION_BATCH_SIZE: usize = 256;
-const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
-const EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
-
-fn wall_clock_age_milliseconds(now: u64, updated_at: u64) -> u64 {
-    // A persisted timestamp from the future is a clock anomaly, not a fresh recovery window.
-    // Treat it as expired so wall-clock corrections cannot renew automatic recovery.
-    now.checked_sub(updated_at).unwrap_or(u64::MAX)
-}
 
 fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
     SystemTime::now()
@@ -11352,14 +11344,16 @@ fn plan_verified_connection_auto_recording(
         let matches_vehicle = preview.recorder.associated_vehicle() == Some(identity)
             || (preview.recorder.associated_vehicle().is_none()
                 && preview.recorder.candidate_vehicle() == Some(identity));
-        let within_resume_window =
-            preview
-                .recoverable_updated_at_milliseconds
-                .is_some_and(|updated_at| {
-                    wall_clock_age_milliseconds(occurred_at_ms, updated_at)
-                        <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS
-                });
-        if matches_vehicle && within_resume_window {
+        let recovery_decision = preview
+            .recoverable_updated_at_milliseconds
+            .map(|updated_at| {
+                ride_maps::ride_recovery_decision(
+                    ride_maps::RideRecoveryKind::InvoluntaryInterruption,
+                    ride_maps::WallClockUnixMilliseconds::new(occurred_at_ms),
+                    ride_maps::WallClockUnixMilliseconds::new(updated_at),
+                )
+            });
+        if matches_vehicle && recovery_decision == Some(ride_maps::RideRecoveryDecision::Resume) {
             preview.transition(MobileRideEventDto::Resume, at_ms, occurred_at_ms, mutations)?;
         }
     }
@@ -12550,14 +12544,23 @@ impl MobileRideMapCoreInner {
             return Ok(());
         }
         let now = wall_clock_milliseconds()?;
-        let age = wall_clock_age_milliseconds(now, ride.updated_at_milliseconds());
-        if !explicit_pause && age <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS {
-            self.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
-            self.recoverable_updated_at_milliseconds = None;
-            return Ok(());
-        }
-        if explicit_pause && age <= EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS {
-            return Ok(());
+        let recovery_kind = if explicit_pause {
+            ride_maps::RideRecoveryKind::ExplicitPause
+        } else {
+            ride_maps::RideRecoveryKind::InvoluntaryInterruption
+        };
+        match ride_maps::ride_recovery_decision(
+            recovery_kind,
+            ride_maps::WallClockUnixMilliseconds::new(now),
+            ride_maps::WallClockUnixMilliseconds::new(ride.updated_at_milliseconds()),
+        ) {
+            ride_maps::RideRecoveryDecision::Resume => {
+                self.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
+                self.recoverable_updated_at_milliseconds = None;
+                return Ok(());
+            }
+            ride_maps::RideRecoveryDecision::KeepPaused => return Ok(()),
+            ride_maps::RideRecoveryDecision::Finalize => {}
         }
         let discard_empty = ride.summary().point_count().as_u64() == 0
             && ride.last_telemetry_at_milliseconds().is_none();
@@ -12956,14 +12959,14 @@ fn apply_connection_recording_policy(
         let matches_vehicle = state.recorder.associated_vehicle() == Some(platform_identifier)
             || (state.recorder.associated_vehicle().is_none()
                 && state.recorder.candidate_vehicle() == Some(platform_identifier));
-        let within_resume_window =
-            state
-                .recoverable_updated_at_milliseconds
-                .is_some_and(|updated_at| {
-                    wall_clock_age_milliseconds(now, updated_at)
-                        <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS
-                });
-        if matches_vehicle && within_resume_window {
+        let recovery_decision = state.recoverable_updated_at_milliseconds.map(|updated_at| {
+            ride_maps::ride_recovery_decision(
+                ride_maps::RideRecoveryKind::InvoluntaryInterruption,
+                ride_maps::WallClockUnixMilliseconds::new(now),
+                ride_maps::WallClockUnixMilliseconds::new(updated_at),
+            )
+        });
+        if matches_vehicle && recovery_decision == Some(ride_maps::RideRecoveryDecision::Resume) {
             state.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
             state.recoverable_updated_at_milliseconds = None;
         }
@@ -21553,7 +21556,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS);
+        .saturating_sub(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64());
         // Leave a small scheduling margin so the assertion exercises the inclusive boundary
         // without depending on a frozen wall clock between the SQL update and restore.
         let resume_boundary = resume_boundary.saturating_add(5_000);
@@ -21626,7 +21629,7 @@ mod tests {
             };
         let future_update = wall_clock_milliseconds()
             .expect("system clock follows epoch")
-            .saturating_add(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_add(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64())
             .saturating_add(1);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -21697,7 +21700,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+        .saturating_sub(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64())
         .saturating_sub(1_000);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -21767,7 +21770,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS);
+        .saturating_sub(ride_maps::EXPLICIT_PAUSE_PERSISTENCE_WINDOW.as_u64());
         let pause_boundary = pause_boundary.saturating_add(5_000);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -21827,7 +21830,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS)
+        .saturating_sub(ride_maps::EXPLICIT_PAUSE_PERSISTENCE_WINDOW.as_u64())
         .saturating_sub(1_000);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -21888,7 +21891,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS)
+        .saturating_sub(ride_maps::EXPLICIT_PAUSE_PERSISTENCE_WINDOW.as_u64())
         .saturating_sub(1_000);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -21960,7 +21963,7 @@ mod tests {
                 .as_millis(),
         )
         .expect("wall clock fits u64")
-        .saturating_sub(EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS)
+        .saturating_sub(ride_maps::EXPLICIT_PAUSE_PERSISTENCE_WINDOW.as_u64())
         .saturating_sub(1_000);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -30574,7 +30577,7 @@ mod tests {
         )
         .expect("wall clock fits u64");
         let stale_update = now_milliseconds
-            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64())
             .saturating_sub(1);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -30645,7 +30648,7 @@ mod tests {
                 ride_id
             };
         let stale_update = wall_clock_now
-            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64())
             .saturating_sub(1);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -30718,7 +30721,7 @@ mod tests {
                 ride_id
             };
         let stale_update = wall_clock_now
-            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(ride_maps::INTERRUPTED_RIDE_RESUME_WINDOW.as_u64())
             .saturating_sub(1);
         rusqlite::Connection::open(&path)
             .expect("sqlite opens")
@@ -30797,9 +30800,15 @@ mod tests {
             durable_before_reopen.updated_at_milliseconds,
             clock_only_wall_clock
         );
-        assert!(
-            wall_clock_age_milliseconds(now, durable_before_reopen.updated_at_milliseconds)
-                <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS
+        assert_eq!(
+            ride_maps::ride_recovery_decision(
+                ride_maps::RideRecoveryKind::InvoluntaryInterruption,
+                ride_maps::WallClockUnixMilliseconds::new(now),
+                ride_maps::WallClockUnixMilliseconds::new(
+                    durable_before_reopen.updated_at_milliseconds
+                ),
+            ),
+            ride_maps::RideRecoveryDecision::Resume
         );
         database.shutdown().expect("database shuts down");
 
