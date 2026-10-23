@@ -7996,8 +7996,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
-        persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
-        persistence::StorageError::RideInactivityConflict => {
+        persistence::StorageError::InvalidRideState(_)
+        | persistence::StorageError::RideInactivityConflict
+        | persistence::StorageError::LiveCaptureNotActive => {
             MobileRideDatabaseError::InvalidRideState
         }
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
@@ -8033,9 +8034,6 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::MusicPolicyConflict => {
             MobileRideDatabaseError::MusicPolicyConflict
-        }
-        persistence::StorageError::LiveCaptureNotActive => {
-            MobileRideDatabaseError::InvalidRideState
         }
     }
 }
