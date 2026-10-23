@@ -554,34 +554,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         } catch MobileRideDatabaseError.StorageFailure {}
     }
 
-    func testDiagnosticWithdrawalFinishesOnlyAutomaticWriterAndPreservesRideAndConnection() async throws {
+    func testLegacyAutomaticPreferenceRejectsAutomaticStartAndPreservesManualWriterRideAndConnection() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)
         let previous = try preference.automaticDiagnosticRecordingEnabled()
         defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
-        for origin: MobileCaptureOriginDto in [.automatic, .manual] {
-            _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
-            let map = MobileRideMapState()
-            let ride = try map.startGpsOnly(atMs: 100)
-            let recorder = CaptureRecorderSpy()
-            let core = CutoutSessionCore(
-                clock: MonotonicClock(), rideMapState: map, database: database, captureRecorder: recorder)
-            let state = core.rideSessionStateHandle
-            let token = try XCTUnwrap(
-                state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
-            XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
-            let generation = try XCTUnwrap(state.beginConsentedCapture(origin: origin))
-            XCTAssertTrue(state.captureWriterStarted(generation: generation))
-            recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
-            let connection = core.connectionSnapshot
-            try await core.setAutomaticDiagnosticRecordingEnabled(false)
-            XCTAssertEqual(recorder.finishCount, origin == .automatic ? 1 : 0)
-            XCTAssertEqual(core.connectionSnapshot, connection)
-            XCTAssertEqual(map.currentSnapshot()?.rideID, ride.rideID)
-            XCTAssertEqual(map.currentSnapshot()?.state, .active)
-            XCTAssertFalse(try state.automaticDiagnosticRecordingEnabled())
-            if origin == .manual { core.finishCaptureForTesting() }
-        }
+        _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
+        let map = MobileRideMapState()
+        let ride = try map.startGpsOnly(atMs: 100)
+        let recorder = CaptureRecorderSpy()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(), rideMapState: map, database: database, captureRecorder: recorder)
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(
+            state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
+        XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
+        XCTAssertNil(
+            state.beginConsentedCapture(origin: .automatic),
+            "Legacy consent must not admit automatic diagnostic capture")
+        XCTAssertNil(state.captureLifecycleSnapshot().attempt)
+
+        let generation = try XCTUnwrap(state.beginConsentedCapture(origin: .manual))
+        XCTAssertTrue(state.captureWriterStarted(generation: generation))
+        recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
+        let connection = core.connectionSnapshot
+        try await core.setAutomaticDiagnosticRecordingEnabled(false)
+        XCTAssertEqual(recorder.finishCount, 0, "Changing the legacy preference must not retire a manual writer")
+        XCTAssertEqual(core.connectionSnapshot, connection)
+        XCTAssertEqual(map.currentSnapshot()?.rideID, ride.rideID)
+        XCTAssertEqual(map.currentSnapshot()?.state, .active)
+        XCTAssertFalse(try state.automaticDiagnosticRecordingEnabled())
+        core.finishCaptureForTesting()
     }
 
     func testDiagnosticConsentAdmissionDefaultsOffAndKeepsExplicitManualCaptureAvailable() {
@@ -1056,7 +1059,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         await fulfillment(of: [completed], timeout: 5)
     }
 
-    func testCaptureStartupReservesPolicyAndActiveLabelClosureAtExactCapacity() async throws {
+    func testCaptureStartupRetainsManualMetadataAndClosesActiveLabel() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)
         let previous = try preference.automaticDiagnosticRecordingEnabled()
@@ -1064,9 +1067,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
         let cases: [(MobileCaptureOriginDto, [String])] = [
             (.manual, (0..<4).map { "note=\($0)" }),
-            (.automatic, (0..<3).map { "note=\($0)" }),
             (.manual, ["note=0", "note=1", "capture_label=ride_start"]),
-            (.automatic, ["note=0", "capture_label=ride_start"]),
         ]
         for (origin, annotations) in cases {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1099,32 +1100,34 @@ final class CutoutSessionCoreTests: XCTestCase {
             if annotations.contains("capture_label=ride_start") {
                 XCTAssertTrue(retained.contains("capture_label=ride_stop"))
             }
-            XCTAssertEqual(retained.contains("capture_recording_policy=material_changes"), origin == .automatic)
+            XCTAssertFalse(retained.contains("capture_recording_policy=material_changes"))
+        }
+
+        let refusedAutomaticCases: [[String]] = [
+            (0..<3).map { "note=\($0)" },
+            ["note=0", "capture_label=ride_start"],
+        ]
+        for annotations in refusedAutomaticCases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let recorder = CutoutSessionCaptureRecorder(
+                clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+                wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+                database: try XCTUnwrap(MobileRideMapState.debugDatabase),
+                publish: { _ in },
+                onWriterCompletion: { _ in XCTFail("refused automatic startup must not finish a writer") }
+            )
+            XCTAssertFalse(
+                startRecorder(recorder, directory: directory, annotations: annotations, origin: .automatic),
+                "Legacy consent must not admit automatic diagnostic capture")
+            XCTAssertFalse(recorder.hasWriter)
+            XCTAssertNil(recorder.currentGeneration)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
         }
     }
 
-    func testCaptureStartupRejectsActiveLabelClosureBeyondCapacity() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = CutoutSessionCaptureRecorder(
-            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
-            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
-            database: try XCTUnwrap(MobileRideMapState.debugDatabase),
-            publish: { _ in },
-            onWriterCompletion: { _ in XCTFail("rejected startup must not finish") }
-        )
-        XCTAssertFalse(
-            startRecorder(
-                recorder, directory: directory,
-                annotations: ["note=0", "note=1", "capture_label=ride_start"], origin: .automatic
-            ))
-        XCTAssertFalse(recorder.hasWriter)
-        XCTAssertNil(recorder.currentGeneration)
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
-    }
-
-    func testCaptureStartupRejectsRequestedAnnotationsThatCannotBeRetained() throws {
+    func testCaptureStartupRejectsOversizedManualRequestedAnnotations() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1142,10 +1145,10 @@ final class CutoutSessionCoreTests: XCTestCase {
                 platformIdentifier: "capture-test-\(UUID().uuidString)",
                 advertisedServices: [],
                 directory: directory,
-                reason: "annotation_overflow",
-                annotations: (0..<6).map { "note=\($0)" },
+                reason: "oversized_manual_annotations",
+                annotations: (0..<256).map { "note=\($0)" },
                 evidence: "simulator_fixture",
-                origin: .automatic,
+                origin: .manual,
                 advertisedName: nil
             )
         )
