@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 60;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 61;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -79,6 +79,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         57 => migrate_v57_to_current(connection)?,
         58 => migrate_v58_to_current(connection)?,
         59 => migrate_v59_to_current(connection)?,
+        60 => migrate_v60_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2405,6 +2406,7 @@ fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageErro
     super::phone_control::verify_schema(&transaction)?;
     transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
+    requeue_legacy_archives(&transaction)?;
     transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
@@ -2414,14 +2416,81 @@ fn migrate_v59_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
     super::ride_inactivity::verify_schema(&transaction)?;
+    requeue_legacy_archives(&transaction)?;
     transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v60_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    requeue_legacy_archives(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn requeue_legacy_archives(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "UPDATE storage_normalization_progress
+         SET artifact_digest = NULL, artifact_complete = 0,
+             compaction_pending = 0, compaction_complete = 0
+         WHERE EXISTS (SELECT 1 FROM pevcap_imports WHERE artifact_path IS NOT NULL)",
+        [],
+    )?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_archive_path_repair_requeues_remaining_archives_once() {
+        for remaining in [false, true] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            let digest = "a".repeat(64);
+            if remaining {
+                connection.execute(
+                    "INSERT INTO pevcap_imports VALUES (?1, '/old/container/ride.sqlite.pevcap-imports/archive.jsonl', NULL, 'capture_only', 4, 1, 0, 1)",
+                    [&digest],
+                ).unwrap();
+            }
+            connection.execute(
+                "UPDATE storage_normalization_progress SET semantic_complete = 1, artifact_digest = ?1, artifact_complete = 1, compaction_complete = 1",
+                [&digest],
+            ).unwrap();
+            connection.pragma_update(None, "user_version", 60).unwrap();
+            migrate(&mut connection).unwrap();
+            let state: (bool, Option<String>, bool, bool) = connection.query_row(
+                "SELECT semantic_complete, artifact_digest, artifact_complete, compaction_complete FROM storage_normalization_progress", [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).unwrap();
+            assert!(state.0, "completed semantic reconciliation is retained");
+            assert_eq!(state.1, (!remaining).then_some(digest));
+            assert_eq!(state.2, !remaining);
+            assert_eq!(state.3, !remaining);
+            connection
+                .execute(
+                    "UPDATE storage_normalization_progress SET artifact_complete = 1",
+                    [],
+                )
+                .unwrap();
+            migrate(&mut connection).unwrap();
+            let complete: bool = connection
+                .query_row(
+                    "SELECT artifact_complete FROM storage_normalization_progress",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                complete,
+                "opening the current schema does not keep restarting reconciliation"
+            );
+        }
+    }
 
     #[test]
     fn current_schema_persists_per_ride_inactivity_evidence() {
@@ -2526,7 +2595,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(version, 60);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
         assert_eq!(updated_at, 900);
         assert_eq!(evidence_count, 0);
     }
