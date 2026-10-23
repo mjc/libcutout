@@ -17,9 +17,9 @@ use super::{
     remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
     ride_session_marker, route_points, save_device_name, save_music_event,
     save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
-    save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
-    sqlite_capabilities, trail_segments_in_bounds, transition_ride_with_telemetry,
-    update_ride_map_metadata_with_moving_time, voltage_sag_model,
+    save_selected_device, save_voltage_sag_model, selected_device, settle_inactive_live_ride,
+    settle_recovered_ride, sqlite_capabilities, trail_segments_in_bounds,
+    transition_ride_with_telemetry, update_ride_map_metadata_with_moving_time, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -427,6 +427,23 @@ impl DatabaseWorker<'_> {
                     replacement_candidate_vehicle.as_deref(),
                 ));
             }
+            Command::SettleInactiveLiveRide {
+                ride_id,
+                expected_evidence,
+                occurred_at_ms,
+                monotonic_at_ms,
+                replacement_candidate_vehicle,
+                reply,
+            } => {
+                let _ = reply.send(settle_inactive_live_ride(
+                    connection,
+                    ride_id,
+                    expected_evidence,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                    replacement_candidate_vehicle.as_deref(),
+                ));
+            }
             Command::CreateStartedRide {
                 source,
                 created_at_ms,
@@ -452,6 +469,7 @@ impl DatabaseWorker<'_> {
                 last_telemetry_at_ms,
                 motion,
                 moving_time_observation,
+                inactivity_evidence,
                 reply,
             } => {
                 let _ = reply.send(update_ride_map_metadata_with_moving_time(
@@ -463,6 +481,7 @@ impl DatabaseWorker<'_> {
                     last_telemetry_at_ms,
                     motion,
                     moving_time_observation,
+                    inactivity_evidence,
                 ));
             }
             Command::RecordBmsVoltageSamples { samples, reply } => {
@@ -842,6 +861,7 @@ impl DatabaseWorker<'_> {
                 telemetry_state,
                 moving_time_observation,
                 latest_vehicle_moving_time_observation,
+                inactivity_evidence,
                 reply,
             } => {
                 let _ = reply.send(append_location_with_moving_time(
@@ -853,6 +873,7 @@ impl DatabaseWorker<'_> {
                     SegmentStartReasonInput::Recorded(start_reason),
                     moving_time_observation,
                     latest_vehicle_moving_time_observation,
+                    inactivity_evidence,
                 ));
             }
             #[cfg(test)]
@@ -902,6 +923,35 @@ impl DatabaseWorker<'_> {
             }
             Command::NewestRecoverableRide { reply } => {
                 let _ = reply.send(newest_recoverable_ride(connection));
+            }
+            Command::RideInactivityEvidence { ride_id, reply } => {
+                let _ = reply.send(super::ride_inactivity::read(connection, ride_id));
+            }
+            Command::ObserveRideAppPresence {
+                ride_id,
+                order,
+                presence,
+                observed_at,
+                reply,
+            } => {
+                let _ = reply.send(super::ride_inactivity::observe_app_presence(
+                    connection,
+                    ride_id,
+                    order,
+                    presence,
+                    observed_at,
+                ));
+            }
+            Command::ObserveVerifiedDeviceSeen {
+                ride_id,
+                observed_at,
+                reply,
+            } => {
+                let _ = reply.send(super::ride_inactivity::observe_verified_device_seen(
+                    connection,
+                    ride_id,
+                    observed_at,
+                ));
             }
             Command::RestoreSnapshot { reply } => {
                 let _ = reply.send(load_ride_restore_snapshot(connection));

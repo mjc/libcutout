@@ -1,15 +1,11 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 59;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 60;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
     format!("PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {version};")
-}
-
-fn current_schema_pragmas() -> String {
-    schema_pragmas(CURRENT_SCHEMA_VERSION)
 }
 
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
@@ -82,6 +78,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         56 => migrate_v56_to_current(connection)?,
         57 => migrate_v57_to_current(connection)?,
         58 => migrate_v58_to_current(connection)?,
+        59 => migrate_v59_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -205,11 +202,15 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
                 .map_err(Into::into)
         })
         .and_then(|()| ensure_capture_payload_encoding(connection))
+        .and_then(|()| super::ride_inactivity::verify_schema(connection))
     {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
-    connection.execute_batch(&format!("{} COMMIT;", current_schema_pragmas()))?;
+    connection.execute_batch(&format!(
+        "{} COMMIT;",
+        schema_pragmas(CURRENT_SCHEMA_VERSION)
+    ))?;
     Ok(())
 }
 
@@ -494,6 +495,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::capture_submission::SCHEMA)?;
     ensure_charging_sync_schema(connection)?;
     ensure_community_account_columns(connection)?;
+    connection.execute_batch(super::ride_inactivity::SCHEMA)?;
     Ok(())
 }
 
@@ -701,7 +703,8 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2042,6 +2045,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    super::ride_inactivity::verify_schema(connection)?;
     Ok(())
 }
 
@@ -2088,6 +2092,7 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         "map_points_rtree",
         "ride_music_history",
         "ride_music_event",
+        "ride_inactivity_evidence",
         "bms_voltage_samples",
         "last_connected_device",
     ] {
@@ -2387,7 +2392,9 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
         INSERT OR IGNORE INTO storage_normalization_progress (singleton) VALUES (1);",
     )?;
     transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2396,7 +2403,18 @@ fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
     super::phone_control::verify_schema(&transaction)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v59_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2404,6 +2422,173 @@ fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_schema_persists_per_ride_inactivity_evidence() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+
+        let table_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'ride_inactivity_evidence')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(table_exists);
+    }
+
+    fn create_unconstrained_ride_inactivity_table(connection: &Connection) {
+        connection
+            .execute_batch(
+                "CREATE TABLE ride_inactivity_evidence (
+                    ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                    presence_order INTEGER,
+                    presence_observed_at_ms INTEGER,
+                    app_inactive_since_ms INTEGER,
+                    last_verified_device_seen_ms INTEGER
+                );",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn current_schema_verification_rejects_missing_or_malformed_ride_inactivity_table() {
+        let missing = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&missing).unwrap();
+        missing
+            .execute_batch("DROP TABLE ride_inactivity_evidence;")
+            .unwrap();
+        assert!(matches!(
+            verify_current_schema(&missing),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+
+        let wrong_columns = "CREATE TABLE ride_inactivity_evidence (
+            ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            other INTEGER
+        );";
+        let wrong_foreign_key = super::super::ride_inactivity::SCHEMA
+            .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
+            .replace("ON DELETE CASCADE", "ON DELETE RESTRICT");
+        for malformed_schema in [
+            "CREATE TABLE ride_inactivity_evidence (
+                ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                presence_order INTEGER,
+                presence_observed_at_ms INTEGER,
+                app_inactive_since_ms INTEGER,
+                last_verified_device_seen_ms INTEGER
+            );"
+            .to_owned(),
+            wrong_columns.to_owned(),
+            wrong_foreign_key,
+        ] {
+            let malformed = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&malformed).unwrap();
+            malformed
+                .execute_batch("DROP TABLE ride_inactivity_evidence;")
+                .unwrap();
+            malformed.execute_batch(&malformed_schema).unwrap();
+            assert!(matches!(
+                verify_current_schema(&malformed),
+                Err(StorageError::InvalidDatabaseIdentity)
+            ));
+        }
+    }
+
+    #[test]
+    fn v59_migration_adds_empty_inactivity_evidence_without_guessing_from_updated_at() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v59', 'live', 'interrupted', 100, 900, 0, 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute_batch("DROP TABLE ride_inactivity_evidence; PRAGMA user_version = 59;")
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let (version, updated_at, evidence_count): (i64, i64, u64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT user_version FROM pragma_user_version),
+                    updated_at_ms,
+                    (SELECT COUNT(*) FROM ride_inactivity_evidence WHERE ride_id = rides.id)
+                 FROM rides WHERE id = 'ride-v59'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(version, 60);
+        assert_eq!(updated_at, 900);
+        assert_eq!(evidence_count, 0);
+    }
+
+    #[test]
+    fn inactivity_schema_migrations_reject_malformed_table_without_advancing_or_leaking_ddl() {
+        for version in [57, 58, 59] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO rides
+                        (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                     VALUES ('ride-before-inactivity-migration', 'live', 'interrupted', 100, 900, 0, 0)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute_batch("DROP TABLE ride_inactivity_evidence;")
+                .unwrap();
+            create_unconstrained_ride_inactivity_table(&connection);
+            if version == 57 {
+                connection
+                    .execute_batch("DROP TABLE storage_normalization_progress;")
+                    .unwrap();
+            }
+            if version == 58 {
+                connection
+                    .execute_batch("DROP TABLE phone_drive_preferences;")
+                    .unwrap();
+            }
+            connection.execute_batch(&schema_pragmas(version)).unwrap();
+
+            assert!(matches!(
+                migrate(&mut connection),
+                Err(StorageError::InvalidDatabaseIdentity)
+            ));
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                version
+            );
+            if version == 57 {
+                assert!(!table_exists(&connection, "storage_normalization_progress").unwrap());
+            }
+            if version == 58 {
+                assert!(!table_exists(&connection, "phone_drive_preferences").unwrap());
+            }
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT updated_at_ms FROM rides
+                         WHERE id = 'ride-before-inactivity-migration'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                900
+            );
+        }
+    }
 
     fn v56_migration_fixture(with_conflicting_table: bool) -> Connection {
         let connection = Connection::open_in_memory().unwrap();
