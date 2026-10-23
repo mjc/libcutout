@@ -112,6 +112,71 @@ fn phone_drive_preferences_save_is_atomic_and_rejects_invalid_identity() {
 }
 
 #[test]
+fn phone_drive_preferences_reject_ignored_insert_and_update() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("phone-control.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let previous = PhoneDriveSettingsRecord::new(
+        PhoneControlMode::Buttons,
+        PhoneDriveLimits::new(7_000, 8_000).unwrap(),
+    );
+    database
+        .save_phone_drive_preferences("board-existing", previous)
+        .unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER ignore_phone_drive_insert BEFORE INSERT ON phone_drive_preferences
+             WHEN NEW.device_identity = 'board-new'
+             BEGIN SELECT RAISE(IGNORE); END;
+             CREATE TRIGGER ignore_phone_drive_update BEFORE UPDATE ON phone_drive_preferences
+             BEGIN SELECT RAISE(IGNORE); END;",
+        )
+        .unwrap();
+
+    let inserted = database.save_phone_drive_preferences(
+        "board-new",
+        PhoneDriveSettingsRecord::new(
+            PhoneControlMode::Area,
+            PhoneDriveLimits::new(11_000, 12_000).unwrap(),
+        ),
+    );
+    let updated = database.save_phone_drive_preferences(
+        "board-existing",
+        PhoneDriveSettingsRecord::new(
+            PhoneControlMode::Area,
+            PhoneDriveLimits::new(13_000, 14_000).unwrap(),
+        ),
+    );
+    database.shutdown().unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.phone_drive_preferences("board-new").unwrap(),
+        PhoneDriveSettingsRecord::default(),
+        "ignored insert must not create settings"
+    );
+    assert_eq!(
+        database.phone_drive_preferences("board-existing").unwrap(),
+        previous,
+        "ignored update must preserve the last complete settings"
+    );
+    database.shutdown().unwrap();
+
+    assert!(
+        matches!(inserted, Err(StorageError::InvalidDatabaseIdentity)),
+        "zero affected rows from an ignored insert must not report success"
+    );
+    assert!(
+        matches!(updated, Err(StorageError::InvalidDatabaseIdentity)),
+        "zero affected rows from an ignored update must not report success"
+    );
+}
+
+#[test]
 fn phone_drive_preferences_schema_preserves_legacy_singleton_without_using_it() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();

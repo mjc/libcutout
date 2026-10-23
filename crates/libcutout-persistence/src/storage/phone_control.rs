@@ -123,8 +123,14 @@ pub(super) fn dispatch(connection: &Connection, command: Command) {
                         settings.limits().brake_milliamps()
                     ],
                 )
-                .map(|_| ())
-                .map_err(StorageError::from);
+                .map_err(StorageError::from)
+                .and_then(|affected_rows| {
+                    if affected_rows == 1 {
+                        Ok(())
+                    } else {
+                        Err(StorageError::InvalidDatabaseIdentity)
+                    }
+                });
             let _ = reply.send(result);
         }
     }
