@@ -68,7 +68,6 @@ impl RideInactivityEvidence {
     /// # Errors
     /// Returns [`RideInactivityEvidenceError::InvalidState`] when the presence order and
     /// timestamp are inconsistent or an inactive anchor has no accepted presence event.
-    #[must_use]
     pub const fn from_state_parts(
         presence_order: Option<RideAppPresenceOrder>,
         presence_observed_at: Option<WallClockUnixMilliseconds>,
