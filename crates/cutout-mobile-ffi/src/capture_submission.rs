@@ -861,6 +861,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one server-backed scenario verifies receipt, local cleanup and remote deletion together"
+    )]
     async fn ffi_send_receives_a_receipt_removes_local_payload_and_deletes_remote_copy()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = TestDirectory::new()?;
