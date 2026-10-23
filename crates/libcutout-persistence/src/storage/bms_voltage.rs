@@ -1,7 +1,7 @@
 //! Compact, lossless storage for raw BMS voltage observations.
 
 use super::{BmsVoltageSampleRecord, StorageError, bms_sqlite_integer};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 const LEGACY_BATCH_ROWS: i64 = 256;
 
@@ -189,38 +189,21 @@ fn intern_ids(
     device: &str,
     session: &str,
 ) -> Result<(i64, i64), StorageError> {
-    connection.execute(
-        "INSERT OR IGNORE INTO bms_devices(identity) VALUES (?1)",
-        [device],
-    )?;
-    let device_id: i64 = connection.query_row(
-        "SELECT id FROM bms_devices WHERE identity = ?1",
-        [device],
-        |row| row.get(0),
-    )?;
-    connection.execute(
-        "INSERT OR IGNORE INTO bms_sessions(device_id, identifier) VALUES (?1, ?2)",
-        params![device_id, session],
-    )?;
-    let session_id: i64 = connection.query_row(
-        "SELECT id FROM bms_sessions WHERE device_id = ?1 AND identifier = ?2",
-        params![device_id, session],
-        |row| row.get(0),
-    )?;
+    connection
+        .prepare_cached("INSERT OR IGNORE INTO bms_devices(identity) VALUES (?1)")?
+        .execute([device])?;
+    let device_id: i64 = connection
+        .prepare_cached("SELECT id FROM bms_devices WHERE identity = ?1")?
+        .query_row([device], |row| row.get(0))?;
+    connection
+        .prepare_cached(
+            "INSERT OR IGNORE INTO bms_sessions(device_id, identifier) VALUES (?1, ?2)",
+        )?
+        .execute(params![device_id, session])?;
+    let session_id: i64 = connection
+        .prepare_cached("SELECT id FROM bms_sessions WHERE device_id = ?1 AND identifier = ?2")?
+        .query_row(params![device_id, session], |row| row.get(0))?;
     Ok((device_id, session_id))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LegacySample {
-    device: String,
-    session: String,
-    sequence: i64,
-    monotonic: i64,
-    wall: i64,
-    observation: i64,
-    pack: Option<i64>,
-    pack_observation: Option<i64>,
-    millivolts: i64,
 }
 
 pub(super) fn record_samples(
@@ -231,45 +214,58 @@ pub(super) fn record_samples(
         return Ok(());
     }
     let transaction = connection.transaction()?;
+    let mut legacy_exists = transaction.prepare_cached(
+        "SELECT EXISTS(
+             SELECT 1 FROM bms_voltage_samples_legacy
+             WHERE device_identity = ?1 AND session_identifier = ?2
+               AND event_sequence = ?3 AND observation_index = ?4
+         )",
+    )?;
+    let mut insert_sample = transaction.prepare_cached(
+        "INSERT OR IGNORE INTO bms_cell_samples
+         (session_id, device_id, event_sequence, monotonic_ms, wall_clock_ms,
+          observation_index, pack_index, pack_observation_index, millivolts)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    )?;
     for sample in samples {
         let sequence = bms_sqlite_integer(sample.event_sequence, "BMS event sequence")?;
         let monotonic =
             bms_sqlite_integer(sample.monotonic_milliseconds, "BMS monotonic timestamp")?;
         let wall = bms_sqlite_integer(sample.wall_clock_milliseconds, "BMS wall clock timestamp")?;
+        let observation = i64::from(sample.observation_index);
+        let pack = sample.pack_index.map(i64::from);
+        let pack_observation = sample.pack_observation_index.map(i64::from);
+        let old_exists: bool = legacy_exists.query_row(
+            params![
+                sample.device_identity,
+                sample.session_identifier,
+                sequence,
+                observation
+            ],
+            |row| row.get(0),
+        )?;
+        if old_exists {
+            continue;
+        }
         let (device_id, session_id) = intern_ids(
             &transaction,
             &sample.device_identity,
             &sample.session_identifier,
         )?;
-        let expected = LegacySample {
-            device: sample.device_identity.clone(),
-            session: sample.session_identifier.clone(),
+        insert_sample.execute(params![
+            session_id,
+            device_id,
             sequence,
             monotonic,
             wall,
-            observation: i64::from(sample.observation_index),
-            pack: sample.pack_index.map(i64::from),
-            pack_observation: sample.pack_observation_index.map(i64::from),
-            millivolts: i64::from(sample.millivolts),
-        };
-        let old: Option<LegacySample> = transaction.query_row(
-            "SELECT device_identity, session_identifier, event_sequence, monotonic_ms, wall_clock_ms,
-                    observation_index, pack_index, pack_observation_index, millivolts
-             FROM bms_voltage_samples_legacy WHERE device_identity=?1 AND session_identifier=?2 AND event_sequence=?3 AND observation_index=?4",
-            params![expected.device, expected.session, sequence, expected.observation], |row| Ok(LegacySample {
-                device: row.get(0)?, session: row.get(1)?, sequence: row.get(2)?, monotonic: row.get(3)?, wall: row.get(4)?,
-                observation: row.get(5)?, pack: row.get(6)?, pack_observation: row.get(7)?, millivolts: row.get(8)?,
-            })).optional()?;
-        if old.is_some() {
-            continue;
-        }
-        transaction.execute(
-            "INSERT OR IGNORE INTO bms_cell_samples
-             (session_id, device_id, event_sequence, monotonic_ms, wall_clock_ms, observation_index, pack_index, pack_observation_index, millivolts)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![session_id, device_id, sequence, monotonic, wall, expected.observation, expected.pack, expected.pack_observation, expected.millivolts],
-        )?;
+            observation,
+            pack,
+            pack_observation,
+            sample.millivolts,
+        ])?;
     }
+    drop(insert_sample);
+    drop(legacy_exists);
     transaction.commit()?;
     Ok(())
 }
