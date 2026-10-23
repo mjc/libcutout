@@ -113,7 +113,6 @@ struct ContentView: View {
                 focusedRoute = route
             }
             .onChange(of: presentedSheet?.id) { _, _ in model.phoneDrive.cancel(.navigation) }
-            .task { await model.phoneDrive.loadMode() }
             .onChange(of: model.capture.status) { _, status in
                 if let announcement = status?.accessibilityAnnouncement {
                     AccessibilityNotification.Announcement(announcement).post()

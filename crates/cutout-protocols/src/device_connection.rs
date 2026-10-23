@@ -156,6 +156,10 @@ pub struct DeviceConnectionSession {
     setting_operations:
         std::collections::BTreeMap<cutout_core::SettingId, settings::SettingTransportOperation>,
     phone_drive_control: phone_drive::PhoneDriveControl,
+    /// Exact connection attempt whose per-device preferences were loaded or saved.
+    phone_drive_preferences_token: Option<ConnectionAttemptToken>,
+    /// Exact attempt whose Ride settings sheet is visible.
+    phone_drive_settings_presented_for: Option<ConnectionAttemptToken>,
 }
 
 impl DeviceConnectionSession {
@@ -1143,7 +1147,11 @@ mod tests {
         assert!(owner.configure_vehicle_kind(&token, cutout_core::VehicleKind::Eskate));
         identify_vesc(&mut owner, &token);
         let _ = drivetrain_tick(&mut owner, &token, 3_000);
-        owner.set_phone_control_mode(PhoneControlMode::Buttons);
+        assert!(owner.apply_phone_drive_preferences(
+            &token,
+            PhoneControlMode::Buttons,
+            PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+        ));
         let unarmed_generation = owner.phone_drive_input_snapshot().generation.unwrap();
         let _ = owner.observe_phone_drive_contacts_at(
             &token,
@@ -1251,7 +1259,11 @@ mod tests {
             PhoneControlMode::Buttons,
             PhoneControlMode::Area,
         ] {
-            owner.set_phone_control_mode(mode);
+            assert!(owner.apply_phone_drive_preferences(
+                &token,
+                mode,
+                cutout_core::PhoneDriveLimits::default(),
+            ));
             let generation = owner.phone_drive_input_snapshot().generation.unwrap();
             owner.observe_phone_drive_contacts(&token, generation, PhoneDriveContacts::Released);
             assert_eq!(
@@ -1274,7 +1286,11 @@ mod tests {
             assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
             identify_vesc(&mut owner, &token);
             let _ = drivetrain_tick(&mut owner, &token, 3_000);
-            owner.set_phone_control_mode(PhoneControlMode::Buttons);
+            assert!(owner.apply_phone_drive_preferences(
+                &token,
+                PhoneControlMode::Buttons,
+                cutout_core::PhoneDriveLimits::default(),
+            ));
             (owner, token)
         }
         let (mut owner, first) = board();
@@ -1322,7 +1338,11 @@ mod tests {
         assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
         identify_vesc(&mut owner, &token);
         let _ = drivetrain_tick(&mut owner, &token, 3_000);
-        owner.set_phone_control_mode(PhoneControlMode::Area);
+        assert!(owner.apply_phone_drive_preferences(
+            &token,
+            PhoneControlMode::Area,
+            cutout_core::PhoneDriveLimits::default(),
+        ));
         let generation = owner.phone_drive_input_snapshot().generation.unwrap();
         owner.observe_phone_drive_contacts(&token, generation, PhoneDriveContacts::Released);
         owner.observe_phone_drive_contacts(

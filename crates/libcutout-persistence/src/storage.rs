@@ -1,6 +1,9 @@
 use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage, check_limit};
 use crate::recording::RideMotionObservation;
-use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapRecord};
+use cutout_core::{
+    PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapRecord, PhoneControlMode,
+    PhoneDriveLimits,
+};
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
     MusicRideEventKind, MusicTimeline, MusicTimelineOutcome, MusicValidationError,
@@ -1037,6 +1040,39 @@ pub struct VoltageSagModelRecord {
 pub struct PhoneAlarmPreferencesRecord {
     enabled: bool,
     pwm_duty_percent: u8,
+}
+
+/// Saved phone input mode and current limits for one stable device identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneDriveSettingsRecord {
+    mode: PhoneControlMode,
+    limits: PhoneDriveLimits,
+}
+
+impl PhoneDriveSettingsRecord {
+    /// Creates one atomic device-scoped phone-drive configuration.
+    #[must_use]
+    pub const fn new(mode: PhoneControlMode, limits: PhoneDriveLimits) -> Self {
+        Self { mode, limits }
+    }
+
+    /// Returns the saved input layout. `Disabled` never activates the session.
+    #[must_use]
+    pub const fn mode(self) -> PhoneControlMode {
+        self.mode
+    }
+
+    /// Returns the checked throttle and brake current limits.
+    #[must_use]
+    pub const fn limits(self) -> PhoneDriveLimits {
+        self.limits
+    }
+}
+
+impl Default for PhoneDriveSettingsRecord {
+    fn default() -> Self {
+        Self::new(PhoneControlMode::Disabled, PhoneDriveLimits::default())
+    }
 }
 
 impl PhoneAlarmPreferencesRecord {
@@ -3586,6 +3622,45 @@ impl RideDatabase {
         self.request(move |reply| Command::PhoneAlarmPreferences {
             device_identity,
             reply,
+        })
+    }
+
+    /// Loads the saved phone-drive mode and limits for one stable device identity.
+    ///
+    /// A device with no explicit saved settings receives the disabled default. Legacy global
+    /// settings are retained separately and are never attributed to a device.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the identity is invalid or the stored values are corrupt.
+    pub fn phone_drive_preferences(
+        &self,
+        device_identity: &str,
+    ) -> Result<PhoneDriveSettingsRecord, StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(|reply| {
+            Command::PhoneControl(phone_control::Command::LoadForDevice {
+                device_identity,
+                reply,
+            })
+        })
+    }
+
+    /// Atomically stores one device's mode and current limits.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the identity is invalid or the database cannot commit.
+    pub fn save_phone_drive_preferences(
+        &self,
+        device_identity: &str,
+        settings: PhoneDriveSettingsRecord,
+    ) -> Result<(), StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(|reply| {
+            Command::PhoneControl(phone_control::Command::SaveForDevice {
+                device_identity,
+                settings,
+                reply,
+            })
         })
     }
 

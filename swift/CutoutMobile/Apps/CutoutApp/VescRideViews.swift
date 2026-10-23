@@ -19,6 +19,7 @@ struct VescRideScreenView: View {
     var makeDrivetrainEditor: (() -> VescDrivetrainEditor?)? = nil
     var phoneDrive: PhoneDriveModel? = nil
     @State private var showsStandardReadings = false
+    @State private var showsPhoneDriveSettings = false
     @State private var drivetrainEditor: VescDrivetrainEditor?
 
     private var presentation: VescRideScreenPresentation {
@@ -55,6 +56,48 @@ struct VescRideScreenView: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .toolbar {
+            #if os(iOS)
+                ToolbarItem(placement: .bottomBar) {
+                    if let phoneDrive, phoneDrive.canPresentSettings {
+                        Button {
+                            presentPhoneDriveSettings(phoneDrive)
+                        } label: {
+                            Label(
+                                localizedAppText("phone_control.settings"),
+                                systemImage: "gearshape")
+                        }
+                        .accessibilityIdentifier("ride.phone-control.settings")
+                    }
+                }
+            #else
+                ToolbarItem(placement: .automatic) {
+                    if let phoneDrive, phoneDrive.canPresentSettings {
+                        Button {
+                            presentPhoneDriveSettings(phoneDrive)
+                        } label: {
+                            Label(localizedAppText("phone_control.settings"), systemImage: "gearshape")
+                        }
+                        .accessibilityIdentifier("ride.phone-control.settings")
+                    }
+                }
+            #endif
+        }
+        .sheet(
+            isPresented: $showsPhoneDriveSettings,
+            onDismiss: {
+                guard let phoneDrive, let token = phoneDrive.dismissSettings() else { return }
+                guard !phoneDrive.activateAfterSettingsDismissal(token) else { return }
+                guard phoneDrive.presentSettings(for: token, activationFailed: true) else { return }
+                showsPhoneDriveSettings = true
+            }
+        ) {
+            if let phoneDrive {
+                PhoneDriveSettingsSheet(model: phoneDrive) {
+                    showsPhoneDriveSettings = false
+                }
+            }
+        }
         .sheet(item: $drivetrainEditor) { editor in
             VescDrivetrainEditorView(editor: editor)
         }
@@ -71,6 +114,11 @@ struct VescRideScreenView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
+    }
+
+    private func presentPhoneDriveSettings(_ phoneDrive: PhoneDriveModel) {
+        guard phoneDrive.presentSettings() else { return }
+        showsPhoneDriveSettings = true
     }
 
     private var refloatInstruments: some View {

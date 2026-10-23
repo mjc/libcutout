@@ -1,4 +1,8 @@
 use super::*;
+use crate::{
+    MobileApplicationQueryTransportStatusDto, MobileSessionInputDto, MobileSessionInputKindDto,
+    MobileVehicleKindDto,
+};
 
 fn database() -> std::sync::Arc<crate::RideDatabaseHandle> {
     let path = std::env::temp_dir().join(format!(
@@ -8,174 +12,398 @@ fn database() -> std::sync::Arc<crate::RideDatabaseHandle> {
     crate::open_ride_database(path.to_string_lossy().into_owned()).unwrap()
 }
 
+fn eligible_eskate_attempt(
+    handle: &CutoutSessionStateHandle,
+    identity: &str,
+    at_ms: u64,
+) -> MobileConnectionAttemptTokenDto {
+    const VESC_REPLY: &[u8] = &[
+        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+        38, 208, 3,
+    ];
+    let token = handle
+        .begin_connection_attempt(identity.to_owned(), at_ms)
+        .token
+        .unwrap();
+    handle.connection_link_established(token.clone());
+    handle.observe_connection_notification(token.clone(), VESC_REPLY.to_vec());
+    handle.resolve_device_session(token.clone(), false, at_ms + 1);
+    assert!(handle.configure_connection_vehicle_kind(token.clone(), MobileVehicleKindDto::Eskate));
+    let link = handle
+        .ingest_device_session(
+            token.clone(),
+            MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::LinkUp,
+                monotonic_ms: crate::MobileMonotonicMillisDto {
+                    milliseconds: at_ms + 2,
+                },
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+            },
+        )
+        .unwrap();
+    let query = link
+        .result
+        .outputs
+        .into_iter()
+        .find_map(|output| output.application_query)
+        .expect("verified VESC startup asks about its application");
+    assert!(handle.mark_application_query_transport(
+        token.clone(),
+        query.query_id,
+        0,
+        1,
+        MobileApplicationQueryTransportStatusDto::Submitted,
+        at_ms + 2,
+    ));
+    let _ = handle.ingest_device_session(
+        token.clone(),
+        MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: crate::MobileMonotonicMillisDto {
+                milliseconds: at_ms + 10_000,
+            },
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+        },
+    );
+    token
+}
+
 #[test]
-fn phone_drive_ffi_current_budgets_are_durable_and_invalid_edits_do_not_replace_them() {
+fn phone_drive_ffi_loads_preferences_only_for_the_eligible_target() {
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let database = database();
     let handle = CutoutSessionStateHandle::with_database(database.clone());
-    let initial = handle.load_phone_control_mode().unwrap();
-    assert_eq!(initial.limits.throttle_milliamps, 3_000);
-    assert_eq!(initial.limits.brake_milliamps, 3_000);
-    let saved = handle
-        .save_phone_drive_limits("7.125".into(), "4.5".into())
-        .unwrap();
-    assert_eq!(saved.limits.throttle_milliamps, 7_125);
-    assert_eq!(saved.limits.brake_milliamps, 4_500);
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+
     assert!(matches!(
-        handle.save_phone_drive_limits("7.125".into(), "NaN".into()),
+        handle.phone_drive_snapshot().availability,
+        MobilePhoneDriveAvailabilityDto::Ready
+    ));
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    let snapshot = handle.load_phone_drive_preferences(token).unwrap();
+    assert_eq!(snapshot.device_identity.as_deref(), Some("board-a"));
+    assert_eq!(snapshot.mode, MobilePhoneControlModeDto::Disabled);
+    assert_eq!(snapshot.limits.throttle_milliamps, 3_000);
+    assert_eq!(snapshot.limits.brake_milliamps, 3_000);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_rejects_stale_device_attempts_without_publishing_into_replacement() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let first = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(first.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(first.clone()).unwrap();
+    let saved_a = handle
+        .save_phone_drive_preferences(
+            first.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7.125".into(),
+            "4.5".into(),
+        )
+        .unwrap();
+    assert_eq!(saved_a.device_identity.as_deref(), Some("board-a"));
+    assert_eq!(saved_a.limits.throttle_milliamps, 7_125);
+    assert_eq!(saved_a.limits.brake_milliamps, 4_500);
+
+    let replacement = eligible_eskate_attempt(&handle, "board-b", 20_000);
+
+    assert_ne!(first.generation, replacement.generation);
+    assert!(matches!(
+        handle.load_phone_drive_preferences(first.clone()),
+        Err(MobilePhoneControlError::DeviceChanged)
+    ));
+    assert!(matches!(
+        handle.set_phone_drive_settings_presented(first.clone(), true),
+        Err(MobilePhoneControlError::DeviceChanged)
+    ));
+    assert!(matches!(
+        handle.save_phone_drive_preferences(
+            first,
+            MobilePhoneControlModeDto::Buttons,
+            "7.125".into(),
+            "4.5".into(),
+        ),
+        Err(MobilePhoneControlError::DeviceChanged)
+    ));
+    handle
+        .set_phone_drive_settings_presented(replacement.clone(), true)
+        .unwrap();
+    let board_b = handle
+        .load_phone_drive_preferences(replacement.clone())
+        .unwrap();
+    assert_eq!(board_b.device_identity.as_deref(), Some("board-b"));
+    assert_eq!(board_b.mode, MobilePhoneControlModeDto::Disabled);
+    assert_eq!(board_b.limits.throttle_milliamps, 3_000);
+    handle
+        .set_phone_drive_settings_presented(replacement, false)
+        .unwrap();
+
+    let reopened_a = eligible_eskate_attempt(&handle, "board-a", 40_000);
+    handle
+        .set_phone_drive_settings_presented(reopened_a.clone(), true)
+        .unwrap();
+    let restored_a = handle.load_phone_drive_preferences(reopened_a).unwrap();
+    assert_eq!(restored_a.device_identity.as_deref(), Some("board-a"));
+    assert_eq!(restored_a.mode, MobilePhoneControlModeDto::Buttons);
+    assert_eq!(restored_a.limits.throttle_milliamps, 7_125);
+    assert_eq!(restored_a.limits.brake_milliamps, 4_500);
+
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_discards_a_completed_sql_load_after_attempt_replacement() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = std::sync::Arc::new(CutoutSessionStateHandle::with_database(database.clone()));
+    let first = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(first.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(first.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            first.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7.125".into(),
+            "4.5".into(),
+        )
+        .unwrap();
+    let first_generation = first.generation;
+
+    let (read_tx, read_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    let loading_handle = handle.clone();
+    let loading_database = database.clone();
+    let load = std::thread::spawn(move || {
+        load_phone_drive_preferences_with(&loading_handle, first, |identity| {
+            let record = loading_database
+                .inner
+                .phone_drive_preferences(identity)
+                .unwrap();
+            read_tx.send(()).unwrap();
+            resume_rx.recv().unwrap();
+            Ok(record)
+        })
+    });
+
+    read_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the real SQLite read must finish before the controlled pause");
+    assert!(
+        handle.inner.try_lock().is_ok(),
+        "database I/O must not retain the session mutex needed for connection changes"
+    );
+    let replacement = handle.begin_connection_attempt("board-b".into(), 20_000);
+    let replacement = replacement.token.unwrap();
+    assert_ne!(replacement.generation, first_generation);
+
+    resume_tx.send(()).unwrap();
+    assert!(matches!(
+        load.join().unwrap(),
+        Err(MobilePhoneControlError::DeviceChanged)
+    ));
+    let snapshot = handle.phone_drive_snapshot();
+    assert_eq!(snapshot.mode, MobilePhoneControlModeDto::Disabled);
+    assert_eq!(snapshot.limits.throttle_milliamps, 3_000);
+    assert_eq!(snapshot.limits.brake_milliamps, 3_000);
+    assert_eq!(
+        handle
+            .device_session_snapshot()
+            .connection
+            .token
+            .unwrap()
+            .generation,
+        replacement.generation
+    );
+    let durable_a = database.inner.phone_drive_preferences("board-a").unwrap();
+    assert_eq!(durable_a.mode(), core::PhoneControlMode::Buttons);
+    assert_eq!(durable_a.limits().throttle_milliamps(), 7_125);
+    assert_eq!(durable_a.limits().brake_milliamps(), 4_500);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_invalid_atomic_save_preserves_the_last_complete_device_record() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    let saved = handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7.125".into(),
+            "4.5".into(),
+        )
+        .unwrap();
+    assert!(matches!(
+        handle.save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Area,
+            "8".into(),
+            "NaN".into(),
+        ),
         Err(MobilePhoneControlError::InvalidLimits)
     ));
-    assert_eq!(handle.phone_drive_snapshot().limits, saved.limits);
-    let restored = CutoutSessionStateHandle::with_database(database.clone())
-        .load_phone_control_mode()
+    let after_failure = handle.phone_drive_snapshot();
+    assert_eq!(after_failure.mode, saved.mode);
+    assert_eq!(after_failure.limits, saved.limits);
+
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
         .unwrap();
-    assert_eq!(restored.limits, saved.limits);
+    let reopened = eligible_eskate_attempt(&handle, "board-a", 20_000);
+    handle
+        .set_phone_drive_settings_presented(reopened.clone(), true)
+        .unwrap();
+    let durable = handle.load_phone_drive_preferences(reopened).unwrap();
+    assert_eq!(durable.mode, MobilePhoneControlModeDto::Buttons);
+    assert_eq!(durable.limits.throttle_milliamps, 7_125);
+    assert_eq!(durable.limits.brake_milliamps, 4_500);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_concurrent_loads_and_saves_keep_one_complete_record() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+
+    std::thread::scope(|scope| {
+        for (mode, throttle, brake) in [
+            (MobilePhoneControlModeDto::Buttons, "2.5", "1.25"),
+            (MobilePhoneControlModeDto::Area, "4", "3.5"),
+        ] {
+            let handle = &handle;
+            let token = token.clone();
+            scope.spawn(move || {
+                handle
+                    .save_phone_drive_preferences(
+                        token,
+                        mode,
+                        throttle.to_owned(),
+                        brake.to_owned(),
+                    )
+                    .unwrap()
+            });
+        }
+        let handle = &handle;
+        let token = token.clone();
+        scope.spawn(move || handle.load_phone_drive_preferences(token).unwrap());
+    });
+
+    let final_snapshot = handle.load_phone_drive_preferences(token.clone()).unwrap();
+    let final_record = database.inner.phone_drive_preferences("board-a").unwrap();
     assert_eq!(
-        restored.availability,
+        final_snapshot.mode,
+        MobilePhoneControlModeDto::from(final_record.mode())
+    );
+    assert_eq!(
+        final_snapshot.limits.throttle_milliamps,
+        final_record.limits().throttle_milliamps()
+    );
+    assert_eq!(
+        final_snapshot.limits.brake_milliamps,
+        final_record.limits().brake_milliamps()
+    );
+    assert!(matches!(
+        (
+            final_snapshot.mode,
+            final_snapshot.limits.throttle_milliamps,
+            final_snapshot.limits.brake_milliamps
+        ),
+        (MobilePhoneControlModeDto::Buttons, 2_500, 1_250)
+            | (MobilePhoneControlModeDto::Area, 4_000, 3_500)
+    ));
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_modal_cancellation_does_not_wait_for_configuration_storage() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = std::sync::Arc::new(CutoutSessionStateHandle::with_database(database.clone()));
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+
+    let configuration_gate = handle
+        .configuration_updates
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker_handle = handle.clone();
+    let worker = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        done_tx
+            .send(worker_handle.set_phone_drive_settings_presented(token, false))
+            .unwrap();
+    });
+    started_rx.recv().unwrap();
+    let completed_while_storage_ordering_was_held = done_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .is_ok();
+    drop(configuration_gate);
+    worker.join().unwrap();
+    assert!(
+        completed_while_storage_ordering_was_held,
+        "input cancellation must not wait behind a database operation"
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn phone_drive_ffi_rejects_invalid_settings_without_mutating_session_defaults() {
+    let handle = CutoutSessionStateHandle::new();
+    assert!(matches!(
+        handle.phone_drive_snapshot().availability,
         MobilePhoneDriveAvailabilityDto::Unavailable {
             reason: MobilePhoneDriveUnavailableReasonDto::Disconnected
         }
-    );
-    database.shutdown().unwrap();
-    assert!(
-        handle
-            .save_phone_drive_limits("8".into(), "9".into())
-            .is_err()
-    );
-    assert_eq!(handle.phone_drive_snapshot().limits, saved.limits);
-}
-
-#[test]
-fn phone_drive_ffi_preferences_roundtrip_without_restoring_pressed_input() {
-    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let database = database();
-    let handle = CutoutSessionStateHandle::with_database(database.clone());
-    assert_eq!(
-        handle.load_phone_control_mode().unwrap().mode,
-        MobilePhoneControlModeDto::Disabled
-    );
-    for mode in [
-        MobilePhoneControlModeDto::Buttons,
-        MobilePhoneControlModeDto::Area,
-        MobilePhoneControlModeDto::Disabled,
-    ] {
-        let saved = handle.save_phone_control_mode(mode).unwrap();
-        assert_eq!(saved.mode, mode);
-        assert_eq!(
-            saved.availability,
-            MobilePhoneDriveAvailabilityDto::Unavailable {
-                reason: MobilePhoneDriveUnavailableReasonDto::Disconnected
-            }
-        );
-        let restored = CutoutSessionStateHandle::with_database(database.clone())
-            .load_phone_control_mode()
-            .unwrap();
-        assert_eq!(restored.mode, mode);
-        assert!(!matches!(
-            restored.phase,
-            MobilePhoneDriveInputPhaseDto::Pressed { .. }
-        ));
-    }
-    database.shutdown().unwrap();
-}
-
-#[test]
-fn phone_drive_ffi_failed_save_keeps_mode_but_retires_input() {
-    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let database = database();
-    let handle = CutoutSessionStateHandle::with_database(database.clone());
-    handle
-        .save_phone_control_mode(MobilePhoneControlModeDto::Buttons)
-        .unwrap();
-    {
-        let mut owner = handle.lock_inner();
-        let input = &mut owner.session_state_mut().phone_drive_input;
-        let generation = input.snapshot().generation.unwrap();
-        input.observe(generation, core::PhoneDriveContacts::Released);
-        input.observe(
-            generation,
-            core::PhoneDriveContacts::Single {
-                contact: core::PhoneDriveContactId::new(1).unwrap(),
-                region: Some(core::PhoneDriveAction::Throttle),
-            },
-        );
-    }
-    let before = handle.phone_drive_snapshot();
-    assert_eq!(
-        before.phase,
-        MobilePhoneDriveInputPhaseDto::Pressed {
-            action: MobilePhoneDriveActionDto::Throttle
-        }
-    );
-    database.shutdown().unwrap();
-    assert!(
-        handle
-            .save_phone_control_mode(MobilePhoneControlModeDto::Area)
-            .is_err()
-    );
-    let failed = handle.phone_drive_snapshot();
-    assert_eq!(failed.mode, MobilePhoneControlModeDto::Buttons);
-    assert_ne!(failed.generation, before.generation);
-    assert_eq!(
-        failed.phase,
-        MobilePhoneDriveInputPhaseDto::Cancelled {
-            reason: MobilePhoneDriveCancelReasonDto::ModeChanged
-        }
-    );
-}
-
-#[test]
-fn phone_drive_ffi_concurrent_preference_operations_keep_active_and_durable_mode_together() {
-    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let database = database();
-    let handle = CutoutSessionStateHandle::with_database(database.clone());
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            handle
-                .save_phone_control_mode(MobilePhoneControlModeDto::Area)
-                .unwrap()
-        });
-        scope.spawn(|| {
-            handle
-                .save_phone_control_mode(MobilePhoneControlModeDto::Buttons)
-                .unwrap()
-        });
-        scope.spawn(|| handle.load_phone_control_mode().unwrap());
-    });
-    assert_eq!(
-        core::PhoneControlMode::from(handle.phone_drive_snapshot().mode),
-        database.inner.phone_control_mode().unwrap()
-    );
-    database.shutdown().unwrap();
-}
-
-#[test]
-fn phone_drive_ffi_invalid_native_contact_cannot_become_a_valid_id() {
-    let contacts: core::PhoneDriveContacts = MobilePhoneDriveContactsDto::Single {
-        contact_id: 0,
-        region: Some(MobilePhoneDriveActionDto::Throttle),
-    }
-    .into();
-    assert_eq!(contacts, core::PhoneDriveContacts::Invalid);
-    let handle = CutoutSessionStateHandle::new();
-    assert!(matches!(
-        handle.load_phone_control_mode(),
-        Err(MobilePhoneControlError::PersistenceUnavailable)
     ));
-    assert!(matches!(
-        handle.save_phone_control_mode(MobilePhoneControlModeDto::Area),
-        Err(MobilePhoneControlError::PersistenceUnavailable)
-    ));
+    assert_eq!(handle.phone_drive_snapshot().device_identity, None);
     assert_eq!(
         handle.phone_drive_snapshot().mode,
         MobilePhoneControlModeDto::Disabled
     );
+    assert_eq!(
+        handle.phone_drive_snapshot().limits.throttle_milliamps,
+        3_000
+    );
+    assert_eq!(handle.phone_drive_snapshot().limits.brake_milliamps, 3_000);
 }

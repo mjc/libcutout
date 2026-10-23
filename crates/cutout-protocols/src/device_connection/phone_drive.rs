@@ -27,6 +27,9 @@ pub enum PhoneDriveActivationError {
     /// The route does not support standard local VESC phone commands.
     #[error("vehicle unsupported")]
     VehicleUnsupported,
+    /// No saved settings have been loaded for this exact connection attempt.
+    #[error("phone settings are not loaded for this connection")]
+    SettingsNotLoaded,
     /// Phone control is disabled in the saved layout.
     #[error("phone control mode disabled")]
     ModeDisabled,
@@ -124,6 +127,12 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return Err(PhoneDriveActivationError::ConnectionUnavailable);
         }
+        if self.phone_drive_preferences_token.as_ref() != Some(token) {
+            return Err(PhoneDriveActivationError::SettingsNotLoaded);
+        }
+        if self.phone_drive_settings_presented_for.as_ref() == Some(token) {
+            return Err(PhoneDriveActivationError::Busy);
+        }
         match self.phone_drive_availability() {
             PhoneDriveAvailability::Unavailable(_) => {
                 return Err(PhoneDriveActivationError::VehicleUnsupported);
@@ -198,6 +207,11 @@ impl DeviceConnectionSession {
         at: MonotonicTimestamp,
     ) -> Option<DeviceConnectionStep> {
         if !self.state.connection.is_verified(token) {
+            return None;
+        }
+        if self.phone_drive_preferences_token.as_ref() != Some(token)
+            || self.phone_drive_settings_presented_for.as_ref() == Some(token)
+        {
             return None;
         }
         let before = self.phone_drive_input_snapshot();
@@ -323,6 +337,11 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return false;
         }
+        if self.phone_drive_settings_presented_for.as_ref() == Some(token)
+            && write.kind == PhoneDriveWriteKind::Setpoint
+        {
+            return false;
+        }
         let Some(pending) = self.phone_drive_control.pending else {
             return false;
         };
@@ -360,6 +379,8 @@ impl DeviceConnectionSession {
         at: MonotonicTimestamp,
     ) -> bool {
         if !self.state.connection.is_verified(token)
+            || (self.phone_drive_settings_presented_for.as_ref() == Some(token)
+                && write.kind == PhoneDriveWriteKind::Setpoint)
             || !self
                 .phone_drive_control
                 .pending
@@ -397,14 +418,6 @@ impl DeviceConnectionSession {
         self.state.phone_drive_input.snapshot()
     }
 
-    /// Applies an already durably saved layout and cancels any active input.
-    pub fn set_phone_control_mode(&mut self, mode: PhoneControlMode) {
-        if self.phone_drive_input_snapshot().mode != mode {
-            self.cancel_phone_drive(PhoneDriveCancelReason::ModeChanged);
-            self.state.phone_drive_input.set_mode(mode);
-        }
-    }
-
     /// Updates contact feedback without renewing live-control input age.
     #[cfg(test)]
     pub fn observe_phone_drive_contacts(
@@ -413,7 +426,10 @@ impl DeviceConnectionSession {
         generation: u64,
         contacts: PhoneDriveContacts,
     ) {
-        if self.state.connection.is_verified(token) && self.phone_drive_activation().is_none() {
+        if self.phone_drive_preferences_are_current(token)
+            && self.phone_drive_settings_presented_for.as_ref() != Some(token)
+            && self.phone_drive_activation().is_none()
+        {
             match self.phone_drive_availability() {
                 PhoneDriveAvailability::Ready => {
                     self.state.phone_drive_input.observe(generation, contacts);
@@ -425,13 +441,20 @@ impl DeviceConnectionSession {
 
     /// Retires held input and retains bounded neutral intent for the same live attempt.
     pub fn cancel_phone_drive(&mut self, reason: PhoneDriveCancelReason) {
-        self.state.phone_drive_input.cancel(reason);
         if reason == PhoneDriveCancelReason::ConnectionChanged {
             self.phone_drive_control.activation = None;
             self.phone_drive_control.pending = None;
             self.phone_drive_control.controller_fault = false;
+            self.phone_drive_preferences_token = None;
+            self.phone_drive_settings_presented_for = None;
+            self.state
+                .phone_drive_input
+                .set_mode(PhoneControlMode::Disabled);
+            self.state.phone_drive_input.cancel(reason);
+            self.state.phone_drive_limits = PhoneDriveLimits::default();
             return;
         }
+        self.state.phone_drive_input.cancel(reason);
         if self.phone_drive_control.activation.is_some() {
             if !self
                 .phone_drive_control
@@ -448,6 +471,82 @@ impl DeviceConnectionSession {
                 self.phone_drive_control.activation = None;
             }
         }
+    }
+
+    /// Applies a complete persisted configuration to the exact currently eligible attempt.
+    ///
+    /// The generation is ephemeral and is never used as a database key.
+    pub fn apply_phone_drive_preferences(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        mode: PhoneControlMode,
+        limits: PhoneDriveLimits,
+    ) -> bool {
+        if !self.state.connection.is_verified(token)
+            || matches!(
+                self.phone_drive_availability(),
+                PhoneDriveAvailability::Unavailable(_)
+            )
+        {
+            return false;
+        }
+        if self.phone_drive_input_snapshot().mode != mode {
+            self.cancel_phone_drive(PhoneDriveCancelReason::ModeChanged);
+        } else if self.state.phone_drive_limits != limits {
+            self.cancel_phone_drive(PhoneDriveCancelReason::ActivationChanged);
+        }
+        self.state.phone_drive_input.set_mode(mode);
+        self.state.phone_drive_limits = limits;
+        self.phone_drive_preferences_token = Some(token.clone());
+        true
+    }
+
+    /// Whether this attempt is currently eligible to show device-scoped phone settings.
+    #[must_use]
+    pub fn phone_drive_target_is_current(&self, token: &ConnectionAttemptToken) -> bool {
+        self.state.connection.is_verified(token)
+            && !matches!(
+                self.phone_drive_availability(),
+                PhoneDriveAvailability::Unavailable(_)
+            )
+    }
+
+    /// Whether the full saved configuration belongs to this verified attempt.
+    #[must_use]
+    pub fn phone_drive_preferences_are_current(&self, token: &ConnectionAttemptToken) -> bool {
+        self.phone_drive_preferences_token.as_ref() == Some(token)
+            && self.phone_drive_target_is_current(token)
+    }
+
+    /// Reports that the existing Ride input surface is covered by its settings sheet.
+    /// Opening retires held input and activation; dismissing never restores either.
+    pub fn set_phone_drive_settings_presented(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        presented: bool,
+    ) -> bool {
+        if !self.phone_drive_target_is_current(token) {
+            return false;
+        }
+        if presented {
+            if self.phone_drive_settings_presented_for.as_ref() != Some(token) {
+                self.cancel_phone_drive(PhoneDriveCancelReason::Navigation);
+                self.phone_drive_settings_presented_for = Some(token.clone());
+            }
+            true
+        } else if self.phone_drive_settings_presented_for.as_ref() == Some(token) {
+            self.phone_drive_settings_presented_for = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether this exact connection owns the currently presented settings sheet.
+    #[must_use]
+    pub fn phone_drive_settings_are_presented(&self, token: &ConnectionAttemptToken) -> bool {
+        self.phone_drive_settings_presented_for.as_ref() == Some(token)
+            && self.phone_drive_target_is_current(token)
     }
 
     /// Cancels from a native lifecycle event using its current host receipt time.

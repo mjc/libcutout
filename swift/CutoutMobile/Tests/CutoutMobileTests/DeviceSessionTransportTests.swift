@@ -93,17 +93,8 @@ final class DeviceSessionTransportTests: XCTestCase {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         try queue.sync {
             let state = CutoutSessionStateHandle.withDatabase(database: database)
-            let previous = try state.loadPhoneControlMode()
-            defer {
-                XCTAssertNoThrow(try state.savePhoneControlMode(mode: previous.mode))
-                XCTAssertNoThrow(
-                    try state.savePhoneDriveLimits(
-                        throttleAmpsText: String(Double(previous.limits.throttleMilliamps) / 1_000),
-                        brakeAmpsText: String(Double(previous.limits.brakeMilliamps) / 1_000)))
-            }
-            _ = try state.savePhoneControlMode(mode: .buttons)
-            _ = try state.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
-            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "phone-vesc", nowMs: 0).token)
+            let identity = "phone-vesc-\(UUID().uuidString)"
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identity, nowMs: 0).token)
             _ = state.connectionLinkEstablished(token: token)
             _ = state.observeConnectionNotification(token: token, bytes: vescReply)
             _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
@@ -119,6 +110,11 @@ final class DeviceSessionTransportTests: XCTestCase {
             transport.handleTimer()
             XCTAssertTrue(state.configureConnectionVehicleKind(token: token, kind: .eskate))
             XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+            _ = try state.setPhoneDriveSettingsPresented(token: token, presented: true)
+            _ = try state.loadPhoneDrivePreferences(token: token)
+            _ = try state.savePhoneDrivePreferences(
+                token: token, mode: .buttons, throttleAmpsText: "3", brakeAmpsText: "3")
+            _ = try state.setPhoneDriveSettingsPresented(token: token, presented: false)
             let generation = try XCTUnwrap(state.phoneDriveSnapshot().generation)
             _ = transport.observePhoneDriveContacts(
                 generation: generation, contacts: .released, observedAtMs: 3_000)

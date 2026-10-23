@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 58;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 59;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -81,6 +81,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         55 => migrate_v55_to_v56(connection)?,
         56 => migrate_v56_to_current(connection)?,
         57 => migrate_v57_to_current(connection)?,
+        58 => migrate_v58_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -153,6 +154,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 57 {
             migrate_v57_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 58 {
+            migrate_v58_to_current(connection)?;
         }
     }
     Ok(())
@@ -2051,6 +2055,7 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         "device_vesc_drivetrains",
         "phone_alarm_preferences",
         "phone_control_preferences",
+        "phone_drive_preferences",
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
         "capture_submissions",
@@ -2306,7 +2311,7 @@ fn migrate_v55_to_v56(connection: &mut Connection) -> Result<(), StorageError> {
         (true, true) => {}
         _ => return Err(StorageError::InvalidDatabaseIdentity),
     }
-    super::phone_control::verify_schema(&transaction)?;
+    super::phone_control::verify_legacy_schema(&transaction)?;
     transaction.execute_batch(&schema_pragmas(56))?;
     transaction.commit()?;
     Ok(())
@@ -2381,6 +2386,16 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
         );
         INSERT OR IGNORE INTO storage_normalization_progress (singleton) VALUES (1);",
     )?;
+    transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
+    super::phone_control::verify_schema(&transaction)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -2419,6 +2434,53 @@ mod tests {
         }
         connection.execute_batch(&schema_pragmas(56)).unwrap();
         connection
+    }
+
+    #[test]
+    fn v55_upgrade_uses_the_historical_phone_schema_and_preserves_legacy_values() {
+        let mut connection = v56_migration_fixture(false);
+        connection
+            .execute_batch(
+                "ALTER TABLE phone_control_preferences RENAME TO phone_control_preferences_v56;
+                 CREATE TABLE phone_control_preferences (
+                     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+                     mode TEXT NOT NULL CHECK (mode IN ('disabled', 'buttons', 'area'))
+                 );
+                 INSERT INTO phone_control_preferences (id, mode)
+                     SELECT id, 'area' FROM phone_control_preferences_v56 WHERE id = 1;
+                 DROP TABLE phone_control_preferences_v56;
+                 DROP TABLE phone_drive_preferences;
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 55;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT mode, throttle_milliamps, brake_milliamps
+                       FROM phone_control_preferences WHERE id = 1",
+                    [],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?
+                    )),
+                )
+                .unwrap(),
+            ("area".to_owned(), 3_000, 3_000)
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM phone_drive_preferences", [], |row| {
+                    row.get::<_, u64>(0)
+                },)
+                .unwrap(),
+            0,
+            "legacy global mode must remain unassigned to every device"
+        );
     }
 
     fn insert_v56_import_fixture(connection: &Connection, digest: &str) {

@@ -66,13 +66,10 @@ struct PhoneDriveRideSurface<Content: View>: View {
                     )
                     .background { areaFeedback }
                     .accessibilityElement()
-                    .accessibilityLabel(localizedAppText("phone_control.title"))
+                    .accessibilityLabel(localizedAppText("phone_control.area_hint"))
                     .accessibilityValue(model.feedbackText)
                     .accessibilityAction(named: localizedAppText("phone_control.brake")) { pulse(.brake) }
                     .accessibilityAction(named: localizedAppText("phone_control.throttle")) { pulse(.throttle) }
-                    .accessibilityAction(named: localizedAppText("phone_control.deactivate")) {
-                        model.cancel(.activationChanged)
-                    }
                     .accessibilityIdentifier("phone-control.area")
                 }
             }
@@ -99,28 +96,19 @@ struct PhoneDriveRideSurface<Content: View>: View {
     }
 
     private func buttonsPanel(height: CGFloat) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text(localizedAppText("phone_control.title")).font(.system(size: 13, weight: .semibold))
-                Spacer()
-                activationStatus
-            }
-            HStack(spacing: PhoneDriveTouchGeometry.buttonGap) {
-                holdButton(.brake)
-                holdButton(.throttle)
-            }
-            .frame(height: height)
-            .overlay {
-                if model.snapshot.mode == .buttons {
-                    PhoneDriveTouchSurface(
-                        model: model, mode: .buttons, acceptsInput: model.capturesInput
-                    )
-                    .accessibilityHidden(true)
-                }
-            }
-            statusText
+        HStack(spacing: PhoneDriveTouchGeometry.buttonGap) {
+            holdButton(.brake)
+            holdButton(.throttle)
         }
-        .accessibilityElement(children: .contain)
+        .frame(height: height)
+        .overlay {
+            if model.snapshot.mode == .buttons {
+                PhoneDriveTouchSurface(
+                    model: model, mode: .buttons, acceptsInput: model.capturesInput
+                )
+                .accessibilityHidden(true)
+            }
+        }
         .accessibilityIdentifier("phone-control.buttons")
     }
 
@@ -175,21 +163,16 @@ struct PhoneDriveRideSurface<Content: View>: View {
 
     private var areaStatus: some View {
         VStack(spacing: 6) {
-            HStack {
-                Text(localizedAppText("phone_control.area_hint"))
-                    .font(.caption)
-                    .foregroundStyle(PevDashboardColors.rideMuted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                Spacer(minLength: 4)
-                activationStatus
-            }
+            Text(localizedAppText("phone_control.area_hint"))
+                .font(.caption)
+                .foregroundStyle(PevDashboardColors.rideMuted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
             if case .pressed = model.snapshot.phase {
                 Text(model.feedbackText)
                     .font(.caption.weight(.semibold))
                     .accessibilityIdentifier("phone-control.feedback")
             }
-            statusText
         }
     }
 
@@ -216,54 +199,124 @@ struct PhoneDriveRideSurface<Content: View>: View {
         return false
     }
 
-    @ViewBuilder
-    private var activationStatus: some View {
-        if !model.capturesInput || model.snapshot.mode != .area {
-            Button {
-                if model.capturesInput { model.cancel(.activationChanged) } else { model.activate() }
-            } label: {
-                if model.capturesInput {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 20, weight: .semibold))
-                } else {
-                    Text(localizedAppText("phone_control.arm"))
-                        .font(.caption)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
+}
+
+struct PhoneDriveSettingsSheet: View {
+    let model: PhoneDriveModel
+    let requestActivation: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker(
+                        localizedAppText("phone_control.input_mode"),
+                        selection: Binding(
+                            get: { model.settingsMode },
+                            set: { model.updateSettingsMode($0) }
+                        )
+                    ) {
+                        ForEach([MobilePhoneControlModeDto.disabled, .buttons, .area], id: \.self) { mode in
+                            Text(mode.phoneControlTitle).tag(mode)
+                        }
+                    }
+                    .disabled(model.settingsBusy || !model.settingsLoaded)
+                    .accessibilityIdentifier("ride.phone-control.mode")
+                    phoneDriveCurrentField(
+                        "phone_control.throttle_current",
+                        text: Binding(
+                            get: { model.throttleAmpsText },
+                            set: { model.throttleAmpsText = $0 }
+                        ),
+                        identifier: "ride.phone-control.throttle-current"
+                    )
+                    phoneDriveCurrentField(
+                        "phone_control.brake_current",
+                        text: Binding(
+                            get: { model.brakeAmpsText },
+                            set: { model.brakeAmpsText = $0 }
+                        ),
+                        identifier: "ride.phone-control.brake-current"
+                    )
+                    Button(localizedAppText("phone_control.save_limits")) {
+                        Task { _ = await model.saveSettings() }
+                    }
+                    .disabled(model.settingsBusy || !model.settingsLoaded)
+                    .accessibilityIdentifier("ride.phone-control.save")
+                    if model.settingsMode != .disabled, model.settingsLoaded {
+                        Button(localizedAppText("phone_control.arm")) {
+                            Task {
+                                if await model.saveSettingsAndRequestActivation() {
+                                    requestActivation()
+                                }
+                            }
+                        }
+                        .disabled(model.settingsBusy)
+                        .accessibilityIdentifier("ride.phone-control.activate")
+                    }
+                    if model.activationError {
+                        Text(localizedAppText("phone_control.activation_failed"))
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("ride.phone-control.activation-error")
+                    }
+                    if model.limitsError {
+                        Text(localizedAppText("phone_control.limits_failed"))
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("ride.phone-control.limits-error")
+                    }
+                    if model.settingsError {
+                        Text(localizedAppText("phone_control.save_failed"))
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("ride.phone-control.error")
+                    }
+                    if !model.settingsLoaded && model.settingsBusy {
+                        ProgressView(localizedAppText("phone_control.input_mode"))
+                    } else if !model.settingsLoaded {
+                        Button(localizedAppText("phone_control.retry")) {
+                            Task { await model.loadSettings() }
+                        }
+                        .disabled(model.settingsBusy)
+                    }
+                }
+                Section {
+                    Text(localizedAppText("phone_control.limitations"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .disabled(!model.capturesInput && !model.canActivate)
-            .frame(minWidth: 44, minHeight: 44)
-            .accessibilityLabel(
-                localizedAppText(model.capturesInput ? "phone_control.deactivate" : "phone_control.arm")
-            )
-            .accessibilityIdentifier("phone-control.activate")
-        }
-    }
-
-    private var statusText: some View {
-        VStack(spacing: 3) {
-            HStack(spacing: 6) {
-                Text(model.availabilityText)
-                    .accessibilityIdentifier("phone-control.status")
-                if model.isInputPreview {
-                    Text(localizedAppText("phone_control.preview"))
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .accessibilityLabel(localizedAppText("phone_control.preview"))
+            .navigationTitle(localizedAppText("phone_control.title"))
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(localizedAppText("music.done")) { dismiss() }
+                        .accessibilityIdentifier("ride.phone-control.done")
                 }
             }
-            if model.activationError {
-                Text(localizedAppText("phone_control.activation_failed")).foregroundStyle(.red)
-            }
         }
-        .font(.caption2)
-        .foregroundStyle(PevDashboardColors.rideMuted)
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
+        .task { await model.loadSettings() }
+        .accessibilityIdentifier("ride.phone-control.settings-sheet")
     }
 
+    private func phoneDriveCurrentField(
+        _ labelKey: String,
+        text: Binding<String>,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(localizedAppText(labelKey))
+            TextField(localizedAppText(labelKey), text: text)
+                .labelsHidden()
+                .frame(minHeight: 44)
+                .disabled(model.settingsBusy || !model.settingsLoaded)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.numbersAndPunctuation)
+                #endif
+                .accessibilityLabel(localizedAppText(labelKey))
+                .accessibilityIdentifier(identifier)
+        }
+    }
 }
 
 #if os(iOS)

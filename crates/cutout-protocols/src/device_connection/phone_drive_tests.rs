@@ -12,7 +12,11 @@ fn active() -> (DeviceConnectionSession, ConnectionAttemptToken, u64) {
     assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
     identify_vesc(&mut owner, &token);
     let _ = drivetrain_tick(&mut owner, &token, 3_000);
-    owner.set_phone_control_mode(PhoneControlMode::Buttons);
+    assert!(owner.apply_phone_drive_preferences(
+        &token,
+        PhoneControlMode::Buttons,
+        PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+    ));
     let unarmed_generation = owner.phone_drive_input_snapshot().generation.unwrap();
     let _ = owner.observe_phone_drive_contacts_at(
         &token,
@@ -158,6 +162,107 @@ fn phone_drive_platform_cancellation_requires_explicit_reactivation_in_a_fresh_i
     assert_eq!(
         drives(&reactivated)[0].0.kind,
         PhoneDriveWriteKind::Setpoint
+    );
+}
+
+#[test]
+fn phone_drive_preferences_are_bound_to_the_exact_attempt_and_settings_sheet_disarms_input() {
+    let (mut owner, first_token, _) = active();
+    let first_settings = owner.phone_drive_input_snapshot().mode;
+    assert_eq!(first_settings, PhoneControlMode::Buttons);
+
+    assert!(owner.set_phone_drive_settings_presented(&first_token, true));
+    assert_eq!(owner.phone_drive_activation(), None);
+    assert!(matches!(
+        owner.phone_drive_input_snapshot().phase,
+        PhoneDriveInputPhase::Cancelled(PhoneDriveCancelReason::Navigation)
+    ));
+    assert_eq!(
+        owner.activate_phone_drive(&first_token, PhoneDriveLimits::default(), at(3_001)),
+        Err(PhoneDriveActivationError::Busy),
+        "activation is refused while the Ride settings sheet covers the input surface"
+    );
+    let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    assert!(
+        owner
+            .observe_phone_drive_contacts_at(
+                &first_token,
+                generation,
+                PhoneDriveContacts::Released,
+                at(3_001),
+                at(3_001),
+            )
+            .is_none()
+    );
+    let release = owner
+        .tick_phone_drive(&first_token, at(3_001), true)
+        .unwrap();
+    let neutral = drives(&release)[0].0;
+    assert_eq!(neutral.kind, PhoneDriveWriteKind::Release);
+    assert!(owner.mark_phone_drive_transport(
+        &first_token,
+        neutral,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_001),
+    ));
+
+    assert!(owner.set_phone_drive_settings_presented(&first_token, false));
+    assert_eq!(owner.phone_drive_activation(), None);
+    let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    owner
+        .observe_phone_drive_contacts_at(
+            &first_token,
+            generation,
+            PhoneDriveContacts::Released,
+            at(3_002),
+            at(3_002),
+        )
+        .unwrap();
+    assert!(owner.phone_drive_activation().is_none());
+    owner
+        .activate_phone_drive(&first_token, PhoneDriveLimits::default(), at(3_003))
+        .unwrap();
+
+    let replacement = begin(&mut owner, "another-board");
+    assert_eq!(
+        owner.phone_drive_input_snapshot().mode,
+        PhoneControlMode::Disabled,
+        "a new target starts disabled until its own preferences load"
+    );
+    assert_eq!(
+        owner.session_state().phone_drive_limits,
+        PhoneDriveLimits::default()
+    );
+    assert!(!owner.phone_drive_preferences_are_current(&replacement));
+    assert!(owner.configure_vehicle_kind(&replacement, VehicleKind::Eskate));
+    identify_vesc(&mut owner, &replacement);
+    let _ = drivetrain_tick(&mut owner, &replacement, 3_000);
+    assert!(!owner.apply_phone_drive_preferences(
+        &first_token,
+        PhoneControlMode::Buttons,
+        PhoneDriveLimits::new(7_000, 8_000).unwrap(),
+    ));
+    assert_eq!(
+        owner.phone_drive_input_snapshot().mode,
+        PhoneControlMode::Disabled
+    );
+    assert_eq!(
+        owner.session_state().phone_drive_limits,
+        PhoneDriveLimits::default()
+    );
+    assert_eq!(
+        owner.activate_phone_drive(&replacement, PhoneDriveLimits::default(), at(3_004)),
+        Err(PhoneDriveActivationError::SettingsNotLoaded)
+    );
+    assert!(owner.apply_phone_drive_preferences(
+        &replacement,
+        PhoneControlMode::Area,
+        PhoneDriveLimits::new(9_000, 10_000).unwrap(),
+    ));
+    assert!(owner.phone_drive_preferences_are_current(&replacement));
+    assert_eq!(
+        owner.phone_drive_input_snapshot().mode,
+        PhoneControlMode::Area
     );
 }
 

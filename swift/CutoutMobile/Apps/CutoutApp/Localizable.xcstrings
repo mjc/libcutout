@@ -12,6 +12,7 @@
     "phone_control.limitations" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Controls the local controller. Phone and remote inputs can override each other. Shared timeout and battery limits affect release and braking."}}}},
     "phone_control.limits_summary" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Throttle %1$@ A · Brake %2$@ A"}}}},
     "phone_control.title" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Phone control"}}}},
+    "phone_control.settings" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Phone control settings"}}}},
     "phone_control.input_mode" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Input mode"}}}},
     "phone_control.mode.disabled" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Disabled"}}}},
     "phone_control.mode.buttons" : {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Buttons"}}}},

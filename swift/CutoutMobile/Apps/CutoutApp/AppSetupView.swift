@@ -77,75 +77,6 @@ struct AppSetupView: View {
                     }
                     .accessibilityIdentifier("setup.music")
                 }
-                Section(localizedAppText("phone_control.title")) {
-                    if model.phoneDrive.settingsLoaded {
-                        Picker(
-                            localizedAppText("phone_control.input_mode"),
-                            selection: Binding(
-                                get: { model.phoneDrive.snapshot.mode },
-                                set: { mode in Task { await model.phoneDrive.saveMode(mode) } }
-                            )
-                        ) {
-                            ForEach([MobilePhoneControlModeDto.disabled, .buttons, .area], id: \.self) { mode in
-                                Text(mode.phoneControlTitle).tag(mode)
-                            }
-                        }
-                        .disabled(model.phoneDrive.settingsBusy)
-                        .accessibilityIdentifier("setup.phone-control.mode")
-                    } else if !model.phoneDrive.settingsError {
-                        ProgressView(localizedAppText("phone_control.input_mode"))
-                    }
-                    if model.phoneDrive.settingsLoaded {
-                        phoneDriveCurrentField(
-                            "phone_control.throttle_current",
-                            text: Binding(
-                                get: { model.phoneDrive.throttleAmpsText },
-                                set: { model.phoneDrive.throttleAmpsText = $0 }
-                            ),
-                            identifier: "setup.phone-control.throttle-current"
-                        )
-                        phoneDriveCurrentField(
-                            "phone_control.brake_current",
-                            text: Binding(
-                                get: { model.phoneDrive.brakeAmpsText },
-                                set: { model.phoneDrive.brakeAmpsText = $0 }
-                            ),
-                            identifier: "setup.phone-control.brake-current"
-                        )
-                        Button(localizedAppText("phone_control.save_limits")) {
-                            Task { await model.phoneDrive.saveLimits() }
-                        }
-                        .disabled(model.phoneDrive.settingsBusy)
-                        .accessibilityIdentifier("setup.phone-control.save-limits")
-                        if model.phoneDrive.limitsError {
-                            Text(localizedAppText("phone_control.limits_failed"))
-                                .foregroundStyle(.red)
-                                .accessibilityIdentifier("setup.phone-control.limits-error")
-                        }
-                    }
-                    Text(localizedAppText("phone_control.limitations"))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Text(model.phoneDrive.availabilityText)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    if model.phoneDrive.settingsError {
-                        Text(
-                            localizedAppText(
-                                model.phoneDrive.settingsLoaded
-                                    ? "phone_control.save_failed" : "phone_control.load_failed"
-                            )
-                        )
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("setup.phone-control.error")
-                        if !model.phoneDrive.settingsLoaded {
-                            Button(localizedAppText("phone_control.retry")) {
-                                Task { await model.phoneDrive.loadMode() }
-                            }
-                            .disabled(model.phoneDrive.settingsBusy)
-                        }
-                    }
-                }
                 if model.device.hasSavedDevice {
                     Section(localizedAppText("setup.device")) {
                         Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
@@ -257,7 +188,6 @@ struct AppSetupView: View {
             }
             .task { await model.loadRideAutostartSetting() }
             .task { await model.loadDiagnosticRecordingSetting() }
-            .task { await model.phoneDrive.loadMode() }
             .task { await accountDeletion.refresh() }
             .formStyle(.grouped)
             .navigationTitle(localizedAppText("picker.section.setup"))
@@ -344,23 +274,6 @@ struct AppSetupView: View {
             }
         }
         .tint(PevDashboardColors.yellow)
-    }
-
-    private func phoneDriveCurrentField(_ labelKey: String, text: Binding<String>, identifier: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(localizedAppText(labelKey))
-            TextField(localizedAppText(labelKey), text: text)
-                .labelsHidden()
-                .frame(minHeight: 44)
-                .disabled(model.phoneDrive.settingsBusy)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                #endif
-                .accessibilityLabel(localizedAppText(labelKey))
-                .accessibilityIdentifier(identifier)
-        }
     }
 
     @ToolbarContentBuilder

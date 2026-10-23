@@ -1,4 +1,4 @@
-use super::{Reply, RideDatabase, StorageError};
+use super::{Reply, StorageError};
 use cutout_core::{PhoneControlMode, PhoneDriveLimits};
 use rusqlite::Connection;
 
@@ -14,13 +14,27 @@ pub(super) const BUDGET_MIGRATION: &str = "
     ALTER TABLE phone_control_preferences ADD COLUMN throttle_milliamps INTEGER NOT NULL DEFAULT 3000 CHECK (throttle_milliamps BETWEEN 1 AND 500000);
     ALTER TABLE phone_control_preferences ADD COLUMN brake_milliamps INTEGER NOT NULL DEFAULT 3000 CHECK (brake_milliamps BETWEEN 1 AND 500000);";
 
+pub(super) const DEVICE_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS phone_drive_preferences (
+        device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+        mode TEXT NOT NULL CHECK (mode IN ('disabled', 'buttons', 'area')),
+        throttle_milliamps INTEGER NOT NULL CHECK (throttle_milliamps BETWEEN 1 AND 500000),
+        brake_milliamps INTEGER NOT NULL CHECK (brake_milliamps BETWEEN 1 AND 500000)
+    );";
+
 pub(super) fn create_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(SCHEMA_V55)?;
     connection.execute_batch(BUDGET_MIGRATION)?;
+    connection.execute_batch(DEVICE_SCHEMA)?;
     Ok(())
 }
 
 pub(super) fn verify_schema(connection: &Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    verify_device_schema(connection)
+}
+
+pub(super) fn verify_legacy_schema(connection: &Connection) -> Result<(), StorageError> {
     let mut statement = connection.prepare("PRAGMA table_info(phone_control_preferences)")?;
     let columns = statement
         .query_map([], |row| {
@@ -44,103 +58,125 @@ pub(super) fn verify_schema(connection: &Connection) -> Result<(), StorageError>
     Ok(())
 }
 
-pub(super) enum Command {
-    LoadLimits {
-        reply: Reply<PhoneDriveLimits>,
-    },
-    SaveLimits {
-        limits: PhoneDriveLimits,
-        reply: Reply<()>,
-    },
-    Load {
-        reply: Reply<PhoneControlMode>,
-    },
-    Save {
-        mode: PhoneControlMode,
-        reply: Reply<()>,
-    },
+fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
+    let mut statement = connection.prepare("PRAGMA table_info(phone_drive_preferences)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = [
+        ("device_identity".to_owned(), "TEXT".to_owned(), 1, 1),
+        ("mode".to_owned(), "TEXT".to_owned(), 1, 0),
+        ("throttle_milliamps".to_owned(), "INTEGER".to_owned(), 1, 0),
+        ("brake_milliamps".to_owned(), "INTEGER".to_owned(), 1, 0),
+    ];
+    if columns != expected {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    Ok(())
 }
 
-impl RideDatabase {
-    /// Loads independent current budgets without restoring activation.
-    ///
-    /// # Errors
-    /// Returns storage or corrupt-value failures.
-    pub fn phone_drive_limits(&self) -> Result<PhoneDriveLimits, StorageError> {
-        self.request(|reply| super::Command::PhoneControl(Command::LoadLimits { reply }))
-    }
-
-    /// Saves checked current budgets atomically through the database worker.
-    ///
-    /// # Errors
-    /// Returns the actual storage failure.
-    pub fn save_phone_drive_limits(&self, limits: PhoneDriveLimits) -> Result<(), StorageError> {
-        self.request(|reply| super::Command::PhoneControl(Command::SaveLimits { limits, reply }))
-    }
-
-    /// Loads the saved phone input layout.
-    ///
-    /// # Errors
-    /// Returns [`StorageError`] if the preference cannot be read or is corrupt.
-    pub fn phone_control_mode(&self) -> Result<PhoneControlMode, StorageError> {
-        self.request(|reply| super::Command::PhoneControl(Command::Load { reply }))
-    }
-
-    /// Saves the phone input layout.
-    ///
-    /// # Errors
-    /// Returns [`StorageError`] if the preference cannot be saved.
-    pub fn save_phone_control_mode(&self, mode: PhoneControlMode) -> Result<(), StorageError> {
-        self.request(|reply| super::Command::PhoneControl(Command::Save { mode, reply }))
-    }
+pub(super) enum Command {
+    LoadForDevice {
+        device_identity: String,
+        reply: Reply<super::PhoneDriveSettingsRecord>,
+    },
+    SaveForDevice {
+        device_identity: String,
+        settings: super::PhoneDriveSettingsRecord,
+        reply: Reply<()>,
+    },
 }
 
 pub(super) fn dispatch(connection: &Connection, command: Command) {
     match command {
-        Command::LoadLimits { reply } => {
-            let _ = reply.send(load_limits(connection));
+        Command::LoadForDevice {
+            device_identity,
+            reply,
+        } => {
+            let _ = reply.send(load_for_device(connection, &device_identity));
         }
-        Command::SaveLimits { limits, reply } => {
-            let result = connection.execute(
-                "UPDATE phone_control_preferences SET throttle_milliamps = ?1, brake_milliamps = ?2 WHERE id = 1",
-                rusqlite::params![limits.throttle_milliamps(), limits.brake_milliamps()],
-            ).map_err(StorageError::from).and_then(|updated| {
-                if updated == 1 { Ok(()) } else { Err(StorageError::InvalidDatabaseIdentity) }
-            });
+        Command::SaveForDevice {
+            device_identity,
+            settings,
+            reply,
+        } => {
+            let result = connection
+                .execute(
+                    "INSERT INTO phone_drive_preferences
+                     (device_identity, mode, throttle_milliamps, brake_milliamps)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(device_identity) DO UPDATE SET
+                     mode = excluded.mode,
+                     throttle_milliamps = excluded.throttle_milliamps,
+                     brake_milliamps = excluded.brake_milliamps",
+                    rusqlite::params![
+                        device_identity,
+                        encode_mode(settings.mode()),
+                        settings.limits().throttle_milliamps(),
+                        settings.limits().brake_milliamps()
+                    ],
+                )
+                .map(|_| ())
+                .map_err(StorageError::from);
             let _ = reply.send(result);
-        }
-        Command::Load { reply } => {
-            let _ = reply.send(load(connection));
-        }
-        Command::Save { mode, reply } => {
-            let _ = reply.send(save(connection, mode));
         }
     }
 }
 
-fn load_limits(connection: &Connection) -> Result<PhoneDriveLimits, StorageError> {
-    let (throttle, brake): (i64, i64) = connection.query_row(
-        "SELECT throttle_milliamps, brake_milliamps FROM phone_control_preferences WHERE id = 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+fn load_for_device(
+    connection: &Connection,
+    device_identity: &str,
+) -> Result<super::PhoneDriveSettingsRecord, StorageError> {
+    use rusqlite::OptionalExtension;
+
+    let stored = connection
+        .query_row(
+            "SELECT mode, throttle_milliamps, brake_milliamps
+               FROM phone_drive_preferences WHERE device_identity = ?1",
+            [device_identity],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((mode, throttle, brake)) = stored else {
+        return Ok(super::PhoneDriveSettingsRecord::default());
+    };
     let invalid = || StorageError::InvalidStoredValue {
         field: "phone drive current budgets",
         value: format!("{throttle},{brake}"),
     };
-    PhoneDriveLimits::new(
+    let limits = PhoneDriveLimits::new(
         u32::try_from(throttle).map_err(|_| invalid())?,
         u32::try_from(brake).map_err(|_| invalid())?,
     )
-    .map_err(|_| invalid())
+    .map_err(|_| invalid())?;
+    Ok(super::PhoneDriveSettingsRecord::new(
+        decode_mode(mode)?,
+        limits,
+    ))
 }
 
-fn load(connection: &Connection) -> Result<PhoneControlMode, StorageError> {
-    let value: String = connection.query_row(
-        "SELECT mode FROM phone_control_preferences WHERE id = 1",
-        [],
-        |row| row.get(0),
-    )?;
+fn encode_mode(mode: PhoneControlMode) -> &'static str {
+    match mode {
+        PhoneControlMode::Disabled => "disabled",
+        PhoneControlMode::Buttons => "buttons",
+        PhoneControlMode::Area => "area",
+    }
+}
+
+fn decode_mode(value: String) -> Result<PhoneControlMode, StorageError> {
     match value.as_str() {
         "disabled" => Ok(PhoneControlMode::Disabled),
         "buttons" => Ok(PhoneControlMode::Buttons),
@@ -150,20 +186,4 @@ fn load(connection: &Connection) -> Result<PhoneControlMode, StorageError> {
             value,
         }),
     }
-}
-
-fn save(connection: &Connection, mode: PhoneControlMode) -> Result<(), StorageError> {
-    let value = match mode {
-        PhoneControlMode::Disabled => "disabled",
-        PhoneControlMode::Buttons => "buttons",
-        PhoneControlMode::Area => "area",
-    };
-    let updated = connection.execute(
-        "UPDATE phone_control_preferences SET mode = ?1 WHERE id = 1",
-        [value],
-    )?;
-    if updated != 1 {
-        return Err(StorageError::InvalidDatabaseIdentity);
-    }
-    Ok(())
 }

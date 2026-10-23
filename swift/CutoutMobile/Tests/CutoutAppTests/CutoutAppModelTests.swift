@@ -27,6 +27,34 @@ private struct SharedVescReplayFixture: Decodable {
     let notifications: [Notification]
 }
 
+private actor PhoneDriveOperationGate {
+    private var hasEntered = false
+    private var isReleased = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        hasEntered = true
+        let waiters = entryWaiters
+        entryWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilEntered() async {
+        guard !hasEntered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() {
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
 final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRejectedProtocolIdentityCannotReplaceSelectedDeviceOnLivePhase() throws {
@@ -2494,24 +2522,162 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLatePhoneDriveLoadForARefreshesRustProjectionAfterSwitchToB() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let gate = PhoneDriveOperationGate()
+            let model = PhoneDriveModel(
+                core: driver,
+                loadPreferences: { state, token in
+                    let loaded = try await Task.detached {
+                        try state.loadPhoneDrivePreferences(token: token)
+                    }.value
+                    await gate.pause()
+                    return loaded
+                })
+            XCTAssertTrue(model.presentSettings(for: token))
+
+            let load = Task { await model.loadSettings() }
+            await gate.waitUntilEntered()
+            XCTAssertTrue(model.settingsBusy)
+
+            let replacement = try XCTUnwrap(
+                state.beginConnectionAttempt(platformIdentifier: "replacement-board", nowMs: 20_000).token)
+            XCTAssertNotEqual(token.generation, replacement.generation)
+            model.refresh()
+            await gate.release()
+            await load.value
+
+            XCTAssertFalse(model.settingsLoaded)
+            XCTAssertFalse(model.settingsError)
+            XCTAssertFalse(model.settingsBusy)
+            XCTAssertEqual(model.snapshot.mode, .disabled)
+            XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 3_000)
+            XCTAssertEqual(model.snapshot.limits.brakeMilliamps, 3_000)
+        }
+    }
+
+    @MainActor
+    func testDismissedPhoneDriveLoadIgnoresLateStorageErrorAndClearsBusyState() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let gate = PhoneDriveOperationGate()
+            let model = PhoneDriveModel(
+                core: driver,
+                loadPreferences: { state, token in
+                    _ = try await Task.detached {
+                        try state.loadPhoneDrivePreferences(token: token)
+                    }.value
+                    await gate.pause()
+                    throw NSError(domain: "PhoneDriveTests", code: 1)
+                })
+            XCTAssertTrue(model.presentSettings(for: token))
+
+            let load = Task { await model.loadSettings() }
+            await gate.waitUntilEntered()
+            XCTAssertTrue(model.settingsBusy)
+            XCTAssertNil(model.dismissSettings())
+            XCTAssertFalse(model.settingsBusy)
+            await gate.release()
+            await load.value
+
+            XCTAssertFalse(model.settingsLoaded)
+            XCTAssertFalse(model.settingsError)
+            XCTAssertFalse(model.settingsBusy)
+            XCTAssertEqual(model.snapshot.deviceIdentity, token.platformIdentifier)
+        }
+    }
+
+    @MainActor
+    func testReopenedPhoneDriveSettingsKeepNewLoadBusyWhenOldLoadCompletes() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let oldLoadGate = PhoneDriveOperationGate()
+            let newLoadGate = PhoneDriveOperationGate()
+            var loadCount = 0
+            let model = PhoneDriveModel(
+                core: driver,
+                loadPreferences: { state, token in
+                    let loaded = try await Task.detached {
+                        try state.loadPhoneDrivePreferences(token: token)
+                    }.value
+                    loadCount += 1
+                    if loadCount == 1 {
+                        await oldLoadGate.pause()
+                        throw NSError(domain: "PhoneDriveTests", code: 2)
+                    }
+                    await newLoadGate.pause()
+                    return loaded
+                })
+            XCTAssertTrue(model.presentSettings(for: token))
+
+            let oldLoad = Task { await model.loadSettings() }
+            await oldLoadGate.waitUntilEntered()
+            XCTAssertTrue(model.settingsBusy)
+            XCTAssertNil(model.dismissSettings())
+            XCTAssertTrue(model.presentSettings(for: token))
+
+            let newLoad = Task { await model.loadSettings() }
+            await newLoadGate.waitUntilEntered()
+            XCTAssertTrue(model.settingsBusy)
+            await oldLoadGate.release()
+            await oldLoad.value
+
+            XCTAssertTrue(model.settingsBusy)
+            XCTAssertFalse(model.settingsError)
+            XCTAssertFalse(model.settingsLoaded)
+            await newLoadGate.release()
+            await newLoad.value
+
+            XCTAssertFalse(model.settingsBusy)
+            XCTAssertFalse(model.settingsError)
+            XCTAssertTrue(model.settingsLoaded)
+        }
+    }
+
+    @MainActor
+    func testLatePhoneDriveSaveDoesNotPublishSnapshotAfterSameAttemptCancellation() async throws {
+        try await withActivePhoneDrive { state, token, _, driver, _ in
+            let gate = PhoneDriveOperationGate()
+            let model = PhoneDriveModel(
+                core: driver,
+                savePreferences: { state, token, mode, throttle, brake in
+                    let saved = try await Task.detached {
+                        try state.savePhoneDrivePreferences(
+                            token: token, mode: mode,
+                            throttleAmpsText: throttle, brakeAmpsText: brake
+                        )
+                    }.value
+                    await gate.pause()
+                    return saved
+                })
+            XCTAssertTrue(model.presentSettings(for: token))
+            await model.loadSettings()
+            XCTAssertTrue(model.settingsLoaded)
+            model.updateSettingsMode(.area)
+
+            let save = Task { await model.saveSettings() }
+            await gate.waitUntilEntered()
+            XCTAssertTrue(model.settingsBusy)
+            _ = state.cancelPhoneDriveAt(reason: .navigation, monotonicMs: 3_001)
+            let cancelledProjection = state.phoneDriveSnapshot()
+            await gate.release()
+            let accepted = await save.value
+
+            XCTAssertFalse(accepted)
+            XCTAssertFalse(model.settingsBusy)
+            XCTAssertEqual(model.snapshot.generation, cancelledProjection.generation)
+            XCTAssertEqual(model.snapshot.phase, cancelledProjection.phase)
+            XCTAssertEqual(model.snapshot.mode, cancelledProjection.mode)
+        }
+    }
+    @MainActor
     private func withActivePhoneDrive(
         _ test: (CutoutSessionStateHandle, ConnectionAttemptToken, UInt64, SessionDriverSpy, CutoutAppModel)
             async throws -> Void
     ) async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let state = CutoutSessionStateHandle.withDatabase(database: database)
-        let previous = try state.loadPhoneControlMode()
-        defer {
-            XCTAssertNoThrow(try state.savePhoneControlMode(mode: previous.mode))
-            XCTAssertNoThrow(
-                try state.savePhoneDriveLimits(
-                    throttleAmpsText: String(Double(previous.limits.throttleMilliamps) / 1_000),
-                    brakeAmpsText: String(Double(previous.limits.brakeMilliamps) / 1_000)))
-        }
-        _ = try state.savePhoneControlMode(mode: .buttons)
-        _ = try state.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
+        let identity = "disconnect-phone-vesc-\(UUID().uuidString)"
         let token = try XCTUnwrap(
-            state.beginConnectionAttempt(platformIdentifier: "disconnect-phone-vesc", nowMs: 0).token)
+            state.beginConnectionAttempt(platformIdentifier: identity, nowMs: 0).token)
         _ = state.connectionLinkEstablished(token: token)
         _ = state.observeConnectionNotification(
             token: token,
@@ -2537,6 +2703,11 @@ final class CutoutAppModelTests: XCTestCase {
                 channel: Data(), bytes: Data()))
         XCTAssertTrue(state.configureConnectionVehicleKind(token: token, kind: .eskate))
         XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+        _ = try state.setPhoneDriveSettingsPresented(token: token, presented: true)
+        _ = try state.loadPhoneDrivePreferences(token: token)
+        _ = try state.savePhoneDrivePreferences(
+            token: token, mode: .buttons, throttleAmpsText: "3", brakeAmpsText: "3")
+        _ = try state.setPhoneDriveSettingsPresented(token: token, presented: false)
         let idleGeneration = try XCTUnwrap(state.phoneDriveSnapshot().generation)
         _ = state.observePhoneDriveContactsAt(
             token: token, generation: idleGeneration, contacts: .released,

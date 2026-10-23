@@ -126,135 +126,29 @@ final class PhoneDriveTests: XCTestCase {
     }
 
     @MainActor
-    func testPreferenceLoadFailureShowsRecoveryWithoutInventingAChoice() async {
+    func testSettingsRequireTheCurrentRideAttemptAndDoNotInventDefaults() {
         let model = PhoneDriveModel(core: CutoutSessionCore(testScript: CutoutUITestSessionFixture.eskate.testScript))
-        await model.loadMode()
-        XCTAssertTrue(model.settingsError)
+        XCTAssertFalse(model.presentSettings())
         XCTAssertFalse(model.settingsLoaded)
         XCTAssertEqual(model.snapshot.mode, .disabled)
+        XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 3_000)
+        XCTAssertEqual(model.snapshot.limits.brakeMilliamps, 3_000)
         XCTAssertFalse(model.capturesInput)
     }
 
     @MainActor
-    func testSavedLayoutReloadsWithoutEnablingProductionInput() async throws {
-        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let preferences = CutoutSessionStateHandle.withDatabase(database: database)
-        let previous = try preferences.loadPhoneControlMode()
-        defer { restorePhonePreferences(previous, state: preferences) }
-        let model = PhoneDriveModel(
-            core: CutoutSessionCore(
-                testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
-            ))
-        await model.loadMode()
-        XCTAssertTrue(model.settingsLoaded)
-        await model.saveMode(.buttons)
-        XCTAssertFalse(model.settingsError)
-        XCTAssertEqual(model.snapshot.mode, .buttons)
-
-        let reopened = PhoneDriveModel(
-            core: CutoutSessionCore(
-                testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
-            ))
-        await reopened.loadMode()
-        XCTAssertEqual(reopened.snapshot.mode, .buttons)
-        XCTAssertFalse(reopened.capturesInput)
-        if case .pressed = reopened.snapshot.phase { XCTFail("Restoring a layout must not restore a held gesture") }
-
-        var connection: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(MobileRideMapState.debugDatabasePath, &connection), SQLITE_OK)
-        defer { sqlite3_close(connection) }
-        XCTAssertEqual(
-            sqlite3_exec(
-                connection,
-                "CREATE TRIGGER reject_phone_mode_update BEFORE UPDATE OF mode ON phone_control_preferences BEGIN SELECT RAISE(ABORT, 'phone mode write denied'); END",
-                nil, nil, nil), SQLITE_OK)
-        defer {
-            sqlite3_exec(connection, "DROP TRIGGER IF EXISTS reject_phone_mode_update", nil, nil, nil)
-        }
-        await reopened.saveMode(.area)
-        XCTAssertTrue(reopened.settingsError)
-        XCTAssertEqual(reopened.snapshot.mode, .buttons)
-        XCTAssertFalse(reopened.capturesInput)
-        XCTAssertEqual(try preferences.loadPhoneControlMode().mode, .buttons)
-        XCTAssertEqual(sqlite3_exec(connection, "DROP TRIGGER reject_phone_mode_update", nil, nil, nil), SQLITE_OK)
-        await reopened.saveMode(.area)
-        XCTAssertFalse(reopened.settingsError)
-        XCTAssertEqual(reopened.snapshot.mode, .area)
-        XCTAssertFalse(reopened.capturesInput)
-    }
-    @MainActor
-    func testBudgetDraftsUseRustValidationAndRestoreCanonicalSavedLimits() async throws {
-        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let preferences = CutoutSessionStateHandle.withDatabase(database: database)
-        let previous = try preferences.loadPhoneControlMode()
-        defer { restorePhonePreferences(previous, state: preferences) }
-        _ = try preferences.savePhoneDriveLimits(throttleAmpsText: "3", brakeAmpsText: "3")
-        let model = PhoneDriveModel(
-            core: CutoutSessionCore(
-                testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
-            ))
-        await model.loadMode()
-        XCTAssertEqual(model.throttleAmpsText, "3")
-        XCTAssertEqual(model.brakeAmpsText, "3")
-        model.throttleAmpsText = "2.500"
-        model.brakeAmpsText = "1.25"
-        await model.saveLimits()
-        XCTAssertFalse(model.limitsError)
-        XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 2_500)
-        XCTAssertEqual(model.snapshot.limits.brakeMilliamps, 1_250)
-        XCTAssertEqual(model.throttleAmpsText, "2.5")
-        let saved = model.snapshot.limits
-        model.throttleAmpsText = "not a current"
-        await model.saveLimits()
-        XCTAssertTrue(model.limitsError)
-        XCTAssertEqual(model.snapshot.limits, saved)
-        XCTAssertEqual(model.throttleAmpsText, "not a current")
-        let reopened = PhoneDriveModel(
-            core: CutoutSessionCore(
-                testScript: CutoutUITestSessionFixture.eskate.testScript, database: database
-            ))
-        await reopened.loadMode()
-        XCTAssertEqual(reopened.throttleAmpsText, "2.5")
-        XCTAssertEqual(reopened.brakeAmpsText, "1.25")
-        XCTAssertFalse(reopened.capturesInput)
-    }
-
-    @MainActor
-    func testLateLimitSaveDoesNotReplaceANewerNativeDraft() async throws {
-        let fixture = try await SQLiteRideStall.make()
-        defer { fixture.release.signal() }
-        let core = CutoutSessionCore(
-            testScript: CutoutUITestSessionFixture.eskate.testScript, database: fixture.database)
-        let model = PhoneDriveModel(core: core)
-        await model.loadMode()
-        let previous = model.snapshot.limits
-        defer {
-            _ = try? core.rideSessionStateHandle.savePhoneDriveLimits(
-                throttleAmpsText: String(Double(previous.throttleMilliamps) / 1_000),
-                brakeAmpsText: String(Double(previous.brakeMilliamps) / 1_000))
-        }
-        try await fixture.holdWrite()
+    func testSettingsSheetKeepsConfigurationAsDraftUntilExplicitSave() async {
+        let model = PhoneDriveModel(core: CutoutSessionCore(testScript: CutoutUITestSessionFixture.eskate.testScript))
+        model.updateSettingsMode(.buttons)
         model.throttleAmpsText = "2.5"
         model.brakeAmpsText = "1.25"
-        let saving = Task { await model.saveLimits() }
-        for _ in 0..<1_000 where !model.settingsBusy { await Task.yield() }
-        XCTAssertTrue(model.settingsBusy)
-        XCTAssertFalse(fixture.unlocked.withLock { $0 })
-        model.throttleAmpsText = "4"
-        fixture.release.signal()
-        await saving.value
-        XCTAssertFalse(model.limitsError)
-        XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 2_500)
-        XCTAssertEqual(model.throttleAmpsText, "4", "An older durable receipt must not erase a newer draft")
-        try await fixture.finish()
-    }
-
-    private func restorePhonePreferences(_ snapshot: MobilePhoneDriveSnapshotDto, state: CutoutSessionStateHandle) {
-        XCTAssertNoThrow(try state.savePhoneControlMode(mode: snapshot.mode))
-        XCTAssertNoThrow(
-            try state.savePhoneDriveLimits(
-                throttleAmpsText: String(Double(snapshot.limits.throttleMilliamps) / 1_000),
-                brakeAmpsText: String(Double(snapshot.limits.brakeMilliamps) / 1_000)))
+        XCTAssertEqual(model.settingsMode, .disabled)
+        XCTAssertFalse(model.settingsLoaded)
+        let saved = await model.saveSettings()
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.snapshot.mode, .disabled)
+        XCTAssertEqual(model.snapshot.limits.throttleMilliamps, 3_000)
+        XCTAssertFalse(model.capturesInput)
     }
 
 }

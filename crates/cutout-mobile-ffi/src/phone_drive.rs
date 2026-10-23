@@ -2,6 +2,7 @@
 
 use crate::{CutoutSessionStateHandle, MobileConnectionAttemptTokenDto, MobileRideDatabaseError};
 use cutout_core as core;
+use libcutout_persistence as persistence;
 
 #[cfg(test)]
 mod tests;
@@ -314,8 +315,10 @@ impl From<MobilePhoneDriveTransportStatusDto> for core::ApplicationQueryTranspor
 }
 
 /// One canonical input and eligibility projection from the existing Rust owner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePhoneDriveSnapshotDto {
+    /// Stable platform identifier only when settings were loaded for the current attempt.
+    pub device_identity: Option<String>,
     /// Saved layout only.
     pub mode: MobilePhoneControlModeDto,
     /// Ephemeral input identity; never persisted.
@@ -330,7 +333,12 @@ pub struct MobilePhoneDriveSnapshotDto {
 
 fn snapshot(owner: &cutout_protocols::DeviceConnectionSession) -> MobilePhoneDriveSnapshotDto {
     let input = owner.phone_drive_input_snapshot();
+    let current_token = owner.snapshot().connection.token;
     MobilePhoneDriveSnapshotDto {
+        device_identity: current_token
+            .as_ref()
+            .filter(|token| owner.phone_drive_preferences_are_current(token))
+            .map(|token| token.platform_identifier().to_owned()),
         mode: input.mode.into(),
         generation: input.generation,
         phase: match input.phase {
@@ -372,6 +380,15 @@ pub enum MobilePhoneControlError {
     /// Current fields failed checked Rust parsing or range validation.
     #[error("enter a current from 0.001 to 500 A for each control")]
     InvalidLimits,
+    /// The caller's exact connection attempt is no longer current.
+    #[error("phone settings belong to a replaced device connection")]
+    DeviceChanged,
+    /// The active device is not an eligible VESC e-skate ride.
+    #[error("phone settings require an eligible e-skate ride")]
+    VehicleUnsupported,
+    /// Saving is permitted only from this attempt's Ride settings sheet.
+    #[error("phone settings sheet is not open for this device")]
+    SettingsNotPresented,
     /// Activation refused on the current connection.
     #[error("phone activation refused: {reason:?}")]
     Activation {
@@ -401,6 +418,8 @@ pub enum MobilePhoneDriveActivationRefusalDto {
     InputHeld,
     /// A conflicting operation is active.
     Busy,
+    /// The saved device preferences were not loaded for this exact attempt.
+    SettingsNotLoaded,
     /// Clock moved backwards.
     ClockRegression,
     /// Activation identity exhausted.
@@ -416,10 +435,51 @@ impl From<cutout_protocols::PhoneDriveActivationError> for MobilePhoneDriveActiv
             E::ModeDisabled => Self::ModeDisabled,
             E::InputHeld => Self::InputHeld,
             E::Busy => Self::Busy,
+            E::SettingsNotLoaded => Self::SettingsNotLoaded,
             E::ClockRegression => Self::ClockRegression,
             E::IdentifierExhausted => Self::IdentifierExhausted,
         }
     }
+}
+
+fn validate_phone_drive_target(
+    owner: &cutout_protocols::DeviceConnectionSession,
+    token: &MobileConnectionAttemptTokenDto,
+    attempt: &core::ConnectionAttemptToken,
+) -> Result<(), MobilePhoneControlError> {
+    if owner.snapshot().connection.token.as_ref() != Some(attempt) {
+        return Err(MobilePhoneControlError::DeviceChanged);
+    }
+    if !owner.phone_drive_target_is_current(attempt) {
+        return Err(MobilePhoneControlError::VehicleUnsupported);
+    }
+    if attempt.platform_identifier() != token.platform_identifier {
+        return Err(MobilePhoneControlError::DeviceChanged);
+    }
+    Ok(())
+}
+
+fn load_phone_drive_preferences_with(
+    handle: &CutoutSessionStateHandle,
+    token: MobileConnectionAttemptTokenDto,
+    load: impl FnOnce(&str) -> Result<persistence::PhoneDriveSettingsRecord, MobilePhoneControlError>,
+) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
+    let _ordering = handle
+        .configuration_updates
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let attempt: core::ConnectionAttemptToken = token.clone().into();
+    {
+        let owner = handle.lock_inner();
+        validate_phone_drive_target(&owner, &token, &attempt)?;
+    }
+    let preferences = load(&token.platform_identifier)?;
+    let mut owner = handle.lock_inner();
+    validate_phone_drive_target(&owner, &token, &attempt)?;
+    if !owner.apply_phone_drive_preferences(&attempt, preferences.mode(), preferences.limits()) {
+        return Err(MobilePhoneControlError::DeviceChanged);
+    }
+    Ok(snapshot(&owner))
 }
 
 #[uniffi::export]
@@ -434,98 +494,93 @@ impl CutoutSessionStateHandle {
         snapshot(&self.lock_inner())
     }
 
-    /// Loads only saved layout; an old contact or activation can never be restored.
+    /// Loads mode and current limits for the exact eligible connection attempt.
     ///
     /// # Errors
-    /// Returns unavailable database or the actual storage failure.
-    pub fn load_phone_control_mode(
+    /// Returns target, availability, database, or stored-value errors.
+    pub fn load_phone_drive_preferences(
         &self,
+        token: MobileConnectionAttemptTokenDto,
     ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
-        let _ordering = self
-            .configuration_updates
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let database = self
             .diagnostic_database
             .as_ref()
             .ok_or(MobilePhoneControlError::PersistenceUnavailable)?;
-        let mode = database.phone_control_mode().map_err(|error| {
-            MobilePhoneControlError::Persistence {
-                error: crate::map_ride_database_error(error),
-            }
-        })?;
-        let limits = database.phone_drive_limits().map_err(|error| {
-            MobilePhoneControlError::Persistence {
-                error: crate::map_ride_database_error(error),
-            }
-        })?;
-        let mut owner = self.lock_inner();
-        owner.set_phone_control_mode(mode);
-        if owner.session_state().phone_drive_limits != limits {
-            owner.cancel_phone_drive(core::PhoneDriveCancelReason::ActivationChanged);
-            owner.session_state_mut().phone_drive_limits = limits;
-        }
-        Ok(snapshot(&owner))
+        load_phone_drive_preferences_with(self, token, |identity| {
+            database.phone_drive_preferences(identity).map_err(|error| {
+                MobilePhoneControlError::Persistence {
+                    error: crate::map_ride_database_error(error),
+                }
+            })
+        })
     }
 
-    /// Saves layout through the existing database worker before publishing it.
-    /// Cancellation is retained even when persistence fails.
+    /// Saves mode and both limits atomically for this open Ride settings sheet.
     ///
     /// # Errors
-    /// Returns unavailable database or the actual storage failure.
-    pub fn save_phone_control_mode(
+    /// Returns target, validation, database, or sheet-ownership errors.
+    pub fn save_phone_drive_preferences(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         mode: MobilePhoneControlModeDto,
-    ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
-        let _ordering = self
-            .configuration_updates
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mode = mode.into();
-        {
-            let mut owner = self.lock_inner();
-            if owner.phone_drive_input_snapshot().mode != mode {
-                owner.cancel_phone_drive(core::PhoneDriveCancelReason::ModeChanged);
-            }
-        }
-        self.diagnostic_database
-            .as_ref()
-            .ok_or(MobilePhoneControlError::PersistenceUnavailable)?
-            .save_phone_control_mode(mode)
-            .map_err(|error| MobilePhoneControlError::Persistence {
-                error: crate::map_ride_database_error(error),
-            })?;
-        let mut owner = self.lock_inner();
-        owner.set_phone_control_mode(mode);
-        Ok(snapshot(&owner))
-    }
-
-    /// Saves rider-selected current budgets without persisting activation.
-    ///
-    /// # Errors
-    /// Returns invalid fields or the actual storage failure.
-    pub fn save_phone_drive_limits(
-        &self,
         throttle_amps_text: String,
         brake_amps_text: String,
     ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
-        let limits = core::PhoneDriveLimits::from_amp_text(&throttle_amps_text, &brake_amps_text)
-            .map_err(|_| MobilePhoneControlError::InvalidLimits)?;
         let _ordering = self
             .configuration_updates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.lock_inner()
-            .cancel_phone_drive(core::PhoneDriveCancelReason::ActivationChanged);
+        let attempt: core::ConnectionAttemptToken = token.clone().into();
+        {
+            let mut owner = self.lock_inner();
+            validate_phone_drive_target(&owner, &token, &attempt)?;
+            if !owner.phone_drive_settings_are_presented(&attempt) {
+                return Err(MobilePhoneControlError::SettingsNotPresented);
+            }
+            if !owner.phone_drive_preferences_are_current(&attempt) {
+                return Err(MobilePhoneControlError::DeviceChanged);
+            }
+            owner.cancel_phone_drive(core::PhoneDriveCancelReason::ActivationChanged);
+        }
+        let limits = core::PhoneDriveLimits::from_amp_text(&throttle_amps_text, &brake_amps_text)
+            .map_err(|_| MobilePhoneControlError::InvalidLimits)?;
+        let mode = mode.into();
         self.diagnostic_database
             .as_ref()
             .ok_or(MobilePhoneControlError::PersistenceUnavailable)?
-            .save_phone_drive_limits(limits)
+            .save_phone_drive_preferences(
+                &token.platform_identifier,
+                persistence::PhoneDriveSettingsRecord::new(mode, limits),
+            )
             .map_err(|error| MobilePhoneControlError::Persistence {
                 error: crate::map_ride_database_error(error),
             })?;
         let mut owner = self.lock_inner();
-        owner.session_state_mut().phone_drive_limits = limits;
+        validate_phone_drive_target(&owner, &token, &attempt)?;
+        if !owner.phone_drive_settings_are_presented(&attempt) {
+            return Err(MobilePhoneControlError::SettingsNotPresented);
+        }
+        if !owner.apply_phone_drive_preferences(&attempt, mode, limits) {
+            return Err(MobilePhoneControlError::DeviceChanged);
+        }
+        Ok(snapshot(&owner))
+    }
+
+    /// Reports presentation of the existing Ride settings sheet to the Rust input owner.
+    ///
+    /// # Errors
+    /// Returns when the token no longer identifies the eligible Ride.
+    pub fn set_phone_drive_settings_presented(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        presented: bool,
+    ) -> Result<MobilePhoneDriveSnapshotDto, MobilePhoneControlError> {
+        let mut owner = self.lock_inner();
+        let attempt: core::ConnectionAttemptToken = token.clone().into();
+        validate_phone_drive_target(&owner, &token, &attempt)?;
+        if !owner.set_phone_drive_settings_presented(&attempt, presented) {
+            return Err(MobilePhoneControlError::DeviceChanged);
+        }
         Ok(snapshot(&owner))
     }
 
