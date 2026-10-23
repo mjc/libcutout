@@ -9717,8 +9717,15 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [estimated], timeout: 5), .completed, phoneApp.debugDescription)
         let speed = phoneElement("ride.hero.speed")
         let speedValue = speed.value as? String ?? ""
-        // Freshness/severity metadata can be unavailable beside a numeric primary speed.
-        XCTAssertTrue(speedValue.first?.isNumber == true, phoneApp.debugDescription)
+        // Accessibility puts the localized numeric speed before comma-separated metadata.
+        let primarySpeed = speedValue.split(separator: ",", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let numericSpeed = primarySpeed.flatMap(Double.init) else {
+            XCTFail("Expected a parseable primary Ride speed before accessibility metadata; got: \(speedValue)")
+            return
+        }
+        XCTAssertGreaterThanOrEqual(
+            numericSpeed, 10, "Expected multi-digit populated Ride speed; got: \(speedValue)")
         XCTAssertFalse(phoneApp.buttons["vesc.drivetrain.open"].exists)
         XCTAssertFalse(energy.frame.isEmpty)
         let trip = phoneElement("vesc.ride.tripDistance")
@@ -9798,7 +9805,13 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             "-CUTOUT_UI_TEST_MUSIC", pausedMusic ? "paused" : "silent",
         ]
         if preview { phoneApp.launchArguments.append("--ui-test-phone-drive-input") }
-        if populated { phoneApp.launchArguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES"] }
+        if populated {
+            phoneApp.launchArguments += [
+                "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+                "-AppleLanguages", "(en)",
+                "-AppleLocale", "en_US",
+            ]
+        }
         if pausedMusic {
             phoneApp.launchArguments += [
                 "-io.cutout.music.provider.selected", "apple_music",
