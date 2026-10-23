@@ -7997,6 +7997,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
         persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
+        persistence::StorageError::RideInactivityConflict => {
+            MobileRideDatabaseError::InvalidRideState
+        }
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
         persistence::StorageError::TooManyConnectionAdmissionMutations { .. }
         | persistence::StorageError::InvalidConnectionAdmissionPlan => {
