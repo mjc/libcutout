@@ -15,6 +15,20 @@ use std::{
 const SEMANTIC_BATCH_ROWS: usize = 64;
 const CAPTURE_CHUNK_BYTES: usize = 64 * 1024;
 
+#[cfg(test)]
+static TEST_COMPLETED_COMPACTIONS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) fn test_compaction_completed_for(database_path: &Path) -> bool {
+    let database_path =
+        fs::canonicalize(database_path).unwrap_or_else(|_| database_path.to_owned());
+    TEST_COMPLETED_COMPACTIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&database_path)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BatchState {
     Pending,
@@ -344,6 +358,17 @@ where
          WHERE singleton = 1",
         [],
     )?;
+    #[cfg(test)]
+    {
+        let database_path =
+            fs::canonicalize(database_path).unwrap_or_else(|_| database_path.to_owned());
+        let mut completed = TEST_COMPLETED_COMPACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !completed.iter().any(|path| path == &database_path) {
+            completed.push(database_path);
+        }
+    }
     Ok(CompactionState::Complete)
 }
 

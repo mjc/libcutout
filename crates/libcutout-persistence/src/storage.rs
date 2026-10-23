@@ -73,6 +73,8 @@ mod migrations;
 mod normalization;
 #[cfg(test)]
 pub(crate) use normalization::pause_legacy_archive_for_test;
+#[cfg(test)]
+pub(crate) use normalization::test_compaction_completed_for;
 mod phone_control;
 mod ride_inactivity;
 mod ride_write;

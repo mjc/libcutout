@@ -4922,6 +4922,10 @@ fn add_legacy_semantic_rows(
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the logical cleanup, quiet physical compaction, and lossless comparison in one regression."
+)]
 fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
@@ -4943,7 +4947,6 @@ fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
     let before_bytes = physical_bytes(&database_path);
     let reopened = RideDatabase::open(&database_path).expect("legacy schema upgrades");
     let deadline = Instant::now() + Duration::from_secs(20);
-    let mut compacted = false;
     let mut logical_bytes = None;
     while Instant::now() < deadline {
         let connection = Connection::open(&database_path).unwrap();
@@ -4968,17 +4971,41 @@ fn legacy_semantic_dedup_physically_reclaims_pages_and_preserves_overrides() {
             .unwrap();
         if state.0 && state.1 && state.2 && !state.3 {
             logical_bytes = Some(physical_bytes(&database_path));
-        }
-        if state.3 {
-            assert_eq!(state.4, 1, "only the independent legacy override remains");
-            compacted = true;
+            drop(connection);
             break;
         }
+        drop(connection);
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(compacted, "quiet worker completed physical compaction");
     let logical_bytes = logical_bytes.expect("test observed deduplication before VACUUM");
+    while !crate::storage::test_compaction_completed_for(&database_path) {
+        assert!(
+            Instant::now() < deadline,
+            "quiet worker completed physical compaction"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let after_bytes = physical_bytes(&database_path);
+    let connection = Connection::open(&database_path).unwrap();
+    let (compaction_complete, remaining_rows): (bool, u64) = connection
+        .query_row(
+            "SELECT compaction_complete,
+                    (SELECT COUNT(*) FROM live_capture_ble_semantic_telemetry
+                     WHERE capture_id = ?1)
+             FROM storage_normalization_progress WHERE singleton = 1",
+            [capture_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(
+        compaction_complete,
+        "physical shrink follows logical compaction"
+    );
+    assert_eq!(
+        remaining_rows, 1,
+        "only the independent legacy override remains"
+    );
+    drop(connection);
     eprintln!(
         "legacy semantic physical fixture: records={PHYSICAL_DEDUP_RECORDS}, canonical_payload_bytes={}, before={before_bytes}, after_logical_dedup={logical_bytes}, after_vacuum={after_bytes}",
         payloads.iter().map(Vec::len).sum::<usize>()
