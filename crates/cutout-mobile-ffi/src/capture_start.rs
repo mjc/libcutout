@@ -371,7 +371,10 @@ mod tests {
         request.origin = MobileCaptureOriginDto::Manual;
         let prepared = prepare_capture_writer(request, None).unwrap();
         let started = prepared.start(100).unwrap();
-        assert!(started.path.ends_with(".jsonl"));
+        assert_eq!(
+            Path::new(&started.path).extension(),
+            Some(std::ffi::OsStr::new("jsonl"))
+        );
         let _ = finished_capture(&started);
     }
 
