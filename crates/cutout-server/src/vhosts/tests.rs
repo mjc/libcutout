@@ -236,22 +236,16 @@ fn duplicate_host_headers_absolute_uri_authority_and_malformed_forwarded_are_rej
     let mut headers = HeaderMap::new();
     headers.append(reqwest::header::HOST, HeaderValue::from_static(MUSIC));
     headers.append(reqwest::header::HOST, HeaderValue::from_static(RIDES));
-    assert!(
-        super::canonical_request_host(&headers, &"/v1/token".parse().expect("origin uri"))
-            .is_none()
-    );
+    assert!(super::request_host(&headers, &"/v1/token".parse().expect("origin uri")).is_none());
 
     headers.clear();
     headers.insert(reqwest::header::HOST, HeaderValue::from_static(MUSIC));
     headers.insert("forwarded", HeaderValue::from_static("not-a-parameter"));
-    assert!(
-        super::canonical_request_host(&headers, &"/v1/token".parse().expect("origin uri"))
-            .is_none()
-    );
+    assert!(super::request_host(&headers, &"/v1/token".parse().expect("origin uri")).is_none());
 
     headers.remove("forwarded");
     assert!(
-        super::canonical_request_host(
+        super::request_host(
             &headers,
             &"http://music.cutout.lol/v1/token"
                 .parse()
@@ -264,8 +258,5 @@ fn duplicate_host_headers_absolute_uri_authority_and_malformed_forwarded_are_rej
     headers.insert(reqwest::header::HOST, HeaderValue::from_static(MUSIC));
     headers.append("x-forwarded-host", HeaderValue::from_static(MUSIC));
     headers.append("x-forwarded-host", HeaderValue::from_static(MUSIC));
-    assert!(
-        super::canonical_request_host(&headers, &"/v1/token".parse().expect("origin uri"))
-            .is_none()
-    );
+    assert!(super::request_host(&headers, &"/v1/token".parse().expect("origin uri")).is_none());
 }

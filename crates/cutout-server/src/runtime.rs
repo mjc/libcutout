@@ -222,34 +222,25 @@ async fn serve(
     ride_database: PathBuf,
 ) -> Result<(), Error> {
     let ride_service = open_ride_service(ride_database).await?;
+    let result = serve_http(listen, vhosts, store, ride_service.clone()).await;
+    shutdown_ride_service(ride_service).await?;
+    result
+}
+
+async fn serve_http(
+    listen: SocketAddr,
+    vhosts: crate::vhosts::PublicVhosts,
+    store: Store,
+    ride: libcutout_persistence::RideDatabase,
+) -> Result<(), Error> {
     let lific_worker = crate::signup_sync::LificSync::from_env();
-    let signup_state = match (
-        crate::signup::SignupState::enabled_from_env(),
-        lific_worker.is_some(),
-    ) {
-        (Some(state), true) => state,
-        _ => crate::signup::SignupState::from_env(),
-    };
-    let router = match build_router(store.clone(), vhosts, signup_state, ride_service.clone()).await
-    {
-        Ok(router) => router,
-        Err(error) => {
-            shutdown_ride_service(ride_service).await?;
-            return Err(error);
-        }
-    };
-    let Ok(listener) = tokio::net::TcpListener::bind(listen).await else {
-        shutdown_ride_service(ride_service).await?;
-        return Err(Error::Unavailable);
-    };
-    let Ok(address) = listener.local_addr() else {
-        shutdown_ride_service(ride_service).await?;
-        return Err(Error::Unavailable);
-    };
-    if let Err(error) = store.cleanup_capture_staging().await {
-        shutdown_ride_service(ride_service).await?;
-        return Err(error);
-    }
+    let signup = signup_state(lific_worker.is_some());
+    let router = build_router(store.clone(), vhosts, signup, ride).await?;
+    let listener = tokio::net::TcpListener::bind(listen)
+        .await
+        .map_err(|_| Error::Unavailable)?;
+    let address = listener.local_addr().map_err(|_| Error::Unavailable)?;
+    store.cleanup_capture_staging().await?;
     tracing::info!(%address, "cutout server listening");
     let worker =
         lific_worker.map(|lific| tokio::spawn(crate::signup_sync::run_worker(store, lific)));
@@ -264,8 +255,17 @@ async fn serve(
         worker.abort();
         let _ = worker.await;
     }
-    shutdown_ride_service(ride_service).await?;
     result
+}
+
+fn signup_state(worker_configured: bool) -> crate::signup::SignupState {
+    match (
+        crate::signup::SignupState::enabled_from_env(),
+        worker_configured,
+    ) {
+        (Some(state), true) => state,
+        _ => crate::signup::SignupState::from_env(),
+    }
 }
 
 async fn build_router(

@@ -6,7 +6,10 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tower::ServiceExt;
 
 use crate::TrustedProxy;
@@ -45,9 +48,15 @@ impl PublicHost {
         Ok(Self(value))
     }
 
-    fn matches_header(&self, value: &str) -> bool {
+    fn matches(&self, value: &str) -> bool {
         value == self.0
     }
+}
+
+enum HostedApp {
+    Music,
+    Rides,
+    Site,
 }
 
 /// Invalid static host configuration.
@@ -85,6 +94,22 @@ impl PublicVhosts {
             trusted_proxy,
         })
     }
+
+    fn hosted_app(&self, peer: SocketAddr, headers: &HeaderMap, uri: &Uri) -> Option<HostedApp> {
+        if !same_ip(peer.ip(), self.trusted_proxy.0) {
+            return None;
+        }
+        let host = request_host(headers, uri)?;
+        if self.music_host.matches(host) {
+            Some(HostedApp::Music)
+        } else if self.rides_host.matches(host) {
+            Some(HostedApp::Rides)
+        } else if self.site_host.matches(host) {
+            Some(HostedApp::Site)
+        } else {
+            None
+        }
+    }
 }
 
 /// Build a host-dispatching listener from already configured application routers.
@@ -92,15 +117,16 @@ impl PublicVhosts {
 /// the configured proxy must overwrite `Host` with the canonical public host
 /// and strip forwarding or internal routing metadata.
 pub fn router(vhosts: PublicVhosts, music: Router, rides: Router, site: Router) -> Router {
-    Router::new().fallback(dispatch).with_state(DispatchState {
-        vhosts,
-        music,
-        rides,
-        site,
-    })
+    Router::new()
+        .fallback(dispatch)
+        .with_state(Arc::new(DispatchState {
+            vhosts,
+            music,
+            rides,
+            site,
+        }))
 }
 
-#[derive(Clone)]
 struct DispatchState {
     vhosts: PublicVhosts,
     music: Router,
@@ -108,7 +134,7 @@ struct DispatchState {
     site: Router,
 }
 
-async fn dispatch(State(state): State<DispatchState>, request: Request) -> Response {
+async fn dispatch(State(state): State<Arc<DispatchState>>, request: Request) -> Response {
     let Some(peer) = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -116,20 +142,16 @@ async fn dispatch(State(state): State<DispatchState>, request: Request) -> Respo
     else {
         return invalid_host();
     };
-    if !same_ip(peer.ip(), state.vhosts.trusted_proxy.0) {
-        return invalid_host();
-    }
-    let Some(host) = canonical_request_host(request.headers(), request.uri()) else {
+    let Some(app) = state
+        .vhosts
+        .hosted_app(peer, request.headers(), request.uri())
+    else {
         return invalid_host();
     };
-    let service = if state.vhosts.music_host.matches_header(&host) {
-        &state.music
-    } else if state.vhosts.rides_host.matches_header(&host) {
-        &state.rides
-    } else if state.vhosts.site_host.matches_header(&host) {
-        &state.site
-    } else {
-        return invalid_host();
+    let service = match app {
+        HostedApp::Music => &state.music,
+        HostedApp::Rides => &state.rides,
+        HostedApp::Site => &state.site,
     };
     let mut request = request;
     request.extensions_mut().insert(state.vhosts.trusted_proxy);
@@ -147,33 +169,30 @@ fn same_ip(left: IpAddr, right: IpAddr) -> bool {
     left.to_canonical() == right.to_canonical()
 }
 
-fn canonical_request_host(headers: &HeaderMap, uri: &Uri) -> Option<String> {
+const REJECTED_METADATA: &[&str] = &[
+    "forwarded",
+    "x-forwarded-host",
+    "x-original-host",
+    "x-cutout-host",
+    "x-cutout-vhost",
+    "x-cutout-route",
+];
+
+fn request_host<'a>(headers: &'a HeaderMap, uri: &Uri) -> Option<&'a str> {
     if uri.authority().is_some() {
         return None;
     }
     let mut hosts = headers.get_all(header::HOST).iter();
     let host = hosts.next()?.to_str().ok()?;
-    if hosts.next().is_some() || !is_canonical_host(host) {
+    if hosts.next().is_some() {
         return None;
     }
-
-    for name in [
-        "forwarded",
-        "x-forwarded-host",
-        "x-original-host",
-        "x-cutout-host",
-        "x-cutout-vhost",
-        "x-cutout-route",
-    ] {
-        if headers.contains_key(name) {
+    for name in REJECTED_METADATA {
+        if headers.contains_key(*name) {
             return None;
         }
     }
-    Some(host.to_owned())
-}
-
-fn is_canonical_host(host: &str) -> bool {
-    PublicHost::parse(host.to_owned()).is_ok()
+    Some(host)
 }
 
 #[cfg(test)]
