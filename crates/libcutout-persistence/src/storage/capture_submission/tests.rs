@@ -546,6 +546,125 @@ fn capture_submission_can_prepare_nonempty_recovered_interruption_with_stable_pr
 }
 
 #[test]
+fn live_capture_history_prefers_recording_submission_over_live_id_alias() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let writer = recording(&database, directory.path());
+    let (id, receipt) = finished(writer);
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let recording_source = CaptureSubmissionSource::LiveCapture(id);
+    let recording_status = database
+        .prepare_capture_submission(recording_source)
+        .unwrap();
+
+    let mut live_id_alias = recording_status.clone();
+    live_id_alias.operation_id = "ffffffff-ffff-4fff-8fff-ffffffffffff".to_owned();
+    live_id_alias.metadata.provenance.source_artifact_id = id.to_string();
+    live_id_alias.phase = CaptureSubmissionPhase::Cancelled;
+    let alias_json = serde_json::to_string(&live_id_alias).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO capture_submissions
+             (source_artifact_id, operation_id, snapshot_digest, status_json)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id.to_string(),
+                live_id_alias.operation_id,
+                live_id_alias.metadata.capture_sha256(),
+                alias_json,
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let listed = database
+        .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(listed.captures.len(), 1);
+    assert_eq!(
+        listed.captures[0]
+            .submission
+            .status
+            .as_ref()
+            .map(|status| status.operation_id.as_str()),
+        Some(recording_status.operation_id.as_str()),
+        "list prefers the status addressed by the published recording artifact ID"
+    );
+    assert_eq!(
+        database
+            .capture_submission(recording_source)
+            .unwrap()
+            .unwrap()
+            .operation_id,
+        recording_status.operation_id,
+        "lookup resolves the same published recording owner independently of UUID order"
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn live_capture_history_does_not_fallback_to_alias_when_recording_identity_exists() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let writer = recording(&database, directory.path());
+    let (id, receipt) = finished(writer);
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let recording_status = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let published_source = recording_status
+        .metadata
+        .provenance
+        .source_artifact_id
+        .clone();
+    let mut alias_status = recording_status.clone();
+    alias_status.operation_id = "ffffffff-ffff-4fff-8fff-ffffffffffff".to_owned();
+    alias_status.metadata.provenance.source_artifact_id = id.to_string();
+    let alias_json = serde_json::to_string(&alias_status).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "DELETE FROM capture_submissions WHERE source_artifact_id = ?1",
+            [&published_source],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO capture_submissions
+             (source_artifact_id, operation_id, snapshot_digest, status_json)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id.to_string(),
+                alias_status.operation_id,
+                alias_status.metadata.capture_sha256(),
+                alias_json,
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let listed = database
+        .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(listed.captures.len(), 1);
+    assert!(
+        listed.captures[0].submission.status.is_none(),
+        "a writer-owned artifact must not inherit a status from its live-ID alias"
+    );
+    assert!(
+        database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+            .unwrap()
+            .is_none(),
+        "source lookup uses the same writer-owned artifact identity as history"
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn recovered_interruption_history_alias_round_trips_evidence_and_prepares_same_operation() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ride.sqlite");
