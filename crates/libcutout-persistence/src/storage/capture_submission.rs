@@ -482,6 +482,18 @@ pub(super) enum SourceRecord {
     },
 }
 
+/// Applies the shared provenance admission used by direct export and batch review.
+/// Interrupted nonempty captures remain usable with unknown provenance.
+pub(super) fn validate_live_capture_submission_provenance(
+    entry: &LiveCaptureHistoryEntry,
+) -> Result<(), CaptureSubmissionError> {
+    if entry.state == LiveCaptureState::Finished && entry.recording.is_none() {
+        Err(CaptureSubmissionError::ProvenanceUnavailable)
+    } else {
+        Ok(())
+    }
+}
+
 struct SnapshotSource {
     origin: CaptureSubmissionOrigin,
     integrity: CaptureSubmissionIntegrity,
@@ -963,9 +975,7 @@ impl RideDatabase {
                 if entry.state == LiveCaptureState::Active || entry.event_count == 0 {
                     return Err(CaptureSubmissionError::NotFinished);
                 }
-                if entry.state == LiveCaptureState::Finished && entry.recording.is_none() {
-                    return Err(CaptureSubmissionError::ProvenanceUnavailable);
-                }
+                validate_live_capture_submission_provenance(&entry)?;
                 let integrity = match entry.integrity {
                     LiveCaptureIntegrity::Complete => CaptureSubmissionIntegrity::Complete,
                     LiveCaptureIntegrity::Incomplete { dropped_messages } => {
