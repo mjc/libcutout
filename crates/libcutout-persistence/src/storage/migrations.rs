@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 62;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 64;
 const ARCHIVE_REPAIR_SCHEMA_VERSION: i64 = 61;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
@@ -82,6 +82,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         59 => migrate_v59_to_current(connection)?,
         60 => migrate_v60_to_current(connection)?,
         61 => migrate_v61_to_current(connection)?,
+        62 => migrate_v62_to_current(connection)?,
+        63 => migrate_v63_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -89,7 +91,11 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         _ => return Err(StorageError::InvalidDatabaseIdentity),
     }
-    migrate_remaining_versions(connection)
+    migrate_remaining_versions(connection)?;
+    if version < CURRENT_SCHEMA_VERSION {
+        backfill_capture_submission_source_aliases(connection)?;
+    }
+    Ok(())
 }
 
 fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), StorageError> {
@@ -160,6 +166,9 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 61 {
             migrate_v61_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 62 {
+            migrate_v62_to_current(connection)?;
         }
     }
     Ok(())
@@ -2036,6 +2045,16 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
             return Err(StorageError::InvalidDatabaseIdentity);
         }
     }
+    for column in [
+        "source_artifact_id",
+        "operation_id",
+        "source_sha256",
+        "source_size",
+    ] {
+        if !table_has_column(connection, "capture_submission_reservations", column)? {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
     if !table_has_column(connection, "charging_outbox", "blocked_kind")?
         || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?
     {
@@ -2451,8 +2470,54 @@ fn migrate_v60_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v61_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_compact_bms_schema(&transaction)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
     transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v62_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    backfill_capture_submission_source_aliases(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v63_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    backfill_capture_submission_source_aliases(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn backfill_capture_submission_source_aliases(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT OR IGNORE INTO capture_submission_source_aliases
+            (artifact_digest, source_artifact_id)
+         SELECT coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         ), source_artifact_id FROM capture_submissions
+         WHERE length(coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         )) = 64
+           AND coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         ) NOT GLOB '*[^0-9a-f]*'
+         UNION
+         SELECT json_extract(status_json, '$.metadata.provenance.source_sha256'), source_artifact_id
+         FROM capture_submissions
+         WHERE json_extract(status_json, '$.metadata.provenance.source_sha256') IS NOT NULL
+           AND length(json_extract(status_json, '$.metadata.provenance.source_sha256')) = 64
+           AND json_extract(status_json, '$.metadata.provenance.source_sha256') NOT GLOB '*[^0-9a-f]*'",
+        [],
+    )?;
     Ok(())
 }
 
@@ -2518,6 +2583,263 @@ mod tests {
                  PRAGMA user_version = 61;",
             )
             .unwrap();
+    }
+
+    #[test]
+    fn schema_62_upgrade_adds_submission_aliases_and_preserves_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE capture_submission_source_aliases;
+                 DROP TABLE capture_submission_reservations;",
+            )
+            .unwrap();
+        let digest = "a".repeat(64);
+        let source_artifact_id = "00000000-0000-4000-8000-000000000001";
+        let operation_id = "00000000-0000-4000-8000-000000000002";
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v62', 'pevcap_import', 'imported', 50, 55, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/managed.jsonl', 'ride-v62', 'ride_and_capture', 4, 1, 1, 55)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [&digest],
+            )
+            .unwrap();
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "sha256": digest,
+                "provenance": {"source_artifact_id": source_artifact_id}
+            }
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![source_artifact_id, operation_id, digest, status.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 62;")
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (
+            version,
+            ride_count,
+            import_count,
+            chunk,
+            status_count,
+            reservation_count,
+            alias_count,
+        ): (i64, u64, u64, Vec<u8>, u64, u64, u64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT user_version FROM pragma_user_version),
+                    (SELECT COUNT(*) FROM rides WHERE id = 'ride-v62'),
+                    (SELECT COUNT(*) FROM pevcap_imports WHERE artifact_digest = ?1),
+                    (SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1),
+                    (SELECT COUNT(*) FROM capture_submissions WHERE operation_id = ?2),
+                    (SELECT COUNT(*) FROM capture_submission_reservations),
+                    (SELECT COUNT(*) FROM capture_submission_source_aliases
+                     WHERE artifact_digest = ?1 AND source_artifact_id = ?3)",
+                params![digest, operation_id, source_artifact_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(ride_count, 1);
+        assert_eq!(import_count, 1);
+        assert_eq!(chunk, [1, 2, 3, 4]);
+        assert_eq!(status_count, 1);
+        assert_eq!(reservation_count, 0);
+        assert_eq!(alias_count, 1);
+    }
+
+    #[test]
+    fn schema_63_upgrade_backfills_digest_aliases_without_changing_status_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch("DROP TABLE capture_submission_source_aliases;")
+            .unwrap();
+        let source_digest = "a".repeat(64);
+        let snapshot_digest = "b".repeat(64);
+        let source_artifact_id = "00000000-0000-4000-8000-000000000031";
+        let operation_id = "00000000-0000-4000-8000-000000000032";
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, NULL, NULL, 'capture_only', 4, 1, 0, 55)",
+                [&snapshot_digest],
+            )
+            .unwrap();
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "sha256": snapshot_digest,
+                "provenance": {
+                    "source_artifact_id": source_artifact_id,
+                    "source_sha256": source_digest
+                }
+            }
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    source_artifact_id,
+                    operation_id,
+                    snapshot_digest,
+                    status.to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 63;")
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (version, status_count, snapshot_alias_count, source_alias_count): (
+            i64,
+            u64,
+            u64,
+            u64,
+        ) = connection
+            .query_row(
+                "SELECT
+                        (SELECT user_version FROM pragma_user_version),
+                        (SELECT COUNT(*) FROM capture_submissions WHERE operation_id = ?1),
+                        (SELECT COUNT(*) FROM capture_submission_source_aliases
+                         WHERE artifact_digest = ?2 AND source_artifact_id = ?3),
+                        (SELECT COUNT(*) FROM capture_submission_source_aliases
+                         WHERE artifact_digest = ?4 AND source_artifact_id = ?3)",
+                params![
+                    operation_id,
+                    snapshot_digest,
+                    source_artifact_id,
+                    source_digest
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(status_count, 1);
+        assert_eq!(snapshot_alias_count, 1);
+        assert_eq!(source_alias_count, 1);
+    }
+
+    #[test]
+    fn schema_60_upgrade_waits_for_submission_schema_before_alias_backfill() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        let digest = "c".repeat(64);
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v60', 'pevcap_import', 'imported', 60, 65, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/v60.jsonl', 'ride-v60', 'capture_only', 4, 1, 0, 65)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE capture_submission_source_aliases;
+                 DROP TABLE capture_submission_reservations;
+                 DROP TABLE capture_submissions;
+                 PRAGMA user_version = 60;",
+            )
+            .unwrap();
+        assert!(!table_exists(&connection, "capture_submission_source_aliases").unwrap());
+        assert!(!table_exists(&connection, "capture_submissions").unwrap());
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (version, ride_count, import_count, capture_bytes): (i64, u64, u64, Vec<u8>) =
+            connection
+                .query_row(
+                    "SELECT
+                        (SELECT user_version FROM pragma_user_version),
+                        (SELECT COUNT(*) FROM rides WHERE id = 'ride-v60'),
+                        (SELECT COUNT(*) FROM pevcap_imports WHERE artifact_digest = ?1),
+                        (SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1)",
+                    [&digest],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(ride_count, 1);
+        assert_eq!(import_count, 1);
+        assert_eq!(capture_bytes, [1, 2, 3, 4]);
     }
 
     type BmsMigrationRow = (
@@ -3518,7 +3840,6 @@ mod tests {
             .unwrap();
         connection
     }
-
     #[test]
     fn diagnostic_consent_migration_defaults_off_without_changing_existing_preferences() {
         for version in [45, 46, 47] {

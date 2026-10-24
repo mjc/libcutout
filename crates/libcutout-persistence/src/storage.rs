@@ -4287,7 +4287,7 @@ impl RideDatabase {
             return self.confirm_existing_pevcap(preview, receipt, publication);
         }
         let outcome = match publication {
-            CapturePublication::Recording(_) | CapturePublication::SubmissionSnapshot => {
+            CapturePublication::Recording(_) | CapturePublication::SubmissionSnapshot { .. } => {
                 NewPevcapImportOutcome::CaptureOnly
             }
             CapturePublication::Import => NewPevcapImportOutcome::try_from(preview.outcome)?,
@@ -4394,6 +4394,7 @@ impl RideDatabase {
         capture_data::store(self, preview, preview.source_path())?;
         self.request(|reply| Command::PublishCaptureData {
             digest: preview.artifact_digest.clone(),
+            source_artifact_id: publication.submission_source_artifact_id(),
             reply,
         })?;
         self.verify_stored_pevcap(preview)?;
@@ -5657,20 +5658,29 @@ enum PevcapBegin {
 enum CapturePublication {
     Import,
     Recording(RecordedCapture),
-    SubmissionSnapshot,
+    SubmissionSnapshot {
+        source_artifact_id: crate::CaptureArtifactId,
+    },
 }
 
 impl CapturePublication {
     fn recording(&self) -> Option<&RecordedCapture> {
         match self {
-            Self::Import | Self::SubmissionSnapshot => None,
+            Self::Import | Self::SubmissionSnapshot { .. } => None,
             Self::Recording(recording) => Some(recording),
+        }
+    }
+
+    fn submission_source_artifact_id(&self) -> Option<crate::CaptureArtifactId> {
+        match self {
+            Self::SubmissionSnapshot { source_artifact_id } => Some(*source_artifact_id),
+            Self::Import | Self::Recording(_) => None,
         }
     }
 
     fn validate_duplicate(&self, receipt: &PevcapImportReceipt) -> Result<(), StorageError> {
         match self {
-            Self::Import | Self::SubmissionSnapshot => Ok(()),
+            Self::Import | Self::SubmissionSnapshot { .. } => Ok(()),
             Self::Recording(recording) if receipt.recording.as_ref() == Some(recording) => Ok(()),
             Self::Recording(_) => Err(StorageError::CaptureIdentityConflict),
         }
@@ -5776,6 +5786,7 @@ enum Command {
     },
     PublishCaptureData {
         digest: String,
+        source_artifact_id: Option<crate::CaptureArtifactId>,
         reply: Reply<()>,
     },
     AbortCaptureData {
@@ -8166,7 +8177,7 @@ fn validate_existing_pevcap_confirmation(
     // A submission derivative retains GPS bytes without deriving a ride. An existing ordinary
     // import of the same bytes still has its original ride and must retain import validation.
     let submission_capture_only = match publication {
-        CapturePublication::SubmissionSnapshot => {
+        CapturePublication::SubmissionSnapshot { .. } => {
             receipt.outcome == PevcapImportOutcome::CaptureOnly
         }
         CapturePublication::Import | CapturePublication::Recording(_) => false,
@@ -8601,6 +8612,13 @@ fn finish_pevcap_import(
     capture_data::publish(&transaction, digest)?;
     if let Some(recording) = publication.recording() {
         recorded_capture::insert(&transaction, digest, recording)?;
+    }
+    if let Some(source_artifact_id) = publication.submission_source_artifact_id() {
+        transaction.execute(
+            "INSERT OR IGNORE INTO capture_submission_source_aliases
+                (artifact_digest, source_artifact_id) VALUES (?1, ?2)",
+            params![digest, source_artifact_id.to_string()],
+        )?;
     }
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",

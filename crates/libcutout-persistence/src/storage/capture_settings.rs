@@ -115,7 +115,7 @@ impl RideDatabase {
             SourceRecord::Live(entry) => {
                 visit_live_events(self.clone(), entry.id, visit).map_err(Into::into)
             }
-            SourceRecord::File(receipt) => {
+            SourceRecord::File(receipt) | SourceRecord::FileWithIdentity { receipt, .. } => {
                 let source = StoredCaptureReader {
                     database: self.clone(),
                     digest: receipt.artifact_digest,

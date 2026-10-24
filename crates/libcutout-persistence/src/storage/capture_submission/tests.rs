@@ -217,11 +217,13 @@ fn capture_submission_gps_snapshot_prepare_recovers_after_publication_before_sta
         .preflight_pevcap(&snapshot, PevcapEncoding::Jsonl)
         .unwrap();
     assert_eq!(preview.location_count(), 1);
+    let source_artifact_id =
+        source_record_artifact_id(&database.submission_source(source).unwrap()).unwrap();
     let receipt = database
         .confirm_pevcap_publication(
             &preview,
             1_700_000_001_000,
-            &CapturePublication::SubmissionSnapshot,
+            &CapturePublication::SubmissionSnapshot { source_artifact_id },
         )
         .unwrap();
     assert!(receipt.ride_id.is_none());
@@ -306,7 +308,7 @@ fn capture_submission_prepares_unknown_decoder_without_gps_and_reuses_durable_id
     assert!(database.capture_submission(source).unwrap().is_none());
     let prepared = database.prepare_capture_submission(source).unwrap();
     assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
-    assert_eq!(prepared.metadata.origin, CaptureOrigin::Manual);
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Manual);
     assert_eq!(
         prepared.metadata.provenance.source_artifact_id,
         receipt.artifact_id().to_string()
@@ -428,6 +430,821 @@ fn capture_submission_rejects_recovered_interruption_without_promoting_integrity
 }
 
 #[test]
+fn capture_submission_can_prepare_nonempty_recovered_interruption_with_stable_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "interrupted-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    database
+        .append_live_capture_event(
+            id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            record.to_jsonl_line().unwrap().into_bytes(),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    let source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = reopened.prepare_capture_submission(source).unwrap();
+    assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Unknown);
+    assert_eq!(
+        prepared.metadata.integrity,
+        CaptureSubmissionIntegrity::Unknown
+    );
+    let live_capture_id = id.to_string();
+    assert_eq!(
+        prepared.metadata.provenance.live_capture_id.as_deref(),
+        Some(live_capture_id.as_str())
+    );
+    assert_eq!(
+        prepared.metadata.provenance.source_artifact_id, live_capture_id,
+        "an unpublished interruption uses its retained durable capture identity"
+    );
+    assert!(
+        prepared.receipt.is_none(),
+        "preparation is not transmission"
+    );
+    let history = reopened
+        .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(history.captures.len(), 1);
+    assert_eq!(
+        history.captures[0].submission.source_artifact_id,
+        live_capture_id
+    );
+    assert_eq!(
+        history.captures[0].submission.source,
+        CaptureSubmissionSource::LiveCapture(id)
+    );
+    assert_eq!(
+        history.captures[0]
+            .submission
+            .status
+            .as_ref()
+            .map(|status| status.operation_id.as_str()),
+        Some(prepared.operation_id.as_str())
+    );
+    let published_history = reopened
+        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(published_history.captures.len(), 1);
+    assert_eq!(
+        published_history.captures[0].submission.source_artifact_id,
+        prepared.metadata.provenance.source_artifact_id,
+        "published history advertises the identity used by the durable Send status"
+    );
+    assert_eq!(
+        published_history.captures[0]
+            .submission
+            .status
+            .as_ref()
+            .map(|status| status.operation_id.as_str()),
+        Some(prepared.operation_id.as_str()),
+        "status lookup through the advertised ID must reach this operation"
+    );
+    let operation = prepared.operation_id;
+    reopened.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    let prepared_again = reopened.prepare_capture_submission(source).unwrap();
+    assert_eq!(prepared_again.operation_id, operation);
+    assert_eq!(
+        prepared_again.metadata.provenance,
+        prepared.metadata.provenance
+    );
+}
+
+#[test]
+fn recovered_interruption_history_alias_round_trips_evidence_and_prepares_same_operation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "interrupted-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    database
+        .append_live_capture_event(
+            id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            record.to_jsonl_line().unwrap().into_bytes(),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    let history = reopened
+        .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    let alias = CaptureSubmissionSource::RecordedArtifact(
+        CaptureArtifactId::parse(&history.captures[0].submission.source_artifact_id).unwrap(),
+    );
+    assert_eq!(
+        reopened.capture_evidence(alias).unwrap(),
+        CaptureAttachments::default(),
+        "history identity must resolve the retained interruption after reopen"
+    );
+    let edited = CaptureAttachments {
+        note: "reviewed after recovery".into(),
+        screenshots: Vec::new(),
+    };
+    assert_eq!(
+        reopened
+            .save_capture_evidence(alias, edited.clone())
+            .unwrap(),
+        edited
+    );
+
+    let from_history = reopened.prepare_capture_submission(alias).unwrap();
+    let from_live = reopened
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    assert_eq!(from_history.operation_id, from_live.operation_id);
+    assert_eq!(
+        from_history.metadata.provenance,
+        from_live.metadata.provenance
+    );
+    assert_eq!(
+        from_history
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some("reviewed after recovery".len() as u32)
+    );
+}
+
+#[test]
+fn recorded_artifact_file_resolution_precedes_live_id_alias_fallback() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "interrupted-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let interrupted_id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    database
+        .append_live_capture_event(
+            interrupted_id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            record.to_jsonl_line().unwrap().into_bytes(),
+        )
+        .unwrap();
+
+    let (recorded_id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared_recording = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(recorded_id))
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO pevcap_recordings
+                (artifact_id, artifact_digest, origin, advertised_name,
+                 platform_identifier, started_at_ms, model, model_verification)
+             VALUES (?1, ?2, 'manual', NULL, 'published-wheel', 1234, NULL, NULL)",
+            rusqlite::params![
+                interrupted_id.to_string(),
+                prepared_recording.metadata.sha256
+            ],
+        )
+        .unwrap();
+
+    let alias = CaptureSubmissionSource::RecordedArtifact(
+        CaptureArtifactId::parse(&interrupted_id.to_string()).unwrap(),
+    );
+    assert!(matches!(
+        source_record(&connection, alias).unwrap(),
+        Some(SourceRecord::File(_))
+    ));
+}
+
+#[test]
+fn imported_capture_without_recording_keeps_evidence_and_send_receipt_after_retirement() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source_path = directory.path().join("imported.jsonl");
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "legacy-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    let mut bytes = header.to_jsonl_line().unwrap().into_bytes();
+    bytes.push(b'\n');
+    bytes.extend_from_slice(&record.to_jsonl_line().unwrap().into_bytes());
+    bytes.push(b'\n');
+    std::fs::write(&source_path, &bytes).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let imported = database
+        .confirm_pevcap_import(&preview, 1_700_000_001_000)
+        .unwrap();
+    let digest = PevcapDigest::parse(&imported.artifact_digest).unwrap();
+    let source = CaptureSubmissionSource::PevcapDigest(digest);
+    let history = database
+        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(history.captures.len(), 1);
+    assert!(history.captures[0].recording.is_none());
+    assert_eq!(
+        history.captures[0].submission.source,
+        CaptureSubmissionSource::PevcapDigest(digest)
+    );
+
+    assert_eq!(
+        database.capture_evidence(source).unwrap(),
+        CaptureAttachments::default()
+    );
+    let evidence = CaptureAttachments {
+        note: "legacy imported evidence".into(),
+        screenshots: Vec::new(),
+    };
+    assert_eq!(
+        database
+            .save_capture_evidence(source, evidence.clone())
+            .unwrap(),
+        evidence
+    );
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Unknown);
+    assert_eq!(
+        prepared.metadata.integrity,
+        CaptureSubmissionIntegrity::Unknown
+    );
+    assert_eq!(
+        prepared.metadata.provenance.source_artifact_id,
+        legacy_capture_artifact_id(&imported.artifact_digest)
+            .unwrap()
+            .to_string()
+    );
+    assert_eq!(
+        prepared.metadata.provenance.source_sha256.as_deref(),
+        Some(imported.artifact_digest.as_str())
+    );
+    assert_eq!(
+        prepared
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some(evidence.note.len() as u32)
+    );
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert!(sent.receipt.is_some());
+    assert!(
+        String::from_utf8_lossy(&transport.uploads.lock().unwrap()[0].1)
+            .contains("legacy imported evidence"),
+        "saved evidence must be part of the frozen transfer before local retirement"
+    );
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let mut cursor = None;
+    for _ in 0..4 {
+        if cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap()
+            == crate::storage::normalization::BatchState::Finished
+        {
+            break;
+        }
+    }
+    drop(connection);
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    let status = reopened.capture_submission(source).unwrap().unwrap();
+    assert_eq!(status.operation_id, prepared.operation_id);
+    assert_eq!(status.phase, CaptureSubmissionPhase::Sent);
+    assert_eq!(
+        status.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+    assert_eq!(status.receipt, sent.receipt);
+    assert_eq!(
+        status
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some(evidence.note.len() as u32),
+        "the retained receipt keeps the disclosure manifest after payload retirement"
+    );
+    let history = reopened
+        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(history.captures.len(), 1);
+    assert_eq!(
+        history.captures[0].submission.source_artifact_id,
+        status.metadata.provenance.source_artifact_id
+    );
+    assert_eq!(
+        history.captures[0]
+            .submission
+            .status
+            .as_ref()
+            .and_then(|status| status.receipt.as_ref()),
+        sent.receipt.as_ref()
+    );
+}
+
+#[test]
+fn pevcap_digest_resolves_the_prepared_live_owner_and_retained_receipt() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "interrupted-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    database
+        .append_live_capture_event(
+            id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            record.to_jsonl_line().unwrap().into_bytes(),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let evidence = CaptureAttachments {
+        note: "interrupted capture evidence".into(),
+        screenshots: Vec::new(),
+    };
+    let live_source = CaptureSubmissionSource::LiveCapture(id);
+    database
+        .save_capture_evidence(live_source, evidence.clone())
+        .unwrap();
+    let prepared = database.prepare_capture_submission(live_source).unwrap();
+    let operation_id = prepared.operation_id.clone();
+    let digest = PevcapDigest::parse(
+        &prepared
+            .metadata
+            .evidence
+            .as_ref()
+            .expect("saved evidence records the canonical source digest")
+            .capture_sha256,
+    )
+    .unwrap();
+    let digest_source = CaptureSubmissionSource::PevcapDigest(digest);
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    assert_eq!(reopened.capture_evidence(digest_source).unwrap(), evidence);
+    let status = reopened.capture_submission(digest_source).unwrap().unwrap();
+    assert_eq!(status.operation_id, operation_id);
+    let prepared_again = reopened.prepare_capture_submission(digest_source).unwrap();
+    assert_eq!(prepared_again.operation_id, operation_id);
+    assert_eq!(prepared_again.metadata.evidence, prepared.metadata.evidence);
+
+    let transport = Transport::default();
+    let sent =
+        ready(reopened.send_capture_submission(&operation_id, ACCOUNT, "secret", &transport))
+            .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    reopened.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let mut cursor = None;
+    for _ in 0..4 {
+        if cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap()
+            == crate::storage::normalization::BatchState::Finished
+        {
+            break;
+        }
+    }
+    drop(connection);
+
+    let retired = RideDatabase::open(&database_path).unwrap();
+    let retained = retired.capture_submission(digest_source).unwrap().unwrap();
+    assert_eq!(retained.operation_id, operation_id);
+    assert_eq!(retained.receipt, sent.receipt);
+    assert_eq!(
+        retained.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+}
+
+#[test]
+fn pevcap_digest_rejects_ambiguous_durable_submission_owners() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&database_path).unwrap();
+    let mut status: serde_json::Value = connection
+        .query_row(
+            "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+            [&prepared.operation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|json| serde_json::from_str(&json).unwrap())
+        .unwrap();
+    let second_source = "00000000-0000-0000-0000-0000000000f1";
+    let second_operation = "00000000-0000-0000-0000-0000000000f2";
+    status["operation_id"] = serde_json::json!(second_operation);
+    status["metadata"]["provenance"]["source_artifact_id"] = serde_json::json!(second_source);
+    connection
+        .execute(
+            "INSERT INTO capture_submissions
+                (source_artifact_id, operation_id, snapshot_digest, evidence_json, status_json)
+             SELECT ?1, ?2, snapshot_digest, evidence_json, ?3
+             FROM capture_submissions WHERE operation_id = ?4",
+            rusqlite::params![
+                second_source,
+                second_operation,
+                status.to_string(),
+                prepared.operation_id
+            ],
+        )
+        .unwrap();
+
+    let digest = PevcapDigest::parse(&prepared.metadata.sha256).unwrap();
+    assert!(matches!(
+        source_record(&connection, CaptureSubmissionSource::PevcapDigest(digest)),
+        Err(StorageError::InvalidStoredValue {
+            field: "ambiguous capture submission source identity",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn digest_alias_keeps_live_owner_and_evidence_after_prepared_status_is_replaced() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "interrupted-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(1),
+        GattChannel::from_bytes([0x11; 16]),
+        GattChannel::from_bytes([0x22; 16]),
+        vec![0xff, 0x00, 0xa5],
+    );
+    database
+        .append_live_capture_event(
+            id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            record.to_jsonl_line().unwrap().into_bytes(),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let live_source = CaptureSubmissionSource::LiveCapture(id);
+    let prepared = database.prepare_capture_submission(live_source).unwrap();
+    let digest = PevcapDigest::parse(
+        &prepared
+            .metadata
+            .evidence
+            .as_ref()
+            .map_or(&prepared.metadata.sha256, |manifest| {
+                &manifest.capture_sha256
+            }),
+    )
+    .unwrap();
+    let digest_source = CaptureSubmissionSource::PevcapDigest(digest);
+    let edited = CaptureAttachments {
+        note: "edited through canonical digest".into(),
+        screenshots: Vec::new(),
+    };
+    assert_eq!(
+        database
+            .save_capture_evidence(digest_source, edited.clone())
+            .unwrap(),
+        edited
+    );
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    assert_eq!(reopened.capture_evidence(digest_source).unwrap(), edited);
+    let prepared_again = reopened.prepare_capture_submission(digest_source).unwrap();
+    assert_eq!(
+        prepared_again.metadata.provenance.source_artifact_id,
+        id.to_string(),
+        "re-preparation must keep the original live identity after replacing Prepared status"
+    );
+    assert_eq!(
+        prepared_again
+            .metadata
+            .provenance
+            .live_capture_id
+            .as_deref(),
+        Some(id.to_string().as_str())
+    );
+    assert_eq!(
+        prepared_again
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some(edited.note.len() as u32)
+    );
+}
+
+#[test]
+fn digest_alias_keeps_published_live_context_through_receipt_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&database_path).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    let source_artifact_id = receipt.artifact_id();
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let initial = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let digest = PevcapDigest::parse(&initial.metadata.sha256).unwrap();
+    let source = CaptureSubmissionSource::PevcapDigest(digest);
+    let evidence = CaptureAttachments {
+        note: "published context reviewed through digest".into(),
+        screenshots: Vec::new(),
+    };
+    database
+        .save_capture_evidence(source, evidence.clone())
+        .unwrap();
+
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert_eq!(
+        prepared.metadata.provenance.source_artifact_id,
+        source_artifact_id.to_string()
+    );
+    assert_eq!(
+        prepared.metadata.provenance.live_capture_id.as_deref(),
+        Some(id.to_string().as_str())
+    );
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Manual);
+    assert_eq!(
+        prepared.metadata.integrity,
+        CaptureSubmissionIntegrity::Complete
+    );
+    assert_eq!(
+        prepared
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some(evidence.note.len() as u32)
+    );
+
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    database.shutdown().unwrap();
+
+    let mut connection = Connection::open(&database_path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    let mut cursor = None;
+    for _ in 0..4 {
+        if cleanup_sent_capture_batch(&mut connection, &mut cursor).unwrap()
+            == crate::storage::normalization::BatchState::Finished
+        {
+            break;
+        }
+    }
+    let retained_events: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        retained_events, 0,
+        "receipt cleanup retires the live event payload"
+    );
+    drop(connection);
+
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    let retained = reopened.capture_submission(source).unwrap().unwrap();
+    assert_eq!(retained.operation_id, prepared.operation_id);
+    assert_eq!(retained.receipt, sent.receipt);
+    assert_eq!(
+        retained.local_payload_state,
+        CaptureSubmissionLocalPayloadState::Removed
+    );
+}
+
+#[test]
+fn capture_submission_still_rejects_an_active_live_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "active-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    assert!(matches!(
+        database.prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id)),
+        Err(CaptureSubmissionError::NotFinished)
+    ));
+}
+
+#[test]
+fn capture_submission_rejects_corrupt_interrupted_bytes_without_removing_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1234),
+        "corrupt-wheel",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let id = database
+        .begin_live_capture(header.to_jsonl_line().unwrap().into_bytes(), 1234)
+        .unwrap();
+    database
+        .append_live_capture_event(
+            id,
+            crate::LiveCaptureEventKind::Notification,
+            1,
+            None,
+            None,
+            b"not a PEVCAP event".to_vec(),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert!(matches!(
+        reopened.prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id)),
+        Err(CaptureSubmissionError::InvalidCapture)
+    ));
+    let history = reopened
+        .list_live_capture_history(None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(history.captures[0].event_count, 1);
+}
+
+#[test]
 fn capture_submission_preserves_automatic_origin_as_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
@@ -436,7 +1253,7 @@ fn capture_submission_preserves_automatic_origin_as_provenance() {
     let prepared = database
         .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
         .unwrap();
-    assert_eq!(prepared.metadata.origin, CaptureOrigin::Automatic);
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Automatic);
     assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
     assert!(
         prepared.receipt.is_none(),

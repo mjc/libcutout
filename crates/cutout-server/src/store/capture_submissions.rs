@@ -588,7 +588,7 @@ mod tests {
             sha256: "a".repeat(64),
             bytes: 42,
             encoding: cutout_core::PevcapEncoding::Jsonl,
-            origin: cutout_core::CaptureOrigin::Automatic,
+            origin: cutout_core::CaptureOrigin::Automatic.into(),
             integrity: cutout_core::CaptureSubmissionIntegrity::Complete,
             provenance: cutout_core::CaptureSubmissionProvenance {
                 source_artifact_id: Uuid::new_v4().to_string(),

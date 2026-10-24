@@ -409,8 +409,20 @@ impl DatabaseWorker<'_> {
                     connection, &digest, sequence, &chunk,
                 ));
             }
-            Command::PublishCaptureData { digest, reply } => {
-                let _ = reply.send(super::capture_data::publish(connection, &digest));
+            Command::PublishCaptureData {
+                digest,
+                source_artifact_id,
+                reply,
+            } => {
+                let result = match source_artifact_id {
+                    Some(source_artifact_id) => super::capture_data::publish_with_submission_alias(
+                        connection,
+                        &digest,
+                        source_artifact_id,
+                    ),
+                    None => super::capture_data::publish(connection, &digest),
+                };
+                let _ = reply.send(result);
             }
             Command::AbortCaptureData { digest, reply } => {
                 let _ = reply.send(super::capture_data::abort(connection, &digest));

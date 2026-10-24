@@ -40,6 +40,8 @@ pub struct LiveCaptureHistoryEntry {
     pub event_count: u64,
     /// Uncompressed JSONL header and event bytes, excluding delimiters.
     pub stored_bytes: u64,
+    /// Stable source alias and durable private Send receipt, if any.
+    pub submission: super::capture_history::CaptureSubmissionHistory,
 }
 
 /// Bounded session history page.
@@ -179,6 +181,7 @@ struct HistoryRow {
     event_count: u64,
     stored_bytes: u64,
     context: Option<String>,
+    submission_status: Option<String>,
 }
 
 impl HistoryRow {
@@ -194,6 +197,7 @@ impl HistoryRow {
             event_count: row.get(7)?,
             stored_bytes: row.get(8)?,
             context: row.get(9)?,
+            submission_status: row.get(10)?,
         })
     }
 
@@ -226,8 +230,18 @@ impl HistoryRow {
                 })
             })
             .transpose()?;
+        let id = LiveCaptureId::parse(&self.id)?;
+        let source_artifact_id = recording.as_ref().map_or_else(
+            || id.to_string(),
+            |recording| recording.artifact_id.to_string(),
+        );
+        let status = self
+            .submission_status
+            .as_deref()
+            .map(super::capture_submission::decode_status)
+            .transpose()?;
         Ok(LiveCaptureHistoryEntry {
-            id: LiveCaptureId::parse(&self.id)?,
+            id,
             state: LiveCaptureState::parse(&self.state)?,
             integrity: LiveCaptureIntegrity::parse(&self.integrity, self.dropped)?,
             recording,
@@ -236,6 +250,11 @@ impl HistoryRow {
             finished_at_ms: self.finished_at_ms,
             event_count: self.event_count,
             stored_bytes: self.stored_bytes,
+            submission: super::capture_history::CaptureSubmissionHistory {
+                source: super::capture_submission::CaptureSubmissionSource::LiveCapture(id),
+                source_artifact_id,
+                status,
+            },
         })
     }
 }
@@ -247,7 +266,11 @@ pub(super) fn list(
 ) -> Result<LiveCaptureHistoryPage, StorageError> {
     let mut query = connection.prepare(
         "SELECT capture_id, state, integrity, dropped_messages, header_json, started_at_ms,
-            finished_at_ms, next_sequence, stored_bytes, recording_context_json
+            finished_at_ms, next_sequence, stored_bytes, recording_context_json,
+            (SELECT status_json FROM capture_submissions AS submission
+             WHERE json_extract(submission.status_json, '$.metadata.provenance.live_capture_id') = live_capture_sessions.capture_id
+                OR submission.source_artifact_id = json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
+             ORDER BY submission.operation_id DESC LIMIT 1)
          FROM live_capture_sessions
          WHERE state != 'active' AND (?1 IS NULL OR started_at_ms < ?1 OR (started_at_ms = ?1 AND capture_id < ?2))
          ORDER BY started_at_ms DESC, capture_id DESC LIMIT ?3")?;
@@ -286,7 +309,11 @@ pub(super) fn lookup(
     connection
         .query_row(
             "SELECT capture_id, state, integrity, dropped_messages, header_json, started_at_ms,
-            finished_at_ms, next_sequence, stored_bytes, recording_context_json
+            finished_at_ms, next_sequence, stored_bytes, recording_context_json,
+            (SELECT status_json FROM capture_submissions AS submission
+             WHERE json_extract(submission.status_json, '$.metadata.provenance.live_capture_id') = live_capture_sessions.capture_id
+                OR submission.source_artifact_id = json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
+             ORDER BY submission.operation_id DESC LIMIT 1)
          FROM live_capture_sessions
          WHERE (?1 IS NOT NULL AND capture_id = ?1)
             OR (?2 IS NOT NULL AND json_extract(recording_context_json, '$.artifact_id') = ?2)",

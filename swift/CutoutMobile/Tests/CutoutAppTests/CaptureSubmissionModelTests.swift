@@ -8,15 +8,210 @@ import XCTest
 final class CaptureSubmissionModelTests: XCTestCase {
     private enum TestFailure: Error { case unavailable }
 
-    private func status(_ phase: MobileCaptureSubmissionPhaseDto, operationID: String = "fixed-operation")
+    func testEvidenceLoadErrorKeepsReviewDisabledUntilRetrySucceeds() async {
+        let source = MobileCaptureSubmissionSourceDto.liveCapture(id: UUID().uuidString)
+        var attempts = 0
+        let model = CaptureEvidenceEditorModel(source: source) { received in
+            XCTAssertEqual(received, source)
+            attempts += 1
+            if attempts == 1 { throw TestFailure.unavailable }
+            return MobileCaptureEvidenceDto(
+                note: "", screenshots: [], noteLimitBytes: 1_024,
+                screenshotLimit: 4, screenshotLimitBytes: 5 * 1_024 * 1_024
+            )
+        }
+
+        await model.refresh()
+        XCTAssertFalse(model.isLoaded)
+        XCTAssertNotNil(model.error)
+        XCTAssertFalse(
+            captureSubmissionEvidenceIsReviewable(
+                loaded: model.isLoaded, working: model.isWorking, dirty: model.isDirty))
+
+        await model.refresh()
+        XCTAssertTrue(model.isLoaded)
+        XCTAssertNil(model.error)
+        XCTAssertTrue(
+            captureSubmissionEvidenceIsReviewable(
+                loaded: model.isLoaded, working: model.isWorking, dirty: model.isDirty))
+        XCTAssertEqual(attempts, 2)
+    }
+
+    private func status(
+        _ phase: MobileCaptureSubmissionPhaseDto,
+        operationID: String = "fixed-operation",
+        receipt: MobileCaptureSubmissionReceiptDto? = nil
+    )
         -> MobileCaptureSubmissionStatusDto
     {
         MobileCaptureSubmissionStatusDto(
-            operationId: operationID, phase: phase, localPayloadState: .retained,
+            operationId: operationID, phase: phase, origin: .unknown, integrity: .unknown,
+            localPayloadState: .retained,
             categories: MobileCaptureSubmissionCategoriesDto(
                 deviceIdentifiers: true, location: false, notes: true, annotations: true, settingsObservations: false
-            ), droppedMessages: 2, byteCount: 100, receipt: nil, failure: nil
+            ), droppedMessages: 2, byteCount: 100, receipt: receipt, failure: nil
         )
+    }
+
+    func testHistoryBadgeRequiresDurableSendReceiptAndKeepsRemoteDeletionDistinct() {
+        XCTAssertNil(captureHistorySendBadge(status(.sent)))
+        let receipt = MobileCaptureSubmissionReceiptDto(
+            operationId: "fixed-operation", sha256: String(repeating: "a", count: 64),
+            bytes: 100, receivedAtMilliseconds: 1_700_000_000_000
+        )
+        XCTAssertEqual(captureHistorySendBadge(status(.sent, receipt: receipt)), .sent)
+        XCTAssertEqual(captureHistorySendBadge(status(.deleted, receipt: receipt)), .remoteDeleted)
+        XCTAssertEqual(captureHistorySendBadge(status(.deleting, receipt: receipt)), .sent)
+        XCTAssertNil(captureHistorySendBadge(status(.prepared, receipt: receipt)))
+    }
+
+    func testBatchReviewIsLocalAndConfirmationDelegatesOneSharedSend() async {
+        let candidate = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "source-a", sourceKind: "Live capture", displayName: "Capture A",
+            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: ["device identifiers"], noteBytes: 4, screenshotCount: 1, receipt: nil
+        )
+        var sends: [[String]] = []
+        var stopRequests = 0
+        var terminalUpdates = 0
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { [candidate] },
+                sendSelected: { ids, update in
+                    sends.append(ids)
+                    update(
+                        CaptureSubmissionBatchProgress(
+                            sourceArtifactID: candidate.sourceArtifactID, phase: .cleaned,
+                            message: "Local copy removed after receipt", total: 1, sent: 1,
+                            cleaned: 1, failed: 0, skipped: 0, cancelled: 0, current: 0
+                        ))
+                    return CaptureSubmissionBatchSummary(
+                        sent: 1, cleaned: 1, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [],
+                        pendingCleanupSourceArtifactIDs: []
+                    )
+                },
+                requestCancel: { stopRequests += 1 }
+            ),
+            onTerminalUpdate: { terminalUpdates += 1 }
+        )
+
+        XCTAssertTrue(sends.isEmpty, "Creating or reviewing the plan must not send captures")
+        await model.review()
+        XCTAssertEqual(model.selectedCount, 1)
+        XCTAssertTrue(sends.isEmpty, "The plan review remains local")
+        await model.sendSelected()
+
+        XCTAssertEqual(sends, [[candidate.sourceArtifactID]])
+        XCTAssertEqual(model.itemProgress[candidate.sourceArtifactID]?.message, "Local copy removed after receipt")
+        XCTAssertEqual(model.summary?.cleaned, 1)
+        XCTAssertEqual(terminalUpdates, 1)
+        model.requestStopAfterCurrent()
+        XCTAssertEqual(stopRequests, 0, "Cancellation is available only while a batch is active")
+    }
+
+    func testBatchRetryIgnoresLateProgressFromPreviousAttempt() async {
+        let candidate = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "source-a", sourceKind: "Live capture", displayName: nil,
+            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        var attempt = 0
+        var reviews = 0
+        var previousUpdate: CaptureSubmissionBatchAdapter.ProgressUpdate?
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: {
+                    reviews += 1
+                    return [candidate]
+                },
+                sendSelected: { _, update in
+                    attempt += 1
+                    if attempt == 1 {
+                        previousUpdate = update
+                        return .init(
+                            sent: 0, cleaned: 0, failed: 1, skipped: 0, cancelled: 0,
+                            failedSourceArtifactIDs: [candidate.sourceArtifactID], pendingCleanupSourceArtifactIDs: [])
+                    }
+
+                    update(
+                        .init(
+                            sourceArtifactID: candidate.sourceArtifactID, phase: .sent, message: "receipt",
+                            total: 1, sent: 1, cleaned: 0, failed: 0, skipped: 0, cancelled: 0, current: 0
+                        ))
+                    previousUpdate?(
+                        .init(
+                            sourceArtifactID: candidate.sourceArtifactID, phase: .failed, message: "stale failure",
+                            total: 1, sent: 0, cleaned: 0, failed: 1, skipped: 0, cancelled: 0, current: 0
+                        ))
+                    return .init(
+                        sent: 2, cleaned: 1, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {}
+            ))
+
+        await model.review()
+        await model.sendSelected()
+        XCTAssertEqual(model.failedSourceArtifactIDs, [candidate.sourceArtifactID])
+        await model.reviewFailed()
+        XCTAssertEqual(reviews, 2)
+        XCTAssertEqual(model.selectedSourceArtifactIDs, [candidate.sourceArtifactID])
+        XCTAssertEqual(attempt, 1, "Refreshing the reviewed plan cannot send")
+        await model.sendSelected()
+
+        XCTAssertEqual(model.progress?.phase, .sent)
+        XCTAssertEqual(model.summary?.sent, 2, "The final Rust summary replaces an older progress snapshot")
+        XCTAssertEqual(model.itemProgress[candidate.sourceArtifactID]?.message, "receipt")
+        XCTAssertTrue(model.failedSourceArtifactIDs.isEmpty)
+    }
+
+    func testStoppedBatchRequiresFreshLocalReviewBeforeAnotherSend() async {
+        let candidate = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "source-stop", sourceKind: "Live capture", displayName: nil,
+            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        var reviews = 0
+        var sends = 0
+        var model: CaptureSubmissionBatchModel?
+        let adapter = CaptureSubmissionBatchAdapter(
+            review: {
+                reviews += 1
+                return [candidate]
+            },
+            sendSelected: { _, update in
+                sends += 1
+                update(
+                    .init(
+                        sourceArtifactID: candidate.sourceArtifactID, phase: .current, message: "current",
+                        total: 1, sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 0, current: 1
+                    ))
+                model?.requestStopAfterCurrent()
+                return .init(
+                    sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 1,
+                    failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+            },
+            requestCancel: {}
+        )
+        model = CaptureSubmissionBatchModel(adapter: adapter)
+        await model?.review()
+        await model?.sendSelected()
+
+        XCTAssertTrue(model?.requiresFreshReview == true)
+        XCTAssertEqual(sends, 1)
+        await model?.sendSelected()
+        XCTAssertEqual(sends, 1, "The permanently cancelled plan cannot admit another batch")
+        await model?.review()
+        XCTAssertFalse(model?.requiresFreshReview ?? true)
+        XCTAssertEqual(reviews, 2)
+        XCTAssertEqual(sends, 1, "A fresh local review still does not send before confirmation")
     }
 
     func testRetryUsesThePreparedRustOperationAndNeverPreparesAReplacement() async {

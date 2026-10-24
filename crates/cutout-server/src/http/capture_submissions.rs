@@ -337,8 +337,8 @@ mod tests {
     use super::*;
     use crate::store::{Registration, Role};
     use cutout_core::{
-        CaptureOrigin, CaptureSubmissionIntegrity, CaptureSubmissionProvenance,
-        CaptureSubmissionTransformation,
+        CaptureOrigin, CaptureSubmissionIntegrity, CaptureSubmissionOrigin,
+        CaptureSubmissionProvenance, CaptureSubmissionTransformation,
     };
     use uuid::Uuid;
 
@@ -367,7 +367,7 @@ mod tests {
             sha256: digest.clone(),
             bytes: u64::try_from(bytes.len()).expect("size"),
             encoding: PevcapEncoding::Jsonl,
-            origin: CaptureOrigin::Manual,
+            origin: CaptureOrigin::Manual.into(),
             integrity: CaptureSubmissionIntegrity::Complete,
             provenance: CaptureSubmissionProvenance {
                 source_artifact_id: Uuid::new_v4().to_string(),
@@ -405,6 +405,20 @@ mod tests {
         .expect("upload");
         assert_eq!(status, StatusCode::CREATED);
         (directory, store, headers, operation, bytes)
+    }
+
+    #[tokio::test]
+    async fn metadata_accepts_truthful_unknown_legacy_provenance() {
+        let (_directory, _store, mut headers, _operation, _bytes) = stored_capture().await;
+        let mut value: CaptureSubmissionMetadata =
+            serde_json::from_slice(headers["x-cutout-capture"].as_bytes()).unwrap();
+        value.origin = CaptureSubmissionOrigin::Unknown;
+        value.integrity = CaptureSubmissionIntegrity::Unknown;
+        headers.insert(
+            "x-cutout-capture",
+            serde_json::to_string(&value).unwrap().parse().unwrap(),
+        );
+        assert_eq!(metadata(&headers).unwrap(), value);
     }
 
     async fn reviewer_headers(store: &Store, template: &HeaderMap) -> HeaderMap {

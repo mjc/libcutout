@@ -6,6 +6,26 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+func captureSubmissionEvidenceIsReviewable(loaded: Bool, working: Bool, dirty: Bool) -> Bool {
+    loaded && !working && !dirty
+}
+
+func captureSubmissionOriginLabel(_ origin: MobileCaptureSubmissionOriginDto) -> String {
+    switch origin {
+    case .automatic: localizedAppText("captures.automatic")
+    case .manual: localizedAppText("captures.manual")
+    case .unknown: localizedAppText("capture.send.origin_unknown")
+    }
+}
+
+func captureSubmissionIntegrityLabel(_ integrity: MobileCaptureIntegrityDto) -> String {
+    switch integrity {
+    case .complete: localizedAppText("capture.send.integrity_complete")
+    case .incomplete: localizedAppText("captures.incomplete")
+    case .unknown: localizedAppText("captures.integrity_unknown")
+    }
+}
+
 /// The same private Send presentation is embedded in both existing details.
 struct CaptureSubmissionSection: View {
     @State private var model: CaptureSubmissionModel
@@ -13,14 +33,17 @@ struct CaptureSubmissionSection: View {
     @State private var showsSendConfirmation = false
     @State private var showsDeleteConfirmation = false
     let onLocalPayloadStateChange: (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void
+    let onStatusChange: (MobileCaptureSubmissionStatusDto?) -> Void
 
     init(
         source: MobileCaptureSubmissionSourceDto,
-        onLocalPayloadStateChange: @escaping (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void = { _ in }
+        onLocalPayloadStateChange: @escaping (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void = { _ in },
+        onStatusChange: @escaping (MobileCaptureSubmissionStatusDto?) -> Void = { _ in }
     ) {
         _model = State(initialValue: CaptureSubmissionModel(source: source))
         _evidence = State(initialValue: CaptureEvidenceEditorModel(source: source))
         self.onLocalPayloadStateChange = onLocalPayloadStateChange
+        self.onStatusChange = onStatusChange
     }
 
     var body: some View {
@@ -31,10 +54,17 @@ struct CaptureSubmissionSection: View {
         .task {
             await model.refresh()
             onLocalPayloadStateChange(model.status?.localPayloadState)
+            onStatusChange(model.status)
             await evidence.refresh()
         }
         .onChange(of: model.status?.localPayloadState) { _, state in
             onLocalPayloadStateChange(state)
+        }
+        .onChange(of: model.status?.phase) { _, _ in
+            onStatusChange(model.status)
+        }
+        .onChange(of: model.status?.localPayloadState) { _, _ in
+            onStatusChange(model.status)
         }
     }
 
@@ -77,9 +107,14 @@ struct CaptureSubmissionSection: View {
                         if model.status?.phase == .prepared { showsSendConfirmation = true }
                     }
                 } label: {
-                    Label("Review private Send", systemImage: "paperplane")
+                    Label(localizedAppText("capture.submission.review"), systemImage: "paperplane")
                 }
-                .disabled(model.isWorking || !evidence.isLoaded || evidence.isWorking || evidence.isDirty)
+                .disabled(
+                    model.isWorking
+                        || !captureSubmissionEvidenceIsReviewable(
+                            loaded: evidence.isLoaded, working: evidence.isWorking, dirty: evidence.isDirty
+                        )
+                )
                 .accessibilityIdentifier("captures.send.review")
             }
             if model.isSending, let progress = model.progress {
@@ -105,6 +140,10 @@ struct CaptureSubmissionSection: View {
 
     @ViewBuilder
     private func disclosure(_ status: MobileCaptureSubmissionStatusDto) -> some View {
+        LabeledContent("Recording origin", value: captureSubmissionOriginLabel(status.origin))
+            .accessibilityIdentifier("captures.send.origin")
+        LabeledContent("Recording integrity", value: captureSubmissionIntegrityLabel(status.integrity))
+            .accessibilityIdentifier("captures.send.integrity")
         LabeledContent(
             "Snapshot size",
             value: ByteCountFormatter.string(fromByteCount: Int64(clamping: status.byteCount), countStyle: .file))
@@ -179,7 +218,12 @@ struct CaptureSubmissionSection: View {
         } label: {
             Label(title, systemImage: "paperplane")
         }
-        .disabled(model.isWorking || model.isSending || evidence.isWorking || evidence.isDirty)
+        .disabled(
+            model.isWorking || model.isSending
+                || !captureSubmissionEvidenceIsReviewable(
+                    loaded: evidence.isLoaded, working: evidence.isWorking, dirty: evidence.isDirty
+                )
+        )
         .accessibilityIdentifier("captures.send")
     }
 
@@ -219,6 +263,8 @@ struct CaptureSubmissionSection: View {
 @MainActor
 @Observable
 final class CaptureEvidenceEditorModel {
+    typealias LoadEvidence = @MainActor (MobileCaptureSubmissionSourceDto) async throws -> MobileCaptureEvidenceDto
+
     let source: MobileCaptureSubmissionSourceDto
     var note = "" { didSet { if !isWorking { isDirty = true } } }
     private(set) var screenshots: [Data] = []
@@ -228,16 +274,19 @@ final class CaptureEvidenceEditorModel {
     private(set) var error: String?
     private(set) var noteLimit = 1024
     private(set) var screenshotLimit = 4
+    @ObservationIgnored private let loadEvidence: LoadEvidence
 
-    init(source: MobileCaptureSubmissionSourceDto) { self.source = source }
+    init(source: MobileCaptureSubmissionSourceDto, loadEvidence: LoadEvidence? = nil) {
+        self.source = source
+        self.loadEvidence = loadEvidence ?? Self.readEvidence
+    }
 
     func refresh() async {
         guard !isWorking, !isDirty else { return }
         isWorking = true
         defer { isWorking = false }
         do {
-            let client = try CaptureSubmissionClientHandle(database: await RustPersistenceStore.open())
-            let saved = try await client.evidence(source: source)
+            let saved = try await loadEvidence(source)
             note = saved.note
             screenshots = saved.screenshots
             noteLimit = Int(saved.noteLimitBytes)
@@ -295,6 +344,13 @@ final class CaptureEvidenceEditorModel {
             isDirty = true
             error = nil
         } catch { self.error = CaptureSubmissionModel.message(for: error) }
+    }
+
+    private static func readEvidence(_ source: MobileCaptureSubmissionSourceDto) async throws
+        -> MobileCaptureEvidenceDto
+    {
+        let database = try await RustPersistenceStore.open()
+        return try await CaptureSubmissionClientHandle(database: database).evidence(source: source)
     }
 }
 
@@ -379,7 +435,14 @@ private struct CaptureEvidenceSection: View {
                 .accessibilityIdentifier("captures.evidence.save")
             }
             if model.isWorking { ProgressView() }
-            if let error = model.error { Text(error).foregroundStyle(PevColors.warningText) }
+            if let error = model.error {
+                Text(error).foregroundStyle(PevColors.warningText)
+                if !model.isLoaded {
+                    Button(localizedAppText("capture.evidence.retry")) { Task { await model.refresh() } }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("captures.evidence.retry")
+                }
+            }
         } header: {
             Text("Recording notes")
         }

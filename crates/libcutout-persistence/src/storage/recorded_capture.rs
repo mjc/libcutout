@@ -81,7 +81,8 @@ impl RideDatabase {
                     }
                 }
             }
-            Ok(SourceRecord::File(receipt)) => {
+            Ok(SourceRecord::File(receipt))
+            | Ok(SourceRecord::FileWithIdentity { receipt, .. }) => {
                 match self.export_pevcap_capture(&receipt.artifact_digest, destination) {
                     Err(StorageError::PevcapCaptureNotFound) => {
                         Err(StorageError::CapturePayloadUnavailable)
