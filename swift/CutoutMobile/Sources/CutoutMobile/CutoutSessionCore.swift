@@ -1043,7 +1043,8 @@ public final class CutoutSessionCore: NSObject {
                     guard
                         startCapture(
                             reason: note ?? "record-only", annotations: annotations,
-                            evidence: "simulator_fixture", origin: .manual
+                            evidence: "simulator_fixture", origin: .manual,
+                            transportOwnership: .borrowed
                         )
                     else {
                         isRecordOnly = false
@@ -1094,7 +1095,9 @@ public final class CutoutSessionCore: NSObject {
                 reason: note ?? "record-only",
                 annotations: captureAnnotations,
                 evidence: evidence,
-                origin: .manual
+                origin: .manual,
+                transportOwnership: .borrowed,
+                connectionAttempt: token
             )
         else { return false }
         _ = acceptCaptureWrite(recordCaptureLinkUp())
@@ -1231,16 +1234,26 @@ public final class CutoutSessionCore: NSObject {
         else { return false }
         let receipt = await flushCaptureReceipt()
         return onBleQueue {
-            guard rustSessionState.finishCaptureFlush(token: token, outcome: receipt.outcome) else {
+            let disposition = rustSessionState.finishCaptureFlush(token: token, outcome: receipt.outcome)
+            switch disposition {
+            case .rejected:
                 publishCaptureProgress()
                 return false
-            }
-            // A capture borrowed by a live ride owns only its writer. A record-only
-            // route owns its transport and may release it when the user finishes.
-            if isRecordOnly {
-                disconnectAndScanOnBleQueue()
-            } else {
+            case .writerOnly:
                 finishCaptureWriter()
+                #if DEBUG
+                    if testScript != nil, connectionSnapshot.token == nil {
+                        isRecordOnly = false
+                        publishConnectionSnapshot()
+                    }
+                #endif
+            case .releaseOwnedTransport(let ownedAttempt):
+                // Recheck at the native boundary so a replacement link is never closed.
+                guard connectionSnapshot.token == ownedAttempt else {
+                    finishCaptureWriter()
+                    return true
+                }
+                disconnectAndScanOnBleQueue()
             }
             return true
         }
@@ -2317,13 +2330,16 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        guard
+        guard let ownedConnectionAttempt = connectionAttempt?.token,
             startCapture(
                 reason: "record-only",
                 annotations: ["route=record_only"] + annotations
                     + (note.map {
                         [pevcapAnnotation(key: "user_note", value: $0)]
-                    } ?? []), origin: .manual
+                    } ?? []),
+                origin: .manual,
+                transportOwnership: .captureOwned,
+                connectionAttempt: ownedConnectionAttempt
             )
         else {
             isRecordOnly = false
@@ -3020,9 +3036,17 @@ public final class CutoutSessionCore: NSObject {
         reason: String,
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested",
-        origin: MobileCaptureOriginDto
+        origin: MobileCaptureOriginDto,
+        transportOwnership: MobileCaptureTransportOwnershipDto = .borrowed,
+        connectionAttempt: ConnectionAttemptToken? = nil
     ) -> Bool {
-        guard let identity = rustSessionState.beginConsentedCapture(origin: origin) else { return false }
+        guard
+            let identity = rustSessionState.beginConsentedCapture(
+                origin: origin,
+                transportOwnership: transportOwnership,
+                connectionAttempt: connectionAttempt
+            )
+        else { return false }
         let generation = CaptureGeneration(rawValue: identity.value)
         var directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         #if DEBUG

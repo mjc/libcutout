@@ -45,15 +45,13 @@ data class DiagnosticCaptureArtifact(
 internal fun localCapturePayloadMayBeShared(state: MobileCaptureSubmissionLocalPayloadStateDto?): Boolean =
     state == null || state == MobileCaptureSubmissionLocalPayloadStateDto.RETAINED
 
-internal enum class CaptureTransportOwnership { BORROWED, CAPTURE_OWNED }
-
 /** Native writer/filesystem effects; Rust remains the lifecycle, admission, and history owner. */
 class AndroidDiagnosticCaptureClient internal constructor(
     private val context: Context,
     private val state: () -> CutoutSessionStateHandle,
     private val database: () -> RideDatabaseHandle,
     private val postOwner: (() -> Unit) -> Boolean,
-    private val onFinishManual: (MobileConnectionAttemptTokenDto?, CaptureTransportOwnership) -> Unit,
+    private val onFinishManual: (MobileCaptureTransportReleaseDto) -> Boolean,
 ) {
     private data class Writer(
         val generation: MobileCaptureGenerationDto,
@@ -64,7 +62,6 @@ class AndroidDiagnosticCaptureClient internal constructor(
         val origin: MobileCaptureOriginDto,
         val description: String?,
         val connectionToken: MobileConnectionAttemptTokenDto?,
-        val transportOwnership: CaptureTransportOwnership,
         var priorOutcome: MobileCaptureWriteOutcomeDto = MobileCaptureWriteOutcomeDto.Accepted,
         var notificationCount: ULong = 0UL,
         var finalizationStarted: Boolean = false,
@@ -258,11 +255,11 @@ class AndroidDiagnosticCaptureClient internal constructor(
         description: String?,
         connectionToken: MobileConnectionAttemptTokenDto?,
         evidence: String = "hardware_tested",
-        transportOwnership: CaptureTransportOwnership = CaptureTransportOwnership.CAPTURE_OWNED,
+        transportOwnership: MobileCaptureTransportOwnershipDto = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
     ): MobileCaptureGenerationDto? {
         if (writer != null) return null
         val owner = state()
-        val generation = owner.beginConsentedCapture(origin) ?: run {
+        val generation = owner.beginConsentedCapture(origin, transportOwnership, connectionToken) ?: run {
             update(lifecycle = owner.captureLifecycleSnapshot(), error = context.getString(R.string.capture_not_admitted))
             return null
         }
@@ -290,7 +287,7 @@ class AndroidDiagnosticCaptureClient internal constructor(
             val started = prepared.start(SystemClock.elapsedRealtime().toULong())
             val writer = Writer(
                 generation, started.builder, started.path, platformId, advertisedName,
-                origin, description, connectionToken, transportOwnership,
+                origin, description, connectionToken,
             )
             if (!owner.captureWriterStarted(generation)) {
                 started.builder.finishWriterAndPublishCapture(null)
@@ -416,13 +413,20 @@ class AndroidDiagnosticCaptureClient internal constructor(
                     postOwner {
                         val receipt = outcome.getOrElse { MobileCaptureFlushOutcomeDto.Failed(it.message ?: "flush failed") }
                         state().applyCaptureFlushOutcome(active.generation, receipt)
-                        val admitted = state().finishCaptureFlush(token, receipt)
-                        if (admitted) {
-                            onFinishManual(active.connectionToken, active.transportOwnership)
-                            if (active.transportOwnership == CaptureTransportOwnership.BORROWED) finish(active)
+                        when (val disposition = state().finishCaptureFlush(token, receipt)) {
+                            MobileCaptureTransportReleaseDto.Rejected -> {
+                                update(lifecycle = state().captureLifecycleSnapshot(), error = context.getString(R.string.capture_save_failed))
+                                main.post { completed(false) }
+                            }
+                            MobileCaptureTransportReleaseDto.WriterOnly -> {
+                                finish(active)
+                                main.post { completed(true) }
+                            }
+                            is MobileCaptureTransportReleaseDto.ReleaseOwnedTransport -> {
+                                if (!onFinishManual(disposition)) finish(active)
+                                main.post { completed(true) }
+                            }
                         }
-                        else update(lifecycle = state().captureLifecycleSnapshot(), error = context.getString(R.string.capture_save_failed))
-                        main.post { completed(admitted) }
                     }
                 }
             } catch (error: java.util.concurrent.RejectedExecutionException) {

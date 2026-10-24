@@ -53,11 +53,21 @@ class AndroidBleClient(
             state = { state },
             database = { (context.applicationContext as CutoutApplication).rides.databaseForNativeOwner() },
             postOwner = ::postOnOwner,
-            onFinishManual = { token, ownership ->
-                val active = connection?.takeIf { it.token == token }
-                when (ownership) {
-                    CaptureTransportOwnership.BORROWED -> active?.captureLinkUp = false
-                    CaptureTransportOwnership.CAPTURE_OWNED -> active?.finishTransport(failed = false)
+            onFinishManual = { disposition ->
+                when (disposition) {
+                    is MobileCaptureTransportReleaseDto.ReleaseOwnedTransport -> {
+                        val token = disposition.connectionAttempt
+                        val active = connection?.takeIf {
+                            it.token == token && state.connectionAttemptSnapshot().token == token
+                        }
+                        if (active == null) false
+                        else {
+                            active.finishTransport(failed = false)
+                            true
+                        }
+                    }
+                    MobileCaptureTransportReleaseDto.Rejected,
+                    MobileCaptureTransportReleaseDto.WriterOnly -> false
                 }
             },
         )
@@ -291,7 +301,7 @@ class AndroidBleClient(
         }
     }
 
-    /** Starts a manual diagnostic capture, borrowing a verified live link when available. */
+    /** Starts a manual diagnostic capture, borrowing any current connected attempt when available. */
     fun startManualCapture(
         platformId: String,
         note: String?,
@@ -308,8 +318,7 @@ class AndroidBleClient(
             val currentConnection = state.connectionAttemptSnapshot()
             if (active.device.address != platformId ||
                 currentConnection.token != active.token ||
-                currentConnection.transport != MobileConnectionTransportStateDto.CONNECTED ||
-                state.deviceSessionSnapshot().connection.readiness != MobileConnectionReadinessDto.VERIFIED) {
+                currentConnection.transport != MobileConnectionTransportStateDto.CONNECTED) {
                 main.post { completed(false) }
                 return@postOnOwner
             }
@@ -324,7 +333,7 @@ class AndroidBleClient(
                     ?: runCatching { active.device.name }.getOrNull(),
                 description = annotation,
                 connectionToken = active.token,
-                transportOwnership = CaptureTransportOwnership.BORROWED,
+                transportOwnership = MobileCaptureTransportOwnershipDto.BORROWED,
             )
             if (generation != null) {
                 diagnostics.linkUp(active.token, active.session.writeLimit.toInt())
@@ -358,7 +367,7 @@ class AndroidBleClient(
             advertisedName = selected.second.advertisedName,
             description = annotation,
             connectionToken = token,
-            transportOwnership = CaptureTransportOwnership.CAPTURE_OWNED,
+            transportOwnership = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
         )
         if (generation == null) {
             state.disconnectConnectionAttempt()
