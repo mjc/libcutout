@@ -889,6 +889,11 @@ fn candidate_from_parts(
     let already_submitted = status.as_ref().is_some_and(valid_receipt);
     let eligibility = if already_submitted {
         CaptureSubmissionBatchEligibility::AlreadySubmitted
+    } else if status
+        .as_ref()
+        .is_some_and(|status| !status.can_start_transfer())
+    {
+        CaptureSubmissionBatchEligibility::Unavailable
     } else {
         failure.unwrap_or(CaptureSubmissionBatchEligibility::Eligible)
     };
@@ -1815,6 +1820,56 @@ mod tests {
             .collect()
     }
 
+    fn exported_capture_bytes(
+        database: &RideDatabase,
+        directory: &Path,
+        id: LiveCaptureId,
+        label: &str,
+    ) -> Vec<u8> {
+        let path = directory.join(format!("export-{label}-{id}.jsonl"));
+        database.export_live_capture(id, &path).unwrap();
+        fs::read(path).unwrap()
+    }
+
+    fn cancelled_and_rejected_sources(
+        database: &RideDatabase,
+        directory: &Path,
+    ) -> (
+        (LiveCaptureId, CaptureSubmissionStatus),
+        (LiveCaptureId, CaptureSubmissionStatus),
+    ) {
+        let cancelled_source = finished_capture(database, directory, 0x61);
+        let cancelled_prepared = database
+            .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(cancelled_source))
+            .unwrap();
+        let cancelled = ready(database.cancel_capture_submission(
+            &cancelled_prepared.operation_id,
+            None,
+            &BatchTransport::default(),
+        ))
+        .unwrap();
+        assert_eq!(cancelled.phase, CaptureSubmissionPhase::Cancelled);
+
+        let rejected_source = finished_capture(database, directory, 0x62);
+        let rejected_prepared = database
+            .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(rejected_source))
+            .unwrap();
+        let reject_transport = BatchTransport::default();
+        reject_transport
+            .invalid_receipt
+            .store(true, Ordering::Release);
+        let rejected = ready(database.send_capture_submission(
+            &rejected_prepared.operation_id,
+            ACCOUNT,
+            "secret",
+            &reject_transport,
+        ))
+        .unwrap();
+        assert_eq!(rejected.phase, CaptureSubmissionPhase::Rejected);
+
+        ((cancelled_source, cancelled), (rejected_source, rejected))
+    }
+
     #[test]
     fn batch_mixed_failure_and_success_keeps_failed_bytes_and_never_deletes_server_copies() {
         let directory = tempfile::tempdir().unwrap();
@@ -2070,6 +2125,143 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn reviewed_cancelled_and_rejected_sources_are_unavailable_and_never_retried() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let ((cancelled_source, cancelled), (rejected_source, rejected)) =
+            cancelled_and_rejected_sources(&database, directory.path());
+        let cancelled_bytes =
+            exported_capture_bytes(&database, directory.path(), cancelled_source, "before");
+        let rejected_bytes =
+            exported_capture_bytes(&database, directory.path(), rejected_source, "before");
+
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let cancelled_candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.operation_id == cancelled.operation_id)
+            })
+            .unwrap();
+        let rejected_candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.operation_id == rejected.operation_id)
+            })
+            .unwrap();
+        for (candidate, phase) in [
+            (cancelled_candidate, CaptureSubmissionPhase::Cancelled),
+            (rejected_candidate, CaptureSubmissionPhase::Rejected),
+        ] {
+            assert_eq!(candidate.status.as_ref().unwrap().phase, phase);
+            assert_eq!(
+                candidate.eligibility,
+                CaptureSubmissionBatchEligibility::Unavailable
+            );
+        }
+
+        let no_upload = BatchTransport::default();
+        let selected = vec![
+            cancelled_candidate.source_artifact_id.clone(),
+            rejected_candidate.source_artifact_id.clone(),
+        ];
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            &selected,
+            ACCOUNT,
+            "secret",
+            &no_upload,
+            Arc::new(|_| {}),
+        ))
+        .unwrap();
+        assert_eq!(result.skipped, 2);
+        assert_eq!(result.failed, 0);
+        assert_eq!(no_upload.uploads.load(Ordering::Acquire), 0);
+        for (source, prior) in [(cancelled_source, cancelled), (rejected_source, rejected)] {
+            let current = database
+                .capture_submission(CaptureSubmissionSource::LiveCapture(source))
+                .unwrap()
+                .unwrap();
+            assert_eq!(current.operation_id, prior.operation_id);
+            assert_eq!(current.phase, prior.phase);
+            assert_eq!(
+                current.local_payload_state,
+                CaptureSubmissionLocalPayloadState::Retained
+            );
+        }
+        assert_eq!(
+            exported_capture_bytes(&database, directory.path(), cancelled_source, "after"),
+            cancelled_bytes
+        );
+        assert_eq!(
+            exported_capture_bytes(&database, directory.path(), rejected_source, "after"),
+            rejected_bytes
+        );
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn fresh_batch_review_keeps_retryable_operation_eligible_and_stable() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let source = finished_capture(&database, directory.path(), 0x63);
+        let prepared = database
+            .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(source))
+            .unwrap();
+        let failed_transport = BatchTransport::default();
+        *failed_transport.fail_next.lock().unwrap() = true;
+        let retryable = ready(database.send_capture_submission(
+            &prepared.operation_id,
+            ACCOUNT,
+            "secret",
+            &failed_transport,
+        ))
+        .unwrap();
+        assert_eq!(retryable.phase, CaptureSubmissionPhase::Retryable);
+
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.operation_id == retryable.operation_id)
+            })
+            .unwrap();
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            std::slice::from_ref(&candidate.source_artifact_id),
+            ACCOUNT,
+            "secret",
+            &BatchTransport::default(),
+            Arc::new(|_| {}),
+        ))
+        .unwrap();
+        assert_eq!(result.sent, 1);
+        let current = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(source))
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.phase, CaptureSubmissionPhase::Sent);
+        assert_eq!(current.operation_id, retryable.operation_id);
         database.shutdown().unwrap();
     }
 

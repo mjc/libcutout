@@ -2277,6 +2277,48 @@ fn capture_submission_prepared_cancel_is_local_and_preserves_original() {
 }
 
 #[test]
+fn transfer_admission_requires_retryable_or_prepared_and_retained_payload() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let (id, receipt) = finished(recording(&database, directory.path()));
+    retain(&database, &receipt, CaptureOrigin::Manual);
+    let mut status = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    let phases = [
+        CaptureSubmissionPhase::Prepared,
+        CaptureSubmissionPhase::Sending,
+        CaptureSubmissionPhase::Retryable,
+        CaptureSubmissionPhase::Rejected,
+        CaptureSubmissionPhase::CancellationPending,
+        CaptureSubmissionPhase::Cancelled,
+        CaptureSubmissionPhase::Sent,
+        CaptureSubmissionPhase::DeletionPending,
+        CaptureSubmissionPhase::Deleted,
+    ];
+    let payload_states = [
+        CaptureSubmissionLocalPayloadState::Retained,
+        CaptureSubmissionLocalPayloadState::RemovalPending,
+        CaptureSubmissionLocalPayloadState::Removed,
+    ];
+    for phase in phases {
+        for payload_state in payload_states {
+            status.phase = phase;
+            status.local_payload_state = payload_state;
+            let expected = matches!(
+                phase,
+                CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable
+            ) && payload_state == CaptureSubmissionLocalPayloadState::Retained;
+            assert_eq!(
+                status.can_start_transfer(),
+                expected,
+                "phase {phase:?} with payload {payload_state:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn capture_submission_cancel_during_receipt_lookup_does_not_start_upload() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();

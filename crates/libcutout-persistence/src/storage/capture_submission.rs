@@ -138,6 +138,23 @@ pub struct CaptureSubmissionStatus {
     revision: u64,
 }
 
+impl CaptureSubmissionStatus {
+    fn can_start_transfer(&self) -> bool {
+        match self.phase {
+            CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => {
+                self.local_payload_state == CaptureSubmissionLocalPayloadState::Retained
+            }
+            CaptureSubmissionPhase::Sending
+            | CaptureSubmissionPhase::Rejected
+            | CaptureSubmissionPhase::CancellationPending
+            | CaptureSubmissionPhase::Cancelled
+            | CaptureSubmissionPhase::Sent
+            | CaptureSubmissionPhase::DeletionPending
+            | CaptureSubmissionPhase::Deleted => false,
+        }
+    }
+}
+
 /// Transient transport progress for one admitted Send attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureSubmissionProgressPhase {
@@ -1705,12 +1722,10 @@ fn start(
     if account_state != "active" {
         return Err(CaptureSubmissionError::WrongAccount);
     }
-    match status.phase {
-        CaptureSubmissionPhase::Sent => return Ok(false),
-        CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => {}
-        _ => return Err(CaptureSubmissionError::InvalidState),
+    if status.phase == CaptureSubmissionPhase::Sent {
+        return Ok(false);
     }
-    if status.local_payload_state != CaptureSubmissionLocalPayloadState::Retained {
+    if !status.can_start_transfer() {
         return Err(CaptureSubmissionError::InvalidState);
     }
     status.account_id = Some(account_id);
