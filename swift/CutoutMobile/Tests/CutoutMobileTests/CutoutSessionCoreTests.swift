@@ -570,11 +570,16 @@ final class CutoutSessionCoreTests: XCTestCase {
             state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
         XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
         XCTAssertNil(
-            state.beginConsentedCapture(origin: .automatic),
+            state.beginConsentedCapture(
+                origin: .automatic, transportOwnership: .borrowed, connectionAttempt: token
+            ),
             "Legacy consent must not admit automatic diagnostic capture")
         XCTAssertNil(state.captureLifecycleSnapshot().attempt)
 
-        let generation = try XCTUnwrap(state.beginConsentedCapture(origin: .manual))
+        let generation = try XCTUnwrap(
+            state.beginConsentedCapture(
+                origin: .manual, transportOwnership: .borrowed, connectionAttempt: token
+            ))
         XCTAssertTrue(state.captureWriterStarted(generation: generation))
         recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
         let connection = core.connectionSnapshot
@@ -589,10 +594,16 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testDiagnosticConsentAdmissionDefaultsOffAndKeepsExplicitManualCaptureAvailable() {
         let state = CutoutSessionStateHandle()
-        XCTAssertNil(state.beginConsentedCapture(origin: .automatic))
+        XCTAssertNil(
+            state.beginConsentedCapture(
+                origin: .automatic, transportOwnership: .borrowed, connectionAttempt: nil
+            ))
         XCTAssertNil(
             state.captureLifecycleSnapshot().attempt, "Declining diagnostics must not publish a writer failure")
-        XCTAssertNotNil(state.beginConsentedCapture(origin: .manual))
+        XCTAssertNotNil(
+            state.beginConsentedCapture(
+                origin: .manual, transportOwnership: .borrowed, connectionAttempt: nil
+            ))
     }
 
     func testRideMapPublishedSnapshotRejectsOlderRevisionButAcceptsNewRide() {
@@ -2240,6 +2251,30 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideAfter.rideID, rideBefore.rideID)
         XCTAssertEqual(rideAfter.state, .active)
         XCTAssertFalse(core.isRecordOnlyConnection)
+    }
+
+    func testStandaloneDebugCaptureFinishClearsRecordOnlyPresentationWithoutConnection() async throws {
+        let started = expectation(description: "standalone diagnostic writer starts")
+        let finished = expectation(description: "standalone diagnostic writer completes")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+            ))
+        core.onCaptureEvent = { event in
+            if case .started = event { started.fulfill() }
+            if case .finished = event { finished.fulfill() }
+        }
+
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+        XCTAssertNil(core.connectionSnapshot.token)
+
+        let saved = await core.finishCapture()
+        XCTAssertTrue(saved)
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertNil(core.connectionSnapshot.token)
     }
 
     @MainActor

@@ -1,31 +1,20 @@
 //! Optional diagnostic recording preferences through the existing database owner.
 
 use crate::{
-    CutoutSessionStateHandle, MobileCaptureGenerationDto, MobileCaptureOriginDto,
-    MobileRideDatabaseError, map_ride_database_error,
+    CutoutSessionStateHandle, MobileCaptureGenerationDto, MobileRideDatabaseError,
+    map_ride_database_error,
 };
 
 /// Only an explicit user action may admit a diagnostic capture.
-pub(crate) const fn admits_capture_origin(origin: MobileCaptureOriginDto) -> bool {
+pub(crate) const fn admits_capture_origin(origin: crate::MobileCaptureOriginDto) -> bool {
     match origin {
-        MobileCaptureOriginDto::Manual => true,
-        MobileCaptureOriginDto::Automatic => false,
+        crate::MobileCaptureOriginDto::Manual => true,
+        crate::MobileCaptureOriginDto::Automatic => false,
     }
 }
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Admits capture attempts initiated by an explicit manual user action.
-    pub fn begin_consented_capture(
-        &self,
-        origin: MobileCaptureOriginDto,
-    ) -> Option<MobileCaptureGenerationDto> {
-        if !admits_capture_origin(origin) {
-            return None;
-        }
-        self.begin_capture(origin)
-    }
-
     /// Reads durable consent. Missing storage cannot authorize automatic recording.
     /// Call off native UI and callback threads.
     ///
@@ -89,12 +78,20 @@ mod tests {
         let automatic = CutoutSessionStateHandle::with_database(std::sync::Arc::clone(&database));
         assert!(
             automatic
-                .begin_consented_capture(MobileCaptureOriginDto::Automatic)
+                .begin_consented_capture(
+                    crate::MobileCaptureOriginDto::Automatic,
+                    crate::MobileCaptureTransportOwnershipDto::Borrowed,
+                    None,
+                )
                 .is_none()
         );
         assert!(
             automatic
-                .begin_consented_capture(MobileCaptureOriginDto::Manual)
+                .begin_consented_capture(
+                    crate::MobileCaptureOriginDto::Manual,
+                    crate::MobileCaptureTransportOwnershipDto::Borrowed,
+                    None,
+                )
                 .is_some()
         );
         database.shutdown().unwrap();

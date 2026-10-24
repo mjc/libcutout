@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::ConnectionAttemptToken;
+
 /// Identity of one writer attempt, including a failed start.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CaptureGeneration(u64);
@@ -33,6 +35,34 @@ pub enum CaptureOrigin {
     Automatic,
     /// An explicit recording that must not be replaced by picker navigation.
     Manual,
+}
+
+/// Native observation of who created the transport used by this capture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CaptureTransportOwnership {
+    /// The capture borrowed a link owned by another session action.
+    #[default]
+    Borrowed,
+    /// The capture route created the record-only connection attempt.
+    CaptureOwned,
+}
+
+/// Result of a successful capture flush for transport cleanup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureTransportRelease {
+    /// The flush was rejected or failed; the caller retains the retry path.
+    Rejected,
+    /// Capture storage can finalize without a transport cleanup effect.
+    WriterOnly,
+    /// The caller may release exactly this owned connection attempt.
+    ReleaseOwnedTransport(ConnectionAttemptToken),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum CaptureTransportBinding {
+    #[default]
+    Borrowed,
+    Owned(ConnectionAttemptToken),
 }
 
 /// Read-only lifecycle vocabulary for native presentation.
@@ -121,6 +151,7 @@ pub struct CaptureSessionLifecycle {
     next_generation: u64,
     next_operation: u64,
     current: Option<CaptureAttemptSnapshot>,
+    transport: CaptureTransportBinding,
     finishing: Option<CaptureFinishToken>,
     pending_completions: BTreeSet<CaptureGeneration>,
 }
@@ -179,9 +210,27 @@ impl CaptureSessionLifecycle {
 
     /// Reserves a generation before attempting writer creation. Never wraps identity.
     pub fn begin(&mut self, origin: CaptureOrigin) -> Option<CaptureGeneration> {
+        self.begin_with_transport(origin, CaptureTransportOwnership::Borrowed, None)
+    }
+
+    /// Reserves a generation and retains the native transport-creation observation.
+    pub fn begin_with_transport(
+        &mut self,
+        origin: CaptureOrigin,
+        ownership: CaptureTransportOwnership,
+        connection_attempt: Option<ConnectionAttemptToken>,
+    ) -> Option<CaptureGeneration> {
         if !self.can_start() {
             return None;
         }
+        let transport = match (ownership, connection_attempt) {
+            (CaptureTransportOwnership::Borrowed, None) => CaptureTransportBinding::Borrowed,
+            (CaptureTransportOwnership::CaptureOwned, Some(token)) => {
+                CaptureTransportBinding::Owned(token)
+            }
+            (CaptureTransportOwnership::Borrowed, Some(_))
+            | (CaptureTransportOwnership::CaptureOwned, None) => return None,
+        };
         self.next_generation = self.next_generation.checked_add(1)?;
         let generation = CaptureGeneration(self.next_generation);
         if let Some(previous) = self.current
@@ -194,6 +243,7 @@ impl CaptureSessionLifecycle {
             origin,
             stage: CaptureStage::Starting,
         });
+        self.transport = transport;
         self.finishing = None;
         Some(generation)
     }
@@ -247,6 +297,27 @@ impl CaptureSessionLifecycle {
             CaptureStage::SaveFailed
         };
         succeeded
+    }
+
+    /// Completes one flush while atomically deciding whether its owned link can be released.
+    pub fn finish_flush_with_transport(
+        &mut self,
+        token: CaptureFinishToken,
+        succeeded: bool,
+        current_token: Option<&ConnectionAttemptToken>,
+    ) -> CaptureTransportRelease {
+        if !self.finish_flush(token, succeeded) {
+            return CaptureTransportRelease::Rejected;
+        }
+        let binding = std::mem::take(&mut self.transport);
+        match binding {
+            CaptureTransportBinding::Owned(owned) if current_token == Some(&owned) => {
+                CaptureTransportRelease::ReleaseOwnedTransport(owned)
+            }
+            CaptureTransportBinding::Borrowed | CaptureTransportBinding::Owned(_) => {
+                CaptureTransportRelease::WriterOnly
+            }
+        }
     }
 
     /// Retains a background-flush or writer failure. Healthy progress never clears it.
@@ -325,12 +396,112 @@ impl CaptureSessionLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ConnectionAttemptToken;
 
     fn recording(origin: CaptureOrigin) -> (CaptureSessionLifecycle, CaptureGeneration) {
         let mut owner = CaptureSessionLifecycle::default();
         let generation = owner.begin(origin).unwrap();
         assert!(owner.writer_started(generation));
         (owner, generation)
+    }
+
+    fn connection(identifier: &str, generation: u64) -> ConnectionAttemptToken {
+        ConnectionAttemptToken::new(generation, identifier.to_owned())
+    }
+
+    #[test]
+    fn borrowed_capture_never_releases_transport_after_intent_changes() {
+        let mut owner = CaptureSessionLifecycle::default();
+        let generation = owner.begin(CaptureOrigin::Manual).unwrap();
+        assert!(owner.writer_started(generation));
+        let attempt = connection("borrowed", 3);
+        let flush = owner.begin_finish(generation).unwrap();
+        assert_eq!(
+            owner.finish_flush_with_transport(flush, true, Some(&attempt)),
+            CaptureTransportRelease::WriterOnly
+        );
+    }
+
+    #[test]
+    fn owned_capture_releases_only_its_matching_current_transport() {
+        let mut owner = CaptureSessionLifecycle::default();
+        let attempt = connection("owned", 4);
+        let generation = owner
+            .begin_with_transport(
+                CaptureOrigin::Manual,
+                CaptureTransportOwnership::CaptureOwned,
+                Some(attempt.clone()),
+            )
+            .unwrap();
+        assert!(owner.writer_started(generation));
+        let flush = owner.begin_finish(generation).unwrap();
+        assert_eq!(
+            owner.finish_flush_with_transport(flush, true, Some(&attempt)),
+            CaptureTransportRelease::ReleaseOwnedTransport(attempt)
+        );
+    }
+
+    #[test]
+    fn owned_capture_does_not_release_replacement_transport() {
+        let mut owner = CaptureSessionLifecycle::default();
+        let owned_attempt = connection("owned", 4);
+        let replacement = connection("replacement", 5);
+        let generation = owner
+            .begin_with_transport(
+                CaptureOrigin::Manual,
+                CaptureTransportOwnership::CaptureOwned,
+                Some(owned_attempt),
+            )
+            .unwrap();
+        assert!(owner.writer_started(generation));
+        let flush = owner.begin_finish(generation).unwrap();
+        assert_eq!(
+            owner.finish_flush_with_transport(flush, true, Some(&replacement)),
+            CaptureTransportRelease::WriterOnly
+        );
+    }
+
+    #[test]
+    fn capture_owned_admission_requires_the_creation_token() {
+        let mut owner = CaptureSessionLifecycle::default();
+        assert_eq!(
+            owner.begin_with_transport(
+                CaptureOrigin::Manual,
+                CaptureTransportOwnership::CaptureOwned,
+                None,
+            ),
+            None
+        );
+        assert_eq!(owner.snapshot(), None);
+    }
+
+    #[test]
+    fn failed_flush_retains_owned_binding_for_retry() {
+        let mut owner = CaptureSessionLifecycle::default();
+        let attempt = connection("owned", 4);
+        let generation = owner
+            .begin_with_transport(
+                CaptureOrigin::Manual,
+                CaptureTransportOwnership::CaptureOwned,
+                Some(attempt.clone()),
+            )
+            .unwrap();
+        assert!(owner.writer_started(generation));
+        let rejected = owner.begin_finish(generation).unwrap();
+        assert_eq!(
+            owner.finish_flush_with_transport(rejected, false, Some(&attempt)),
+            CaptureTransportRelease::Rejected
+        );
+        assert_eq!(owner.snapshot().unwrap().stage, CaptureStage::SaveFailed);
+        let retry = owner.begin_finish(generation).unwrap();
+        assert_eq!(
+            owner.finish_flush_with_transport(retry, true, Some(&attempt)),
+            CaptureTransportRelease::ReleaseOwnedTransport(attempt)
+        );
+        assert_eq!(
+            owner.finish_flush_with_transport(retry, true, None),
+            CaptureTransportRelease::Rejected
+        );
     }
 
     #[test]

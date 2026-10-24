@@ -4566,7 +4566,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         else { return false }
         onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
         let flushed = await flushCapture()
-        let accepted = rideSessionStateHandle.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+        let accepted =
+            rideSessionStateHandle.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+            == .writerOnly
         onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
         if accepted {
             disconnectAndScan()

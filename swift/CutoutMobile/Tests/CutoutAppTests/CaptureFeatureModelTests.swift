@@ -658,6 +658,7 @@ final class CaptureFeatureModelTests: XCTestCase {
                 finishEntered.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
                 return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
             })
         capture.deliverCaptureEvent(
             .started(
@@ -703,7 +704,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                 guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
                 enteredFinish.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
-                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                let accepted =
+                    sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -748,7 +751,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                     !flushOutcomes.isEmpty
                 else { return false }
                 let flushed = flushOutcomes.removeFirst()
-                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                let accepted =
+                    sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -786,8 +791,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                     firstFinishEntered.fulfill()
                     let flushed = await withCheckedContinuation { releaseFirstFlush = $0 }
                     return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                        == .writerOnly
                 }
-                return sessionState.finishCaptureFlush(token: token, outcome: .flushed)
+                return sessionState.finishCaptureFlush(token: token, outcome: .flushed) == .writerOnly
             })
         capture.deliverCaptureEvent(
             .started(

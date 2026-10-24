@@ -247,7 +247,10 @@ fn capture_flush_rejection_is_retryable_and_only_a_durable_receipt_releases_tran
             .apply_capture_flush_outcome(Some(generation), MobileCaptureFlushOutcomeDto::Rejected),
         MobileCaptureWriteDecisionDto::Rejected
     );
-    assert!(!lifecycle.finish_capture_flush(rejected, MobileCaptureFlushOutcomeDto::Rejected));
+    assert_eq!(
+        lifecycle.finish_capture_flush(rejected, MobileCaptureFlushOutcomeDto::Rejected),
+        MobileCaptureTransportReleaseDto::Rejected
+    );
     assert_eq!(
         lifecycle
             .capture_lifecycle_snapshot()
@@ -262,9 +265,15 @@ fn capture_flush_rejection_is_retryable_and_only_a_durable_receipt_releases_tran
             .apply_capture_flush_outcome(Some(generation), MobileCaptureFlushOutcomeDto::Flushed),
         MobileCaptureWriteDecisionDto::Continue
     );
-    assert!(lifecycle.finish_capture_flush(retry, MobileCaptureFlushOutcomeDto::Flushed));
+    assert_eq!(
+        lifecycle.finish_capture_flush(retry, MobileCaptureFlushOutcomeDto::Flushed),
+        MobileCaptureTransportReleaseDto::WriterOnly
+    );
     let finalizing = lifecycle.capture_lifecycle_snapshot();
-    assert!(!lifecycle.finish_capture_flush(rejected, MobileCaptureFlushOutcomeDto::Flushed));
+    assert_eq!(
+        lifecycle.finish_capture_flush(rejected, MobileCaptureFlushOutcomeDto::Flushed),
+        MobileCaptureTransportReleaseDto::Rejected
+    );
     assert_eq!(lifecycle.capture_lifecycle_snapshot(), finalizing);
 }
 
@@ -287,7 +296,10 @@ fn capture_fatal_flush_during_save_preserves_finish_token_until_typed_rejection(
             .stage,
         MobileCaptureStageDto::Saving
     );
-    assert!(!lifecycle.finish_capture_flush(token, failed));
+    assert_eq!(
+        lifecycle.finish_capture_flush(token, failed),
+        MobileCaptureTransportReleaseDto::Rejected
+    );
     assert_eq!(
         lifecycle
             .capture_lifecycle_snapshot()
@@ -351,7 +363,10 @@ fn capture_durable_flush_after_observation_loss_preserves_incomplete_integrity()
         lifecycle.apply_capture_flush_outcome(Some(generation), outcome.clone()),
         MobileCaptureWriteDecisionDto::Continue
     );
-    assert!(lifecycle.finish_capture_flush(token, outcome));
+    assert_eq!(
+        lifecycle.finish_capture_flush(token, outcome),
+        MobileCaptureTransportReleaseDto::WriterOnly
+    );
     assert!(matches!(
         builder.finish_writer_outcome(),
         MobileCaptureFinishOutcomeDto::DatabaseFinished {
