@@ -1,10 +1,6 @@
 //! Explicit private diagnostic transfer. No capture replay or transport execution.
 use super::actor;
-use crate::{
-    Error, Store,
-    model::id,
-    store::capture_submissions::{CaptureTransferLease, ReviewPage},
-};
+use crate::{Error, Store, model::id, store::capture_submissions::ReviewPage};
 use axum::{
     Json, Router,
     body::{Body, Bytes, HttpBody},
@@ -18,53 +14,21 @@ use cutout_core::{
     MAX_CAPTURE_SUBMISSION_BYTES, PevcapEncoding, validate_capture_submission_payload,
 };
 use serde::Deserialize;
-use std::{
-    future::poll_fn,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{future::poll_fn, pin::Pin, time::Duration};
 use tokio::io::AsyncWriteExt;
 
-/// Retains the shared transfer slot even when a response body is not polled.
-/// The independent watchdog retires stalled bodies; Drop retires abandoned ones.
+/// Stops a capture download ten minutes after the response starts.
 #[derive(Debug)]
 struct DownloadLease {
-    permit: Arc<Mutex<Option<CaptureTransferLease>>>,
     expires: tokio::time::Instant,
-    watchdog: tokio::task::JoinHandle<()>,
 }
 
 impl DownloadLease {
-    fn new(permit: CaptureTransferLease) -> Self {
-        let permit = Arc::new(Mutex::new(Some(permit)));
-        let expires = tokio::time::Instant::now() + Duration::from_secs(600);
-        let retained = permit.clone();
-        let watchdog = tokio::spawn(async move {
-            tokio::time::sleep_until(expires).await;
-            release_download_permit(&retained);
-        });
+    fn new() -> Self {
         Self {
-            permit,
-            expires,
-            watchdog,
+            expires: tokio::time::Instant::now() + Duration::from_secs(600),
         }
     }
-}
-
-impl Drop for DownloadLease {
-    fn drop(&mut self) {
-        self.watchdog.abort();
-        release_download_permit(&self.permit);
-    }
-}
-
-fn release_download_permit(permit: &Mutex<Option<CaptureTransferLease>>) {
-    let mut slot = match permit.lock() {
-        Ok(slot) => slot,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    drop(slot.take());
 }
 
 pub(super) fn router() -> Router<Store> {
@@ -166,7 +130,7 @@ async fn upload(
     store
         .admit_capture(actor.clone(), operation.clone(), metadata.clone())
         .await?;
-    let (stage, mut file) = store.stage_capture(&actor).await?;
+    let (stage, mut file) = store.stage_capture().await?;
     let mut bytes = 0_u64;
     while let Some(frame) = tokio::time::timeout(
         Duration::from_secs(30),
@@ -290,8 +254,7 @@ async fn content(
             "attachment; filename=\"bluetooth-capture.pevcap\"",
         )
     };
-    let permit = store.capture_transfer(&actor)?;
-    let lease = DownloadLease::new(permit);
+    let lease = DownloadLease::new();
     let stream = futures_util::stream::unfold(
         Some((store, actor, operation, 0_u64, lease)),
         move |state| async move {
@@ -530,10 +493,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn private_downloads_share_transfer_slots_and_release_on_body_drop_or_eof() {
+    async fn private_downloads_overlap_and_return_the_stored_bytes() {
         let (_directory, store, headers, operation, bytes) = stored_capture().await;
-        let third_headers = reviewer_headers(&store, &headers).await;
-        let third_actor = actor(&store, &third_headers).await.expect("third actor");
         let first = content(
             State(store.clone()),
             Path(operation.clone()),
@@ -549,87 +510,38 @@ mod tests {
             first.headers()[header::CONTENT_DISPOSITION],
             "attachment; filename=\"bluetooth-capture.pevcap\""
         );
-        assert_eq!(
-            content(
-                State(store.clone()),
-                Path(operation.clone()),
-                headers.clone()
-            )
-            .await
-            .err(),
-            Some(Error::Throttled),
-            "one actor cannot occupy both global transfer slots"
-        );
-        let reviewer = reviewer_headers(&store, &headers).await;
-        let second = content(State(store.clone()), Path(operation.clone()), reviewer)
-            .await
-            .expect("second download");
-        assert_eq!(store.capture_uploads.available_permits(), 0);
-        assert_eq!(
-            content(
-                State(store.clone()),
-                Path(operation.clone()),
-                headers.clone()
-            )
-            .await
-            .err(),
-            Some(Error::Throttled)
-        );
-        assert_eq!(
-            store.stage_capture(&third_actor).await.err(),
-            Some(Error::Throttled),
-            "downloads also bound upload admission"
-        );
-        drop(first);
-        assert_eq!(store.capture_uploads.available_permits(), 1);
-        let replacement = content(
+        let second = content(
             State(store.clone()),
             Path(operation.clone()),
             headers.clone(),
         )
         .await
-        .expect("released transfer slot");
-        let actual = axum::body::to_bytes(replacement.into_body(), bytes.len())
+        .expect("overlapping download");
+        let reviewer = reviewer_headers(&store, &headers).await;
+        let third = content(State(store.clone()), Path(operation.clone()), reviewer)
             .await
-            .expect("complete body");
-        assert_eq!(actual.as_ref(), bytes);
-        assert_eq!(
-            store.capture_uploads.available_permits(),
-            1,
-            "EOF releases its slot"
-        );
-        drop(second);
-        assert_eq!(store.capture_uploads.available_permits(), 2);
-        drop(
-            content(State(store.clone()), Path(operation), headers)
+            .expect("reviewer download");
+        let staged = store
+            .stage_capture()
+            .await
+            .expect("staging during downloads");
+        for response in [first, second, third] {
+            let actual = axum::body::to_bytes(response.into_body(), bytes.len())
                 .await
-                .expect("EOF releases the actor lease"),
-        );
+                .expect("complete body");
+            assert_eq!(actual.as_ref(), bytes);
+        }
+        drop(staged);
     }
 
     #[tokio::test]
     async fn private_download_unpolled_body_expires_and_cannot_resume_after_deadline() {
         let (_directory, store, headers, operation, _) = stored_capture().await;
-        let owner = actor(&store, &headers).await.expect("owner");
-        let response = content(
-            State(store.clone()),
-            Path(operation.clone()),
-            headers.clone(),
-        )
-        .await
-        .expect("download");
-        assert_eq!(store.capture_uploads.available_permits(), 1);
+        let response = content(State(store), Path(operation), headers)
+            .await
+            .expect("download");
         tokio::time::pause();
         tokio::time::advance(Duration::from_secs(601)).await;
-        tokio::task::yield_now().await;
-        assert_eq!(
-            store.capture_uploads.available_permits(),
-            2,
-            "unpolled response cannot retain a transfer slot forever"
-        );
-        let replacement = store
-            .capture_transfer(&owner)
-            .expect("deadline releases the actor lease");
         let mut body = response.into_body();
         let frame = poll_fn(|context| Pin::new(&mut body).poll_frame(context))
             .await
@@ -638,24 +550,10 @@ mod tests {
             frame.is_err(),
             "expired body must not emit more capture bytes"
         );
-        drop(body);
-        assert_eq!(store.capture_uploads.available_permits(), 1);
-        assert_eq!(
-            store.capture_transfer(&owner).err(),
-            Some(Error::Throttled),
-            "dropping the expired body cannot retire a replacement actor lease"
-        );
-        drop(replacement);
-        assert_eq!(store.capture_uploads.available_permits(), 2);
-        drop(
-            store
-                .capture_transfer(&owner)
-                .expect("replacement releases the actor lease"),
-        );
     }
 
     #[tokio::test]
-    async fn private_download_body_error_releases_its_transfer_slot() {
+    async fn private_download_body_errors_after_delete() {
         let (_directory, store, headers, operation, bytes) = stored_capture().await;
         let response = content(
             State(store.clone()),
@@ -669,13 +567,11 @@ mod tests {
             .delete_capture(owner, operation)
             .await
             .expect("delete before body consumption");
-        assert_eq!(store.capture_uploads.available_permits(), 1);
         let mut body = response.into_body();
         let frame = poll_fn(|context| Pin::new(&mut body).poll_frame(context))
             .await
             .expect("terminal error");
         assert!(frame.is_err());
-        assert_eq!(store.capture_uploads.available_permits(), 2);
         let (status, _) = upload(
             State(store),
             Path(Uuid::new_v4().to_string()),
@@ -683,13 +579,13 @@ mod tests {
             Body::from(bytes),
         )
         .await
-        .expect("body error releases the actor lease");
+        .expect("upload after a deleted download");
         assert_eq!(status, StatusCode::CREATED);
     }
 
     #[tokio::test]
-    async fn private_upload_and_download_share_one_actor_lease() {
-        let (_directory, store, headers, operation, _) = stored_capture().await;
+    async fn private_upload_and_download_overlap_for_the_same_actor() {
+        let (_directory, store, headers, operation, bytes) = stored_capture().await;
         let (started, polled) = tokio::sync::oneshot::channel();
         let mut started = Some(started);
         let pending = futures_util::stream::poll_fn(move |_| {
@@ -708,52 +604,53 @@ mod tests {
             .await
             .expect("body poll deadline")
             .expect("upload reached body ingestion");
-        assert_eq!(store.capture_uploads.available_permits(), 1);
-        assert_eq!(
-            content(
-                State(store.clone()),
-                Path(operation.clone()),
-                headers.clone()
-            )
+        let response = content(
+            State(store.clone()),
+            Path(operation.clone()),
+            headers.clone(),
+        )
+        .await
+        .expect("download during upload");
+        let actual = axum::body::to_bytes(response.into_body(), bytes.len())
             .await
-            .err(),
-            Some(Error::Throttled),
-            "a pending upload cannot be combined with a download from the same actor"
-        );
+            .expect("complete body");
+        assert_eq!(actual.as_ref(), bytes);
         let reviewer = reviewer_headers(&store, &headers).await;
         let other = content(State(store.clone()), Path(operation.clone()), reviewer)
             .await
-            .expect("another actor can use the second slot");
-        assert_eq!(store.capture_uploads.available_permits(), 0);
-        drop(other);
+            .expect("reviewer download during upload");
+        let actual = axum::body::to_bytes(other.into_body(), bytes.len())
+            .await
+            .expect("reviewer body");
+        assert_eq!(actual.as_ref(), bytes);
         uploading.abort();
         assert!(uploading.await.expect_err("aborted upload").is_cancelled());
-        assert_eq!(store.capture_uploads.available_permits(), 2);
-        drop(
-            content(State(store.clone()), Path(operation), headers)
-                .await
-                .expect("canceled upload releases the actor lease"),
-        );
+        let (status, _) = upload(
+            State(store),
+            Path(Uuid::new_v4().to_string()),
+            headers,
+            Body::from(bytes),
+        )
+        .await
+        .expect("upload after the overlapped transfer");
+        assert_eq!(status, StatusCode::CREATED);
     }
 
     #[tokio::test]
-    async fn private_download_blocks_same_actor_upload_but_not_another_actor() {
+    async fn private_download_does_not_block_uploads() {
         let (_directory, store, headers, operation, bytes) = stored_capture().await;
         let downloading = content(State(store.clone()), Path(operation), headers.clone())
             .await
             .expect("download");
-        assert_eq!(
-            upload(
-                State(store.clone()),
-                Path(Uuid::new_v4().to_string()),
-                headers.clone(),
-                Body::from(bytes.clone())
-            )
-            .await
-            .err(),
-            Some(Error::Throttled),
-            "the per-actor bound covers upload after download as well"
-        );
+        let (status, _) = upload(
+            State(store.clone()),
+            Path(Uuid::new_v4().to_string()),
+            headers.clone(),
+            Body::from(bytes.clone()),
+        )
+        .await
+        .expect("upload during download");
+        assert_eq!(status, StatusCode::CREATED);
         let other = reviewer_headers(&store, &headers).await;
         let (status, _) = upload(
             State(store.clone()),
@@ -766,15 +663,14 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         drop(downloading);
         let (status, _) = upload(
-            State(store.clone()),
+            State(store),
             Path(Uuid::new_v4().to_string()),
             headers,
             Body::from(bytes),
         )
         .await
-        .expect("body drop releases the actor lease");
+        .expect("upload after the download");
         assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(store.capture_uploads.available_permits(), 2);
     }
 
     #[tokio::test]
