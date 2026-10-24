@@ -40,16 +40,27 @@ class LocalDiagnosticCaptureClientTest {
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
         val state = CutoutSessionStateHandle.withDatabase(database)
         val platformId = "capture-test-${UUID.randomUUID()}"
+        state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
+        val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
+        var reportOwnedLinkDown: (() -> Unit)? = null
         val client = AndroidDiagnosticCaptureClient(
-            context, { state }, { database }, { action -> action(); true }, { _ -> false },
+            context, { state }, { database }, { action -> action(); true }, { disposition ->
+                if (disposition is MobileCaptureTransportReleaseDto.ReleaseOwnedTransport &&
+                    disposition.connectionAttempt == token
+                ) {
+                    // Model the owned transport reporting its final link-down before writer finalization.
+                    reportOwnedLinkDown?.invoke()
+                }
+                false
+            },
         )
+        reportOwnedLinkDown = { client.linkDown(token) }
         var exported: File? = null
         try {
-            state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
-            val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
             checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "Test device", "read-only test", token,
                 evidence = "unverified",
+                transportOwnership = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
             ))
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.RECORDING)
             check(client.activeCameraCaptureIdentity()?.generation == state.captureLifecycleSnapshot().attempt?.generation)
@@ -63,7 +74,6 @@ class LocalDiagnosticCaptureClientTest {
 
             val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
             check(admitted) { "Rust refused a durable manual finish flush" }
-            client.linkDown(token)
             await { done -> client.finishAfterLinkDown(token) { done(Result.success(Unit)) } }.getOrThrow()
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.SAVED)
             check(client.activeCameraCaptureIdentity() == null)
