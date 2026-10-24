@@ -13,7 +13,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Extension, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -92,8 +92,8 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
     .merge(capture_submissions::router().with_state(store))
 }
 
-/// Charging API router for host-isolated combined deployments.
-pub(crate) fn charging_router(store: Store) -> Router {
+/// Charging routes for `rides.cutout.lol`. Readiness also pings the ride database thread.
+pub(crate) fn charging_router(store: Store, ride: libcutout_persistence::RideDatabase) -> Router {
     finish_router(
         Router::new()
             .route("/healthz", get(|| async { StatusCode::OK }))
@@ -103,6 +103,7 @@ pub(crate) fn charging_router(store: Store) -> Router {
         crate::signup::SignupState::from_env(),
     )
     .merge(capture_submissions::router().with_state(store))
+    .layer(Extension(ride))
 }
 
 /// Website and signup router for the separately hosted public site.
@@ -173,7 +174,7 @@ fn finish_router(
 ) -> Router {
     router
         .layer(DefaultBodyLimit::max(32 * 1024))
-        .layer(axum::Extension(signup))
+        .layer(Extension(signup))
         .layer(axum::middleware::from_fn(deadline))
         .with_state(store)
 }
@@ -204,8 +205,17 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, Error> {
     value.strip_prefix("Bearer ").ok_or(Error::Unauthorized)
 }
 
-async fn ready(State(store): State<Store>) -> Result<StatusCode, Error> {
+async fn ready(
+    State(store): State<Store>,
+    ride: Option<Extension<libcutout_persistence::RideDatabase>>,
+) -> Result<StatusCode, Error> {
     store.ready().await?;
+    if let Some(Extension(ride)) = ride {
+        tokio::task::spawn_blocking(move || ride.capabilities())
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .map_err(|_| Error::Unavailable)?;
+    }
     Ok(StatusCode::OK)
 }
 

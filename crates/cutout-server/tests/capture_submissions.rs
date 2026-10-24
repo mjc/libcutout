@@ -973,7 +973,7 @@ impl CombinedCaptureServer {
         let child = Command::new(env!("CARGO_BIN_EXE_cutout-server"))
             .arg("--database")
             .arg(database)
-            .args(["serve", "--music", "--ride-database"])
+            .args(["serve", "--ride-database"])
             .arg(directory.join("rides.sqlite"))
             .args(["--listen"])
             .arg(address.to_string())

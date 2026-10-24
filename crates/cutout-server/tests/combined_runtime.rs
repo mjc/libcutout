@@ -25,7 +25,7 @@ async fn combined_server_opens_the_ride_database_in_process() {
     let mut server = start_server(
         address,
         &fixture.database_path,
-        &fixture.ride_database_path,
+        Some(&fixture.ride_database_path),
         &fixture.credentials_directory,
         &fixture.state_path,
     );
@@ -49,33 +49,32 @@ async fn combined_server_opens_the_ride_database_in_process() {
 }
 
 #[tokio::test]
-async fn combined_server_refuses_to_start_without_the_ride_database() {
+async fn server_opens_the_ride_database_beside_the_charging_database() {
     let fixture = RuntimeFixture::new();
     let address = SocketAddr::from(([127, 0, 0, 1], reserve_port()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cutout-server"))
-        .arg("--database")
-        .arg(&fixture.database_path)
-        .args(["serve", "--music", "--listen"])
-        .arg(address.to_string())
-        .args(["--trusted-proxy", "127.0.0.1"])
-        .env("CREDENTIALS_DIRECTORY", &fixture.credentials_directory)
-        .env("SOUNDCLOUD_TOKEN_STATE_FILE", &fixture.state_path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start combined server");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("server status") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("combined server stayed up without a ride database");
-        }
-        sleep(Duration::from_millis(20)).await;
-    };
-    assert!(!status.success());
+    let mut server = start_server(
+        address,
+        &fixture.database_path,
+        None,
+        &fixture.credentials_directory,
+        &fixture.state_path,
+    );
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("HTTP client");
+
+    wait_until_ready(&mut server, &client).await;
+    let response = request(&client, address, RIDES_HOST, "/readyz").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let ride_database =
+        rusqlite::Connection::open(fixture.database_path.with_file_name("ride.sqlite"))
+            .expect("default ride database");
+    let rides: i64 = ride_database
+        .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get(0))
+        .expect("ride database schema");
+    assert_eq!(rides, 0);
 }
 
 #[tokio::test]
@@ -85,7 +84,7 @@ async fn combined_runtime_routes_isolates_and_drains_with_cached_music_state() {
     let mut server = start_server(
         address,
         &fixture.database_path,
-        &fixture.ride_database_path,
+        Some(&fixture.ride_database_path),
         &fixture.credentials_directory,
         &fixture.state_path,
     );
@@ -387,21 +386,23 @@ fn reserve_port() -> u16 {
 fn start_server(
     address: SocketAddr,
     database_path: &std::path::Path,
-    ride_database_path: &std::path::Path,
+    ride_database_path: Option<&std::path::Path>,
     credentials_directory: &std::path::Path,
     state_path: &std::path::Path,
 ) -> RunningServer {
-    let child = Command::new(env!("CARGO_BIN_EXE_cutout-server"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cutout-server"));
+    command
         .arg("--database")
         .arg(database_path)
         .arg("serve")
-        .arg("--music")
-        .arg("--ride-database")
-        .arg(ride_database_path)
         .arg("--listen")
         .arg(address.to_string())
         .arg("--trusted-proxy")
-        .arg("127.0.0.1")
+        .arg("127.0.0.1");
+    if let Some(ride_database_path) = ride_database_path {
+        command.arg("--ride-database").arg(ride_database_path);
+    }
+    let child = command
         .env("CREDENTIALS_DIRECTORY", credentials_directory)
         .env("SOUNDCLOUD_TOKEN_STATE_FILE", state_path)
         .stdout(Stdio::null())
