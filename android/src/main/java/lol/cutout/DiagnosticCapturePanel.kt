@@ -718,30 +718,36 @@ private class RustCaptureSubmissionBatchOperations(
             val reviewedPlan = checkNotNull(plan) { "Review the captures before sending." }
             val client = this.client ?: CaptureSubmissionClientHandle(database)
             val credential = charging.captureCredential()
-            val publishProgress = progress
-            val listener = object : MobileCaptureSubmissionBatchProgressListener {
-                override fun onProgress(progress: MobileCaptureSubmissionBatchProgressDto) {
-                    val event = projectProgress(progress)
-                    publishProgress(event)
-                }
+            Triple(client, reviewedPlan, credential)
+        }) { prepared ->
+            prepared.onFailure { completed(Result.failure(it)) }
+            prepared.onSuccess { (client, reviewedPlan, credential) ->
+                val publishProgress = progress
+                charging.runCaptureBatch({
+                    val listener = object : MobileCaptureSubmissionBatchProgressListener {
+                        override fun onProgress(progress: MobileCaptureSubmissionBatchProgressDto) {
+                            publishProgress(projectProgress(progress))
+                        }
+                    }
+                    val summary = client.sendSelected(
+                        plan = reviewedPlan,
+                        selectedSourceArtifactIds = sourceArtifactIds,
+                        accountId = credential.identityId,
+                        token = credential.token,
+                        listener = listener,
+                    )
+                    CaptureBatchSummary(
+                        sent = summary.sent,
+                        cleaned = summary.cleaned,
+                        failed = summary.failed,
+                        skipped = summary.skipped,
+                        cancelled = summary.cancelled,
+                        failedSourceArtifactIds = summary.failedSourceArtifactIds,
+                        pendingCleanupSourceArtifactIds = summary.pendingCleanupSourceArtifactIds,
+                    )
+                }, completed)
             }
-            val summary = client.sendSelected(
-                plan = reviewedPlan,
-                selectedSourceArtifactIds = sourceArtifactIds,
-                accountId = credential.identityId,
-                token = credential.token,
-                listener = listener,
-            )
-            CaptureBatchSummary(
-                sent = summary.sent,
-                cleaned = summary.cleaned,
-                failed = summary.failed,
-                skipped = summary.skipped,
-                cancelled = summary.cancelled,
-                failedSourceArtifactIds = summary.failedSourceArtifactIds,
-                pendingCleanupSourceArtifactIds = summary.pendingCleanupSourceArtifactIds,
-            )
-        }, completed)
+        }
     }
 
     override fun requestCancel() {
