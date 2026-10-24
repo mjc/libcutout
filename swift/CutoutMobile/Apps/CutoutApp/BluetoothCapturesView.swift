@@ -258,7 +258,9 @@ private struct CaptureSubmissionBatchReviewView: View {
                 }
             }
             .navigationTitle(localizedAppText("capture.batch.title"))
-            .navigationBarTitleDisplayMode(.inline)
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(localizedAppText("common.cancel")) { dismiss() }
@@ -463,7 +465,7 @@ private final class CaptureSubmissionBatchFFIState {
                 .fileReadCorruptFile,
                 userInfo: [NSLocalizedDescriptionKey: localizedAppText("capture.batch.invalid_review")])
         }
-        let categories =
+        let categories: [String] =
             candidate.categories.map { value in
                 var included: [String] = []
                 if value.deviceIdentifiers { included.append(localizedAppText("capture.batch.category_identifiers")) }
@@ -501,7 +503,7 @@ private final class CaptureSubmissionBatchFFIState {
         }
     }
 
-    nonisolated private static func eligibilityLabel(_ eligibility: MobileCaptureSubmissionBatchEligibilityDto)
+    nonisolated fileprivate static func eligibilityLabel(_ eligibility: MobileCaptureSubmissionBatchEligibilityDto)
         -> String
     {
         switch eligibility {
@@ -903,7 +905,7 @@ enum CaptureHistorySendBadge: Equatable {
 
 func captureHistorySendBadge(_ status: MobileCaptureSubmissionStatusDto?) -> CaptureHistorySendBadge? {
     guard let status, status.receipt != nil else { return nil }
-    switch status.phase {
+    return switch status.phase {
     case .sent, .deleting: .sent
     case .deleted: .remoteDeleted
     default: nil
