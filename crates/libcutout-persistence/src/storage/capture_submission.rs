@@ -1620,9 +1620,6 @@ fn managed_file_submission_reserved(
         params![digest, size],
         |row| row.get(0),
     )?;
-    if reservation_exists {
-        return Ok(true);
-    }
     Ok(reservation_exists)
 }
 
