@@ -344,7 +344,7 @@ fn capture_submission_prepares_unknown_decoder_without_gps_and_reuses_durable_id
 }
 
 #[test]
-fn capture_submission_rejects_active_and_missing_consumed_writer_provenance() {
+fn capture_submission_rejects_active_and_sends_finished_capture_without_writer_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     let header = PevcapHeader::new(
@@ -375,24 +375,20 @@ fn capture_submission_rejects_active_and_missing_consumed_writer_provenance() {
     );
     let writer = recording(&database, directory.path());
     writer.flush().unwrap();
-    let (id, receipt) = finished(writer);
-    assert!(matches!(
-        database.prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id)),
-        Err(CaptureSubmissionError::ProvenanceUnavailable)
-    ));
-    assert!(
-        database
-            .capture_submission(CaptureSubmissionSource::LiveCapture(id))
-            .unwrap()
-            .is_none()
-    );
-    retain(&database, &receipt, CaptureOrigin::Manual);
-    assert!(
+    let (id, _receipt) = finished(writer);
+    let prepared = database
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .expect("finished bytes stay sendable without a published writer");
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Unknown);
+    assert!(prepared.metadata.bytes > 0);
+    assert_eq!(
         database
             .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
-            .is_ok(),
-        "retry uses actual consumed-writer publication"
+            .unwrap(),
+        prepared,
+        "a second prepare reuses the snapshot"
     );
+    database.shutdown().unwrap();
 }
 
 #[test]
@@ -2435,6 +2431,19 @@ fn transfer_admission_requires_retryable_or_prepared_and_retained_payload() {
             );
         }
     }
+    status.phase = CaptureSubmissionPhase::Rejected;
+    status.local_payload_state = CaptureSubmissionLocalPayloadState::Retained;
+    status.failure = Some(CaptureSubmissionTransferError::Rejected);
+    assert!(
+        status.can_start_transfer(),
+        "a generic service rejection can be sent again"
+    );
+    status.failure = Some(CaptureSubmissionTransferError::Conflict);
+    assert!(
+        !status.can_start_transfer(),
+        "a conflicting receipt stays terminal"
+    );
+    database.shutdown().unwrap();
 }
 
 #[test]

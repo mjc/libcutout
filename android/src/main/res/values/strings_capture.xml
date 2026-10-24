@@ -89,9 +89,9 @@
     <string name="capture_batch_failed_reason">%1$s · %2$s</string>
     <string name="capture_batch_cancelled_item">Not started because the batch was stopped.</string>
     <string name="capture_batch_pending_cleanup">%1$d received recording(s) still need local cleanup.</string>
-    <string name="capture_batch_progress">%1$d of %2$d current · %3$d sent · %4$d local copies removed · %5$d failed · %6$d skipped · %7$d stopped</string>
+    <string name="capture_batch_progress">%1$d of %2$d · %3$d sent · %4$d local copies removed · %5$d failed · %6$d skipped · %7$d stopped</string>
     <string name="capture_batch_result">Finished: %1$d sent · %2$d local copies removed · %3$d failed · %4$d skipped · %5$d stopped before admission</string>
-    <string name="capture_batch_stop">Stop after current recording</string>
+    <string name="capture_batch_stop">Stop after this capture</string>
     <string name="capture_batch_retry_failed">Review failed recordings again</string>
     <string name="capture_batch_review_again">Review captures again</string>
     <string name="capture_batch_retry_message">Retry the failed recordings from the same reviewed plan? Captures without a matching receipt remain on this device.</string>

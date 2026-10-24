@@ -195,7 +195,7 @@ private struct CaptureSubmissionBatchReviewView: View {
                         if model.isSending, let progress = model.progress {
                             LabeledContent(
                                 localizedAppText("capture.batch.position"),
-                                value: "\(progress.current.formatted()) / \(progress.total.formatted())")
+                                value: "\(progress.current.formatted()) of \(progress.total.formatted())")
                         }
                     }
                 }
@@ -516,6 +516,23 @@ private final class CaptureSubmissionBatchFFIState {
         case .unavailable: localizedAppText("capture.batch.reason_unavailable")
         }
     }
+
+    nonisolated fileprivate static func failureText(_ failure: MobileCaptureSubmissionFailureDto) -> String {
+        switch failure {
+        case .network: "The network failed. This capture is still on this phone."
+        case .unauthorized: "This account could not send the capture."
+        case .forbidden: "This account cannot send the capture."
+        case .conflict: "The server already has different information for this capture. It is still on this phone."
+        case .rejected: "The server rejected this capture. It is still on this phone."
+        case .throttled: "Waiting. The server asked to slow down."
+        case .unavailable: "The server is unavailable. This capture is still on this phone."
+        case .tooLarge: "This capture is too large to send."
+        case .invalidCapture: "This capture could not be read."
+        case .musicPresent: "This capture includes music and was not sent."
+        case .quotaExceeded: "The server has no room for more captures."
+        case .cancelled: "The send was cancelled."
+        }
+    }
 }
 
 private final class CaptureSubmissionBatchProgressListenerAdapter: MobileCaptureSubmissionBatchProgressListener,
@@ -538,7 +555,9 @@ private final class CaptureSubmissionBatchProgressListenerAdapter: MobileCapture
         switch progress.phase {
         case .current:
             phase = .current
-            if let sent = progress.bytesSent, let total = progress.totalBytes {
+            if progress.status?.failure == .throttled {
+                message = CaptureSubmissionBatchFFIState.failureText(.throttled)
+            } else if let sent = progress.bytesSent, let total = progress.totalBytes {
                 message = localizedAppText("capture.batch.phase_bytes", sent.formatted(), total.formatted())
             } else {
                 message = localizedAppText("capture.batch.phase_current")
@@ -552,12 +571,17 @@ private final class CaptureSubmissionBatchProgressListenerAdapter: MobileCapture
         case .failed:
             phase = .failed
             let retained = localizedAppText("capture.batch.phase_failed")
-            message =
-                progress.reason.map {
-                    localizedAppText(
-                        "capture.batch.phase_failed_reason", CaptureSubmissionBatchFFIState.eligibilityLabel($0),
-                        retained)
-                } ?? retained
+            if let failure = progress.status?.failure {
+                message = "\(CaptureSubmissionBatchFFIState.failureText(failure)) \(retained)"
+            } else {
+                message =
+                    progress.reason.map {
+                        localizedAppText(
+                            "capture.batch.phase_failed_reason",
+                            CaptureSubmissionBatchFFIState.eligibilityLabel($0),
+                            retained)
+                    } ?? retained
+            }
         case .skipped:
             phase = .skipped
             message =

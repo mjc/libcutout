@@ -140,12 +140,16 @@ pub struct CaptureSubmissionStatus {
 
 impl CaptureSubmissionStatus {
     fn can_start_transfer(&self) -> bool {
+        let retained = self.local_payload_state == CaptureSubmissionLocalPayloadState::Retained;
         match self.phase {
-            CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => {
-                self.local_payload_state == CaptureSubmissionLocalPayloadState::Retained
+            CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => retained,
+            // A generic service rejection can be an envelope the current server
+            // does not understand yet. An explicit send may try that snapshot again.
+            // Conflict, forbidden, invalid capture, music, and size stay terminal.
+            CaptureSubmissionPhase::Rejected => {
+                retained && self.failure == Some(CaptureSubmissionTransferError::Rejected)
             }
             CaptureSubmissionPhase::Sending
-            | CaptureSubmissionPhase::Rejected
             | CaptureSubmissionPhase::CancellationPending
             | CaptureSubmissionPhase::Cancelled
             | CaptureSubmissionPhase::Sent
@@ -284,7 +288,8 @@ pub enum CaptureSubmissionError {
     /// The capture is active or contains no retained events.
     #[error("capture recording is active or empty")]
     NotFinished,
-    /// A real consumed-writer provenance publication is still required.
+    /// Retained for callers that still distinguish a missing publication.
+    /// A finished capture with bytes is sent with unknown provenance instead.
     #[error("capture recording provenance is unavailable")]
     ProvenanceUnavailable,
     /// Full-stream validation or original digest verification failed.
@@ -482,16 +487,13 @@ pub(super) enum SourceRecord {
     },
 }
 
-/// Applies the shared provenance admission used by direct export and batch review.
-/// Interrupted nonempty captures remain usable with unknown provenance.
+/// Keeps a capture sendable when writer provenance was never published.
+/// Missing provenance stays unknown. An active or empty capture is rejected earlier.
 pub(super) fn validate_live_capture_submission_provenance(
     entry: &LiveCaptureHistoryEntry,
 ) -> Result<(), CaptureSubmissionError> {
-    if entry.state == LiveCaptureState::Finished && entry.recording.is_none() {
-        Err(CaptureSubmissionError::ProvenanceUnavailable)
-    } else {
-        Ok(())
-    }
+    let _ = entry;
+    Ok(())
 }
 
 struct SnapshotSource {

@@ -17,6 +17,11 @@ use uuid::Uuid;
 
 const OWNER_BYTES: u64 = 1024 * 1024 * 1024;
 const GLOBAL_BYTES: u64 = 10 * OWNER_BYTES;
+/// One account can drain a phone library. Storage quota still caps the bytes.
+const CAPTURE_UPLOADS_PER_MINUTE: u32 = 120;
+const CAPTURE_UPLOADS_PER_HOUR: u32 = 4_000;
+const CAPTURE_READS_PER_MINUTE: u32 = 240;
+const CAPTURE_READS_PER_HOUR: u32 = 8_000;
 const STAGING_PREFIX: &str = "cutout-capture-";
 pub(crate) const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
@@ -115,13 +120,25 @@ impl Store {
             ensure_actor(&transaction, &actor)?;
             let now = now_ms()?;
             let principal = format!("capture-request:{}", actor.id);
-            quota(&transaction, &principal, QuotaWindow::Minute, 6, now)?;
-            quota(&transaction, &principal, QuotaWindow::Hour, 60, now)?;
+            quota(
+                &transaction,
+                &principal,
+                QuotaWindow::Minute,
+                CAPTURE_UPLOADS_PER_MINUTE,
+                now,
+            )?;
+            quota(
+                &transaction,
+                &principal,
+                QuotaWindow::Hour,
+                CAPTURE_UPLOADS_PER_HOUR,
+                now,
+            )?;
             quota(
                 &transaction,
                 "capture-request-global",
                 QuotaWindow::Minute,
-                30,
+                CAPTURE_UPLOADS_PER_MINUTE,
                 now,
             )?;
             transaction.commit().map_err(db_error)
@@ -135,8 +152,20 @@ impl Store {
             ensure_actor(&transaction, &actor)?;
             let now = now_ms()?;
             let principal = format!("capture-read:{}", actor.id);
-            quota(&transaction, &principal, QuotaWindow::Minute, 60, now)?;
-            quota(&transaction, &principal, QuotaWindow::Hour, 600, now)?;
+            quota(
+                &transaction,
+                &principal,
+                QuotaWindow::Minute,
+                CAPTURE_READS_PER_MINUTE,
+                now,
+            )?;
+            quota(
+                &transaction,
+                &principal,
+                QuotaWindow::Hour,
+                CAPTURE_READS_PER_HOUR,
+                now,
+            )?;
             quota(
                 &transaction,
                 "capture-read-global",
@@ -416,13 +445,25 @@ fn admit_capture_at(
     }
     check_storage(&transaction, actor, metadata.bytes)?;
     let principal = format!("capture-upload:{}", actor.id);
-    quota(&transaction, &principal, QuotaWindow::Minute, 3, now)?;
-    quota(&transaction, &principal, QuotaWindow::Hour, 30, now)?;
+    quota(
+        &transaction,
+        &principal,
+        QuotaWindow::Minute,
+        CAPTURE_UPLOADS_PER_MINUTE,
+        now,
+    )?;
+    quota(
+        &transaction,
+        &principal,
+        QuotaWindow::Hour,
+        CAPTURE_UPLOADS_PER_HOUR,
+        now,
+    )?;
     quota(
         &transaction,
         "capture-upload-global",
         QuotaWindow::Minute,
-        30,
+        CAPTURE_UPLOADS_PER_MINUTE,
         now,
     )?;
     transaction.commit().map_err(db_error)
@@ -594,7 +635,7 @@ mod tests {
                 transformation: cutout_core::CaptureSubmissionTransformation::Unmodified,
             },
         };
-        for _ in 0..3 {
+        for _ in 0..CAPTURE_UPLOADS_PER_MINUTE {
             let actor = actor.clone();
             let metadata = metadata.clone();
             store

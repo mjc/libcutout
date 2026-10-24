@@ -3,9 +3,9 @@
 use super::super::{PevcapCaptureCursor, QueryLimit, StoredPevcapCapture, normalization};
 use super::{
     CaptureSubmissionError, CaptureSubmissionLocalPayloadState, CaptureSubmissionProgress,
-    CaptureSubmissionSource, CaptureSubmissionStatus, CaptureSubmissionTransport, LiveCaptureId,
-    LiveCaptureIntegrity, LiveCaptureState, PevcapEncoding, RideDatabase,
-    validate_live_capture_submission_provenance,
+    CaptureSubmissionSource, CaptureSubmissionStatus, CaptureSubmissionTransferError,
+    CaptureSubmissionTransport, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureState,
+    PevcapEncoding, RideDatabase, validate_live_capture_submission_provenance,
 };
 use crate::CaptureArtifactId;
 use cutout_core::{
@@ -202,7 +202,7 @@ pub struct CaptureSubmissionBatchProgress {
     pub skipped: usize,
     /// Sources left unadmitted after cancellation.
     pub cancelled: usize,
-    /// Current in-flight source count, zero or one.
+    /// 1-based position of this source in the selected batch.
     pub current: usize,
     /// Bytes streamed for the current source, when transport has started.
     pub bytes_sent: Option<u64>,
@@ -1156,6 +1156,8 @@ struct BatchSender<'a, T> {
     transport: &'a T,
     progress: CaptureSubmissionBatchProgressCallback,
     total: usize,
+    /// 1-based index of the source currently being admitted.
+    position: usize,
     summary: CaptureSubmissionBatchSummary,
 }
 
@@ -1176,6 +1178,7 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
             transport,
             progress,
             total: 0,
+            position: 0,
             summary: CaptureSubmissionBatchSummary::default(),
         }
     }
@@ -1186,7 +1189,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
         phase: CaptureSubmissionBatchItemPhase,
         status: Option<CaptureSubmissionStatus>,
         reason: Option<CaptureSubmissionBatchEligibility>,
-        current: usize,
     ) {
         (self.progress)(CaptureSubmissionBatchProgress {
             source_artifact_id: source_id.to_owned(),
@@ -1200,7 +1202,7 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
             failed: self.summary.failed,
             skipped: self.summary.skipped,
             cancelled: self.summary.cancelled,
-            current,
+            current: self.position,
             bytes_sent: None,
             total_bytes: None,
         });
@@ -1208,13 +1210,13 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
 
     fn cancel_remaining(&mut self, source_ids: &[String]) {
         for source_id in source_ids {
+            self.position = self.position.saturating_add(1);
             self.summary.cancelled += 1;
             self.emit(
                 source_id,
                 CaptureSubmissionBatchItemPhase::Cancelled,
                 None,
                 None,
-                0,
             );
         }
     }
@@ -1229,7 +1231,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
             CaptureSubmissionBatchItemPhase::Failed,
             status,
             Some(CaptureSubmissionBatchEligibility::Unavailable),
-            0,
         );
     }
 
@@ -1264,7 +1265,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
                 CaptureSubmissionBatchItemPhase::Cleaned,
                 Some(status),
                 None,
-                0,
             );
         } else {
             self.summary
@@ -1275,7 +1275,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
                 CaptureSubmissionBatchItemPhase::Sent,
                 Some(status),
                 Some(CaptureSubmissionBatchEligibility::AlreadySubmitted),
-                0,
             );
         }
     }
@@ -1285,6 +1284,20 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
         let file_cleaned =
             remove_managed_file_after_receipt(self.database, self.plan, source_id, Some(&status));
         self.finish_receipted_item(source_id, status, file_cleaned);
+    }
+
+    fn wait_for_budget(&self) {
+        // Persistence tests poll once. The installed app waits out the service budget
+        // and still notices Stop about once a second.
+        if cfg!(test) {
+            return;
+        }
+        for _ in 0..60 {
+            if self.plan.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
 
     async fn send_one(&mut self, source_id: &str, candidate: &CaptureSubmissionBatchCandidate) {
@@ -1299,7 +1312,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
                 CaptureSubmissionBatchItemPhase::Skipped,
                 candidate.status.clone(),
                 candidate.skip_reason,
-                0,
             );
             return;
         }
@@ -1308,17 +1320,68 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
             CaptureSubmissionBatchItemPhase::Current,
             candidate.status.clone(),
             None,
-            1,
         );
-        match prepare_and_send_one(self, source_id, candidate).await {
-            Ok(status) if valid_receipt(&status) => self.send_success(source_id, status),
-            Ok(status) => self.mark_failed(source_id, Some(status)),
-            Err(_) => {
-                let status = candidate_source(self.plan, source_id)
-                    .and_then(|source| self.database.capture_submission(source).ok().flatten());
-                self.mark_failed(source_id, status);
+        let mut operation_id: Option<String> = None;
+        loop {
+            if operation_id.is_some() && self.plan.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            let result = if let Some(id) = operation_id.clone() {
+                self.retry_throttled_send(source_id, &id).await
+            } else {
+                prepare_and_send_one(self, source_id, candidate).await
+            };
+            match result {
+                Ok(status) if valid_receipt(&status) => {
+                    self.send_success(source_id, status);
+                    return;
+                }
+                Ok(status) if status.failure == Some(CaptureSubmissionTransferError::Throttled) => {
+                    operation_id = Some(status.operation_id.clone());
+                    self.emit(
+                        source_id,
+                        CaptureSubmissionBatchItemPhase::Current,
+                        Some(status),
+                        None,
+                    );
+                    self.wait_for_budget();
+                }
+                Ok(status) => {
+                    self.mark_failed(source_id, Some(status));
+                    return;
+                }
+                Err(_) => {
+                    let status = candidate_source(self.plan, source_id)
+                        .and_then(|source| self.database.capture_submission(source).ok().flatten());
+                    self.mark_failed(source_id, status);
+                    return;
+                }
             }
         }
+    }
+
+    async fn retry_throttled_send(
+        &self,
+        source_id: &str,
+        operation_id: &str,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+        let progress = BatchProgressEmitter {
+            callback: Arc::clone(&self.progress),
+            source_artifact_id: source_id.to_owned(),
+            operation_id: operation_id.to_owned(),
+            total: self.total,
+            position: self.position,
+            summary: self.summary.clone(),
+        };
+        self.database
+            .send_capture_submission_with_progress(
+                operation_id,
+                self.account_id,
+                self.token,
+                self.transport,
+                Arc::new(move |send_progress| progress.emit_upload(&send_progress)),
+            )
+            .await
     }
 }
 
@@ -1356,14 +1419,18 @@ async fn send_selected<T: CaptureSubmissionTransport>(
         .map(|candidate| candidate.source_artifact_id.clone())
         .collect::<Vec<_>>();
     sender.total = selected.len();
-    for (position, source_id) in selected.iter().enumerate() {
+    let mut index = 0;
+    while index < selected.len() {
         if sender.plan.cancelled.load(Ordering::Acquire) {
-            sender.cancel_remaining(&selected[position..]);
+            sender.cancel_remaining(&selected[index..]);
             break;
         }
+        let source_id = &selected[index];
+        sender.position = index + 1;
         sender
             .send_one(source_id, candidates[source_id.as_str()])
             .await;
+        index += 1;
     }
     Ok(sender.summary)
 }
@@ -1388,6 +1455,7 @@ async fn prepare_and_send_one<T: CaptureSubmissionTransport>(
         source_artifact_id: source_id.to_owned(),
         operation_id: operation_id.clone(),
         total: sender.total,
+        position: sender.position,
         summary: sender.summary.clone(),
     };
     sender
@@ -1649,6 +1717,7 @@ struct BatchProgressEmitter {
     source_artifact_id: String,
     operation_id: String,
     total: usize,
+    position: usize,
     summary: CaptureSubmissionBatchSummary,
 }
 
@@ -1666,7 +1735,7 @@ impl BatchProgressEmitter {
             failed: self.summary.failed,
             skipped: self.summary.skipped,
             cancelled: self.summary.cancelled,
-            current: 1,
+            current: self.position,
             bytes_sent: Some(progress.bytes_sent),
             total_bytes: Some(progress.total_bytes),
         });
@@ -1790,6 +1859,7 @@ mod tests {
     struct BatchTransport {
         uploads: AtomicUsize,
         fail_next: Mutex<bool>,
+        throttle_once: AtomicBool,
         invalid_receipt: AtomicBool,
         deletes: AtomicUsize,
         after_upload: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -1812,6 +1882,9 @@ mod tests {
                     return Err(CaptureSubmissionTransferError::InvalidCapture);
                 }
                 self.uploads.fetch_add(1, Ordering::AcqRel);
+                if self.throttle_once.swap(false, Ordering::AcqRel) {
+                    return Err(CaptureSubmissionTransferError::Throttled);
+                }
                 if std::mem::take(&mut *self.fail_next.lock().unwrap()) {
                     return Err(CaptureSubmissionTransferError::Network);
                 }
@@ -1862,62 +1935,82 @@ mod tests {
     }
 
     #[test]
-    fn batch_review_excludes_finished_capture_without_writer_provenance_until_published() {
+    fn batch_review_sends_finished_capture_without_writer_provenance() {
         let directory = tempfile::tempdir().unwrap();
         let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
-        let (id, receipt) = finished_capture_without_provenance(&database, directory.path(), 71);
-        let source_id = id.to_string();
+        let (first_id, _) = finished_capture_without_provenance(&database, directory.path(), 71);
+        let (second_id, _) = finished_capture_without_provenance(&database, directory.path(), 72);
+        let source_ids = [first_id.to_string(), second_id.to_string()];
 
         let plan = database.review_capture_submission_batch(&[]).unwrap();
-        let candidate = plan
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.source_artifact_id == source_id)
-            .expect("finished live capture remains visible for review");
-        assert_eq!(
-            candidate.eligibility,
-            CaptureSubmissionBatchEligibility::Unavailable
-        );
-        assert_eq!(
-            candidate.skip_reason,
-            Some(CaptureSubmissionBatchEligibility::Unavailable)
-        );
-        assert!(candidate.source_bytes > 0);
+        for source_id in &source_ids {
+            let candidate = plan
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.source_artifact_id == *source_id)
+                .expect("finished live capture remains visible for review");
+            assert_eq!(
+                candidate.eligibility,
+                CaptureSubmissionBatchEligibility::Eligible
+            );
+            assert_eq!(candidate.origin, CaptureSubmissionOrigin::Unknown);
+            assert!(candidate.source_bytes > 0);
+            assert!(candidate.skip_reason.is_none());
+        }
 
         let transport = BatchTransport::default();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
         let result = ready(database.send_capture_submission_batch(
             &plan,
-            std::slice::from_ref(&source_id),
+            &source_ids,
+            ACCOUNT,
+            "token",
+            &transport,
+            Arc::new(move |progress| {
+                record.lock().unwrap().push(progress.current);
+            }),
+        ))
+        .unwrap();
+        assert_eq!(result.sent, 2);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(transport.uploads.load(Ordering::Acquire), 2);
+        let positions = seen.lock().unwrap().clone();
+        assert!(positions.contains(&1) && positions.contains(&2));
+        assert!(positions.iter().all(|position| (1..=2).contains(position)));
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn batch_retries_throttled_upload_before_counting_a_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 81);
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let selected = eligible_ids(&plan);
+        assert_eq!(
+            selected.len(),
+            1,
+            "retained capture is reviewed as eligible"
+        );
+        let transport = BatchTransport {
+            throttle_once: AtomicBool::new(true),
+            ..BatchTransport::default()
+        };
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            &selected,
             ACCOUNT,
             "token",
             &transport,
             Arc::new(|_| {}),
         ))
         .unwrap();
-        assert_eq!(result.skipped, 1);
+        assert_eq!(result.sent, 1);
         assert_eq!(result.failed, 0);
-        assert_eq!(transport.uploads.load(Ordering::Acquire), 0);
-
-        database
-            .retain_finished_database_capture(
-                &receipt,
-                CaptureOrigin::Manual,
-                None,
-                WallClockUnixTimestamp::new(1_700_000_101_000),
-            )
-            .unwrap();
-        let retried = database.review_capture_submission_batch(&[]).unwrap();
-        let candidate = retried
-            .candidates()
-            .iter()
-            .find(|candidate| {
-                candidate.source_kind == CaptureSubmissionBatchSourceKind::LiveCapture
-            })
-            .expect("published capture remains reviewable");
-        assert_eq!(
-            candidate.eligibility,
-            CaptureSubmissionBatchEligibility::Eligible
-        );
+        assert_eq!(transport.uploads.load(Ordering::Acquire), 2);
+        database.shutdown().unwrap();
     }
 
     #[test]
@@ -1977,6 +2070,7 @@ mod tests {
         );
         assert_eq!(candidate.origin, CaptureSubmissionOrigin::Unknown);
         assert_eq!(candidate.integrity, CaptureSubmissionIntegrity::Unknown);
+        reopened.shutdown().unwrap();
     }
 
     fn exported_capture_bytes(
