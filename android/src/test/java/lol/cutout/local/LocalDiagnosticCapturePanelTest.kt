@@ -52,8 +52,8 @@ class LocalDiagnosticCapturePanelTest {
         )
         val entry = MobileLiveCaptureHistoryEntryDto(
             liveCaptureId = "interrupted-id", interrupted = true, integrity = MobileCaptureIntegrityDto.Unknown,
-            recording = null, platformIdentifier = "wheel", startedAtMilliseconds = 100,
-            finishedAtMilliseconds = 200, eventCount = 1uL, storedBytes = 100uL,
+            recording = null, platformIdentifier = "wheel", startedAtMilliseconds = 100uL,
+            finishedAtMilliseconds = 200uL, eventCount = 1uL, storedBytes = 100uL,
             submission = MobileCaptureHistorySubmissionDto(
                 source = MobileCaptureSubmissionSourceDto.LiveCapture("interrupted-id"),
                 sourceArtifactId = "interrupted-id", status = status,
