@@ -252,6 +252,10 @@ impl CaptureSubmissionBatchPlanHandle {
 #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary values")]
 impl CaptureSubmissionClientHandle {
     /// Inventories every page and supported app-owned managed root locally for review.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when database inventory fails or the blocking worker cannot join.
     pub async fn review_all(
         &self,
         managed_capture_directories: Vec<String>,
@@ -270,6 +274,12 @@ impl CaptureSubmissionClientHandle {
     }
 
     /// Runs one Rust-owned serial batch after one explicit native confirmation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plan or selected identities are invalid, a source is no
+    /// longer available, local persistence fails, authentication is rejected, or the remote
+    /// service cannot complete the submission.
     pub async fn send_selected(
         &self,
         plan: Arc<CaptureSubmissionBatchPlanHandle>,

@@ -289,9 +289,8 @@ pub struct MobileCaptureSubmissionStatusDto {
 impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatusDto {
     fn from(status: persistence::CaptureSubmissionStatus) -> Self {
         let dropped_messages = match status.metadata.integrity {
-            CaptureSubmissionIntegrity::Complete => 0,
+            CaptureSubmissionIntegrity::Complete | CaptureSubmissionIntegrity::Unknown => 0,
             CaptureSubmissionIntegrity::Incomplete { dropped_messages } => dropped_messages,
-            CaptureSubmissionIntegrity::Unknown => 0,
         };
         Self {
             operation_id: status.operation_id,
@@ -425,8 +424,7 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
             Error::NotFinished | Error::ProvenanceUnavailable | Error::InvalidState => {
                 Self::NotReady
             }
-            Error::InvalidCapture => Self::InvalidCapture,
-            Error::TooLarge => Self::InvalidCapture,
+            Error::InvalidCapture | Error::TooLarge => Self::InvalidCapture,
             Error::WrongAccount => Self::Unauthorized,
             Error::Storage(_) => Self::StorageFailure,
         }
