@@ -268,9 +268,10 @@ pub(super) fn list(
         "SELECT capture_id, state, integrity, dropped_messages, header_json, started_at_ms,
             finished_at_ms, next_sequence, stored_bytes, recording_context_json,
             (SELECT status_json FROM capture_submissions AS submission
-             WHERE json_extract(submission.status_json, '$.metadata.provenance.live_capture_id') = live_capture_sessions.capture_id
-                OR submission.source_artifact_id = json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
-             ORDER BY submission.operation_id DESC LIMIT 1)
+             WHERE submission.source_artifact_id = COALESCE(
+                 json_extract(live_capture_sessions.recording_context_json, '$.artifact_id'),
+                 live_capture_sessions.capture_id
+             ))
          FROM live_capture_sessions
          WHERE state != 'active' AND (?1 IS NULL OR started_at_ms < ?1 OR (started_at_ms = ?1 AND capture_id < ?2))
          ORDER BY started_at_ms DESC, capture_id DESC LIMIT ?3")?;
@@ -311,9 +312,10 @@ pub(super) fn lookup(
             "SELECT capture_id, state, integrity, dropped_messages, header_json, started_at_ms,
             finished_at_ms, next_sequence, stored_bytes, recording_context_json,
             (SELECT status_json FROM capture_submissions AS submission
-             WHERE json_extract(submission.status_json, '$.metadata.provenance.live_capture_id') = live_capture_sessions.capture_id
-                OR submission.source_artifact_id = json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
-             ORDER BY submission.operation_id DESC LIMIT 1)
+             WHERE submission.source_artifact_id = COALESCE(
+                 json_extract(live_capture_sessions.recording_context_json, '$.artifact_id'),
+                 live_capture_sessions.capture_id
+             ))
          FROM live_capture_sessions
          WHERE (?1 IS NOT NULL AND capture_id = ?1)
             OR (?2 IS NOT NULL AND json_extract(recording_context_json, '$.artifact_id') = ?2)",
