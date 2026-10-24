@@ -450,29 +450,48 @@ final class CaptureLibraryModel {
 final class CaptureExportModel {
     typealias SourceExport = @MainActor (URL) async throws -> URL
     typealias CaptureExport = @MainActor (String) async throws -> URL
+    typealias RecordedCaptureExport = @MainActor (String, URL?) async throws -> URL
+    typealias StaleExportCleanup = @MainActor () async -> Void
 
     private(set) var fileURL: URL?
     private(set) var isExporting = false
     private(set) var error: String?
     private let sourceExport: SourceExport
     private let captureExport: CaptureExport
+    private let recordedCaptureExport: RecordedCaptureExport
+    private let staleExportCleanup: StaleExportCleanup
+    private var exportGeneration: UInt64 = 0
 
     init(
         sourceExport: SourceExport? = nil,
-        captureExport: CaptureExport? = nil
+        captureExport: CaptureExport? = nil,
+        recordedCaptureExport: RecordedCaptureExport? = nil,
+        staleExportCleanup: StaleExportCleanup? = nil
     ) {
         self.sourceExport = sourceExport ?? Self.exportSourceFile
         self.captureExport = captureExport ?? Self.exportDatabaseCapture
+        self.recordedCaptureExport = recordedCaptureExport ?? Self.exportDatabaseRecordedCapture
+        self.staleExportCleanup =
+            staleExportCleanup ?? {
+                await RustPersistenceStore.deduplicateManagedCaptureFiles()
+            }
     }
 
     func export(source: URL) async {
         guard !isExporting, fileURL == nil else { return }
         isExporting = true
+        let generation = exportGeneration
         error = nil
         defer { isExporting = false }
         do {
-            fileURL = try await sourceExport(source)
+            let exported = try await sourceExport(source)
+            guard generation == exportGeneration else {
+                await staleExportCleanup()
+                return
+            }
+            fileURL = exported
         } catch {
+            guard generation == exportGeneration else { return }
             self.error = error.localizedDescription
         }
     }
@@ -480,13 +499,48 @@ final class CaptureExportModel {
     func export(id: String) async {
         guard !isExporting, fileURL == nil else { return }
         isExporting = true
+        let generation = exportGeneration
         error = nil
         defer { isExporting = false }
         do {
-            fileURL = try await captureExport(id)
+            let exported = try await captureExport(id)
+            guard generation == exportGeneration else {
+                await staleExportCleanup()
+                return
+            }
+            fileURL = exported
         } catch {
+            guard generation == exportGeneration else { return }
             self.error = error.localizedDescription
         }
+    }
+
+    func export(recordedArtifactID: String, fallbackSource: URL?) async {
+        guard !isExporting, fileURL == nil else { return }
+        isExporting = true
+        let generation = exportGeneration
+        error = nil
+        defer { isExporting = false }
+        do {
+            let exported = try await recordedCaptureExport(recordedArtifactID, fallbackSource)
+            guard generation == exportGeneration else {
+                await staleExportCleanup()
+                return
+            }
+            fileURL = exported
+        } catch MobileRideDatabaseError.CapturePayloadUnavailable {
+            guard generation == exportGeneration else { return }
+            self.error = localizedAppText("captures.file_unavailable")
+        } catch {
+            guard generation == exportGeneration else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    func invalidate() {
+        exportGeneration &+= 1
+        fileURL = nil
+        error = nil
     }
 
     private static func exportSourceFile(_ source: URL) async throws -> URL {
@@ -512,5 +566,27 @@ final class CaptureExportModel {
             return try database.exportLiveCapture(liveCaptureId: id, path: path)
         }.value
         return URL(fileURLWithPath: result.path)
+    }
+
+    private static func exportDatabaseRecordedCapture(_ id: String, fallbackSource: URL?) async throws -> URL {
+        let database = try await RustPersistenceStore.open()
+        return try await Task.detached(priority: .userInitiated) {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "CaptureExports", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let destination = directory.appendingPathComponent("capture-\(UUID().uuidString).jsonl")
+            do {
+                let result = try database.exportRecordedCapture(artifactId: id, path: destination.path)
+                return URL(fileURLWithPath: result.path)
+            } catch MobileRideDatabaseError.PevcapCaptureNotFound {
+                guard let fallbackSource,
+                    FileManager.default.fileExists(atPath: fallbackSource.path)
+                else {
+                    throw MobileRideDatabaseError.PevcapCaptureNotFound
+                }
+                try FileManager.default.copyItem(at: fallbackSource, to: destination)
+                return destination
+            }
+        }.value
     }
 }

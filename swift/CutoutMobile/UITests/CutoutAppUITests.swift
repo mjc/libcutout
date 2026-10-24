@@ -433,48 +433,28 @@ final class CutoutAppUITests: XCTestCase {
         try verifySetupNavigation()
     }
 
-    func testPickerSurfaceDiagnosticsConsentPersistsAndPolicyLinksAreReachable() {
+    func testSetupOffersManualCapturesWithoutAutomaticDiagnosticsSetting() {
         app.terminate()
         app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         app.launch()
 
-        func openDiagnostics() -> XCUIElement {
-            let setup = app.buttons["device-picker.open-setup"]
-            XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
-            setup.tap()
-            let consent = app.switches["setup.diagnostics.automatic"]
-            XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
-            scrollElementFrameIntoViewport(consent, in: app.collectionViews.firstMatch, maxScrolls: 8)
-            let control = consent.switches.firstMatch
-            XCTAssertTrue(control.waitForExistence(timeout: 5), app.debugDescription)
-            XCTAssertTrue(control.isHittable, app.debugDescription)
-            return control
-        }
+        let setup = app.buttons["device-picker.open-setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
+        setup.tap()
+        XCTAssertFalse(app.switches["setup.diagnostics.automatic"].exists, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["setup.diagnostics.automatic"].exists, app.debugDescription)
 
-        func waitForValue(_ value: String, of control: XCUIElement) {
-            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
-            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed, app.debugDescription)
-        }
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: app.collectionViews.firstMatch, maxScrolls: 8)
+        XCTAssertTrue(captures.exists && captures.isHittable, app.debugDescription)
 
-        let consent = openDiagnostics()
-        waitForValue("0", of: consent)
-        consent.tap()
-        waitForValue("1", of: consent)
-        app.buttons["setup.done"].tap()
-        app.terminate()
-        app.launch()
-
-        let restored = openDiagnostics()
-        waitForValue("1", of: restored)
-        restored.tap()
-        waitForValue("0", of: restored)
         for identifier in ["setup.privacy-policy", "setup.support"] {
             let link = app.descendants(matching: .any)[identifier]
             scrollElementFrameIntoViewport(link, in: app.collectionViews.firstMatch, maxScrolls: 8)
             XCTAssertTrue(link.exists && link.isHittable, app.debugDescription)
         }
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Diagnostics consent and privacy-contact links"
+        screenshot.name = "Manual captures and privacy-contact links"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
@@ -2827,8 +2807,19 @@ final class CutoutAppUITests: XCTestCase {
 
     func testFinishCaptureOpensSavedArtifactAndShareSheet() throws {
         _ = try finishCaptureAndOpenArtifact()
-        let share = app.descendants(matching: .any)["captures.share"]
-        XCTAssertTrue(share.isHittable)
+        let prepareShare = app.buttons["captures.share"]
+        let prepareReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate {
+                _, _ in prepareShare.exists && prepareShare.isEnabled && prepareShare.isHittable
+            }, object: prepareShare
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [prepareReady], timeout: 10), .completed, app.debugDescription)
+        prepareShare.tap()
+        let share = app.buttons["captures.share.link"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in share.exists && share.isEnabled && share.isHittable }, object: share
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed, app.debugDescription)
         share.tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
     }
@@ -2874,7 +2865,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(disclosure.label.contains("raw Bluetooth evidence"), disclosure.label)
         XCTAssertTrue(disclosure.label.contains("event order and timing"), disclosure.label)
         XCTAssertTrue(disclosure.label.contains("device and platform identifiers"), disclosure.label)
-        XCTAssertTrue(disclosure.label.contains("Your original recording stays on this device."), disclosure.label)
+        XCTAssertTrue(
+            disclosure.label.contains("A matching receipt starts removal of the local capture payload."),
+            disclosure.label)
         let decline = app.buttons["Not now"]
         if decline.waitForExistence(timeout: 2) {
             waitForReady(decline)
@@ -3194,7 +3187,7 @@ final class CutoutAppUITests: XCTestCase {
         finish.tap()
         let detail = app.descendants(matching: .any)["captures.detail"]
         XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
-        let share = app.descendants(matching: .any)["captures.share"]
+        let share = app.buttons["captures.share"]
         scrollElementFrameIntoViewport(share, in: detail, maxScrolls: 8)
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].exists)
         retainCaptureScreenshot("Saved capture")

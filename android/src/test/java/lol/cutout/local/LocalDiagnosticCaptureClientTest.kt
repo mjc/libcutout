@@ -3,9 +3,12 @@ package lol.cutout.local
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
 import lol.cutout.AndroidDiagnosticCaptureClient
+import lol.cutout.localCapturePayloadMayBeShared
 import lol.cutout.CutoutApplication
 import lol.cutout.R
 import org.junit.Test
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -23,21 +26,41 @@ import java.util.UUID
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalDiagnosticCaptureClientTest {
     @Test
+    fun onlyRetainedOrUnsubmittedLocalPayloadCanBeShared() {
+        assertTrue(localCapturePayloadMayBeShared(null))
+        assertTrue(localCapturePayloadMayBeShared(MobileCaptureSubmissionLocalPayloadStateDto.RETAINED))
+        assertFalse(localCapturePayloadMayBeShared(MobileCaptureSubmissionLocalPayloadStateDto.REMOVAL_PENDING))
+        assertFalse(localCapturePayloadMayBeShared(MobileCaptureSubmissionLocalPayloadStateDto.REMOVED))
+    }
+
+    @Test
     fun recordOnlyWriterUsesRustAdmissionThenPublishesAndExportsPrivateHistory() {
         val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
         val application = context as CutoutApplication
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
         val state = CutoutSessionStateHandle.withDatabase(database)
         val platformId = "capture-test-${UUID.randomUUID()}"
+        state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
+        val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
+        var reportOwnedLinkDown: (() -> Unit)? = null
         val client = AndroidDiagnosticCaptureClient(
-            context, { state }, { database }, { action -> action(); true }, {},
+            context, { state }, { database }, { action -> action(); true }, { disposition ->
+                if (disposition is MobileCaptureTransportReleaseDto.ReleaseOwnedTransport &&
+                    disposition.connectionAttempt == token
+                ) {
+                    // Model the owned transport reporting its final link-down before writer finalization.
+                    reportOwnedLinkDown?.invoke()
+                }
+                false
+            },
         )
+        reportOwnedLinkDown = { client.linkDown(token) }
         var exported: File? = null
         try {
-            val token = checkNotNull(state.beginConnectionAttempt(platformId, 1UL).token)
             checkNotNull(client.start(
                 MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "Test device", "read-only test", token,
                 evidence = "unverified",
+                transportOwnership = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
             ))
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.RECORDING)
             check(client.activeCameraCaptureIdentity()?.generation == state.captureLifecycleSnapshot().attempt?.generation)
@@ -51,7 +74,6 @@ class LocalDiagnosticCaptureClientTest {
 
             val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
             check(admitted) { "Rust refused a durable manual finish flush" }
-            client.linkDown(token)
             await { done -> client.finishAfterLinkDown(token) { done(Result.success(Unit)) } }.getOrThrow()
             check(state.captureLifecycleSnapshot().attempt?.stage == MobileCaptureStageDto.SAVED)
             check(client.activeCameraCaptureIdentity() == null)
@@ -83,7 +105,7 @@ class LocalDiagnosticCaptureClientTest {
     }
 
     @Test
-    fun automaticVescCaptureUsesVerifiedOwnerBeforeTelemetryAndWhenWriterStartsLater() {
+    fun manualVescCaptureUsesVerifiedOwnerBeforeTelemetryAndWhenWriterStartsLater() {
         val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
         val application = context as CutoutApplication
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
@@ -93,12 +115,11 @@ class LocalDiagnosticCaptureClientTest {
         )
         for (identifyBeforeStart in listOf(false, true)) {
             val state = CutoutSessionStateHandle.withDatabase(database)
-            val priorConsent = state.automaticDiagnosticRecordingEnabled()
             val platformId = "capture-vesc-${UUID.randomUUID()}"
-            val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, {})
+            val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, { _ -> false })
             var exported: File? = null
             try {
-                state.setAutomaticDiagnosticRecordingEnabled(true)
+                state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
                 val token = checkNotNull(state.beginConnectionAttempt(platformId, android.os.SystemClock.elapsedRealtime().toULong()).token)
                 state.connectionLinkEstablished(token)
                 val session = lol.cutout.PevSession(state, token, { android.os.SystemClock.elapsedRealtime().toULong() }, {},
@@ -108,7 +129,7 @@ class LocalDiagnosticCaptureClientTest {
                 ) { _, _, _ -> client.updateIdentity(token) }
                 if (identifyBeforeStart) session.notification(ByteArray(16), ByteArray(16), reply)
                 checkNotNull(client.start(
-                    MobileCaptureOriginDto.AUTOMATIC, platformId, emptyList(), "VESC", null, token,
+                    MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "VESC", null, token,
                 ))
                 // The pre-start case verifies the shared identity without requiring another telemetry frame.
                 if (!identifyBeforeStart) session.notification(ByteArray(16), ByteArray(16), reply)
@@ -141,7 +162,6 @@ class LocalDiagnosticCaptureClientTest {
                 exported?.delete()
                 try { await { done -> client.close { done(Result.success(Unit)) } } }
                 finally {
-                    state.setAutomaticDiagnosticRecordingEnabled(priorConsent)
                     state.close()
                 }
             }
@@ -167,9 +187,10 @@ class LocalDiagnosticCaptureClientTest {
         for (invalidatesIdentity in listOf(false, true)) {
             val state = CutoutSessionStateHandle.withDatabase(database)
             val platformId = "capture-conflict-${UUID.randomUUID()}"
-            val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, {})
+            val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, { _ -> false })
             var exported: File? = null
             try {
+                state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
                 var at = android.os.SystemClock.elapsedRealtime().toULong()
                 val stale = checkNotNull(state.beginConnectionAttempt("old-$platformId", at).token)
                 val token = checkNotNull(state.beginConnectionAttempt(platformId, at).token)
@@ -261,17 +282,145 @@ class LocalDiagnosticCaptureClientTest {
         val application = context as CutoutApplication
         val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
         val state = CutoutSessionStateHandle.withDatabase(database)
-        val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, {})
+        val priorConsent = state.automaticDiagnosticRecordingEnabled()
+        val client = AndroidDiagnosticCaptureClient(context, { state }, { database }, { it(); true }, { _ -> false })
         try {
-            check(client.start(
-                MobileCaptureOriginDto.AUTOMATIC, "capture-test-no-consent", emptyList(), null, null, null,
-            ) == null)
-            check(state.captureLifecycleSnapshot().attempt == null)
-            check(client.current().error == context.getString(R.string.capture_not_admitted))
+            for (legacyConsent in listOf(false, true)) {
+                state.setAutomaticDiagnosticRecordingEnabled(legacyConsent)
+                check(client.start(
+                    MobileCaptureOriginDto.AUTOMATIC,
+                    "capture-test-legacy-consent-$legacyConsent",
+                    emptyList(), null, null, null,
+                ) == null) { "Automatic diagnostic capture must remain refused with legacy consent=$legacyConsent" }
+                check(state.captureLifecycleSnapshot().attempt == null)
+                check(client.current().error == context.getString(R.string.capture_not_admitted))
+            }
+        } finally {
+            try { await { done -> client.close { done(Result.success(Unit)) } } }
+            finally {
+                state.setAutomaticDiagnosticRecordingEnabled(priorConsent)
+                state.close()
+            }
+            // Do not close or delete the shared app-owned database.
+        }
+    }
+
+    @Test
+    fun borrowedManualCaptureFinishKeepsConnectionTokenAndTransport() {
+        val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
+        val application = context as CutoutApplication
+        val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
+        val state = CutoutSessionStateHandle.withDatabase(database)
+        val platformId = "capture-borrowed-${UUID.randomUUID()}"
+        var finishDisposition: MobileCaptureTransportReleaseDto? = null
+        val client = AndroidDiagnosticCaptureClient(
+            context, { state }, { database }, { action -> action(); true }, { disposition ->
+                finishDisposition = disposition
+                false
+            },
+        )
+        try {
+            val token = checkNotNull(state.beginConnectionAttempt(platformId, android.os.SystemClock.elapsedRealtime().toULong()).token)
+            state.connectionLinkEstablished(token)
+            val reply = byteArrayOf(
+                2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+                38, 208.toByte(), 3,
+            )
+            val session = lol.cutout.PevSession(
+                state, token, { android.os.SystemClock.elapsedRealtime().toULong() }, {},
+            ) { _, _, _ -> client.updateIdentity(token) }
+            session.notification(ByteArray(16), ByteArray(16), reply)
+            check(state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED)
+
+            checkNotNull(client.start(
+                MobileCaptureOriginDto.MANUAL, platformId, emptyList(), "VESC", "borrowed test", token,
+                transportOwnership = MobileCaptureTransportOwnershipDto.BORROWED,
+            ))
+            client.linkUp(token, 20)
+            val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
+            check(admitted)
+            check(finishDisposition == null) { "Borrowed captures must not request transport release" }
+            check(state.connectionAttemptSnapshot().token == token)
+            check(state.connectionAttemptSnapshot().transport == MobileConnectionTransportStateDto.CONNECTED)
+            check(state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.VERIFIED)
         } finally {
             try { await { done -> client.close { done(Result.success(Unit)) } } }
             finally { state.close() }
-            // Do not close or delete the shared app-owned database.
+        }
+    }
+
+    @Test
+    fun pendingBorrowedCaptureFinishesWriterOnlyAfterConnectionBecomesRecordOnly() {
+        val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
+        val application = context as CutoutApplication
+        val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
+        val state = CutoutSessionStateHandle.withDatabase(database)
+        val platformId = "capture-pending-borrowed-${UUID.randomUUID()}"
+        var finishDisposition: MobileCaptureTransportReleaseDto? = null
+        val client = AndroidDiagnosticCaptureClient(
+            context, { state }, { database }, { action -> action(); true }, { disposition ->
+                finishDisposition = disposition
+                false
+            },
+        )
+        try {
+            val token = checkNotNull(state.beginConnectionAttempt(platformId, android.os.SystemClock.elapsedRealtime().toULong()).token)
+            state.connectionLinkEstablished(token)
+            check(state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.PENDING)
+            checkNotNull(client.start(
+                MobileCaptureOriginDto.MANUAL, platformId, emptyList(), null, null, token,
+                transportOwnership = MobileCaptureTransportOwnershipDto.BORROWED,
+            ))
+            client.linkUp(token, 20)
+
+            state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
+            val deadline = checkNotNull(state.connectionAttemptSnapshot().deadlineMs)
+            state.expireConnectionAttempt(token, deadline + 1UL)
+            check(state.deviceSessionSnapshot().connection.readiness == MobileConnectionReadinessDto.RECORD_ONLY)
+
+            val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
+            check(admitted)
+            check(finishDisposition == null) { "An unresolved borrowed attempt must not be released by capture finish" }
+            val attempt = state.connectionAttemptSnapshot()
+            check(attempt.token == token)
+            check(attempt.transport == MobileConnectionTransportStateDto.CONNECTED)
+            check(attempt.readiness == MobileConnectionReadinessDto.RECORD_ONLY)
+        } finally {
+            try { await { done -> client.close { done(Result.success(Unit)) } } }
+            finally { state.close() }
+        }
+    }
+
+    @Test
+    fun captureOwnedManualFinishRequestsReleaseOfOnlyItsConnectionAttempt() {
+        val context = ApplicationProvider.getApplicationContext<Context>().applicationContext
+        val application = context as CutoutApplication
+        val database = await { done -> application.rides.withDatabase({ it }, done) }.getOrThrow()
+        val state = CutoutSessionStateHandle.withDatabase(database)
+        val platformId = "capture-owned-${UUID.randomUUID()}"
+        var finishDisposition: MobileCaptureTransportReleaseDto? = null
+        val client = AndroidDiagnosticCaptureClient(
+            context, { state }, { database }, { action -> action(); true }, { disposition ->
+                finishDisposition = disposition
+                true
+            },
+        )
+        try {
+            state.setDeviceConnectionIntent(DeviceConnectionIntentDto.RECORD_ONLY)
+            val token = checkNotNull(state.beginConnectionAttempt(platformId, android.os.SystemClock.elapsedRealtime().toULong()).token)
+            checkNotNull(client.start(
+                MobileCaptureOriginDto.MANUAL, platformId, emptyList(), null, null, token,
+                transportOwnership = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
+            ))
+            client.linkUp(token, 20)
+
+            val admitted = await { done -> client.beginManualFinish { done(Result.success(it)) } }.getOrThrow()
+            check(admitted)
+            val release = finishDisposition as? MobileCaptureTransportReleaseDto.ReleaseOwnedTransport
+            check(release?.connectionAttempt == token) { "Capture finish must request release of its exact token" }
+        } finally {
+            try { await { done -> client.close { done(Result.success(Unit)) } } }
+            finally { state.close() }
         }
     }
 

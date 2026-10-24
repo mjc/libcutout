@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    CaptureOrigin, CaptureSubmissionIntegrity, CaptureSubmissionProvenance, GattChannel,
-    MonotonicTimestamp, PevcapCapture, PevcapHeader, PevcapLocationSample, PevcapPhoneLocation,
-    PevcapRecord, WallClockUnixTimestamp, WriteMode,
+    CaptureOrigin, CaptureSubmissionIntegrity, CaptureSubmissionOrigin,
+    CaptureSubmissionProvenance, GattChannel, MonotonicTimestamp, PevcapCapture, PevcapHeader,
+    PevcapLocationSample, PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp, WriteMode,
 };
 
 const ARTIFACT: &str = "db240583-29ae-49e3-a101-ddd6878c34cc";
@@ -59,7 +59,7 @@ fn metadata() -> CaptureSubmissionMetadata {
         sha256: "a".repeat(64),
         bytes: 123,
         encoding: PevcapEncoding::Jsonl,
-        origin: CaptureOrigin::Automatic,
+        origin: CaptureOrigin::Automatic.into(),
         integrity: CaptureSubmissionIntegrity::Complete,
         provenance: CaptureSubmissionProvenance {
             source_artifact_id: ARTIFACT.to_owned(),
@@ -68,6 +68,28 @@ fn metadata() -> CaptureSubmissionMetadata {
             transformation: CaptureSubmissionTransformation::DatabaseExportMusicExcluded,
         },
     }
+}
+
+#[test]
+fn submission_metadata_preserves_unknown_origin_and_integrity_without_claiming_no_loss() {
+    let mut value = metadata();
+    value.origin = CaptureSubmissionOrigin::Unknown;
+    value.integrity = CaptureSubmissionIntegrity::Unknown;
+    value.validate().unwrap();
+    let json = serde_json::to_value(&value).unwrap();
+    assert_eq!(json["origin"], "unknown");
+    assert_eq!(json["integrity"], "unknown");
+    let decoded: CaptureSubmissionMetadata = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.origin, CaptureSubmissionOrigin::Unknown);
+    assert_eq!(decoded.integrity, CaptureSubmissionIntegrity::Unknown);
+}
+
+#[test]
+fn known_submission_provenance_wire_values_remain_compatible() {
+    let mut value = metadata();
+    assert_eq!(serde_json::to_value(&value).unwrap()["origin"], "automatic");
+    value.origin = CaptureSubmissionOrigin::Manual;
+    assert_eq!(serde_json::to_value(&value).unwrap()["origin"], "manual");
 }
 
 #[test]

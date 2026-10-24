@@ -30,6 +30,32 @@ pub enum CaptureSubmissionIntegrity {
         /// Observations the writer could not retain.
         dropped_messages: u64,
     },
+    /// The durable source predates a trustworthy writer-loss receipt.
+    Unknown,
+}
+
+/// Recording origin disclosed with a private submission.
+///
+/// Unlike [`CaptureOrigin`], this vocabulary includes old durable recordings whose
+/// header does not contain enough information to establish how recording began.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSubmissionOrigin {
+    /// Evidence collected while connecting or riding normally.
+    Automatic,
+    /// An explicit recording that must not be replaced by picker navigation.
+    Manual,
+    /// Legacy source metadata does not establish the recording origin.
+    Unknown,
+}
+
+impl From<CaptureOrigin> for CaptureSubmissionOrigin {
+    fn from(origin: CaptureOrigin) -> Self {
+        match origin {
+            CaptureOrigin::Automatic => Self::Automatic,
+            CaptureOrigin::Manual => Self::Manual,
+        }
+    }
 }
 
 /// How submitted bytes relate to the retained original.
@@ -72,7 +98,7 @@ pub struct CaptureSubmissionMetadata {
     /// Existing PEVCAP representation; not a new capture format.
     pub encoding: PevcapEncoding,
     /// Recording provenance, never a hardware-support gate.
-    pub origin: CaptureOrigin,
+    pub origin: CaptureSubmissionOrigin,
     /// Durable completeness, including disclosed observation loss.
     pub integrity: CaptureSubmissionIntegrity,
     /// Retained original and derivative relationship.

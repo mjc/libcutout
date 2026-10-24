@@ -17,9 +17,9 @@ use super::{
     remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
     ride_session_marker, route_points, save_device_name, save_music_event,
     save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
-    save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
-    sqlite_capabilities, trail_segments_in_bounds, transition_ride_with_telemetry,
-    update_ride_map_metadata_with_moving_time, voltage_sag_model,
+    save_selected_device, save_voltage_sag_model, selected_device, settle_inactive_live_ride,
+    settle_recovered_ride, sqlite_capabilities, trail_segments_in_bounds,
+    transition_ride_with_telemetry, update_ride_map_metadata_with_moving_time, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -53,6 +53,7 @@ pub(super) fn run(
         connection,
         database_path,
         legacy_artifact_scan: None,
+        capture_cleanup_cursor: None,
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
         maintenance_demand,
@@ -66,14 +67,15 @@ pub(super) fn run(
     let mut last_command_at = Instant::now();
     let mut next_compaction_attempt = last_command_at + Duration::from_secs(5);
     loop {
-        let idle_delay = match normalization_state {
-            super::normalization::BatchState::Pending => Duration::from_millis(10),
-            super::normalization::BatchState::Deferred
-            | super::normalization::BatchState::Finished => Duration::from_secs(1),
-        };
+        let idle_delay = maintenance_idle_delay(normalization_state);
         match receiver.recv_timeout(idle_delay) {
             Ok(command) => {
                 last_command_at = Instant::now();
+                if requests_capture_cleanup(&command) {
+                    worker.capture_cleanup_cursor = None;
+                    normalization_state = super::normalization::BatchState::Pending;
+                    next_compaction_attempt = last_command_at + Duration::from_secs(5);
+                }
                 if worker.dispatch(command).is_break() {
                     break;
                 }
@@ -83,6 +85,11 @@ pub(super) fn run(
                 match receiver.try_recv() {
                     Ok(command) => {
                         last_command_at = Instant::now();
+                        if requests_capture_cleanup(&command) {
+                            worker.capture_cleanup_cursor = None;
+                            normalization_state = super::normalization::BatchState::Pending;
+                            next_compaction_attempt = last_command_at + Duration::from_secs(5);
+                        }
                         if worker.dispatch(command).is_break() {
                             break;
                         }
@@ -119,10 +126,34 @@ pub(super) fn run(
     worker.stop();
 }
 
+fn requests_capture_cleanup(command: &Command) -> bool {
+    use super::capture_submission::Command as SubmissionCommand;
+    match command {
+        Command::CaptureSubmission(
+            SubmissionCommand::Apply { .. } | SubmissionCommand::Evidence { save: Some(_), .. },
+        )
+        | Command::FinishPevcapImport { .. }
+        | Command::AbortPevcapImport { .. }
+        | Command::FinishLiveCapture { .. }
+        | Command::FinalizeLiveCapture { .. } => true,
+        _ => false,
+    }
+}
+
+fn maintenance_idle_delay(state: super::normalization::BatchState) -> Duration {
+    match state {
+        super::normalization::BatchState::Pending => Duration::ZERO,
+        super::normalization::BatchState::Deferred | super::normalization::BatchState::Finished => {
+            Duration::from_secs(1)
+        }
+    }
+}
+
 struct DatabaseWorker<'a> {
     connection: Connection,
     database_path: PathBuf,
     legacy_artifact_scan: Option<super::normalization::LegacyArtifactScan>,
+    capture_cleanup_cursor: Option<String>,
     spatial_schema: SpatialSchemaState,
     worker_alive: &'a AtomicBool,
     maintenance_demand: &'a Arc<AtomicU64>,
@@ -140,6 +171,7 @@ impl DatabaseWorker<'_> {
             busy_timeout.connection_mut(),
             &self.database_path,
             &mut self.legacy_artifact_scan,
+            &mut self.capture_cleanup_cursor,
         );
         if busy_timeout.restore().is_err() {
             super::normalization::BatchState::Deferred
@@ -152,7 +184,18 @@ impl DatabaseWorker<'_> {
         connection: &mut Connection,
         database_path: &std::path::Path,
         legacy_artifact_scan: &mut Option<super::normalization::LegacyArtifactScan>,
+        capture_cleanup_cursor: &mut Option<String>,
     ) -> super::normalization::BatchState {
+        match super::bms_voltage::normalize_legacy_batch(
+            connection,
+            legacy_artifact_scan
+                .as_ref()
+                .and_then(super::normalization::LegacyArtifactScan::backfill_digest),
+        ) {
+            Ok(super::normalization::BatchState::Finished) => {}
+            Ok(state) => return state,
+            Err(_) => return super::normalization::BatchState::Deferred,
+        }
         match super::normalization::remove_redundant_semantic_batch(
             connection,
             legacy_artifact_scan
@@ -178,7 +221,11 @@ impl DatabaseWorker<'_> {
                         super::normalization::BatchState::Deferred
                     }
                     Ok(super::normalization::ArchiveState::Finished) => {
-                        super::normalization::BatchState::Finished
+                        super::capture_submission::cleanup_sent_capture_batch(
+                            connection,
+                            capture_cleanup_cursor,
+                        )
+                        .unwrap_or(super::normalization::BatchState::Deferred)
                     }
                 }
             }
@@ -362,8 +409,20 @@ impl DatabaseWorker<'_> {
                     connection, &digest, sequence, &chunk,
                 ));
             }
-            Command::PublishCaptureData { digest, reply } => {
-                let _ = reply.send(super::capture_data::publish(connection, &digest));
+            Command::PublishCaptureData {
+                digest,
+                source_artifact_id,
+                reply,
+            } => {
+                let result = match source_artifact_id {
+                    Some(source_artifact_id) => super::capture_data::publish_with_submission_alias(
+                        connection,
+                        &digest,
+                        source_artifact_id,
+                    ),
+                    None => super::capture_data::publish(connection, &digest),
+                };
+                let _ = reply.send(result);
             }
             Command::AbortCaptureData { digest, reply } => {
                 let _ = reply.send(super::capture_data::abort(connection, &digest));
@@ -427,6 +486,23 @@ impl DatabaseWorker<'_> {
                     replacement_candidate_vehicle.as_deref(),
                 ));
             }
+            Command::SettleInactiveLiveRide {
+                ride_id,
+                expected_evidence,
+                occurred_at_ms,
+                monotonic_at_ms,
+                replacement_candidate_vehicle,
+                reply,
+            } => {
+                let _ = reply.send(settle_inactive_live_ride(
+                    connection,
+                    ride_id,
+                    expected_evidence,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                    replacement_candidate_vehicle.as_deref(),
+                ));
+            }
             Command::CreateStartedRide {
                 source,
                 created_at_ms,
@@ -452,6 +528,7 @@ impl DatabaseWorker<'_> {
                 last_telemetry_at_ms,
                 motion,
                 moving_time_observation,
+                inactivity_evidence,
                 reply,
             } => {
                 let _ = reply.send(update_ride_map_metadata_with_moving_time(
@@ -463,6 +540,7 @@ impl DatabaseWorker<'_> {
                     last_telemetry_at_ms,
                     motion,
                     moving_time_observation,
+                    inactivity_evidence,
                 ));
             }
             Command::RecordBmsVoltageSamples { samples, reply } => {
@@ -842,6 +920,7 @@ impl DatabaseWorker<'_> {
                 telemetry_state,
                 moving_time_observation,
                 latest_vehicle_moving_time_observation,
+                inactivity_evidence,
                 reply,
             } => {
                 let _ = reply.send(append_location_with_moving_time(
@@ -853,6 +932,7 @@ impl DatabaseWorker<'_> {
                     SegmentStartReasonInput::Recorded(start_reason),
                     moving_time_observation,
                     latest_vehicle_moving_time_observation,
+                    inactivity_evidence,
                 ));
             }
             #[cfg(test)]
@@ -902,6 +982,35 @@ impl DatabaseWorker<'_> {
             }
             Command::NewestRecoverableRide { reply } => {
                 let _ = reply.send(newest_recoverable_ride(connection));
+            }
+            Command::RideInactivityEvidence { ride_id, reply } => {
+                let _ = reply.send(super::ride_inactivity::read(connection, ride_id));
+            }
+            Command::ObserveRideAppPresence {
+                ride_id,
+                order,
+                presence,
+                observed_at,
+                reply,
+            } => {
+                let _ = reply.send(super::ride_inactivity::observe_app_presence(
+                    connection,
+                    ride_id,
+                    order,
+                    presence,
+                    observed_at,
+                ));
+            }
+            Command::ObserveVerifiedDeviceSeen {
+                ride_id,
+                observed_at,
+                reply,
+            } => {
+                let _ = reply.send(super::ride_inactivity::observe_verified_device_seen(
+                    connection,
+                    ride_id,
+                    observed_at,
+                ));
             }
             Command::RestoreSnapshot { reply } => {
                 let _ = reply.send(load_ride_restore_snapshot(connection));
@@ -1049,6 +1158,22 @@ mod normalization_busy_timeout_tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn runnable_maintenance_drains_without_artificial_waits_but_blocked_work_backs_off() {
+        assert_eq!(
+            super::maintenance_idle_delay(BatchState::Pending),
+            Duration::ZERO
+        );
+        assert_eq!(
+            super::maintenance_idle_delay(BatchState::Deferred),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            super::maintenance_idle_delay(BatchState::Finished),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[test]
     fn worker_normalization_yields_to_writer_and_restores_busy_timeout() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("worker-busy-normalization.sqlite");
@@ -1068,6 +1193,7 @@ mod normalization_busy_timeout_tests {
             connection,
             database_path,
             legacy_artifact_scan: None,
+            capture_cleanup_cursor: None,
             spatial_schema: SpatialSchemaState::Uninitialized,
             worker_alive: &worker_alive,
             maintenance_demand: &maintenance_demand,

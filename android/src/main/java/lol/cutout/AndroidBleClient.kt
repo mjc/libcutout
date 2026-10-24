@@ -53,7 +53,23 @@ class AndroidBleClient(
             state = { state },
             database = { (context.applicationContext as CutoutApplication).rides.databaseForNativeOwner() },
             postOwner = ::postOnOwner,
-            onFinishManual = { connection?.finishTransport(failed = false) },
+            onFinishManual = { disposition ->
+                when (disposition) {
+                    is MobileCaptureTransportReleaseDto.ReleaseOwnedTransport -> {
+                        val token = disposition.connectionAttempt
+                        val active = connection?.takeIf {
+                            it.token == token && state.connectionAttemptSnapshot().token == token
+                        }
+                        if (active == null) false
+                        else {
+                            active.finishTransport(failed = false)
+                            true
+                        }
+                    }
+                    MobileCaptureTransportReleaseDto.Rejected,
+                    MobileCaptureTransportReleaseDto.WriterOnly -> false
+                }
+            },
         )
     }
     // Saved editor drafts belong to this native owner, not merely a reusable attempt number.
@@ -261,15 +277,6 @@ class AndroidBleClient(
     private fun startConnection(device: BluetoothDevice, token: MobileConnectionAttemptTokenDto, recordOnly: Boolean = false) {
         view = view.copy(phase = NativePhase.CONNECTING, telemetry = null, settings = null, bms = null,
             session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL)
-        if (!recordOnly) {
-            val advertisement = found[device.address]?.second
-            diagnostics.start(
-                MobileCaptureOriginDto.AUTOMATIC, device.address,
-                advertisement?.advertisedServices ?: emptyList(),
-                advertisement?.advertisedName ?: runCatching { device.name }.getOrNull(),
-                null, token,
-            )
-        }
         val next = Connection(token, device, recordOnly)
         connection = next
         try {
@@ -294,7 +301,7 @@ class AndroidBleClient(
         }
     }
 
-    /** Starts the Swift-style diagnostic-only route; it never promotes this link to protocol control. */
+    /** Starts a manual diagnostic capture, borrowing any current connected attempt when available. */
     fun startManualCapture(
         platformId: String,
         note: String?,
@@ -302,7 +309,40 @@ class AndroidBleClient(
         completed: (Boolean) -> Unit,
     ) = postOnOwner {
         val selected = found[platformId]
-        if (selected == null || connection != null || !state.captureLifecycleSnapshot().canStart) {
+        if (!state.captureLifecycleSnapshot().canStart) {
+            main.post { completed(false) }
+            return@postOnOwner
+        }
+        val active = connection
+        if (active != null) {
+            val currentConnection = state.connectionAttemptSnapshot()
+            if (active.device.address != platformId ||
+                currentConnection.token != active.token ||
+                currentConnection.transport != MobileConnectionTransportStateDto.CONNECTED) {
+                main.post { completed(false) }
+                return@postOnOwner
+            }
+            val annotation = listOfNotNull(note?.takeIf(String::isNotBlank), description?.takeIf(String::isNotBlank))
+                .joinToString(" — ").ifBlank { null }
+            val generation = diagnostics.start(
+                origin = MobileCaptureOriginDto.MANUAL,
+                platformId = platformId,
+                advertisedServices = selected?.second?.advertisedServices ?: emptyList(),
+                advertisedName = selected?.second?.advertisedName
+                    ?: view.session?.identity?.model
+                    ?: runCatching { active.device.name }.getOrNull(),
+                description = annotation,
+                connectionToken = active.token,
+                transportOwnership = MobileCaptureTransportOwnershipDto.BORROWED,
+            )
+            if (generation != null) {
+                diagnostics.linkUp(active.token, active.session.writeLimit.toInt())
+                active.captureLinkUp = diagnostics.hasWriter(active.token)
+            }
+            main.post { completed(generation != null) }
+            return@postOnOwner
+        }
+        if (selected == null) {
             main.post { completed(false) }
             return@postOnOwner
         }
@@ -327,6 +367,7 @@ class AndroidBleClient(
             advertisedName = selected.second.advertisedName,
             description = annotation,
             connectionToken = token,
+            transportOwnership = MobileCaptureTransportOwnershipDto.CAPTURE_OWNED,
         )
         if (generation == null) {
             state.disconnectConnectionAttempt()
@@ -526,7 +567,7 @@ class AndroidBleClient(
         var gatt: BluetoothGatt? = null
         private var nativeNotificationCount = 0UL
         private var captureWriteId = 0UL
-        private var captureLinkUp = false
+        var captureLinkUp = false
         private var retired = false
         private var ending = false
         private var draining = false

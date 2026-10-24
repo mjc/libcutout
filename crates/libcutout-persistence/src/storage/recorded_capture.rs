@@ -1,6 +1,10 @@
 //! Finished-writer admission and recording provenance in the existing capture store.
 
-use super::{Command, PevcapImportReceipt, RideDatabase, StorageError, pevcap_import_receipt};
+use super::{
+    CaptureSubmissionError, CaptureSubmissionLocalPayloadState, CaptureSubmissionSource, Command,
+    PevcapImportReceipt, RideDatabase, StorageError, capture_submission::SourceRecord,
+    pevcap_import_receipt,
+};
 use crate::{CaptureArtifactId, SavedCaptureArtifact};
 use cutout_core::{
     CaptureOrigin, PevcapEncoding, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
@@ -39,6 +43,83 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS pevcap_recordings (
 );";
 
 impl RideDatabase {
+    /// Exports a retained writer artifact from the canonical SQLite capture store.
+    ///
+    /// This resolves only a published recorded artifact and refuses Send payloads that are
+    /// pending or have been removed. It never reads or deletes a caller-owned source file.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::PevcapCaptureNotFound`] when the artifact has no published
+    /// canonical bytes, [`StorageError::CapturePayloadUnavailable`] after Send-authorized local
+    /// cleanup has started, or an integrity, storage, or destination error.
+    pub fn export_recorded_capture(
+        &self,
+        artifact_id: CaptureArtifactId,
+        destination: &std::path::Path,
+    ) -> Result<String, StorageError> {
+        if self
+            .recorded_payload_state(artifact_id)?
+            .is_some_and(|state| state != CaptureSubmissionLocalPayloadState::Retained)
+        {
+            return Err(StorageError::CapturePayloadUnavailable);
+        }
+        match self.submission_source(CaptureSubmissionSource::RecordedArtifact(artifact_id)) {
+            Ok(SourceRecord::Live(entry)) => {
+                match self.export_live_capture(entry.id, destination) {
+                    Ok(digest) => Ok(digest),
+                    Err(error) => {
+                        if self
+                            .recorded_payload_state(artifact_id)?
+                            .is_some_and(|state| {
+                                state != CaptureSubmissionLocalPayloadState::Retained
+                            })
+                        {
+                            Err(StorageError::CapturePayloadUnavailable)
+                        } else {
+                            Err(StorageError::PevcapCaptureIntegrity(error))
+                        }
+                    }
+                }
+            }
+            Ok(SourceRecord::File(receipt) | SourceRecord::FileWithIdentity { receipt, .. }) => {
+                match self.export_pevcap_capture(&receipt.artifact_digest, destination) {
+                    Err(StorageError::PevcapCaptureNotFound) => {
+                        Err(StorageError::CapturePayloadUnavailable)
+                    }
+                    result => result,
+                }
+            }
+            Err(CaptureSubmissionError::NotFound) => {
+                if self
+                    .recorded_payload_state(artifact_id)?
+                    .is_some_and(|state| state != CaptureSubmissionLocalPayloadState::Retained)
+                {
+                    Err(StorageError::CapturePayloadUnavailable)
+                } else {
+                    Err(StorageError::PevcapCaptureNotFound)
+                }
+            }
+            Err(CaptureSubmissionError::Storage(storage)) => Err(storage),
+            Err(other) => Err(StorageError::PevcapCaptureIntegrity(other.to_string())),
+        }
+    }
+
+    fn recorded_payload_state(
+        &self,
+        artifact_id: CaptureArtifactId,
+    ) -> Result<Option<CaptureSubmissionLocalPayloadState>, StorageError> {
+        let status =
+            match self.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id)) {
+                Ok(status) => status,
+                Err(CaptureSubmissionError::Storage(storage)) => return Err(storage),
+                Err(CaptureSubmissionError::NotFound) => return Ok(None),
+                Err(other) => {
+                    return Err(StorageError::PevcapCaptureIntegrity(other.to_string()));
+                }
+            };
+        Ok(status.map(|status| status.local_payload_state))
+    }
+
     /// Retains a finished writer's original bytes without deriving a GPS ride.
     ///
     /// Call off transport/UI callback threads. The source file is never removed.
@@ -172,7 +253,7 @@ pub(super) fn receipt_for_id(
     let digest: Option<String> = connection
         .query_row(
             "SELECT r.artifact_digest FROM pevcap_recordings r
-         JOIN pevcap_captures c ON c.receipt_digest = r.artifact_digest WHERE r.artifact_id = ?1",
+         JOIN pevcap_imports i ON i.artifact_digest = r.artifact_digest WHERE r.artifact_id = ?1",
             [id.to_string()],
             |row| row.get(0),
         )
@@ -243,4 +324,61 @@ fn verification_from_db(value: &str) -> Result<VerificationStatus, StorageError>
 
 fn invalid(field: &'static str, value: String) -> StorageError {
     StorageError::InvalidStoredValue { field, value }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipt_lookup_survives_capture_payload_retirement() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .unwrap();
+        super::super::migrations::create_current_schema(&connection).unwrap();
+        let digest = "a".repeat(64);
+        let artifact_id = CaptureArtifactId::from_uuid(Uuid::new_v4());
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports (artifact_digest, artifact_path, outcome, artifact_size,
+                 record_count, location_count, imported_at_ms)
+                 VALUES (?1, NULL, 'capture_only', 12, 3, 0, 42)",
+                [&digest],
+            )
+            .unwrap();
+        insert(
+            &connection,
+            &digest,
+            &RecordedCapture {
+                artifact_id,
+                origin: CaptureOrigin::Manual,
+                advertised_name: Some("device".to_owned()),
+                platform_identifier: "platform-id".to_owned(),
+                started_at: WallClockUnixTimestamp::new(17),
+                model: None,
+            },
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures (artifact_digest, receipt_digest, encoding, artifact_size,
+                 written_bytes, next_sequence) VALUES (?1, ?1, 'jsonl', 12, 12, 1)",
+                [&digest],
+            )
+            .unwrap();
+
+        connection
+            .execute(
+                "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+                [&digest],
+            )
+            .unwrap();
+
+        let receipt = receipt_for_id(&connection, artifact_id)
+            .unwrap()
+            .expect("import receipt metadata remains after local payload retirement");
+        assert_eq!(receipt.artifact_digest, digest);
+        assert_eq!(receipt.recording.unwrap().artifact_id, artifact_id);
+    }
 }

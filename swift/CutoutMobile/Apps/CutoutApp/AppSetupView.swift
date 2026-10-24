@@ -85,33 +85,7 @@ struct AppSetupView: View {
                         .accessibilityIdentifier("setup.forget-saved-device")
                     }
                 }
-                Section(localizedAppText("captures.diagnostics")) {
-                    if let enabled = model.automaticDiagnosticRecordingEnabled {
-                        Toggle(
-                            localizedAppText("setup.diagnostics.automatic"),
-                            isOn: Binding(
-                                get: { model.automaticDiagnosticRecordingEnabled ?? enabled },
-                                set: { value in
-                                    Task { await model.setAutomaticDiagnosticRecordingEnabled(value) }
-                                }
-                            )
-                        )
-                        .disabled(model.diagnosticSettingsBusy)
-                        .accessibilityIdentifier("setup.diagnostics.automatic")
-                    } else if !model.diagnosticSettingsError {
-                        ProgressView(localizedAppText("setup.diagnostics.automatic"))
-                    }
-                    Text(localizedAppText("setup.diagnostics.explanation"))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    if model.diagnosticSettingsError {
-                        Text(localizedAppText("setup.diagnostics.failed"))
-                            .foregroundStyle(.red)
-                        Button(localizedAppText("setup.diagnostics.retry")) {
-                            Task { await model.loadDiagnosticRecordingSetting() }
-                        }
-                        .disabled(model.diagnosticSettingsBusy)
-                    }
+                Section(localizedAppText("captures.title")) {
                     NavigationLink(value: Destination.captures) {
                         Label(localizedAppText("captures.title"), systemImage: "waveform.path")
                     }

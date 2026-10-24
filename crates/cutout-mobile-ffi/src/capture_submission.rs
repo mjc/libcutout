@@ -1,6 +1,8 @@
 //! Explicit private diagnostic Send through Rust's retained snapshot owner.
 
+mod bulk;
 mod http;
+pub use bulk::*;
 
 use crate::{RideDatabaseHandle, persistence};
 use cutout_core::{CaptureSubmissionIntegrity, CaptureSubmissionReceipt};
@@ -14,6 +16,8 @@ pub enum MobileCaptureSubmissionSourceDto {
     LiveCapture { id: String },
     /// Consumed writer's retained artifact UUID, independent of its file path.
     RecordedArtifact { id: String },
+    /// Canonical SHA-256 of an imported PEVCAP capture without writer identity.
+    PevcapDigest { sha256: String },
 }
 
 impl TryFrom<MobileCaptureSubmissionSourceDto> for persistence::CaptureSubmissionSource {
@@ -29,6 +33,11 @@ impl TryFrom<MobileCaptureSubmissionSourceDto> for persistence::CaptureSubmissio
             MobileCaptureSubmissionSourceDto::RecordedArtifact { id } => {
                 persistence::CaptureArtifactId::parse(&id)
                     .map(Self::RecordedArtifact)
+                    .map_err(|_| MobileCaptureSubmissionError::InvalidSource)
+            }
+            MobileCaptureSubmissionSourceDto::PevcapDigest { sha256 } => {
+                persistence::PevcapDigest::parse(&sha256)
+                    .map(Self::PevcapDigest)
                     .map_err(|_| MobileCaptureSubmissionError::InvalidSource)
             }
         }
@@ -56,6 +65,29 @@ pub enum MobileCaptureSubmissionPhaseDto {
     Deleting,
     /// Deletion has been confirmed, preserving the original recording.
     Deleted,
+}
+
+/// Availability of the private payload in the current local database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureSubmissionLocalPayloadStateDto {
+    /// Bytes are retained locally.
+    Retained,
+    /// Receipt-confirmed cleanup is still in progress.
+    RemovalPending,
+    /// Payload bytes were removed; receipt details remain available.
+    Removed,
+}
+
+impl From<persistence::CaptureSubmissionLocalPayloadState>
+    for MobileCaptureSubmissionLocalPayloadStateDto
+{
+    fn from(state: persistence::CaptureSubmissionLocalPayloadState) -> Self {
+        match state {
+            persistence::CaptureSubmissionLocalPayloadState::Retained => Self::Retained,
+            persistence::CaptureSubmissionLocalPayloadState::RemovalPending => Self::RemovalPending,
+            persistence::CaptureSubmissionLocalPayloadState::Removed => Self::Removed,
+        }
+    }
 }
 
 impl From<persistence::CaptureSubmissionPhase> for MobileCaptureSubmissionPhaseDto {
@@ -208,6 +240,27 @@ impl From<persistence::CaptureSubmissionTransferError> for MobileCaptureSubmissi
     }
 }
 
+/// Provenance origin retained by a private Send snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureSubmissionOriginDto {
+    /// Captured during ordinary connection or ride use.
+    Automatic,
+    /// Captured after explicit recording action.
+    Manual,
+    /// Legacy source does not establish how recording began.
+    Unknown,
+}
+
+impl From<cutout_core::CaptureSubmissionOrigin> for MobileCaptureSubmissionOriginDto {
+    fn from(origin: cutout_core::CaptureSubmissionOrigin) -> Self {
+        match origin {
+            cutout_core::CaptureSubmissionOrigin::Automatic => Self::Automatic,
+            cutout_core::CaptureSubmissionOrigin::Manual => Self::Manual,
+            cutout_core::CaptureSubmissionOrigin::Unknown => Self::Unknown,
+        }
+    }
+}
+
 /// Current Rust-owned operation, safe to display after relaunch without sending.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCaptureSubmissionStatusDto {
@@ -215,6 +268,12 @@ pub struct MobileCaptureSubmissionStatusDto {
     pub operation_id: String,
     /// Current persisted phase, including unconfirmed remote removal.
     pub phase: MobileCaptureSubmissionPhaseDto,
+    /// Retained recording provenance; unknown is not inferred from the Send action.
+    pub origin: MobileCaptureSubmissionOriginDto,
+    /// Durable completeness. Use this value rather than interpreting a zero loss count.
+    pub integrity: crate::MobileCaptureIntegrityDto,
+    /// Local capture payload availability, independent from remote deletion state.
+    pub local_payload_state: MobileCaptureSubmissionLocalPayloadStateDto,
     /// Actual included categories, independent of native presentation flags.
     pub categories: MobileCaptureSubmissionCategoriesDto,
     /// Known observation loss disclosed with incomplete durable recordings.
@@ -230,12 +289,21 @@ pub struct MobileCaptureSubmissionStatusDto {
 impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatusDto {
     fn from(status: persistence::CaptureSubmissionStatus) -> Self {
         let dropped_messages = match status.metadata.integrity {
-            CaptureSubmissionIntegrity::Complete => 0,
+            CaptureSubmissionIntegrity::Complete | CaptureSubmissionIntegrity::Unknown => 0,
             CaptureSubmissionIntegrity::Incomplete { dropped_messages } => dropped_messages,
         };
         Self {
             operation_id: status.operation_id,
             phase: status.phase.into(),
+            origin: status.metadata.origin.into(),
+            integrity: match status.metadata.integrity {
+                CaptureSubmissionIntegrity::Complete => crate::MobileCaptureIntegrityDto::Complete,
+                CaptureSubmissionIntegrity::Incomplete { dropped_messages } => {
+                    crate::MobileCaptureIntegrityDto::Incomplete { dropped_messages }
+                }
+                CaptureSubmissionIntegrity::Unknown => crate::MobileCaptureIntegrityDto::Unknown,
+            },
+            local_payload_state: status.local_payload_state.into(),
             categories: status.categories.into(),
             dropped_messages,
             byte_count: status.metadata.bytes,
@@ -356,7 +424,7 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
             Error::NotFinished | Error::ProvenanceUnavailable | Error::InvalidState => {
                 Self::NotReady
             }
-            Error::InvalidCapture => Self::InvalidCapture,
+            Error::InvalidCapture | Error::TooLarge => Self::InvalidCapture,
             Error::WrongAccount => Self::Unauthorized,
             Error::Storage(_) => Self::StorageFailure,
         }
@@ -648,6 +716,9 @@ mod tests {
             MobileCaptureSubmissionSourceDto::RecordedArtifact {
                 id: "not-a-writer-receipt".into(),
             },
+            MobileCaptureSubmissionSourceDto::PevcapDigest {
+                sha256: "NOT-A-SHA256".into(),
+            },
         ] {
             assert_eq!(
                 persistence::CaptureSubmissionSource::try_from(source),
@@ -664,6 +735,14 @@ mod tests {
         assert!(
             persistence::CaptureSubmissionSource::try_from(
                 MobileCaptureSubmissionSourceDto::RecordedArtifact { id }
+            )
+            .is_ok()
+        );
+        assert!(
+            persistence::CaptureSubmissionSource::try_from(
+                MobileCaptureSubmissionSourceDto::PevcapDigest {
+                    sha256: "ab".repeat(32),
+                }
             )
             .is_ok()
         );
@@ -712,6 +791,27 @@ mod tests {
             MobileCaptureSubmissionPhaseDto::Cancelling
         );
         database.inner.clone().shutdown()?;
+        Ok(())
+    }
+
+    #[test]
+    fn status_projection_keeps_unknown_origin_and_integrity_explicit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = TestDirectory::new()?;
+        let (database, source) = finished_capture(&directory.0)?;
+        let mut status = database
+            .inner
+            .prepare_capture_submission(source.try_into()?)?;
+        status.metadata.origin = cutout_core::CaptureSubmissionOrigin::Unknown;
+        status.metadata.integrity = CaptureSubmissionIntegrity::Unknown;
+
+        let projected: MobileCaptureSubmissionStatusDto = status.into();
+        assert_eq!(projected.origin, MobileCaptureSubmissionOriginDto::Unknown);
+        assert_eq!(
+            projected.integrity,
+            crate::MobileCaptureIntegrityDto::Unknown
+        );
+        assert_eq!(projected.dropped_messages, 0);
         Ok(())
     }
 
@@ -835,7 +935,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ffi_send_receives_an_authenticated_server_receipt_then_deletes_only_the_remote_copy()
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one server-backed scenario verifies receipt, local cleanup and remote deletion together"
+    )]
+    async fn ffi_send_receives_a_receipt_removes_local_payload_and_deletes_remote_copy()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = TestDirectory::new()?;
         let (database, source) = finished_capture(&directory.0)?;
@@ -884,18 +988,55 @@ mod tests {
             )
             .await?;
         assert_eq!(sent.phase, MobileCaptureSubmissionPhaseDto::Sent);
+        assert_eq!(
+            sent.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::RemovalPending
+        );
         let receipt = sent.receipt.clone().ok_or("durable receipt missing")?;
         assert_eq!(receipt.operation_id, prepared.operation_id);
         assert_eq!(receipt.bytes, prepared.byte_count);
-        assert_eq!(
-            client
-                .send(
-                    prepared.operation_id.clone(),
-                    account_id.clone(),
-                    token.clone()
-                )
-                .await?,
-            sent
+        let repeated_send = client
+            .send(
+                prepared.operation_id.clone(),
+                account_id.clone(),
+                token.clone(),
+            )
+            .await?;
+        assert_eq!(repeated_send.phase, sent.phase);
+        assert_eq!(repeated_send.operation_id, sent.operation_id);
+        assert_eq!(repeated_send.receipt, sent.receipt);
+        assert!(matches!(
+            repeated_send.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::RemovalPending
+                | MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        ));
+        let cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let removed = loop {
+            let status = client
+                .status(source.clone())
+                .await?
+                .ok_or("sent submission status disappeared during cleanup")?;
+            if status.local_payload_state == MobileCaptureSubmissionLocalPayloadStateDto::Removed {
+                break status;
+            }
+            if tokio::time::Instant::now() >= cleanup_deadline {
+                return Err(
+                    "receipt-confirmed local payload cleanup did not finish before deadline".into(),
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        assert_eq!(removed.phase, MobileCaptureSubmissionPhaseDto::Sent);
+        assert_eq!(removed.receipt, Some(receipt.clone()));
+        let persistence::CaptureSubmissionSource::LiveCapture(id) = source.clone().try_into()?
+        else {
+            return Err("expected live source".into());
+        };
+        assert!(
+            database
+                .inner
+                .export_live_capture(id, &directory.0.join("after-send.jsonl"))
+                .is_err()
         );
         let wrong_account = client
             .delete(
@@ -912,7 +1053,24 @@ mod tests {
             .delete(prepared.operation_id.clone(), account_id, token.clone())
             .await?;
         assert_eq!(deleted.phase, MobileCaptureSubmissionPhaseDto::Deleted);
-        assert_eq!(client.status(source.clone()).await?, Some(deleted));
+        assert_eq!(deleted.receipt.as_ref(), Some(&receipt));
+        assert_eq!(
+            deleted.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        );
+        let deleted_status = client
+            .status(source.clone())
+            .await?
+            .ok_or("deleted submission status disappeared")?;
+        assert_eq!(
+            deleted_status.phase,
+            MobileCaptureSubmissionPhaseDto::Deleted
+        );
+        assert_eq!(deleted_status.receipt, Some(receipt.clone()));
+        assert_eq!(
+            deleted_status.local_payload_state,
+            MobileCaptureSubmissionLocalPayloadStateDto::Removed
+        );
         let remote = http
             .get(format!(
                 "{base_url}v1/capture-submissions/{}",
@@ -922,16 +1080,6 @@ mod tests {
             .send()
             .await?;
         assert_eq!(remote.status(), reqwest::StatusCode::NOT_FOUND);
-        let persistence::CaptureSubmissionSource::LiveCapture(id) = source.try_into()? else {
-            return Err("expected live source".into());
-        };
-        let exported = database
-            .inner
-            .export_live_capture(id, &directory.0.join("after-delete.jsonl"))?;
-        assert_eq!(
-            exported, receipt.sha256,
-            "remote deletion must preserve every local capture byte"
-        );
         task.abort();
         database.inner.clone().shutdown()?;
         Ok(())

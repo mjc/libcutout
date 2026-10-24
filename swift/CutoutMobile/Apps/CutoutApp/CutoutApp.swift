@@ -79,6 +79,7 @@ struct CutoutApp: App {
                     case .active:
                         model?.appDidBecomeActive()
                         if model != nil {
+                            Task { await RustPersistenceStore.deduplicateManagedCaptureFiles() }
                             rideMapPresentation.charging.applicationDidBecomeActive()
                         }
                         lighting?.startIfRemembered()
@@ -200,6 +201,7 @@ struct CutoutApp: App {
             model = opened
             opened.start(sceneIsActive: latestScenePhase == .active)
             if latestScenePhase == .active {
+                Task { await RustPersistenceStore.deduplicateManagedCaptureFiles() }
                 rideMapPresentation.charging.applicationDidBecomeActive()
             }
             lighting.selectVehicle(opened.selectedRideIdentifier)
