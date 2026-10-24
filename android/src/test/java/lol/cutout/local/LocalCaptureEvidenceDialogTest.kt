@@ -2,6 +2,7 @@ package lol.cutout.local
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.os.Looper
 import android.view.View
 import lol.cutout.CaptureEvidenceDialog
 import lol.cutout.CutoutApplication
@@ -11,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -70,7 +72,9 @@ class LocalCaptureEvidenceDialogTest {
             assertTrue(remove.performClick())
             val confirmation = checkNotNull(dialog.removalConfirmationDialog)
             assertTrue(confirmation.isShowing)
+            shadowOf(Looper.getMainLooper()).idle()
             confirmation.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
             assertEquals(1, statusRefreshes)
             assertEquals("Remote delete cannot authorize local receipt cleanup", 0, receiptCleanups)
         } finally {
@@ -154,7 +158,9 @@ class LocalCaptureEvidenceDialogTest {
             assertEquals(1, prepares)
             assertEquals(0, sends)
 
+            shadowOf(Looper.getMainLooper()).idle()
             confirmation.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
             assertEquals(1, sends)
         } finally {
             dialog.confirmationDialog?.dismiss()
