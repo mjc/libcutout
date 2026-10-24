@@ -13,6 +13,7 @@ use cutout_core::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::{
     future::Future,
     io::{self, Cursor, Read},
@@ -376,7 +377,6 @@ impl CaptureSubmissionPayload {
 
 impl Read for CaptureSubmissionPayload {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        use sha2::Digest;
         if buffer.is_empty() || self.complete {
             return Ok(0);
         }
@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS capture_evidence (
 );";
 
 pub(super) enum SourceRecord {
-    Live(LiveCaptureHistoryEntry),
+    Live(Box<LiveCaptureHistoryEntry>),
     File(PevcapImportReceipt),
     /// Canonical bytes plus the durable operation owner's identity when a digest aliases it.
     FileWithIdentity {
@@ -710,6 +710,14 @@ impl RideDatabase {
             return Ok(status);
         }
         let record = self.submission_source(source)?;
+        self.prepare_capture_submission_from_record(source, record)
+    }
+
+    fn prepare_capture_submission_from_record(
+        &self,
+        source: CaptureSubmissionSource,
+        record: SourceRecord,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
         let temporary = tempfile::tempdir().map_err(StorageError::from)?;
         let snapshot = temporary.path().join("snapshot.jsonl");
         let SnapshotSource {
@@ -760,33 +768,12 @@ impl RideDatabase {
             super::ride_write::wall_clock_now_milliseconds()?,
             &CapturePublication::SubmissionSnapshot { source_artifact_id },
         )?;
-        if let Some(json) = &evidence_json {
-            use sha2::Digest;
-            let mut digest = sha2::Sha256::new();
-            let mut raw = std::fs::File::open(&snapshot).map_err(StorageError::from)?;
-            let mut buffer = vec![0; 64 * 1024];
-            loop {
-                let count = raw.read(&mut buffer).map_err(StorageError::from)?;
-                if count == 0 {
-                    break;
-                }
-                digest.update(&buffer[..count]);
-            }
-            digest.update(json.as_bytes());
-            metadata.evidence = Some(CaptureEvidenceManifest::new(
-                metadata.sha256.clone(),
-                metadata.bytes,
-                &evidence,
-            )?);
-            metadata.sha256 = hex::encode(digest.finalize());
-            metadata.bytes = metadata
-                .bytes
-                .checked_add(json.len() as u64)
-                .ok_or(CaptureSubmissionError::InvalidCapture)?;
-            metadata
-                .validate()
-                .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
-        }
+        append_evidence_to_submission_snapshot(
+            &mut metadata,
+            &snapshot,
+            &evidence,
+            evidence_json.as_deref(),
+        )?;
         let mut categories = summary.categories;
         categories.notes |= !evidence.note.is_empty();
         let reserved_source_sha256 = metadata.provenance.source_sha256.clone();
@@ -1064,7 +1051,6 @@ impl RideDatabase {
         &self,
         status: &CaptureSubmissionStatus,
     ) -> Result<CaptureSubmissionPayload, CaptureSubmissionError> {
-        use sha2::Digest;
         let evidence = self.request(|reply| {
             super::Command::CaptureSubmission(Command::SnapshotEvidence {
                 operation_id: status.operation_id.clone(),
@@ -1263,6 +1249,41 @@ impl RideDatabase {
     }
 }
 
+fn append_evidence_to_submission_snapshot(
+    metadata: &mut CaptureSubmissionMetadata,
+    snapshot: &std::path::Path,
+    evidence: &CaptureAttachments,
+    evidence_json: Option<&str>,
+) -> Result<(), CaptureSubmissionError> {
+    let Some(evidence_json) = evidence_json else {
+        return Ok(());
+    };
+    let mut digest = sha2::Sha256::new();
+    let mut raw = std::fs::File::open(snapshot).map_err(StorageError::from)?;
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let count = raw.read(&mut buffer).map_err(StorageError::from)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    digest.update(evidence_json.as_bytes());
+    metadata.evidence = Some(CaptureEvidenceManifest::new(
+        metadata.sha256.clone(),
+        metadata.bytes,
+        evidence,
+    )?);
+    metadata.sha256 = hex::encode(digest.finalize());
+    metadata.bytes = metadata
+        .bytes
+        .checked_add(evidence_json.len() as u64)
+        .ok_or(CaptureSubmissionError::InvalidCapture)?;
+    metadata
+        .validate()
+        .map_err(|_| CaptureSubmissionError::InvalidCapture)
+}
+
 fn source_record(
     connection: &Connection,
     source: CaptureSubmissionSource,
@@ -1270,11 +1291,11 @@ fn source_record(
     match source {
         CaptureSubmissionSource::LiveCapture(id) => {
             super::live_capture_history::lookup(connection, Some(id), None)
-                .map(|entry| entry.map(SourceRecord::Live))
+                .map(|entry| entry.map(|entry| SourceRecord::Live(Box::new(entry))))
         }
         CaptureSubmissionSource::RecordedArtifact(id) => {
             if let Some(entry) = super::live_capture_history::lookup(connection, None, Some(id))? {
-                return Ok(Some(SourceRecord::Live(entry)));
+                return Ok(Some(SourceRecord::Live(Box::new(entry))));
             }
             if let Some(receipt) = super::recorded_capture::receipt_for_id(connection, id)? {
                 return Ok(Some(SourceRecord::File(receipt)));
@@ -1285,7 +1306,7 @@ fn source_record(
             Ok(
                 super::live_capture_history::lookup(connection, Some(live_id), None)?
                     .filter(|entry| entry.recording.is_none())
-                    .map(SourceRecord::Live),
+                    .map(|entry| SourceRecord::Live(Box::new(entry))),
             )
         }
         CaptureSubmissionSource::PevcapDigest(digest) => {
@@ -1299,14 +1320,14 @@ fn source_record(
                 if let Some(entry) =
                     super::live_capture_history::lookup(connection, None, Some(source_artifact_id))?
                 {
-                    return Ok(Some(SourceRecord::Live(entry)));
+                    return Ok(Some(SourceRecord::Live(Box::new(entry))));
                 }
                 if let Ok(live_id) = LiveCaptureId::parse(&source_artifact_id.to_string())
                     && let Some(entry) =
                         super::live_capture_history::lookup(connection, Some(live_id), None)?
                     && entry.recording.is_none()
                 {
-                    return Ok(Some(SourceRecord::Live(entry)));
+                    return Ok(Some(SourceRecord::Live(Box::new(entry))));
                 }
                 return Ok(Some(SourceRecord::FileWithIdentity {
                     receipt,
@@ -1375,9 +1396,9 @@ fn source_artifact_id(entry: &LiveCaptureHistoryEntry) -> Result<CaptureArtifact
     )
 }
 
-/// Builds a stable RFC 9562 UUIDv8 in a private domain namespace from a canonical SHA-256.
+/// Builds a stable RFC 9562 `UUIDv8` in a private domain namespace from a canonical SHA-256.
 /// The digest remains separately recorded as the source identity and is never truncated for
-/// validation; UUIDv8 is only the existing UUID-shaped submission key.
+/// validation; `UUIDv8` is only the existing UUID-shaped submission key.
 pub(crate) fn legacy_capture_artifact_id(
     source_sha256: &str,
 ) -> Result<CaptureArtifactId, CaptureSubmissionError> {
@@ -1391,7 +1412,6 @@ pub(crate) fn legacy_capture_artifact_id(
     let source_digest =
         hex::decode(source_sha256).map_err(|_| CaptureSubmissionError::InvalidCapture)?;
     let mut digest = sha2::Sha256::new();
-    use sha2::Digest;
     digest.update(b"libcutout legacy capture artifact identity v1\0");
     digest.update(source_digest);
     let digest = digest.finalize();

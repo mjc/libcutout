@@ -2,9 +2,9 @@
 
 use super::super::{PevcapCaptureCursor, QueryLimit, StoredPevcapCapture, normalization};
 use super::{
-    CaptureSubmissionError, CaptureSubmissionLocalPayloadState, CaptureSubmissionSource,
-    CaptureSubmissionStatus, CaptureSubmissionTransport, LiveCaptureId, LiveCaptureIntegrity,
-    LiveCaptureState, PevcapEncoding, RideDatabase,
+    CaptureSubmissionError, CaptureSubmissionLocalPayloadState, CaptureSubmissionProgress,
+    CaptureSubmissionSource, CaptureSubmissionStatus, CaptureSubmissionTransport, LiveCaptureId,
+    LiveCaptureIntegrity, LiveCaptureState, PevcapEncoding, RideDatabase,
 };
 use crate::CaptureArtifactId;
 use cutout_core::{
@@ -234,6 +234,10 @@ pub type CaptureSubmissionBatchProgressCallback =
 
 impl RideDatabase {
     /// Builds a local-only, read-only inventory for one explicit review.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a database query or filesystem operation fails.
     pub fn review_capture_submission_batch(
         &self,
         managed_capture_directories: &[PathBuf],
@@ -242,6 +246,10 @@ impl RideDatabase {
     }
 
     /// Sends only reviewed candidate identities, in one shared serial owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plan is invalid or sending cannot be prepared.
     pub async fn send_capture_submission_batch<T: CaptureSubmissionTransport>(
         &self,
         plan: &CaptureSubmissionBatchPlan,
@@ -252,13 +260,8 @@ impl RideDatabase {
         progress: CaptureSubmissionBatchProgressCallback,
     ) -> Result<CaptureSubmissionBatchSummary, CaptureSubmissionError> {
         send_selected(
-            self,
-            plan,
+            BatchSender::new(self, plan, account_id, token, transport, progress),
             selected_source_artifact_ids,
-            account_id,
-            token,
-            transport,
-            progress,
         )
         .await
     }
@@ -267,17 +270,51 @@ impl RideDatabase {
 const BATCH_HISTORY_PAGE_SIZE: u32 = 100;
 const FILE_HASH_CHUNK_BYTES: usize = 64 * 1024;
 
+#[derive(Default)]
+struct ReviewInventory {
+    candidates: Vec<CaptureSubmissionBatchCandidate>,
+    sources: HashMap<String, PlannedSource>,
+    source_indices: HashMap<String, usize>,
+    canonical_digests: HashMap<String, String>,
+    managed_aliases: HashMap<String, Vec<ManagedFileLocator>>,
+}
+
 fn review(
     database: &RideDatabase,
     managed_capture_directories: &[PathBuf],
 ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
     let limit = QueryLimit::new(BATCH_HISTORY_PAGE_SIZE)?;
-    let mut candidates = Vec::new();
-    let mut sources = HashMap::new();
-    let mut source_indices = HashMap::new();
-    let mut canonical_digests = HashMap::<String, String>::new();
-    let mut managed_aliases = HashMap::<String, Vec<ManagedFileLocator>>::new();
+    let mut inventory = ReviewInventory::default();
 
+    collect_live_history(database, limit, &mut inventory)?;
+    collect_canonical_history(database, limit, &mut inventory)?;
+    collect_managed_files(database, managed_capture_directories, &mut inventory)?;
+
+    inventory
+        .candidates
+        .sort_by(|left, right| left.source_artifact_id.cmp(&right.source_artifact_id));
+    Ok(CaptureSubmissionBatchPlan {
+        candidates: Arc::new(inventory.candidates),
+        sources: Arc::new(inventory.sources),
+        managed_aliases: Arc::new(inventory.managed_aliases),
+        database_path: database.path.as_ref().clone(),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        running: Arc::new(AtomicBool::new(false)),
+    })
+}
+
+fn collect_live_history(
+    database: &RideDatabase,
+    limit: QueryLimit,
+    inventory: &mut ReviewInventory,
+) -> Result<(), CaptureSubmissionError> {
+    let ReviewInventory {
+        candidates,
+        sources,
+        source_indices,
+        canonical_digests,
+        ..
+    } = inventory;
     let mut live_cursor = None;
     loop {
         let page = database.list_live_capture_history(live_cursor.clone(), limit)?;
@@ -307,7 +344,8 @@ fn review(
             } else if entry.stored_bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
                 Err(CaptureSubmissionBatchEligibility::TooLarge)
             } else {
-                preview_live_capture(database, entry.id, &evidence).map_err(map_preview_error)
+                preview_live_capture(database, entry.id, &evidence)
+                    .map_err(|error| map_preview_error(&error))
             };
             let (summary, failure) = match preview {
                 Ok(summary) => (Some(summary), None),
@@ -353,102 +391,19 @@ fn review(
         }
     }
 
+    Ok(())
+}
+
+fn collect_canonical_history(
+    database: &RideDatabase,
+    limit: QueryLimit,
+    inventory: &mut ReviewInventory,
+) -> Result<(), CaptureSubmissionError> {
     let mut capture_cursor: Option<PevcapCaptureCursor> = None;
     loop {
         let page = database.list_pevcap_captures(capture_cursor, limit)?;
         for capture in page.captures {
-            let source_id = capture.submission.source_artifact_id.clone();
-            let locator = capture.submission.source;
-            let digest = capture.artifact_digest.clone();
-            if let Some(index) = source_indices.get(&source_id).copied() {
-                candidates[index].alias_count += 1;
-                canonical_digests.insert(digest, source_id);
-                continue;
-            }
-            let status = capture.submission.status.clone();
-            let source = if capture.recording.is_some() {
-                PlannedSource::RecordedArtifact {
-                    locator,
-                    digest: digest.clone(),
-                    bytes: capture.artifact_size,
-                    encoding: capture.encoding,
-                    status_fingerprint: status_fingerprint(status.as_ref()),
-                    evidence_fingerprint: String::new(),
-                }
-            } else {
-                PlannedSource::CanonicalCapture {
-                    locator,
-                    digest: digest.clone(),
-                    bytes: capture.artifact_size,
-                    encoding: capture.encoding,
-                    status_fingerprint: status_fingerprint(status.as_ref()),
-                    evidence_fingerprint: String::new(),
-                }
-            };
-            let evidence = database.capture_evidence(locator)?;
-            let source = match source {
-                PlannedSource::RecordedArtifact {
-                    locator,
-                    digest,
-                    bytes,
-                    encoding,
-                    status_fingerprint,
-                    ..
-                } => PlannedSource::RecordedArtifact {
-                    locator,
-                    digest,
-                    bytes,
-                    encoding,
-                    status_fingerprint,
-                    evidence_fingerprint: evidence_fingerprint(&evidence),
-                },
-                PlannedSource::CanonicalCapture {
-                    locator,
-                    digest,
-                    bytes,
-                    encoding,
-                    status_fingerprint,
-                    ..
-                } => PlannedSource::CanonicalCapture {
-                    locator,
-                    digest,
-                    bytes,
-                    encoding,
-                    status_fingerprint,
-                    evidence_fingerprint: evidence_fingerprint(&evidence),
-                },
-                source => source,
-            };
-            let preview = if capture.record_count == 0 {
-                Err(CaptureSubmissionBatchEligibility::Empty)
-            } else if capture.artifact_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
-                Err(CaptureSubmissionBatchEligibility::TooLarge)
-            } else {
-                preview_canonical_capture(
-                    database,
-                    &digest,
-                    capture.artifact_size,
-                    capture.encoding,
-                    &evidence,
-                )
-                .map_err(map_preview_error)
-            };
-            let (summary, failure) = match preview {
-                Ok(summary) => (Some(summary), None),
-                Err(failure) => (None, Some(failure)),
-            };
-            let candidate = candidate_for_imported(
-                source_id.clone(),
-                &capture,
-                status,
-                &evidence,
-                summary.as_ref(),
-                failure,
-            );
-            canonical_digests.insert(digest, source_id.clone());
-            source_indices.insert(source_id.clone(), candidates.len());
-            sources.insert(source_id, source);
-            candidates.push(candidate);
+            collect_canonical_capture(database, &capture, inventory)?;
         }
         capture_cursor = page.next_cursor;
         if capture_cursor.is_none() {
@@ -456,6 +411,133 @@ fn review(
         }
     }
 
+    Ok(())
+}
+
+fn collect_canonical_capture(
+    database: &RideDatabase,
+    capture: &StoredPevcapCapture,
+    inventory: &mut ReviewInventory,
+) -> Result<(), CaptureSubmissionError> {
+    let ReviewInventory {
+        candidates,
+        sources,
+        source_indices,
+        canonical_digests,
+        ..
+    } = inventory;
+    let source_id = capture.submission.source_artifact_id.clone();
+    let locator = capture.submission.source;
+    let digest = capture.artifact_digest.clone();
+    if let Some(index) = source_indices.get(&source_id).copied() {
+        candidates[index].alias_count += 1;
+        canonical_digests.insert(digest, source_id);
+        return Ok(());
+    }
+    let status = capture.submission.status.clone();
+    let source = if capture.recording.is_some() {
+        PlannedSource::RecordedArtifact {
+            locator,
+            digest: digest.clone(),
+            bytes: capture.artifact_size,
+            encoding: capture.encoding,
+            status_fingerprint: status_fingerprint(status.as_ref()),
+            evidence_fingerprint: String::new(),
+        }
+    } else {
+        PlannedSource::CanonicalCapture {
+            locator,
+            digest: digest.clone(),
+            bytes: capture.artifact_size,
+            encoding: capture.encoding,
+            status_fingerprint: status_fingerprint(status.as_ref()),
+            evidence_fingerprint: String::new(),
+        }
+    };
+    let evidence = database.capture_evidence(locator)?;
+    let source = match source {
+        PlannedSource::RecordedArtifact {
+            locator,
+            digest,
+            bytes,
+            encoding,
+            status_fingerprint,
+            ..
+        } => PlannedSource::RecordedArtifact {
+            locator,
+            digest,
+            bytes,
+            encoding,
+            status_fingerprint,
+            evidence_fingerprint: evidence_fingerprint(&evidence),
+        },
+        PlannedSource::CanonicalCapture {
+            locator,
+            digest,
+            bytes,
+            encoding,
+            status_fingerprint,
+            ..
+        } => PlannedSource::CanonicalCapture {
+            locator,
+            digest,
+            bytes,
+            encoding,
+            status_fingerprint,
+            evidence_fingerprint: evidence_fingerprint(&evidence),
+        },
+        source => source,
+    };
+    let (summary, failure) = preview_canonical_candidate(database, capture, &evidence, &digest);
+    let candidate = candidate_for_imported(
+        source_id.clone(),
+        capture,
+        status,
+        &evidence,
+        summary.as_ref(),
+        failure,
+    );
+    canonical_digests.insert(digest, source_id.clone());
+    source_indices.insert(source_id.clone(), candidates.len());
+    sources.insert(source_id, source);
+    candidates.push(candidate);
+    Ok(())
+}
+
+fn preview_canonical_candidate(
+    database: &RideDatabase,
+    capture: &StoredPevcapCapture,
+    evidence: &CaptureAttachments,
+    digest: &str,
+) -> (
+    Option<ReviewedPayload>,
+    Option<CaptureSubmissionBatchEligibility>,
+) {
+    let preview = if capture.record_count == 0 {
+        Err(CaptureSubmissionBatchEligibility::Empty)
+    } else if capture.artifact_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
+        Err(CaptureSubmissionBatchEligibility::TooLarge)
+    } else {
+        preview_canonical_capture(
+            database,
+            digest,
+            capture.artifact_size,
+            capture.encoding,
+            evidence,
+        )
+        .map_err(|error| map_preview_error(&error))
+    };
+    match preview {
+        Ok(summary) => (Some(summary), None),
+        Err(failure) => (None, Some(failure)),
+    }
+}
+
+fn collect_managed_files(
+    database: &RideDatabase,
+    managed_capture_directories: &[PathBuf],
+    inventory: &mut ReviewInventory,
+) -> Result<(), CaptureSubmissionError> {
     let mut file_digests = HashMap::<String, String>::new();
     for root in managed_capture_directories {
         let Some((canonical_root, is_export_root)) = validated_root(root)? else {
@@ -476,146 +558,163 @@ fn review(
             ) else {
                 continue;
             };
-            if is_export_root
-                || kind != super::super::capture_file_dedup::CaptureFileKind::ManagedOriginal
-            {
+            if kind != super::super::capture_file_dedup::CaptureFileKind::ManagedOriginal {
                 continue;
             }
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => {
-                    candidates.push(unavailable_file_candidate(&path));
-                    continue;
-                }
-            };
-            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                candidates.push(unavailable_file_candidate(&path));
+            if is_export_root {
                 continue;
             }
-            let fingerprint = normalization::FileFingerprint::from_metadata(&metadata);
-            let mut file = match File::open(&path) {
-                Ok(file) => file,
-                Err(_) => {
-                    candidates.push(unavailable_file_candidate(&path));
-                    continue;
-                }
-            };
-            if !normalization::same_file_identity(
-                fingerprint,
-                normalization::FileFingerprint::from_metadata(
-                    &file.metadata().map_err(super::StorageError::from)?,
-                ),
-            ) {
-                candidates.push(unavailable_file_candidate(&path));
-                continue;
-            }
-            let digest = match hash_file(&mut file, fingerprint.len()) {
-                Ok(digest) => digest,
-                Err(_) => {
-                    candidates.push(unavailable_file_candidate(&path));
-                    continue;
-                }
-            };
-            if !file_path_still_matches(&path, &file, fingerprint)? {
-                candidates.push(unavailable_file_candidate(&path));
-                continue;
-            }
-            if let Some(source_id) = canonical_digests.get(&digest) {
-                if let Some(index) = source_indices.get(source_id).copied() {
-                    candidates[index].alias_count += 1;
-                }
-                managed_aliases
-                    .entry(source_id.clone())
-                    .or_default()
-                    .push(ManagedFileLocator {
-                        path: path.clone(),
-                        root: canonical_root.clone(),
-                        fingerprint,
-                        digest: digest.clone(),
-                        bytes: fingerprint.len(),
-                    });
-                continue;
-            }
-            if let Some(source_id) = file_digests.get(&digest) {
-                if let Some(index) = source_indices.get(source_id).copied() {
-                    candidates[index].alias_count += 1;
-                }
-                managed_aliases
-                    .entry(source_id.clone())
-                    .or_default()
-                    .push(ManagedFileLocator {
-                        path: path.clone(),
-                        root: canonical_root.clone(),
-                        fingerprint,
-                        digest: digest.clone(),
-                        bytes: fingerprint.len(),
-                    });
-                continue;
-            }
-
-            let artifact_id = super::legacy_capture_artifact_id(&digest)?;
-            let status = database
-                .capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id))?;
-            let evidence = CaptureAttachments::default();
-            let preview = if fingerprint.len() > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
-                Err(CaptureSubmissionBatchEligibility::TooLarge)
-            } else {
-                inspect_payload(&path, CoreEncoding::Jsonl, &evidence).map_err(map_preview_error)
-            };
-            let (summary, failure) = match preview {
-                Ok(summary) => (Some(summary), None),
-                Err(failure) => (None, Some(failure)),
-            };
-            let candidate = candidate_for_file(
-                artifact_id.to_string(),
-                &path,
-                fingerprint.len(),
-                &digest,
-                status.clone(),
-                &evidence,
-                summary.as_ref(),
-                failure,
-            );
-            let status_fingerprint = status_fingerprint(status.as_ref());
-            sources.insert(
-                artifact_id.to_string(),
-                PlannedSource::ManagedFile {
-                    path: path.clone(),
-                    root: canonical_root.clone(),
-                    fingerprint,
-                    digest: digest.clone(),
-                    bytes: fingerprint.len(),
-                    encoding: CoreEncoding::Jsonl,
-                    status_fingerprint,
-                    evidence_fingerprint: evidence_fingerprint(&evidence),
-                },
-            );
-            managed_aliases.insert(
-                artifact_id.to_string(),
-                vec![ManagedFileLocator {
-                    path: path.clone(),
-                    root: canonical_root.clone(),
-                    fingerprint,
-                    digest: digest.clone(),
-                    bytes: fingerprint.len(),
-                }],
-            );
-            file_digests.insert(digest, artifact_id.to_string());
-            source_indices.insert(artifact_id.to_string(), candidates.len());
-            candidates.push(candidate);
+            collect_managed_file(
+                database,
+                path,
+                canonical_root.clone(),
+                inventory,
+                &mut file_digests,
+            )?;
         }
     }
 
-    candidates.sort_by(|left, right| left.source_artifact_id.cmp(&right.source_artifact_id));
-    Ok(CaptureSubmissionBatchPlan {
-        candidates: Arc::new(candidates),
-        sources: Arc::new(sources),
-        managed_aliases: Arc::new(managed_aliases),
-        database_path: database.path.as_ref().clone(),
-        cancelled: Arc::new(AtomicBool::new(false)),
-        running: Arc::new(AtomicBool::new(false)),
-    })
+    Ok(())
+}
+
+fn collect_managed_file(
+    database: &RideDatabase,
+    path: PathBuf,
+    root: PathBuf,
+    inventory: &mut ReviewInventory,
+    file_digests: &mut HashMap<String, String>,
+) -> Result<(), CaptureSubmissionError> {
+    let Some((fingerprint, digest)) = inspect_managed_file(&path, &mut inventory.candidates)?
+    else {
+        return Ok(());
+    };
+    let locator = ManagedFileLocator {
+        path,
+        root,
+        fingerprint,
+        digest: digest.clone(),
+        bytes: fingerprint.len(),
+    };
+    if let Some(source_id) = inventory.canonical_digests.get(&digest).cloned() {
+        register_managed_alias(&source_id, locator, inventory);
+        return Ok(());
+    }
+    if let Some(source_id) = file_digests.get(&digest).cloned() {
+        register_managed_alias(&source_id, locator, inventory);
+        return Ok(());
+    }
+    add_managed_capture_candidate(database, locator, inventory, file_digests)
+}
+
+fn inspect_managed_file(
+    path: &Path,
+    candidates: &mut Vec<CaptureSubmissionBatchCandidate>,
+) -> Result<Option<(normalization::FileFingerprint, String)>, CaptureSubmissionError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            candidates.push(unavailable_file_candidate(path));
+            return Ok(None);
+        }
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    }
+    let fingerprint = normalization::FileFingerprint::from_metadata(&metadata);
+    let Ok(mut file) = File::open(path) else {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    };
+    if !normalization::same_file_identity(
+        fingerprint,
+        normalization::FileFingerprint::from_metadata(
+            &file.metadata().map_err(super::StorageError::from)?,
+        ),
+    ) {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    }
+    let Ok(digest) = hash_file(&mut file, fingerprint.len()) else {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    };
+    if !file_path_still_matches(path, &file, fingerprint)? {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    }
+    Ok(Some((fingerprint, digest)))
+}
+
+fn register_managed_alias(
+    source_id: &str,
+    locator: ManagedFileLocator,
+    inventory: &mut ReviewInventory,
+) {
+    if let Some(index) = inventory.source_indices.get(source_id).copied() {
+        inventory.candidates[index].alias_count += 1;
+    }
+    inventory
+        .managed_aliases
+        .entry(source_id.to_owned())
+        .or_default()
+        .push(locator);
+}
+
+fn add_managed_capture_candidate(
+    database: &RideDatabase,
+    locator: ManagedFileLocator,
+    inventory: &mut ReviewInventory,
+    file_digests: &mut HashMap<String, String>,
+) -> Result<(), CaptureSubmissionError> {
+    let artifact_id = super::legacy_capture_artifact_id(&locator.digest)?;
+    let source_id = artifact_id.to_string();
+    let status =
+        database.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id))?;
+    let evidence = CaptureAttachments::default();
+    let preview = if locator.bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
+        Err(CaptureSubmissionBatchEligibility::TooLarge)
+    } else {
+        inspect_payload(&locator.path, CoreEncoding::Jsonl, &evidence)
+            .map_err(|error| map_preview_error(&error))
+    };
+    let (summary, failure) = match preview {
+        Ok(summary) => (Some(summary), None),
+        Err(failure) => (None, Some(failure)),
+    };
+    let candidate = candidate_for_file(
+        source_id.clone(),
+        &locator.path,
+        locator.bytes,
+        &locator.digest,
+        status.clone(),
+        summary.as_ref(),
+        failure,
+    );
+    let status_fingerprint = status_fingerprint(status.as_ref());
+    inventory.sources.insert(
+        source_id.clone(),
+        PlannedSource::ManagedFile {
+            path: locator.path.clone(),
+            root: locator.root.clone(),
+            fingerprint: locator.fingerprint,
+            digest: locator.digest.clone(),
+            bytes: locator.bytes,
+            encoding: CoreEncoding::Jsonl,
+            status_fingerprint,
+            evidence_fingerprint: evidence_fingerprint(&evidence),
+        },
+    );
+    inventory
+        .managed_aliases
+        .insert(source_id.clone(), vec![locator.clone()]);
+    file_digests.insert(locator.digest, source_id.clone());
+    inventory
+        .source_indices
+        .insert(source_id, inventory.candidates.len());
+    inventory.candidates.push(candidate);
+    Ok(())
 }
 
 fn candidate_for_live(
@@ -642,12 +741,14 @@ fn candidate_for_live(
         |status| status.metadata.integrity,
     );
     candidate_from_parts(
-        source_artifact_id,
-        CaptureSubmissionBatchSourceKind::LiveCapture,
-        entry.platform_identifier.clone(),
-        preview.map_or(entry.stored_bytes, |preview| preview.summary.bytes),
-        origin,
-        integrity,
+        CandidateMetadata {
+            source_artifact_id,
+            source_kind: CaptureSubmissionBatchSourceKind::LiveCapture,
+            display_name: entry.platform_identifier.clone(),
+            source_bytes: preview.map_or(entry.stored_bytes, |preview| preview.summary.bytes),
+            origin,
+            integrity,
+        },
         evidence,
         preview,
         status,
@@ -680,15 +781,17 @@ fn candidate_for_imported(
             status.metadata.integrity
         });
     candidate_from_parts(
-        source_artifact_id,
-        CaptureSubmissionBatchSourceKind::RecordedArtifact,
-        capture.recording.as_ref().map_or_else(
-            || "Imported capture".to_owned(),
-            |recording| recording.platform_identifier.clone(),
-        ),
-        capture.artifact_size,
-        origin,
-        integrity,
+        CandidateMetadata {
+            source_artifact_id,
+            source_kind: CaptureSubmissionBatchSourceKind::RecordedArtifact,
+            display_name: capture.recording.as_ref().map_or_else(
+                || "Imported capture".to_owned(),
+                |recording| recording.platform_identifier.clone(),
+            ),
+            source_bytes: capture.artifact_size,
+            origin,
+            integrity,
+        },
         evidence,
         preview,
         status,
@@ -702,21 +805,24 @@ fn candidate_for_file(
     bytes: u64,
     digest: &str,
     status: Option<CaptureSubmissionStatus>,
-    evidence: &CaptureAttachments,
     preview: Option<&ReviewedPayload>,
     failure: Option<CaptureSubmissionBatchEligibility>,
 ) -> CaptureSubmissionBatchCandidate {
+    let evidence = CaptureAttachments::default();
     let mut candidate = candidate_from_parts(
-        source_artifact_id,
-        CaptureSubmissionBatchSourceKind::ManagedFile,
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Managed capture")
-            .to_owned(),
-        bytes,
-        CaptureSubmissionOrigin::Unknown,
-        CaptureSubmissionIntegrity::Unknown,
-        evidence,
+        CandidateMetadata {
+            source_artifact_id,
+            source_kind: CaptureSubmissionBatchSourceKind::ManagedFile,
+            display_name: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Managed capture")
+                .to_owned(),
+            source_bytes: bytes,
+            origin: CaptureSubmissionOrigin::Unknown,
+            integrity: CaptureSubmissionIntegrity::Unknown,
+        },
+        &evidence,
         preview,
         status,
         failure,
@@ -756,13 +862,17 @@ fn unavailable_file_candidate(path: &Path) -> CaptureSubmissionBatchCandidate {
     }
 }
 
-fn candidate_from_parts(
+struct CandidateMetadata {
     source_artifact_id: String,
     source_kind: CaptureSubmissionBatchSourceKind,
     display_name: String,
     source_bytes: u64,
     origin: CaptureSubmissionOrigin,
     integrity: CaptureSubmissionIntegrity,
+}
+
+fn candidate_from_parts(
+    metadata: CandidateMetadata,
     evidence: &CaptureAttachments,
     preview: Option<&ReviewedPayload>,
     status: Option<CaptureSubmissionStatus>,
@@ -797,16 +907,16 @@ fn candidate_from_parts(
         categories
     });
     CaptureSubmissionBatchCandidate {
-        source_artifact_id,
-        source_kind,
-        display_name,
+        source_artifact_id: metadata.source_artifact_id,
+        source_kind: metadata.source_kind,
+        display_name: metadata.display_name,
         eligibility,
         source_sha256,
-        source_bytes,
+        source_bytes: metadata.source_bytes,
         transfer_sha256,
         transfer_bytes,
-        origin,
-        integrity,
+        origin: metadata.origin,
+        integrity: metadata.integrity,
         categories,
         evidence: status
             .as_ref()
@@ -837,7 +947,7 @@ fn valid_receipt(status: &CaptureSubmissionStatus) -> bool {
     })
 }
 
-fn map_preview_error(error: CaptureSubmissionError) -> CaptureSubmissionBatchEligibility {
+fn map_preview_error(error: &CaptureSubmissionError) -> CaptureSubmissionBatchEligibility {
     match error {
         CaptureSubmissionError::TooLarge => CaptureSubmissionBatchEligibility::TooLarge,
         CaptureSubmissionError::NotFinished => CaptureSubmissionBatchEligibility::Empty,
@@ -963,13 +1073,11 @@ fn validated_root(path: &Path) -> Result<Option<(PathBuf, bool)>, CaptureSubmiss
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let is_export_root = matches!(name, "CaptureExports" | "diagnostic-exports");
-    if !matches!(
-        name,
-        "Documents" | "DiagnosticCaptures" | "CaptureExports" | "diagnostic-exports"
-    ) {
-        return Ok(None);
-    }
+    let is_export_root = match name {
+        "CaptureExports" | "diagnostic-exports" => true,
+        "Documents" | "DiagnosticCaptures" => false,
+        _ => return Ok(None),
+    };
     Ok(Some((
         fs::canonicalize(path).map_err(super::StorageError::from)?,
         is_export_root,
@@ -1033,23 +1141,195 @@ fn evidence_fingerprint(evidence: &CaptureAttachments) -> String {
     )
 }
 
-async fn send_selected<T: CaptureSubmissionTransport>(
-    database: &RideDatabase,
-    plan: &CaptureSubmissionBatchPlan,
-    selected_source_artifact_ids: &[String],
-    account_id: &str,
-    token: &str,
-    transport: &T,
+struct BatchSender<'a, T> {
+    database: &'a RideDatabase,
+    plan: &'a CaptureSubmissionBatchPlan,
+    account_id: &'a str,
+    token: &'a str,
+    transport: &'a T,
     progress: CaptureSubmissionBatchProgressCallback,
+    total: usize,
+    summary: CaptureSubmissionBatchSummary,
+}
+
+impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
+    fn new(
+        database: &'a RideDatabase,
+        plan: &'a CaptureSubmissionBatchPlan,
+        account_id: &'a str,
+        token: &'a str,
+        transport: &'a T,
+        progress: CaptureSubmissionBatchProgressCallback,
+    ) -> Self {
+        Self {
+            database,
+            plan,
+            account_id,
+            token,
+            transport,
+            progress,
+            total: 0,
+            summary: CaptureSubmissionBatchSummary::default(),
+        }
+    }
+
+    fn emit(
+        &self,
+        source_id: &str,
+        phase: CaptureSubmissionBatchItemPhase,
+        status: Option<CaptureSubmissionStatus>,
+        reason: Option<CaptureSubmissionBatchEligibility>,
+        current: usize,
+    ) {
+        (self.progress)(CaptureSubmissionBatchProgress {
+            source_artifact_id: source_id.to_owned(),
+            phase,
+            operation_id: status.as_ref().map(|status| status.operation_id.clone()),
+            status,
+            reason,
+            total: self.total,
+            sent: self.summary.sent,
+            cleaned: self.summary.cleaned,
+            failed: self.summary.failed,
+            skipped: self.summary.skipped,
+            cancelled: self.summary.cancelled,
+            current,
+            bytes_sent: None,
+            total_bytes: None,
+        });
+    }
+
+    fn cancel_remaining(&mut self, source_ids: &[String]) {
+        for source_id in source_ids {
+            self.summary.cancelled += 1;
+            self.emit(
+                source_id,
+                CaptureSubmissionBatchItemPhase::Cancelled,
+                None,
+                None,
+                0,
+            );
+        }
+    }
+
+    fn mark_failed(&mut self, source_id: &str, status: Option<CaptureSubmissionStatus>) {
+        self.summary.failed += 1;
+        self.summary
+            .failed_source_artifact_ids
+            .push(source_id.to_owned());
+        self.emit(
+            source_id,
+            CaptureSubmissionBatchItemPhase::Failed,
+            status,
+            Some(CaptureSubmissionBatchEligibility::Unavailable),
+            0,
+        );
+    }
+
+    fn handle_already_submitted(&mut self, source_id: &str) {
+        let status = candidate_source(self.plan, source_id)
+            .and_then(|source| self.database.capture_submission(source).ok().flatten());
+        if !status.as_ref().is_some_and(valid_receipt) {
+            self.mark_failed(source_id, status);
+            return;
+        }
+        let Some(status) = status else {
+            self.mark_failed(source_id, None);
+            return;
+        };
+        let file_cleaned =
+            remove_managed_file_after_receipt(self.database, self.plan, source_id, Some(&status));
+        self.summary.sent += 1;
+        self.finish_receipted_item(source_id, status, file_cleaned);
+    }
+
+    fn finish_receipted_item(
+        &mut self,
+        source_id: &str,
+        status: CaptureSubmissionStatus,
+        file_cleaned: bool,
+    ) {
+        if status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed && file_cleaned
+        {
+            self.summary.cleaned += 1;
+            self.emit(
+                source_id,
+                CaptureSubmissionBatchItemPhase::Cleaned,
+                Some(status),
+                None,
+                0,
+            );
+        } else {
+            self.summary
+                .pending_cleanup_source_artifact_ids
+                .push(source_id.to_owned());
+            self.emit(
+                source_id,
+                CaptureSubmissionBatchItemPhase::Sent,
+                Some(status),
+                Some(CaptureSubmissionBatchEligibility::AlreadySubmitted),
+                0,
+            );
+        }
+    }
+
+    fn send_success(&mut self, source_id: &str, status: CaptureSubmissionStatus) {
+        self.summary.sent += 1;
+        let file_cleaned =
+            remove_managed_file_after_receipt(self.database, self.plan, source_id, Some(&status));
+        self.finish_receipted_item(source_id, status, file_cleaned);
+    }
+
+    async fn send_one(&mut self, source_id: &str, candidate: &CaptureSubmissionBatchCandidate) {
+        if candidate.eligibility == CaptureSubmissionBatchEligibility::AlreadySubmitted {
+            self.handle_already_submitted(source_id);
+            return;
+        }
+        if candidate.eligibility != CaptureSubmissionBatchEligibility::Eligible {
+            self.summary.skipped += 1;
+            self.emit(
+                source_id,
+                CaptureSubmissionBatchItemPhase::Skipped,
+                candidate.status.clone(),
+                candidate.skip_reason,
+                0,
+            );
+            return;
+        }
+        self.emit(
+            source_id,
+            CaptureSubmissionBatchItemPhase::Current,
+            candidate.status.clone(),
+            None,
+            1,
+        );
+        match prepare_and_send_one(self, source_id, candidate).await {
+            Ok(status) if valid_receipt(&status) => self.send_success(source_id, status),
+            Ok(status) => self.mark_failed(source_id, Some(status)),
+            Err(_) => {
+                let status = candidate_source(self.plan, source_id)
+                    .and_then(|source| self.database.capture_submission(source).ok().flatten());
+                self.mark_failed(source_id, status);
+            }
+        }
+    }
+}
+
+async fn send_selected<T: CaptureSubmissionTransport>(
+    mut sender: BatchSender<'_, T>,
+    selected_source_artifact_ids: &[String],
 ) -> Result<CaptureSubmissionBatchSummary, CaptureSubmissionError> {
-    if database.path.as_ref() != &plan.database_path {
+    if sender.database.path.as_ref() != &sender.plan.database_path {
         return Err(CaptureSubmissionError::InvalidState);
     }
-    plan.running
+    sender
+        .plan
+        .running
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| CaptureSubmissionError::InvalidState)?;
-    let _run_guard = BatchRunGuard(Arc::clone(&plan.running));
-    let candidates = plan
+    let _run_guard = BatchRunGuard(Arc::clone(&sender.plan.running));
+    let candidates = sender
+        .plan
         .candidates
         .iter()
         .map(|candidate| (candidate.source_artifact_id.as_str(), candidate))
@@ -1061,188 +1341,24 @@ async fn send_selected<T: CaptureSubmissionTransport>(
     {
         return Err(CaptureSubmissionError::InvalidState);
     }
-    let selected = plan
+    let selected = sender
+        .plan
         .candidates
         .iter()
         .filter(|candidate| seen.contains(candidate.source_artifact_id.as_str()))
         .map(|candidate| candidate.source_artifact_id.clone())
         .collect::<Vec<_>>();
-    let total = selected.len();
-    let mut summary = CaptureSubmissionBatchSummary::default();
+    sender.total = selected.len();
     for (position, source_id) in selected.iter().enumerate() {
-        let candidate = candidates[source_id.as_str()];
-        if plan.cancelled.load(Ordering::Acquire) {
-            for cancelled_source in &selected[position..] {
-                summary.cancelled += 1;
-                emit_progress(
-                    &progress,
-                    cancelled_source,
-                    CaptureSubmissionBatchItemPhase::Cancelled,
-                    None,
-                    None,
-                    total,
-                    &summary,
-                    0,
-                );
-            }
+        if sender.plan.cancelled.load(Ordering::Acquire) {
+            sender.cancel_remaining(&selected[position..]);
             break;
         }
-        if candidate.eligibility == CaptureSubmissionBatchEligibility::AlreadySubmitted {
-            let status = candidate_source(plan, source_id)
-                .and_then(|source| database.capture_submission(source).ok().flatten());
-            let has_receipt = status.as_ref().is_some_and(valid_receipt);
-            let file_cleaned =
-                remove_managed_file_after_receipt(database, plan, source_id, status.as_ref())
-                    .unwrap_or(false);
-            if !has_receipt {
-                summary.failed += 1;
-                summary.failed_source_artifact_ids.push(source_id.clone());
-                emit_progress(
-                    &progress,
-                    source_id,
-                    CaptureSubmissionBatchItemPhase::Failed,
-                    status,
-                    Some(CaptureSubmissionBatchEligibility::Unavailable),
-                    total,
-                    &summary,
-                    0,
-                );
-                continue;
-            }
-            summary.sent += 1;
-            let cleaned = has_receipt
-                && status.as_ref().is_some_and(|status| {
-                    valid_receipt(status)
-                        && status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed
-                })
-                && file_cleaned;
-            if cleaned {
-                summary.cleaned += 1;
-                emit_progress(
-                    &progress,
-                    source_id,
-                    CaptureSubmissionBatchItemPhase::Cleaned,
-                    status,
-                    None,
-                    total,
-                    &summary,
-                    0,
-                );
-            } else {
-                summary
-                    .pending_cleanup_source_artifact_ids
-                    .push(source_id.clone());
-                emit_progress(
-                    &progress,
-                    source_id,
-                    CaptureSubmissionBatchItemPhase::Sent,
-                    status,
-                    Some(CaptureSubmissionBatchEligibility::AlreadySubmitted),
-                    total,
-                    &summary,
-                    0,
-                );
-            }
-            continue;
-        }
-        if candidate.eligibility != CaptureSubmissionBatchEligibility::Eligible {
-            summary.skipped += 1;
-            emit_progress(
-                &progress,
-                source_id,
-                CaptureSubmissionBatchItemPhase::Skipped,
-                candidate.status.clone(),
-                candidate.skip_reason,
-                total,
-                &summary,
-                0,
-            );
-            continue;
-        }
-        emit_progress(
-            &progress,
-            source_id,
-            CaptureSubmissionBatchItemPhase::Current,
-            candidate.status.clone(),
-            None,
-            total,
-            &summary,
-            1,
-        );
-        match prepare_and_send_one(
-            database, plan, source_id, candidate, account_id, token, transport, &progress, total,
-            &summary,
-        )
-        .await
-        {
-            Ok(status) if valid_receipt(&status) => {
-                summary.sent += 1;
-                let file_cleaned =
-                    remove_managed_file_after_receipt(database, plan, source_id, Some(&status))
-                        .unwrap_or(false);
-                if status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed
-                    && file_cleaned
-                {
-                    summary.cleaned += 1;
-                    emit_progress(
-                        &progress,
-                        source_id,
-                        CaptureSubmissionBatchItemPhase::Cleaned,
-                        Some(status),
-                        None,
-                        total,
-                        &summary,
-                        0,
-                    );
-                } else {
-                    summary
-                        .pending_cleanup_source_artifact_ids
-                        .push(source_id.clone());
-                    emit_progress(
-                        &progress,
-                        source_id,
-                        CaptureSubmissionBatchItemPhase::Sent,
-                        Some(status),
-                        None,
-                        total,
-                        &summary,
-                        0,
-                    );
-                }
-            }
-            Ok(status) => {
-                summary.failed += 1;
-                summary.failed_source_artifact_ids.push(source_id.clone());
-                emit_progress(
-                    &progress,
-                    source_id,
-                    CaptureSubmissionBatchItemPhase::Failed,
-                    Some(status),
-                    Some(CaptureSubmissionBatchEligibility::Unavailable),
-                    total,
-                    &summary,
-                    0,
-                );
-            }
-            Err(_) => {
-                summary.failed += 1;
-                summary.failed_source_artifact_ids.push(source_id.clone());
-                let status = candidate_source(plan, source_id)
-                    .and_then(|source| database.capture_submission(source).ok().flatten());
-                emit_progress(
-                    &progress,
-                    source_id,
-                    CaptureSubmissionBatchItemPhase::Failed,
-                    status,
-                    Some(CaptureSubmissionBatchEligibility::Unavailable),
-                    total,
-                    &summary,
-                    0,
-                );
-            }
-        }
+        sender
+            .send_one(source_id, candidates[source_id.as_str()])
+            .await;
     }
-    Ok(summary)
+    Ok(sender.summary)
 }
 
 struct BatchRunGuard(Arc<AtomicBool>);
@@ -1254,17 +1370,38 @@ impl Drop for BatchRunGuard {
 }
 
 async fn prepare_and_send_one<T: CaptureSubmissionTransport>(
-    database: &RideDatabase,
-    plan: &CaptureSubmissionBatchPlan,
+    sender: &BatchSender<'_, T>,
     source_id: &str,
     candidate: &CaptureSubmissionBatchCandidate,
-    account_id: &str,
-    token: &str,
-    transport: &T,
-    progress: &CaptureSubmissionBatchProgressCallback,
-    total: usize,
-    summary: &CaptureSubmissionBatchSummary,
 ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+    let prepared = prepare_planned_source(sender, source_id, candidate)?;
+    let operation_id = prepared.operation_id.clone();
+    let progress = BatchProgressEmitter {
+        callback: Arc::clone(&sender.progress),
+        source_artifact_id: source_id.to_owned(),
+        operation_id: operation_id.clone(),
+        total: sender.total,
+        summary: sender.summary.clone(),
+    };
+    sender
+        .database
+        .send_capture_submission_with_progress(
+            &operation_id,
+            sender.account_id,
+            sender.token,
+            sender.transport,
+            Arc::new(move |send_progress| progress.emit_upload(&send_progress)),
+        )
+        .await
+}
+
+fn prepare_planned_source<T: CaptureSubmissionTransport>(
+    sender: &BatchSender<'_, T>,
+    source_id: &str,
+    candidate: &CaptureSubmissionBatchCandidate,
+) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+    let database = sender.database;
+    let plan = sender.plan;
     let planned = plan
         .sources
         .get(source_id)
@@ -1308,15 +1445,8 @@ async fn prepare_and_send_one<T: CaptureSubmissionTransport>(
             bytes,
             encoding,
             ..
-        } => {
-            let current =
-                preview_canonical_capture(database, digest, *bytes, *encoding, &current_evidence)?;
-            if candidate.source_sha256.as_deref() != Some(current.summary.sha256.as_str()) {
-                return Err(CaptureSubmissionError::InvalidCapture);
-            }
-            database.prepare_capture_submission(*locator)?
         }
-        PlannedSource::CanonicalCapture {
+        | PlannedSource::CanonicalCapture {
             locator,
             digest,
             bytes,
@@ -1359,49 +1489,26 @@ async fn prepare_and_send_one<T: CaptureSubmissionTransport>(
             database.prepare_legacy_capture_submission(path, digest, *encoding)?
         }
     };
-    if candidate
+    validate_transfer_snapshot(candidate, &prepared)?;
+    Ok(prepared)
+}
+
+fn validate_transfer_snapshot(
+    candidate: &CaptureSubmissionBatchCandidate,
+    prepared: &CaptureSubmissionStatus,
+) -> Result<(), CaptureSubmissionError> {
+    let digest_matches = candidate
         .transfer_sha256
         .as_ref()
-        .is_some_and(|digest| digest != &prepared.metadata.sha256)
-        || candidate
-            .transfer_bytes
-            .is_some_and(|bytes| bytes != prepared.metadata.bytes)
-    {
-        return Err(CaptureSubmissionError::InvalidCapture);
+        .is_none_or(|digest| digest == &prepared.metadata.sha256);
+    let bytes_match = candidate
+        .transfer_bytes
+        .is_none_or(|bytes| bytes == prepared.metadata.bytes);
+    if digest_matches && bytes_match {
+        Ok(())
+    } else {
+        Err(CaptureSubmissionError::InvalidCapture)
     }
-    let operation_id = prepared.operation_id.clone();
-    database
-        .send_capture_submission_with_progress(
-            &operation_id,
-            account_id,
-            token,
-            transport,
-            Arc::new({
-                let callback = Arc::clone(progress);
-                let source_artifact_id = source_id.to_owned();
-                let summary = summary.clone();
-                let operation_id = operation_id.clone();
-                move |send_progress| {
-                    (callback)(CaptureSubmissionBatchProgress {
-                        source_artifact_id: source_artifact_id.clone(),
-                        phase: CaptureSubmissionBatchItemPhase::Current,
-                        operation_id: Some(operation_id.clone()),
-                        status: None,
-                        reason: None,
-                        total,
-                        sent: summary.sent,
-                        cleaned: summary.cleaned,
-                        failed: summary.failed,
-                        skipped: summary.skipped,
-                        cancelled: summary.cancelled,
-                        current: 1,
-                        bytes_sent: Some(send_progress.bytes_sent),
-                        total_bytes: Some(send_progress.total_bytes),
-                    });
-                }
-            }),
-        )
-        .await
 }
 
 fn candidate_source(
@@ -1423,19 +1530,19 @@ fn remove_managed_file_after_receipt(
     plan: &CaptureSubmissionBatchPlan,
     source_id: &str,
     status: Option<&CaptureSubmissionStatus>,
-) -> Result<bool, super::StorageError> {
+) -> bool {
     let Some(status) = status.filter(|status| valid_receipt(status)) else {
-        return Ok(false);
+        return false;
     };
     if plan
         .managed_aliases
         .get(source_id)
         .is_none_or(Vec::is_empty)
     {
-        return Ok(true);
+        return true;
     }
     if !plan.sources.contains_key(source_id) {
-        return Ok(false);
+        return false;
     }
     let source_digest = status
         .metadata
@@ -1489,7 +1596,7 @@ fn remove_managed_file_after_receipt(
             Err(_) => cleaned = false,
         }
     }
-    Ok(cleaned)
+    cleaned
 }
 
 fn planned_status_fingerprint(source: &PlannedSource) -> Option<String> {
@@ -1530,32 +1637,33 @@ fn planned_evidence_fingerprint(source: &PlannedSource) -> String {
     }
 }
 
-fn emit_progress(
-    callback: &CaptureSubmissionBatchProgressCallback,
-    source_artifact_id: &str,
-    phase: CaptureSubmissionBatchItemPhase,
-    status: Option<CaptureSubmissionStatus>,
-    reason: Option<CaptureSubmissionBatchEligibility>,
+struct BatchProgressEmitter {
+    callback: CaptureSubmissionBatchProgressCallback,
+    source_artifact_id: String,
+    operation_id: String,
     total: usize,
-    summary: &CaptureSubmissionBatchSummary,
-    current: usize,
-) {
-    (callback)(CaptureSubmissionBatchProgress {
-        source_artifact_id: source_artifact_id.to_owned(),
-        phase,
-        operation_id: status.as_ref().map(|status| status.operation_id.clone()),
-        status,
-        reason,
-        total,
-        sent: summary.sent,
-        cleaned: summary.cleaned,
-        failed: summary.failed,
-        skipped: summary.skipped,
-        cancelled: summary.cancelled,
-        current,
-        bytes_sent: None,
-        total_bytes: None,
-    });
+    summary: CaptureSubmissionBatchSummary,
+}
+
+impl BatchProgressEmitter {
+    fn emit_upload(&self, progress: &CaptureSubmissionProgress) {
+        (self.callback)(CaptureSubmissionBatchProgress {
+            source_artifact_id: self.source_artifact_id.clone(),
+            phase: CaptureSubmissionBatchItemPhase::Current,
+            operation_id: Some(self.operation_id.clone()),
+            status: None,
+            reason: None,
+            total: self.total,
+            sent: self.summary.sent,
+            cleaned: self.summary.cleaned,
+            failed: self.summary.failed,
+            skipped: self.summary.skipped,
+            cancelled: self.summary.cancelled,
+            current: 1,
+            bytes_sent: Some(progress.bytes_sent),
+            total_bytes: Some(progress.total_bytes),
+        });
+    }
 }
 
 #[cfg(test)]
