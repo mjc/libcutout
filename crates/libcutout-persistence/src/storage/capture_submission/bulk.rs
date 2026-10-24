@@ -5,6 +5,7 @@ use super::{
     CaptureSubmissionError, CaptureSubmissionLocalPayloadState, CaptureSubmissionProgress,
     CaptureSubmissionSource, CaptureSubmissionStatus, CaptureSubmissionTransport, LiveCaptureId,
     LiveCaptureIntegrity, LiveCaptureState, PevcapEncoding, RideDatabase,
+    validate_live_capture_submission_provenance,
 };
 use crate::CaptureArtifactId;
 use cutout_core::{
@@ -344,7 +345,8 @@ fn collect_live_history(
             } else if entry.stored_bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
                 Err(CaptureSubmissionBatchEligibility::TooLarge)
             } else {
-                preview_live_capture(database, entry.id, &evidence)
+                validate_live_capture_submission_provenance(&entry)
+                    .and_then(|()| preview_live_capture(database, entry.id, &evidence))
                     .map_err(|error| map_preview_error(&error))
             };
             let (summary, failure) = match preview {
@@ -1745,6 +1747,45 @@ mod tests {
         live_capture_id
     }
 
+    fn finished_capture_without_provenance(
+        database: &RideDatabase,
+        directory: &Path,
+        byte: u8,
+    ) -> (LiveCaptureId, Box<crate::SavedDatabaseCapture>) {
+        let writer = CaptureWriter::start_with_database(
+            directory.join(format!("capture-unpublished-{byte}.jsonl")),
+            WallClockUnixTimestamp::new(1_700_000_100_000 + u64::from(byte)),
+            "unknown-device",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+            database.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::inbound_notification(
+                MonotonicTimestamp::new(1),
+                GattChannel::from_bytes([0x11; 16]),
+                GattChannel::from_bytes([0x22; 16]),
+                vec![byte],
+            )),
+            CaptureWriteOutcome::Accepted,
+        );
+        let CaptureWriterFinish::DatabaseFinished {
+            live_capture_id,
+            receipt,
+            ..
+        } = writer.finish_without_export().unwrap()
+        else {
+            panic!("database completion required");
+        };
+        (live_capture_id, receipt)
+    }
+
     #[derive(Default)]
     struct BatchTransport {
         uploads: AtomicUsize,
@@ -1818,6 +1859,124 @@ mod tests {
             })
             .map(|candidate| candidate.source_artifact_id.clone())
             .collect()
+    }
+
+    #[test]
+    fn batch_review_excludes_finished_capture_without_writer_provenance_until_published() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let (id, receipt) = finished_capture_without_provenance(&database, directory.path(), 71);
+        let source_id = id.to_string();
+
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.source_artifact_id == source_id)
+            .expect("finished live capture remains visible for review");
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Unavailable
+        );
+        assert_eq!(
+            candidate.skip_reason,
+            Some(CaptureSubmissionBatchEligibility::Unavailable)
+        );
+        assert!(candidate.source_bytes > 0);
+
+        let transport = BatchTransport::default();
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            std::slice::from_ref(&source_id),
+            ACCOUNT,
+            "token",
+            &transport,
+            Arc::new(|_| {}),
+        ))
+        .unwrap();
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.failed, 0);
+        assert_eq!(transport.uploads.load(Ordering::Acquire), 0);
+
+        database
+            .retain_finished_database_capture(
+                &receipt,
+                CaptureOrigin::Manual,
+                None,
+                WallClockUnixTimestamp::new(1_700_000_101_000),
+            )
+            .unwrap();
+        let retried = database.review_capture_submission_batch(&[]).unwrap();
+        let candidate = retried
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate.source_kind == CaptureSubmissionBatchSourceKind::LiveCapture
+            })
+            .expect("published capture remains reviewable");
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+    }
+
+    #[test]
+    fn batch_review_keeps_nonempty_interruption_with_unknown_provenance_eligible() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&path).unwrap();
+        let header = cutout_core::PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_200_000),
+            "interrupted-wheel",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let id = database
+            .begin_live_capture(
+                header.to_jsonl_line().unwrap().into_bytes(),
+                1_700_000_200_000,
+            )
+            .unwrap();
+        database
+            .append_live_capture_event(
+                id,
+                crate::LiveCaptureEventKind::Notification,
+                1,
+                None,
+                None,
+                PevcapRecord::inbound_notification(
+                    MonotonicTimestamp::new(1),
+                    GattChannel::from_bytes([0x11; 16]),
+                    GattChannel::from_bytes([0x22; 16]),
+                    vec![72],
+                )
+                .to_jsonl_line()
+                .unwrap()
+                .into_bytes(),
+            )
+            .unwrap();
+        database.shutdown().unwrap();
+
+        let reopened = RideDatabase::open(&path).unwrap();
+        let plan = reopened.review_capture_submission_batch(&[]).unwrap();
+        let candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.source_artifact_id == id.to_string())
+            .expect("interrupted capture is retained in review");
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert_eq!(candidate.origin, CaptureSubmissionOrigin::Unknown);
+        assert_eq!(candidate.integrity, CaptureSubmissionIntegrity::Unknown);
     }
 
     fn exported_capture_bytes(
