@@ -102,16 +102,23 @@ const SELECT_CAPTURES: &str = "SELECT i.artifact_digest,
             i.record_count, i.location_count, i.ride_id, s.status_json
      FROM pevcap_imports AS i
      LEFT JOIN pevcap_captures AS c ON c.receipt_digest = i.artifact_digest
-     LEFT JOIN capture_submissions AS s ON s.operation_id = (
-        SELECT CASE WHEN count(DISTINCT candidate.source_artifact_id) = 1
-                    THEN min(candidate.operation_id) END
-        FROM capture_submissions AS candidate
-        WHERE candidate.source_artifact_id = (
-                SELECT recording.artifact_id FROM pevcap_recordings AS recording
-                WHERE recording.artifact_digest = i.artifact_digest LIMIT 1)
-           OR candidate.source_artifact_id IN (
-                SELECT alias.source_artifact_id FROM capture_submission_source_aliases AS alias
-                WHERE alias.artifact_digest = i.artifact_digest))
+     LEFT JOIN capture_submissions AS s ON s.source_artifact_id = (
+        SELECT CASE WHEN min(candidate.source_artifact_id) = max(candidate.source_artifact_id)
+                    THEN min(candidate.source_artifact_id) END
+        FROM (
+            SELECT recording.artifact_id AS source_artifact_id
+            FROM pevcap_recordings AS recording
+            WHERE recording.artifact_digest = i.artifact_digest
+            UNION ALL
+            SELECT alias.source_artifact_id
+            FROM capture_submission_source_aliases AS alias
+            WHERE alias.artifact_digest = i.artifact_digest
+            UNION ALL
+            SELECT candidate.source_artifact_id
+            FROM capture_submissions AS candidate
+            WHERE candidate.snapshot_digest = i.artifact_digest
+               OR json_extract(candidate.status_json, '$.metadata.provenance.source_sha256') = i.artifact_digest
+        ) AS candidate)
      ";
 
 pub(super) fn list(
