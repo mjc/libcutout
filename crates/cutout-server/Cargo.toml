@@ -5,13 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Cutout music, charging and website server"
+description = "Cutout music, charging, ride, and website server"
 
 [dependencies]
 hex.workspace = true
 axum.workspace = true
 clap.workspace = true
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde", "http"] }
 futures-util.workspace = true
 cutout-soundcloud-auth-broker = { path = "../cutout-soundcloud-auth-broker", version = "0.1.0" }

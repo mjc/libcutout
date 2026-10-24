@@ -4,7 +4,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-//! Cutout's music broker, charging directory and website, served on separate hosts.
+//! Cutout's music broker, charging directory, ride database, and website, served by one process.
 //!
 //! Public registration budgets group canonical IPv4 addresses and IPv6 /64
 //! prefixes. IPv4-mapped IPv6 addresses use the corresponding IPv4 budget.

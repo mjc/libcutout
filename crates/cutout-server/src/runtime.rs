@@ -12,7 +12,7 @@ use std::{
 #[derive(Debug, Parser)]
 #[command(
     name = "cutout-server",
-    about = "Cutout music, charging and website server"
+    about = "Cutout music, charging, ride, and website server"
 )]
 struct Arguments {
     #[arg(long, env = "CHARGING_DATABASE")]
@@ -39,6 +39,9 @@ enum Command {
         rides_host: crate::vhosts::PublicHost,
         #[arg(long, default_value = "cutout.lol", value_parser = parse_host)]
         site_host: crate::vhosts::PublicHost,
+        /// Ride database opened in this process. Required with `--music`.
+        #[arg(long, env = "CUTOUT_RIDE_DATABASE")]
+        ride_database: Option<PathBuf>,
     },
     /// Provision an operator or contributor credential; stdout contains the secret.
     Identity {
@@ -107,6 +110,7 @@ async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
             music_host,
             rides_host,
             site_host,
+            ride_database,
         } => {
             let mode = match (music, trusted_proxy) {
                 (true, Some(proxy)) => ServiceMode::Combined(
@@ -121,7 +125,12 @@ async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
                 (true, None) => return Err(Error::Invalid),
                 (false, proxy) => ServiceMode::Directory(proxy),
             };
-            serve(listen, mode, store).await
+            let ride_database = match (&mode, ride_database) {
+                (ServiceMode::Combined(_), Some(path)) => Some(path),
+                (ServiceMode::Combined(_), None) => return Err(Error::Invalid),
+                (ServiceMode::Directory(_), _) => None,
+            };
+            serve(listen, mode, store, ride_database).await
         }
         Command::Identity {
             moderator,
@@ -177,16 +186,58 @@ fn validate_listener(command: &Command) -> Result<(), Error> {
     if let Command::Serve {
         music: true,
         listen,
+        ride_database,
         ..
     } = command
-        && !listen.ip().is_loopback()
+        && (ride_database.is_none() || !listen.ip().is_loopback())
     {
         return Err(Error::Invalid);
     }
     Ok(())
 }
 
-async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<(), Error> {
+async fn open_ride_service(path: PathBuf) -> Result<libcutout_persistence::RideDatabase, Error> {
+    tokio::task::spawn_blocking(
+        move || -> Result<libcutout_persistence::RideDatabase, libcutout_persistence::StorageError> {
+            let database = libcutout_persistence::RideDatabase::open(&path)?;
+            database.capabilities()?;
+            Ok(database)
+        },
+    )
+    .await
+    .map_err(|_| Error::Unavailable)?
+    .map_err(|error| {
+        tracing::error!(%error, "ride service failed to open");
+        Error::Unavailable
+    })
+}
+
+async fn shutdown_ride_service(
+    database: Option<libcutout_persistence::RideDatabase>,
+) -> Result<(), Error> {
+    let Some(database) = database else {
+        return Ok(());
+    };
+    tokio::task::spawn_blocking(move || database.shutdown())
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|error| {
+            tracing::error!(%error, "ride service shutdown failed");
+            Error::Unavailable
+        })
+}
+
+async fn serve(
+    listen: SocketAddr,
+    mode: ServiceMode,
+    store: Store,
+    ride_database: Option<PathBuf>,
+) -> Result<(), Error> {
+    let ride_service = match (&mode, ride_database) {
+        (ServiceMode::Combined(_), Some(path)) => Some(open_ride_service(path).await?),
+        (ServiceMode::Combined(_), None) => return Err(Error::Invalid),
+        (ServiceMode::Directory(_), _) => None,
+    };
     let lific_worker = crate::signup_sync::LificSync::from_env();
     let signup_state = match (
         crate::signup::SignupState::enabled_from_env(),
@@ -195,12 +246,25 @@ async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<()
         (Some(state), true) => state,
         _ => crate::signup::SignupState::from_env(),
     };
-    let router = build_router(store.clone(), mode, signup_state).await?;
-    let listener = tokio::net::TcpListener::bind(listen)
-        .await
-        .map_err(|_| Error::Unavailable)?;
-    let address = listener.local_addr().map_err(|_| Error::Unavailable)?;
-    store.cleanup_capture_staging().await?;
+    let router = match build_router(store.clone(), mode, signup_state).await {
+        Ok(router) => router,
+        Err(error) => {
+            shutdown_ride_service(ride_service).await?;
+            return Err(error);
+        }
+    };
+    let Ok(listener) = tokio::net::TcpListener::bind(listen).await else {
+        shutdown_ride_service(ride_service).await?;
+        return Err(Error::Unavailable);
+    };
+    let Ok(address) = listener.local_addr() else {
+        shutdown_ride_service(ride_service).await?;
+        return Err(Error::Unavailable);
+    };
+    if let Err(error) = store.cleanup_capture_staging().await {
+        shutdown_ride_service(ride_service).await?;
+        return Err(error);
+    }
     tracing::info!(%address, "cutout server listening");
     let worker =
         lific_worker.map(|lific| tokio::spawn(crate::signup_sync::run_worker(store, lific)));
@@ -215,6 +279,7 @@ async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<()
         worker.abort();
         let _ = worker.await;
     }
+    shutdown_ride_service(ride_service).await?;
     result
 }
 
@@ -298,8 +363,25 @@ mod tests {
             "--music",
             "--trusted-proxy",
             "127.0.0.1",
+            "--ride-database",
+            "rides.sqlite",
             "--listen",
             "0.0.0.0:8788",
+        ])
+        .expect("valid command syntax");
+        assert!(validate_listener(&arguments.command).is_err());
+    }
+
+    #[test]
+    fn combined_service_requires_the_ride_database() {
+        let arguments = Arguments::try_parse_from([
+            "cutout-server",
+            "--database",
+            "unused.sqlite",
+            "serve",
+            "--music",
+            "--trusted-proxy",
+            "127.0.0.1",
         ])
         .expect("valid command syntax");
         assert!(validate_listener(&arguments.command).is_err());
