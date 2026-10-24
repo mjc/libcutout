@@ -51,7 +51,12 @@ struct BluetoothCapturesView: View {
                 Button {
                     batchModel = CaptureSubmissionBatchModel(
                         adapter: CaptureSubmissionBatchAdapter.live,
-                        onTerminalUpdate: { Task { await library.refresh() } }
+                        onTerminalUpdate: {
+                            Task {
+                                await RustPersistenceStore.deduplicateManagedCaptureFiles()
+                                await library.refresh()
+                            }
+                        }
                     )
                 } label: {
                     Label(localizedAppText("capture.batch.review"), systemImage: "paperplane")
