@@ -193,7 +193,8 @@ struct CaptureSubmissionSection: View {
             cancelButton
         case .sent:
             if status.receipt != nil {
-                Label("Received privately", systemImage: "checkmark.circle")
+                Label(localizedAppText("capture.submission.received"), systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(PevColors.green)
             }
             Button("Delete sent copy", role: .destructive) { showsDeleteConfirmation = true }
                 .disabled(model.isWorking)

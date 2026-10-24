@@ -223,7 +223,7 @@ class DiagnosticCapturePanel(
         MobileCaptureStageDto.SAVED -> context.getString(R.string.capture_recent)
     }
 
-    private fun historyRow(entry: MobileLiveCaptureHistoryEntryDto): View {
+    internal fun historyRow(entry: MobileLiveCaptureHistoryEntryDto): View {
         val row = ui.column()
         row.addView(ui.text(entry.recording?.advertisedName ?: entry.platformIdentifier, 17f, true))
         val started = Date(entry.startedAtMilliseconds.toLong())
@@ -250,6 +250,10 @@ class DiagnosticCapturePanel(
             } else {
                 R.string.capture_sent_privately
             }
+            row.addView(ui.icon(CutoutSymbol.CHECK, ui.green, 18).apply {
+                tag = "captures.history.${entry.liveCaptureId}.sent.icon"
+                contentDescription = context.getString(sentLabel)
+            })
             row.addView(ui.text(context.getString(sentLabel), 14f, color = ui.green)
                 .apply { tag = "captures.history.${entry.liveCaptureId}.sent" })
         }
