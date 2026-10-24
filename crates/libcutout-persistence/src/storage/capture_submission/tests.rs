@@ -429,10 +429,8 @@ fn capture_submission_rejects_recovered_interruption_without_promoting_integrity
     assert!(history.captures[0].recording.is_none());
 }
 
-#[test]
-fn capture_submission_can_prepare_nonempty_recovered_interruption_with_stable_provenance() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("ride.sqlite");
+fn recovered_nonempty_interruption(directory: &Path) -> (PathBuf, RideDatabase, LiveCaptureId) {
+    let path = directory.join("ride.sqlite");
     let database = RideDatabase::open(&path).unwrap();
     let header = PevcapHeader::new(
         WallClockUnixTimestamp::new(1234),
@@ -469,6 +467,13 @@ fn capture_submission_can_prepare_nonempty_recovered_interruption_with_stable_pr
     database.shutdown().unwrap();
 
     let reopened = RideDatabase::open(&path).unwrap();
+    (path, reopened, id)
+}
+
+#[test]
+fn capture_submission_can_prepare_nonempty_recovered_interruption_with_stable_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    let (path, reopened, id) = recovered_nonempty_interruption(directory.path());
     let source = CaptureSubmissionSource::LiveCapture(id);
     let prepared = reopened.prepare_capture_submission(source).unwrap();
     assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
@@ -617,7 +622,7 @@ fn recovered_interruption_history_alias_round_trips_evidence_and_prepares_same_o
             .evidence
             .as_ref()
             .map(|manifest| manifest.note_bytes),
-        Some("reviewed after recovery".len() as u32)
+        Some(u32::try_from("reviewed after recovery".len()).unwrap())
     );
 }
 
@@ -694,6 +699,85 @@ fn imported_capture_without_recording_keeps_evidence_and_send_receipt_after_reti
     let directory = tempfile::tempdir().unwrap();
     let database_path = directory.path().join("ride.sqlite");
     let source_path = directory.path().join("imported.jsonl");
+    let (database, artifact_digest) =
+        import_capture_without_recording(&database_path, &source_path);
+    let digest = PevcapDigest::parse(&artifact_digest).unwrap();
+    let source = CaptureSubmissionSource::PevcapDigest(digest);
+
+    let history = database
+        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(history.captures.len(), 1);
+    assert!(history.captures[0].recording.is_none());
+    assert_eq!(
+        history.captures[0].submission.source,
+        CaptureSubmissionSource::PevcapDigest(digest)
+    );
+
+    assert_eq!(
+        database.capture_evidence(source).unwrap(),
+        CaptureAttachments::default()
+    );
+    let evidence = CaptureAttachments {
+        note: "legacy imported evidence".into(),
+        screenshots: Vec::new(),
+    };
+    let expected_note_bytes = u32::try_from(evidence.note.len()).unwrap();
+    assert_eq!(
+        database
+            .save_capture_evidence(source, evidence.clone())
+            .unwrap(),
+        evidence
+    );
+    let prepared = database.prepare_capture_submission(source).unwrap();
+    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Unknown);
+    assert_eq!(
+        prepared.metadata.integrity,
+        CaptureSubmissionIntegrity::Unknown
+    );
+    assert_eq!(
+        prepared.metadata.provenance.source_artifact_id,
+        legacy_capture_artifact_id(&artifact_digest)
+            .unwrap()
+            .to_string()
+    );
+    assert_eq!(
+        prepared.metadata.provenance.source_sha256.as_deref(),
+        Some(artifact_digest.as_str())
+    );
+    assert_eq!(
+        prepared
+            .metadata
+            .evidence
+            .as_ref()
+            .map(|manifest| manifest.note_bytes),
+        Some(expected_note_bytes)
+    );
+    let transport = Transport::default();
+    let sent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
+    assert!(sent.receipt.is_some());
+    assert!(
+        String::from_utf8_lossy(&transport.uploads.lock().unwrap()[0].1)
+            .contains("legacy imported evidence"),
+        "saved evidence must be part of the frozen transfer before local retirement"
+    );
+    database.shutdown().unwrap();
+
+    let reopened = retire_capture_submission(&database_path);
+    assert_retained_import_receipt(&reopened, source, &prepared, &sent, expected_note_bytes);
+}
+
+fn import_capture_without_recording(
+    database_path: &Path,
+    source_path: &Path,
+) -> (RideDatabase, String) {
     let header = PevcapHeader::new(
         WallClockUnixTimestamp::new(1234),
         "legacy-wheel",
@@ -717,83 +801,20 @@ fn imported_capture_without_recording_keeps_evidence_and_send_receipt_after_reti
     bytes.push(b'\n');
     bytes.extend_from_slice(&record.to_jsonl_line().unwrap().into_bytes());
     bytes.push(b'\n');
-    std::fs::write(&source_path, &bytes).unwrap();
+    std::fs::write(source_path, &bytes).unwrap();
 
-    let database = RideDatabase::open(&database_path).unwrap();
+    let database = RideDatabase::open(database_path).unwrap();
     let preview = database
-        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .preflight_pevcap(source_path, PevcapEncoding::Jsonl)
         .unwrap();
     let imported = database
         .confirm_pevcap_import(&preview, 1_700_000_001_000)
         .unwrap();
-    let digest = PevcapDigest::parse(&imported.artifact_digest).unwrap();
-    let source = CaptureSubmissionSource::PevcapDigest(digest);
-    let history = database
-        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
-        .unwrap();
-    assert_eq!(history.captures.len(), 1);
-    assert!(history.captures[0].recording.is_none());
-    assert_eq!(
-        history.captures[0].submission.source,
-        CaptureSubmissionSource::PevcapDigest(digest)
-    );
+    (database, imported.artifact_digest)
+}
 
-    assert_eq!(
-        database.capture_evidence(source).unwrap(),
-        CaptureAttachments::default()
-    );
-    let evidence = CaptureAttachments {
-        note: "legacy imported evidence".into(),
-        screenshots: Vec::new(),
-    };
-    assert_eq!(
-        database
-            .save_capture_evidence(source, evidence.clone())
-            .unwrap(),
-        evidence
-    );
-    let prepared = database.prepare_capture_submission(source).unwrap();
-    assert_eq!(prepared.metadata.origin, CaptureSubmissionOrigin::Unknown);
-    assert_eq!(
-        prepared.metadata.integrity,
-        CaptureSubmissionIntegrity::Unknown
-    );
-    assert_eq!(
-        prepared.metadata.provenance.source_artifact_id,
-        legacy_capture_artifact_id(&imported.artifact_digest)
-            .unwrap()
-            .to_string()
-    );
-    assert_eq!(
-        prepared.metadata.provenance.source_sha256.as_deref(),
-        Some(imported.artifact_digest.as_str())
-    );
-    assert_eq!(
-        prepared
-            .metadata
-            .evidence
-            .as_ref()
-            .map(|manifest| manifest.note_bytes),
-        Some(evidence.note.len() as u32)
-    );
-    let transport = Transport::default();
-    let sent = ready(database.send_capture_submission(
-        &prepared.operation_id,
-        ACCOUNT,
-        "secret",
-        &transport,
-    ))
-    .unwrap();
-    assert_eq!(sent.phase, CaptureSubmissionPhase::Sent);
-    assert!(sent.receipt.is_some());
-    assert!(
-        String::from_utf8_lossy(&transport.uploads.lock().unwrap()[0].1)
-            .contains("legacy imported evidence"),
-        "saved evidence must be part of the frozen transfer before local retirement"
-    );
-    database.shutdown().unwrap();
-
-    let mut connection = Connection::open(&database_path).unwrap();
+fn retire_capture_submission(database_path: &Path) -> RideDatabase {
+    let mut connection = Connection::open(database_path).unwrap();
     connection
         .pragma_update(None, "foreign_keys", "ON")
         .unwrap();
@@ -807,7 +828,16 @@ fn imported_capture_without_recording_keeps_evidence_and_send_receipt_after_reti
     }
     drop(connection);
 
-    let reopened = RideDatabase::open(&database_path).unwrap();
+    RideDatabase::open(database_path).unwrap()
+}
+
+fn assert_retained_import_receipt(
+    reopened: &RideDatabase,
+    source: CaptureSubmissionSource,
+    prepared: &CaptureSubmissionStatus,
+    sent: &CaptureSubmissionStatus,
+    expected_note_bytes: u32,
+) {
     let status = reopened.capture_submission(source).unwrap().unwrap();
     assert_eq!(status.operation_id, prepared.operation_id);
     assert_eq!(status.phase, CaptureSubmissionPhase::Sent);
@@ -822,7 +852,7 @@ fn imported_capture_without_recording_keeps_evidence_and_send_receipt_after_reti
             .evidence
             .as_ref()
             .map(|manifest| manifest.note_bytes),
-        Some(evidence.note.len() as u32),
+        Some(expected_note_bytes),
         "the retained receipt keeps the disclosure manifest after payload retirement"
     );
     let history = reopened
@@ -1036,7 +1066,7 @@ fn digest_alias_keeps_live_owner_and_evidence_after_prepared_status_is_replaced(
     let live_source = CaptureSubmissionSource::LiveCapture(id);
     let prepared = database.prepare_capture_submission(live_source).unwrap();
     let digest = PevcapDigest::parse(
-        &prepared
+        prepared
             .metadata
             .evidence
             .as_ref()
@@ -1080,7 +1110,7 @@ fn digest_alias_keeps_live_owner_and_evidence_after_prepared_status_is_replaced(
             .evidence
             .as_ref()
             .map(|manifest| manifest.note_bytes),
-        Some(edited.note.len() as u32)
+        Some(u32::try_from(edited.note.len()).unwrap())
     );
 }
 
@@ -1125,7 +1155,7 @@ fn digest_alias_keeps_published_live_context_through_receipt_cleanup() {
             .evidence
             .as_ref()
             .map(|manifest| manifest.note_bytes),
-        Some(evidence.note.len() as u32)
+        Some(u32::try_from(evidence.note.len()).unwrap())
     );
 
     let transport = Transport::default();
