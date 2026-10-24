@@ -1,4 +1,4 @@
-//! Private diagnostic evidence, with one atomic SQLite publication boundary.
+//! Private diagnostic evidence. The row records the publication; the bytes stay in a file beside the database.
 use super::{Actor, Store, begin_write, db_error, ensure_actor, json, now_ms};
 use crate::Error;
 use cutout_core::{
@@ -7,7 +7,9 @@ use cutout_core::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::{
+    collections::HashSet,
     fs::{self, File, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
@@ -26,6 +28,37 @@ impl Drop for StagedCapture {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
+}
+
+/// Removes a capture file unless publication commits.
+struct PublishedCapture {
+    path: PathBuf,
+}
+
+impl PublishedCapture {
+    fn keep(mut self) {
+        self.path.clear();
+    }
+}
+
+impl Drop for PublishedCapture {
+    fn drop(&mut self) {
+        if !self.path.as_os_str().is_empty() {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+pub(super) fn objects_directory(database: &Path) -> PathBuf {
+    let mut name = database.as_os_str().to_owned();
+    name.push(".capture-objects");
+    PathBuf::from(name)
+}
+
+fn object_name(operation: &str) -> Result<String, Error> {
+    Uuid::parse_str(operation)
+        .map(|id| id.to_string())
+        .map_err(|_| Error::Invalid)
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +171,10 @@ impl Store {
             .await
     }
 
+    pub(crate) fn capture_object_path(&self, operation: &str) -> Result<PathBuf, Error> {
+        Ok(self.capture_objects.join(object_name(operation)?))
+    }
+
     pub(crate) async fn commit_capture(
         &self,
         actor: Actor,
@@ -146,29 +183,59 @@ impl Store {
         summary: CaptureSubmissionPayloadSummary,
         stage: StagedCapture,
     ) -> Result<(bool, CaptureSubmissionReceipt), Error> {
+        let stage_path = stage.path.clone();
+        let objects = self.capture_objects.clone();
+        tokio::task::spawn_blocking(move || {
+            File::open(&stage_path)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| Error::Unavailable)
+        })
+        .await
+        .map_err(|_| Error::Unavailable)??;
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
             ensure_actor(&transaction, &actor)?;
-            if let Some(receipt) = existing(&transaction, &actor, &operation, &metadata)? { return Ok((false, receipt)); }
-            check_storage(&transaction, &actor, metadata.bytes)?;
-            if metadata.sha256 != summary.sha256 || metadata.bytes != summary.bytes { return Err(Error::CaptureCorrupt); }
-            let receipt = CaptureSubmissionReceipt {operation_id:operation.clone(), sha256:summary.sha256.clone(), bytes:summary.bytes,
-                received_at_milliseconds:now_ms()?};
-            transaction.execute("INSERT INTO capture_submissions(operation_id,owner_id,metadata,receipt,summary,bytes,payload)
-                VALUES(?1,?2,?3,?4,?5,?6,zeroblob(?6))",
-                params![operation,actor.id,json(&metadata)?,json(&receipt)?,json(&summary)?,summary.bytes]).map_err(db_error)?;
-            let row = transaction.last_insert_rowid();
-            {
-                let mut blob = transaction.blob_open(rusqlite::MAIN_DB, "capture_submissions", "payload", row, false).map_err(db_error)?;
-                let mut file = File::open(&stage.path).map_err(|_| Error::Unavailable)?;
-                let copied = std::io::copy(&mut file, &mut blob).map_err(|_| Error::Unavailable)?;
-                if copied != summary.bytes { return Err(Error::CaptureCorrupt); }
-                blob.close().map_err(db_error)?;
+            if let Some(receipt) = existing(&transaction, &actor, &operation, &metadata)? {
+                return Ok((false, receipt));
             }
+            check_storage(&transaction, &actor, metadata.bytes)?;
+            if metadata.sha256 != summary.sha256 || metadata.bytes != summary.bytes {
+                return Err(Error::CaptureCorrupt);
+            }
+            let object = objects.join(object_name(&operation)?);
+            let published = publish_staged_capture(&stage.path, &object)?;
+            let durable = File::open(&object)
+                .and_then(|file| file.metadata())
+                .map_err(|_| Error::Unavailable)?;
+            if durable.len() != summary.bytes {
+                return Err(Error::CaptureCorrupt);
+            }
+            let receipt = CaptureSubmissionReceipt {
+                operation_id: operation.clone(),
+                sha256: summary.sha256.clone(),
+                bytes: summary.bytes,
+                received_at_milliseconds: now_ms()?,
+            };
+            transaction
+                .execute(
+                    "INSERT INTO capture_submissions(operation_id,owner_id,metadata,receipt,summary,bytes)
+                     VALUES(?1,?2,?3,?4,?5,?6)",
+                    params![
+                        operation,
+                        actor.id,
+                        json(&metadata)?,
+                        json(&receipt)?,
+                        json(&summary)?,
+                        summary.bytes
+                    ],
+                )
+                .map_err(db_error)?;
             transaction.commit().map_err(db_error)?;
+            published.keep();
             drop(stage);
             Ok((true, receipt))
-        }).await
+        })
+        .await
     }
 
     pub(crate) async fn capture_receipt(
@@ -193,18 +260,41 @@ impl Store {
         actor: Actor,
         operation: String,
     ) -> Result<(), Error> {
+        let path = self.capture_object_path(&operation)?;
         self.call(move |connection| {
-            let transaction=begin_write(connection)?;
-            ensure_actor(&transaction,&actor)?;
-            if let Some(stored)=load(&transaction,&operation)? {
-                if stored.owner != actor.id { return Err(Error::NotFound); }
-                if stored.deleted { return Ok(()); }
-                transaction.execute("UPDATE capture_submissions SET deleted=1,metadata=NULL,receipt=NULL,summary=NULL,bytes=0,payload=NULL WHERE operation_id=?1",[&operation]).map_err(db_error)?;
+            let transaction = begin_write(connection)?;
+            ensure_actor(&transaction, &actor)?;
+            if let Some(stored) = load(&transaction, &operation)? {
+                if stored.owner != actor.id {
+                    return Err(Error::NotFound);
+                }
+                if !stored.deleted {
+                    transaction
+                        .execute(
+                            "UPDATE capture_submissions SET deleted=1,metadata=NULL,receipt=NULL,summary=NULL,bytes=0 WHERE operation_id=?1",
+                            [&operation],
+                        )
+                        .map_err(db_error)?;
+                    transaction.commit().map_err(db_error)?;
+                }
             } else {
-                transaction.execute("INSERT INTO capture_submissions(operation_id,owner_id,deleted) VALUES(?1,?2,1)",params![operation,actor.id]).map_err(db_error)?;
+                transaction
+                    .execute(
+                        "INSERT INTO capture_submissions(operation_id,owner_id,deleted) VALUES(?1,?2,1)",
+                        params![operation, actor.id],
+                    )
+                    .map_err(db_error)?;
+                transaction.commit().map_err(db_error)?;
             }
-            transaction.commit().map_err(db_error)
-        }).await
+            Ok(())
+        })
+        .await?;
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
     }
 
     pub(crate) async fn capture_content_metadata(
@@ -227,40 +317,33 @@ impl Store {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn capture_chunk(
         &self,
         actor: Actor,
         operation: String,
         offset: u64,
     ) -> Result<Vec<u8>, Error> {
-        self.call(move |connection| {
-            let transaction = connection.transaction().map_err(db_error)?;
-            authorize_content(&transaction, &actor, &operation)?;
-            let rowid = transaction
-                .query_row(
-                    "SELECT rowid FROM capture_submissions WHERE operation_id=?1",
-                    [operation],
-                    |row| row.get(0),
-                )
-                .map_err(db_error)?;
-            let blob = transaction
-                .blob_open(
-                    rusqlite::MAIN_DB,
-                    "capture_submissions",
-                    "payload",
-                    rowid,
-                    true,
-                )
-                .map_err(db_error)?;
-            let position = usize::try_from(offset).map_err(|_| Error::Invalid)?;
-            let mut chunk = vec![0; blob.len().saturating_sub(position).min(DOWNLOAD_CHUNK)];
-            if !chunk.is_empty() {
-                blob.read_at_exact(&mut chunk, position).map_err(db_error)?;
-            }
-            blob.close().map_err(db_error)?;
-            Ok(chunk)
-        })
-        .await
+        let path = self.capture_object_path(&operation)?;
+        let bytes = self
+            .call(move |connection| {
+                let transaction = connection.transaction().map_err(db_error)?;
+                authorize_content(&transaction, &actor, &operation)?;
+                transaction
+                    .query_row(
+                        "SELECT bytes FROM capture_submissions WHERE operation_id=?1",
+                        [operation],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_error)
+            })
+            .await?;
+        if offset >= bytes {
+            return Ok(Vec::new());
+        }
+        tokio::task::spawn_blocking(move || read_object_chunk(&path, offset, bytes))
+            .await
+            .map_err(|_| Error::Unavailable)?
     }
 
     pub(crate) async fn review_captures(
@@ -384,6 +467,229 @@ fn is_reviewer(connection: &Connection, actor: &Actor) -> Result<bool, Error> {
         )
         .map_err(db_error)
 }
+pub(super) fn migrate_capture_files(
+    connection: &mut Connection,
+    database: &Path,
+) -> Result<(), Error> {
+    extract_capture_blobs(connection, &objects_directory(database))?;
+    connection
+        .execute_batch("PRAGMA secure_delete=ON;")
+        .map_err(db_error)?;
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../../migrations/007_capture_files.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
+}
+
+fn extract_capture_blobs(connection: &mut Connection, directory: &Path) -> Result<(), Error> {
+    staging_directory(directory)?;
+    let rows = {
+        let mut statement = connection
+            .prepare(
+                "SELECT operation_id, rowid, bytes FROM capture_submissions
+                 WHERE deleted=0 AND payload IS NOT NULL",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            })
+            .map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?
+    };
+    for (operation, rowid, bytes) in rows {
+        let name = Uuid::parse_str(&operation)
+            .map_err(|_| Error::Unavailable)?
+            .to_string();
+        let destination = directory.join(&name);
+        if destination.is_file()
+            && fs::metadata(&destination)
+                .map_err(|_| Error::Unavailable)?
+                .len()
+                == bytes
+        {
+            continue;
+        }
+        let partial = directory.join(format!("{name}.partial"));
+        let _ = fs::remove_file(&partial);
+        {
+            let transaction = connection.transaction().map_err(db_error)?;
+            let blob = transaction
+                .blob_open(
+                    rusqlite::MAIN_DB,
+                    "capture_submissions",
+                    "payload",
+                    rowid,
+                    true,
+                )
+                .map_err(db_error)?;
+            write_blob(&blob, &partial, bytes)?;
+        }
+        fs::rename(&partial, &destination).map_err(|_| Error::Unavailable)?;
+        sync_directory(directory)?;
+    }
+    Ok(())
+}
+
+fn write_blob(blob: &rusqlite::blob::Blob<'_>, path: &Path, bytes: u64) -> Result<(), Error> {
+    let blob_len = u64::try_from(blob.len()).map_err(|_| Error::Unavailable)?;
+    if blob_len != bytes {
+        return Err(Error::Unavailable);
+    }
+    let mut file = create_private(path)?;
+    let mut offset = 0_usize;
+    let total = blob.len();
+    while offset < total {
+        let end = total.min(offset.saturating_add(DOWNLOAD_CHUNK));
+        let mut chunk = vec![0; end - offset];
+        blob.read_at_exact(&mut chunk, offset).map_err(db_error)?;
+        file.write_all(&chunk).map_err(|_| Error::Unavailable)?;
+        offset = end;
+    }
+    file.sync_all().map_err(|_| Error::Unavailable)?;
+    Ok(())
+}
+
+fn create_private(path: &Path) -> Result<File, Error> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|_| Error::Unavailable)
+}
+
+pub(super) fn reconcile_capture_objects(
+    connection: &Connection,
+    directory: &Path,
+) -> Result<(), Error> {
+    staging_directory(directory)?;
+    let mut statement = connection
+        .prepare("SELECT operation_id FROM capture_submissions WHERE deleted=0")
+        .map_err(db_error)?;
+    let live = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(db_error)?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(db_error)?;
+    drop(statement);
+    for entry in fs::read_dir(directory).map_err(|_| Error::Unavailable)? {
+        let entry = entry.map_err(|_| Error::Unavailable)?;
+        let Some(name) = entry.file_name().into_string().ok() else {
+            continue;
+        };
+        if name.ends_with(".partial")
+            || (Uuid::parse_str(&name).is_ok() && !live.contains(name.as_str()))
+        {
+            fs::remove_file(entry.path()).map_err(|_| Error::Unavailable)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn copy_capture_objects(source: &Path, output: &Path) -> Result<(), Error> {
+    if !source.exists() {
+        return Ok(());
+    }
+    let destination = objects_directory(&output.canonicalize().map_err(|_| Error::Unavailable)?);
+    staging_directory(&destination)?;
+    for entry in fs::read_dir(source).map_err(|_| Error::Unavailable)? {
+        let entry = entry.map_err(|_| Error::Unavailable)?;
+        let Some(name) = entry.file_name().into_string().ok() else {
+            continue;
+        };
+        if Uuid::parse_str(&name).is_err() {
+            continue;
+        }
+        let target = destination.join(&name);
+        fs::copy(entry.path(), &target).map_err(|_| Error::Unavailable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+                .map_err(|_| Error::Unavailable)?;
+        }
+        File::open(&target)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| Error::Unavailable)?;
+    }
+    sync_directory(&destination)
+}
+
+pub(crate) fn remove_capture_files(directory: &Path, operations: &[String]) {
+    for operation in operations {
+        let Ok(name) = Uuid::parse_str(operation) else {
+            continue;
+        };
+        if let Err(error) = fs::remove_file(directory.join(name.to_string()))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "capture file remained after the row was deleted");
+        }
+    }
+}
+
+fn publish_staged_capture(stage: &Path, object: &Path) -> Result<PublishedCapture, Error> {
+    let directory = object
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or(Error::Unavailable)?;
+    staging_directory(directory)?;
+    let published = PublishedCapture {
+        path: object.to_path_buf(),
+    };
+    let _ = fs::remove_file(object);
+    if fs::hard_link(stage, object).is_err() {
+        fs::copy(stage, object).map_err(|_| Error::Unavailable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(object, fs::Permissions::from_mode(0o600))
+                .map_err(|_| Error::Unavailable)?;
+        }
+    }
+    File::open(object)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| Error::Unavailable)?;
+    sync_directory(directory)?;
+    Ok(published)
+}
+
+fn sync_directory(directory: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        File::open(directory)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| Error::Unavailable)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn read_object_chunk(path: &Path, offset: u64, bytes: u64) -> Result<Vec<u8>, Error> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let remaining = usize::try_from(bytes - offset).map_err(|_| Error::Invalid)?;
+    let mut chunk = vec![0; remaining.min(DOWNLOAD_CHUNK)];
+    let mut file = File::open(path).map_err(|_| Error::Unavailable)?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|_| Error::Unavailable)?;
+    file.read_exact(&mut chunk)
+        .map_err(|_| Error::Unavailable)?;
+    Ok(chunk)
+}
+
 fn authorize_content(connection: &Connection, actor: &Actor, operation: &str) -> Result<(), Error> {
     ensure_actor(connection, actor)?;
     let stored = load(connection, operation)?.ok_or(Error::NotFound)?;
@@ -547,5 +853,88 @@ mod tests {
             .expect("startup cleanup");
         assert!(!abandoned.exists());
         assert_eq!(fs::read(unrelated).expect("preserved file"), b"unrelated");
+    }
+
+    #[tokio::test]
+    async fn capture_bytes_stay_in_a_file_and_leave_with_the_account() {
+        use tokio::io::AsyncWriteExt;
+
+        let directory = tempfile::TempDir::new().expect("directory");
+        let store = Store::open(&directory.path().join("server.sqlite")).expect("store");
+        let identity = store
+            .identity(Registration::Operator {
+                role: Role::Contributor,
+            })
+            .await
+            .expect("identity");
+        let actor = store.authenticate(&identity.token).await.expect("actor");
+        let body = b"file-backed capture";
+        let digest = crate::store::hash(body);
+        let metadata = CaptureSubmissionMetadata {
+            evidence: None,
+            sha256: digest.clone(),
+            bytes: u64::try_from(body.len()).expect("size"),
+            encoding: cutout_core::PevcapEncoding::Jsonl,
+            origin: cutout_core::CaptureOrigin::Manual.into(),
+            integrity: cutout_core::CaptureSubmissionIntegrity::Complete,
+            provenance: cutout_core::CaptureSubmissionProvenance {
+                source_artifact_id: Uuid::new_v4().to_string(),
+                live_capture_id: None,
+                source_sha256: Some(digest.clone()),
+                transformation: cutout_core::CaptureSubmissionTransformation::Unmodified,
+            },
+        };
+        let summary = CaptureSubmissionPayloadSummary {
+            sha256: digest,
+            bytes: metadata.bytes,
+            events: 0,
+            annotation_count: 0,
+            categories: cutout_core::CaptureSubmissionCategories::default(),
+        };
+        let (stage, mut file) = store.stage_capture().await.expect("stage");
+        file.write_all(body).await.expect("stage bytes");
+        drop(file);
+        let operation = Uuid::new_v4().to_string();
+        let (created, _) = store
+            .commit_capture(actor, operation.clone(), metadata, summary, stage)
+            .await
+            .expect("commit");
+        assert!(created);
+        let path = store.capture_object_path(&operation).expect("object path");
+        assert_eq!(fs::read(&path).expect("object"), body);
+        let payload_column: u32 = store
+            .call(|connection| {
+                connection
+                    .query_row(
+                        "SELECT count(*) FROM pragma_table_info('capture_submissions') WHERE name='payload'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_error)
+            })
+            .await
+            .expect("schema");
+        assert_eq!(payload_column, 0);
+        let chunk = store
+            .capture_chunk(
+                store.authenticate(&identity.token).await.expect("reader"),
+                operation.clone(),
+                0,
+            )
+            .await
+            .expect("file chunk");
+        assert_eq!(chunk, body);
+        let backup = directory.path().join("backup.sqlite");
+        store.backup(backup.clone()).await.expect("backup");
+        store
+            .delete_current(identity.token)
+            .await
+            .expect("delete account");
+        assert!(!path.exists(), "account deletion removes the capture file");
+        let restored = Store::open(&backup).expect("restored snapshot");
+        let restored_path = restored
+            .capture_object_path(&operation)
+            .expect("restored object");
+        assert_eq!(fs::read(restored_path).expect("backed up bytes"), body);
     }
 }

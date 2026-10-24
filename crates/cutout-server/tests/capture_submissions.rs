@@ -614,6 +614,13 @@ async fn private_capture_failed_storage_publishes_nothing_and_preserves_retry() 
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
+    let mut objects = database.canonicalize().expect("database").into_os_string();
+    objects.push(".capture-objects");
+    let object = std::path::PathBuf::from(objects).join(&operation);
+    assert!(
+        !object.exists(),
+        "failed publication must not leave a capture file"
+    );
     let count: u64 = connection
         .query_row("SELECT count(*) FROM capture_submissions", [], |row| {
             row.get(0)
@@ -630,6 +637,7 @@ async fn private_capture_failed_storage_publishes_nothing_and_preserves_retry() 
             .status(),
         StatusCode::CREATED
     );
+    assert_eq!(std::fs::read(object).expect("capture file"), capture());
 }
 
 #[tokio::test]
@@ -664,7 +672,7 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
         .expect("partial body");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            let admitted = std::fs::read_dir(&staging).ok().is_some_and(|entries| {
+            let admitted = std::fs::read_dir(&staging).is_ok_and(|entries| {
                 entries.filter_map(Result::ok).any(|entry| {
                     entry
                         .file_name()

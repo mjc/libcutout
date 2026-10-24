@@ -1,6 +1,10 @@
 //! Explicit private diagnostic transfer. No capture replay or transport execution.
 use super::actor;
-use crate::{Error, Store, model::id, store::capture_submissions::ReviewPage};
+use crate::{
+    Error, Store,
+    model::id,
+    store::capture_submissions::{DOWNLOAD_CHUNK, ReviewPage},
+};
 use axum::{
     Json, Router,
     body::{Body, Bytes, HttpBody},
@@ -14,8 +18,8 @@ use cutout_core::{
     MAX_CAPTURE_SUBMISSION_BYTES, PevcapEncoding, validate_capture_submission_payload,
 };
 use serde::Deserialize;
-use std::{future::poll_fn, pin::Pin, time::Duration};
-use tokio::io::AsyncWriteExt;
+use std::{future::poll_fn, io::SeekFrom, path::PathBuf, pin::Pin, time::Duration};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 /// Stops a capture download ten minutes after the response starts.
 #[derive(Debug)]
@@ -240,7 +244,7 @@ async fn content(
     let operation = id(&operation)?;
     store.capture_read_budget(actor.clone()).await?;
     let metadata = store
-        .capture_content_metadata(actor.clone(), operation.clone())
+        .capture_content_metadata(actor, operation.clone())
         .await?;
     let total = metadata.bytes;
     let (content_type, disposition) = if metadata.evidence.is_some() {
@@ -254,36 +258,16 @@ async fn content(
             "attachment; filename=\"bluetooth-capture.pevcap\"",
         )
     };
+    let path = store.capture_object_path(&operation)?;
     let lease = DownloadLease::new();
     let stream = futures_util::stream::unfold(
-        Some((store, actor, operation, 0_u64, lease)),
-        move |state| async move {
-            let (store, actor, operation, offset, lease) = state?;
-            if offset >= total {
-                return None;
-            }
-            if tokio::time::Instant::now() >= lease.expires {
-                return Some((Err(Error::Unavailable), None));
-            }
-            match tokio::time::timeout_at(
-                lease.expires,
-                store.capture_chunk(actor.clone(), operation.clone(), offset),
-            )
-            .await
-            {
-                Ok(Ok(chunk))
-                    if !chunk.is_empty() && tokio::time::Instant::now() < lease.expires =>
-                {
-                    let next = offset + chunk.len() as u64;
-                    Some((
-                        Ok::<Bytes, Error>(Bytes::from(chunk)),
-                        Some((store, actor, operation, next, lease)),
-                    ))
-                }
-                Ok(Err(error)) => Some((Err(error), None)),
-                Ok(Ok(_)) | Err(_) => Some((Err(Error::Unavailable), None)),
-            }
-        },
+        Some(CaptureDownload {
+            path,
+            file: None,
+            offset: 0,
+            lease,
+        }),
+        move |state| async move { read_capture_file(state?, total).await },
     );
     Ok((
         [
@@ -293,6 +277,80 @@ async fn content(
         Body::from_stream(stream),
     )
         .into_response())
+}
+
+struct CaptureDownload {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+    offset: u64,
+    lease: DownloadLease,
+}
+
+async fn read_capture_file(
+    download: CaptureDownload,
+    total: u64,
+) -> Option<(Result<Bytes, Error>, Option<CaptureDownload>)> {
+    let CaptureDownload {
+        path,
+        file,
+        offset,
+        lease,
+    } = download;
+    if offset >= total {
+        return None;
+    }
+    if tokio::time::Instant::now() >= lease.expires {
+        return Some((Err(Error::Unavailable), None));
+    }
+    let read = async {
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(Error::Unavailable);
+        }
+        let mut file = match file {
+            Some(file) => file,
+            None => tokio::fs::File::open(&path)
+                .await
+                .map_err(|_| Error::Unavailable)?,
+        };
+        if offset == 0 {
+            let len = file.metadata().await.map_err(|_| Error::Unavailable)?.len();
+            if len != total {
+                return Err(Error::Unavailable);
+            }
+        }
+        file.seek(SeekFrom::Start(offset))
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let remaining = usize::try_from(total - offset).map_err(|_| Error::Unavailable)?;
+        let mut chunk = vec![0; remaining.min(DOWNLOAD_CHUNK)];
+        file.read_exact(&mut chunk)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok((chunk, file))
+    };
+    match tokio::time::timeout_at(lease.expires, read).await {
+        Ok(Ok((chunk, file)))
+            if !chunk.is_empty() && tokio::time::Instant::now() < lease.expires =>
+        {
+            let Some(next) = u64::try_from(chunk.len())
+                .ok()
+                .and_then(|len| offset.checked_add(len))
+            else {
+                return Some((Err(Error::Unavailable), None));
+            };
+            Some((
+                Ok(Bytes::from(chunk)),
+                Some(CaptureDownload {
+                    path,
+                    file: Some(file),
+                    offset: next,
+                    lease,
+                }),
+            ))
+        }
+        Ok(Err(error)) => Some((Err(error), None)),
+        Ok(Ok(_)) | Err(_) => Some((Err(Error::Unavailable), None)),
+    }
 }
 
 #[cfg(test)]
