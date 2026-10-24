@@ -1851,18 +1851,18 @@ mod tests {
                 .capture_submission(CaptureSubmissionSource::LiveCapture(id))
                 .unwrap()
                 .expect("selected capture has durable status");
-            if status.phase != CaptureSubmissionPhase::Sent {
-                assert_eq!(
-                    status.local_payload_state,
-                    CaptureSubmissionLocalPayloadState::Retained
-                );
-                assert!(status.receipt.is_none());
-            } else {
+            if status.phase == CaptureSubmissionPhase::Sent {
                 assert!(status.receipt.is_some());
                 assert_eq!(
                     status.local_payload_state,
                     CaptureSubmissionLocalPayloadState::Removed
                 );
+            } else {
+                assert_eq!(
+                    status.local_payload_state,
+                    CaptureSubmissionLocalPayloadState::Retained
+                );
+                assert!(status.receipt.is_none());
             }
         }
         database.shutdown().unwrap();
@@ -1987,7 +1987,7 @@ mod tests {
         );
         let second = ready(database.send_capture_submission_batch(
             &retry_plan,
-            &[candidate.source_artifact_id.clone()],
+            std::slice::from_ref(&candidate.source_artifact_id),
             ACCOUNT,
             "secret",
             &BatchTransport::default(),
@@ -1996,7 +1996,10 @@ mod tests {
         .unwrap();
         assert_eq!(second.sent, 1);
         assert_eq!(second.cleaned, 1);
-        assert!(second.pending_cleanup_source_artifact_ids.is_empty());
+        assert_eq!(
+            second.pending_cleanup_source_artifact_ids,
+            Vec::<String>::new()
+        );
         database.shutdown().unwrap();
     }
 
@@ -2042,7 +2045,7 @@ mod tests {
         let no_upload = BatchTransport::default();
         let result = ready(database.send_capture_submission_batch(
             &reviewed,
-            &[candidate.source_artifact_id.clone()],
+            std::slice::from_ref(&candidate.source_artifact_id),
             ACCOUNT,
             "secret",
             &no_upload,
@@ -2056,7 +2059,10 @@ mod tests {
             result.failed_source_artifact_ids,
             vec![candidate.source_artifact_id.clone()]
         );
-        assert!(result.pending_cleanup_source_artifact_ids.is_empty());
+        assert_eq!(
+            result.pending_cleanup_source_artifact_ids,
+            Vec::<String>::new()
+        );
         assert_eq!(no_upload.uploads.load(Ordering::Acquire), 0);
         assert!(
             database
@@ -2210,7 +2216,7 @@ mod tests {
 
         let result = ready(database.send_capture_submission_batch(
             &plan,
-            &[candidate.source_artifact_id.clone()],
+            std::slice::from_ref(&candidate.source_artifact_id),
             ACCOUNT,
             "secret",
             &BatchTransport::default(),
@@ -2354,7 +2360,7 @@ mod tests {
         };
         let result = ready(database.send_capture_submission_batch(
             &plan,
-            &[candidate.source_artifact_id.clone()],
+            std::slice::from_ref(&candidate.source_artifact_id),
             ACCOUNT,
             "secret",
             &transport,
@@ -2414,7 +2420,7 @@ mod tests {
         );
         let result = ready(database.send_capture_submission_batch(
             &plan,
-            &[candidate.source_artifact_id.clone()],
+            std::slice::from_ref(&candidate.source_artifact_id),
             ACCOUNT,
             "secret",
             &BatchTransport::default(),

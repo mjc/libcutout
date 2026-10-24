@@ -2585,16 +2585,9 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn schema_62_upgrade_adds_submission_aliases_and_preserves_existing_data() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        initialize_current_schema(&connection).unwrap();
-        connection
-            .execute_batch(
-                "DROP TABLE capture_submission_source_aliases;
-                 DROP TABLE capture_submission_reservations;",
-            )
-            .unwrap();
+    fn seed_schema_62_submission_alias_fixture(
+        connection: &Connection,
+    ) -> (String, String, String) {
         let digest = "a".repeat(64);
         let source_artifact_id = "00000000-0000-4000-8000-000000000001";
         let operation_id = "00000000-0000-4000-8000-000000000002";
@@ -2648,6 +2641,26 @@ mod tests {
         connection
             .execute_batch("PRAGMA user_version = 62;")
             .unwrap();
+
+        (
+            digest,
+            source_artifact_id.to_owned(),
+            operation_id.to_owned(),
+        )
+    }
+
+    #[test]
+    fn schema_62_upgrade_adds_submission_aliases_and_preserves_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE capture_submission_source_aliases;
+                 DROP TABLE capture_submission_reservations;",
+            )
+            .unwrap();
+        let (digest, source_artifact_id, operation_id) =
+            seed_schema_62_submission_alias_fixture(&connection);
 
         migrate(&mut connection).unwrap();
         verify_current_schema(&connection).unwrap();
