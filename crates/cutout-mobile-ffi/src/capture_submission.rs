@@ -1,6 +1,8 @@
 //! Explicit private diagnostic Send through Rust's retained snapshot owner.
 
+mod bulk;
 mod http;
+pub use bulk::*;
 
 use crate::{RideDatabaseHandle, persistence};
 use cutout_core::{CaptureSubmissionIntegrity, CaptureSubmissionReceipt};
@@ -14,6 +16,8 @@ pub enum MobileCaptureSubmissionSourceDto {
     LiveCapture { id: String },
     /// Consumed writer's retained artifact UUID, independent of its file path.
     RecordedArtifact { id: String },
+    /// Canonical SHA-256 of an imported PEVCAP capture without writer identity.
+    PevcapDigest { sha256: String },
 }
 
 impl TryFrom<MobileCaptureSubmissionSourceDto> for persistence::CaptureSubmissionSource {
@@ -29,6 +33,11 @@ impl TryFrom<MobileCaptureSubmissionSourceDto> for persistence::CaptureSubmissio
             MobileCaptureSubmissionSourceDto::RecordedArtifact { id } => {
                 persistence::CaptureArtifactId::parse(&id)
                     .map(Self::RecordedArtifact)
+                    .map_err(|_| MobileCaptureSubmissionError::InvalidSource)
+            }
+            MobileCaptureSubmissionSourceDto::PevcapDigest { sha256 } => {
+                persistence::PevcapDigest::parse(&sha256)
+                    .map(Self::PevcapDigest)
                     .map_err(|_| MobileCaptureSubmissionError::InvalidSource)
             }
         }
@@ -231,6 +240,27 @@ impl From<persistence::CaptureSubmissionTransferError> for MobileCaptureSubmissi
     }
 }
 
+/// Provenance origin retained by a private Send snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureSubmissionOriginDto {
+    /// Captured during ordinary connection or ride use.
+    Automatic,
+    /// Captured after explicit recording action.
+    Manual,
+    /// Legacy source does not establish how recording began.
+    Unknown,
+}
+
+impl From<cutout_core::CaptureSubmissionOrigin> for MobileCaptureSubmissionOriginDto {
+    fn from(origin: cutout_core::CaptureSubmissionOrigin) -> Self {
+        match origin {
+            cutout_core::CaptureSubmissionOrigin::Automatic => Self::Automatic,
+            cutout_core::CaptureSubmissionOrigin::Manual => Self::Manual,
+            cutout_core::CaptureSubmissionOrigin::Unknown => Self::Unknown,
+        }
+    }
+}
+
 /// Current Rust-owned operation, safe to display after relaunch without sending.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCaptureSubmissionStatusDto {
@@ -238,6 +268,10 @@ pub struct MobileCaptureSubmissionStatusDto {
     pub operation_id: String,
     /// Current persisted phase, including unconfirmed remote removal.
     pub phase: MobileCaptureSubmissionPhaseDto,
+    /// Retained recording provenance; unknown is not inferred from the Send action.
+    pub origin: MobileCaptureSubmissionOriginDto,
+    /// Durable completeness. Use this value rather than interpreting a zero loss count.
+    pub integrity: crate::MobileCaptureIntegrityDto,
     /// Local capture payload availability, independent from remote deletion state.
     pub local_payload_state: MobileCaptureSubmissionLocalPayloadStateDto,
     /// Actual included categories, independent of native presentation flags.
@@ -257,10 +291,19 @@ impl From<persistence::CaptureSubmissionStatus> for MobileCaptureSubmissionStatu
         let dropped_messages = match status.metadata.integrity {
             CaptureSubmissionIntegrity::Complete => 0,
             CaptureSubmissionIntegrity::Incomplete { dropped_messages } => dropped_messages,
+            CaptureSubmissionIntegrity::Unknown => 0,
         };
         Self {
             operation_id: status.operation_id,
             phase: status.phase.into(),
+            origin: status.metadata.origin.into(),
+            integrity: match status.metadata.integrity {
+                CaptureSubmissionIntegrity::Complete => crate::MobileCaptureIntegrityDto::Complete,
+                CaptureSubmissionIntegrity::Incomplete { dropped_messages } => {
+                    crate::MobileCaptureIntegrityDto::Incomplete { dropped_messages }
+                }
+                CaptureSubmissionIntegrity::Unknown => crate::MobileCaptureIntegrityDto::Unknown,
+            },
             local_payload_state: status.local_payload_state.into(),
             categories: status.categories.into(),
             dropped_messages,
@@ -383,6 +426,7 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
                 Self::NotReady
             }
             Error::InvalidCapture => Self::InvalidCapture,
+            Error::TooLarge => Self::InvalidCapture,
             Error::WrongAccount => Self::Unauthorized,
             Error::Storage(_) => Self::StorageFailure,
         }
@@ -674,6 +718,9 @@ mod tests {
             MobileCaptureSubmissionSourceDto::RecordedArtifact {
                 id: "not-a-writer-receipt".into(),
             },
+            MobileCaptureSubmissionSourceDto::PevcapDigest {
+                sha256: "NOT-A-SHA256".into(),
+            },
         ] {
             assert_eq!(
                 persistence::CaptureSubmissionSource::try_from(source),
@@ -690,6 +737,14 @@ mod tests {
         assert!(
             persistence::CaptureSubmissionSource::try_from(
                 MobileCaptureSubmissionSourceDto::RecordedArtifact { id }
+            )
+            .is_ok()
+        );
+        assert!(
+            persistence::CaptureSubmissionSource::try_from(
+                MobileCaptureSubmissionSourceDto::PevcapDigest {
+                    sha256: "ab".repeat(32),
+                }
             )
             .is_ok()
         );
@@ -738,6 +793,27 @@ mod tests {
             MobileCaptureSubmissionPhaseDto::Cancelling
         );
         database.inner.clone().shutdown()?;
+        Ok(())
+    }
+
+    #[test]
+    fn status_projection_keeps_unknown_origin_and_integrity_explicit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = TestDirectory::new()?;
+        let (database, source) = finished_capture(&directory.0)?;
+        let mut status = database
+            .inner
+            .prepare_capture_submission(source.try_into()?)?;
+        status.metadata.origin = cutout_core::CaptureSubmissionOrigin::Unknown;
+        status.metadata.integrity = CaptureSubmissionIntegrity::Unknown;
+
+        let projected: MobileCaptureSubmissionStatusDto = status.into();
+        assert_eq!(projected.origin, MobileCaptureSubmissionOriginDto::Unknown);
+        assert_eq!(
+            projected.integrity,
+            crate::MobileCaptureIntegrityDto::Unknown
+        );
+        assert_eq!(projected.dropped_messages, 0);
         Ok(())
     }
 

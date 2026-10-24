@@ -61,7 +61,7 @@ fn deduplicate_managed_capture_files_inner(
         }
         let entry = entry?;
         let path = entry.path();
-        let Some(file_kind) = capture_file_kind(&entry.file_name()) else {
+        let Some(file_kind) = managed_capture_file_kind(&entry.file_name()) else {
             continue;
         };
         let path_metadata = match fs::symlink_metadata(&path) {
@@ -97,7 +97,11 @@ fn deduplicate_managed_capture_files_inner(
         if !path_still_matches(&path, &file, initial_fingerprint)? {
             continue;
         }
-        let canonical_match = file_kind == CaptureFileKind::ManagedOriginal
+        let submission_protected = file_kind == CaptureFileKind::ManagedOriginal
+            && database
+                .managed_capture_file_submission_reserved(&digest, initial_fingerprint.len())?;
+        let canonical_match = !submission_protected
+            && file_kind == CaptureFileKind::ManagedOriginal
             && matches_published_capture(database, &mut file, &digest, initial_fingerprint.len())?;
         let receipt_authorized = !canonical_match
             && database
@@ -109,6 +113,9 @@ fn deduplicate_managed_capture_files_inner(
         before_unlink(&path);
         if !directory_still_matches(directory, &canonical_directory)?
             || !path_still_matches(&path, &file, initial_fingerprint)?
+            || (file_kind == CaptureFileKind::ManagedOriginal
+                && database
+                    .managed_capture_file_submission_reserved(&digest, initial_fingerprint.len())?)
         {
             continue;
         }
@@ -130,6 +137,60 @@ fn deduplicate_managed_capture_files_inner(
     Ok(result)
 }
 
+/// Removes only one reviewed managed original after its matching receipt is durable.
+pub(super) fn remove_managed_original_after_receipt(
+    database: &RideDatabase,
+    expected_root: &Path,
+    path: &Path,
+    expected_digest: &str,
+    expected_size: u64,
+) -> Result<bool, StorageError> {
+    if path.parent() != Some(expected_root)
+        || !directory_still_matches(expected_root, expected_root)?
+    {
+        return Ok(false);
+    }
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(StorageError::Io(error)),
+    };
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() != expected_size
+        || managed_capture_file_kind(path.file_name().unwrap_or_default())
+            != Some(CaptureFileKind::ManagedOriginal)
+    {
+        return Ok(false);
+    }
+    let fingerprint = normalization::FileFingerprint::from_metadata(&metadata);
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(StorageError::Io(error)),
+    };
+    if !normalization::same_file_identity(
+        fingerprint,
+        normalization::FileFingerprint::from_metadata(&file.metadata()?),
+    ) || hash_file(&mut file, expected_size)?.as_deref() != Some(expected_digest)
+        || !path_still_matches(path, &file, fingerprint)?
+        || !database.managed_capture_file_removal_authorized(expected_digest, expected_size)?
+    {
+        return Ok(false);
+    }
+    if !directory_still_matches(expected_root, expected_root)?
+        || !path_still_matches(path, &file, fingerprint)?
+        || database.managed_capture_file_submission_reserved(expected_digest, expected_size)?
+    {
+        return Ok(false);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(StorageError::Io(error)),
+    }
+}
+
 fn directory_still_matches(directory: &Path, canonical: &Path) -> Result<bool, StorageError> {
     let metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -143,12 +204,12 @@ fn directory_still_matches(directory: &Path, canonical: &Path) -> Result<bool, S
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CaptureFileKind {
+pub(super) enum CaptureFileKind {
     ManagedOriginal,
     ExportCache,
 }
 
-fn capture_file_kind(filename: &std::ffi::OsStr) -> Option<CaptureFileKind> {
+pub(super) fn managed_capture_file_kind(filename: &std::ffi::OsStr) -> Option<CaptureFileKind> {
     let filename = filename.to_str()?;
     if let Some(stem) = filename
         .strip_prefix("cutout-btle-capture-")
@@ -613,6 +674,45 @@ mod tests {
     }
 
     #[test]
+    fn prepare_racing_exact_duplicate_cleanup_preserves_canonical_submission_bytes() {
+        let (directory, database, digest, bytes) = published_capture();
+        let documents = directory.path().join("Documents");
+        let original = capture_file(
+            &documents,
+            &btle_name(&uuid::Uuid::new_v4().hyphenated().to_string()),
+            &bytes,
+        );
+        let mut prepared = None;
+
+        // The pre-unlink hook admits a competing preparation after the initial canonical
+        // comparison. The original path may then be retired as an exact duplicate, but the
+        // durable private submission must retain the same logical bytes.
+        let result = deduplicate_managed_capture_files_inner(&database, &documents, |_| {
+            prepared = Some(
+                database
+                    .prepare_legacy_capture_submission(&original, &digest, PevcapEncoding::Jsonl)
+                    .unwrap(),
+            );
+        })
+        .unwrap();
+
+        assert_eq!(result.removed_files, 1);
+        assert!(!original.exists());
+        let prepared = prepared.expect("the competing preparation completed");
+        assert_eq!(prepared.metadata.sha256, digest);
+        assert_eq!(
+            prepared.local_payload_state,
+            crate::CaptureSubmissionLocalPayloadState::Retained
+        );
+        let canonical_copy = directory.path().join("canonical-after-race.jsonl");
+        database
+            .export_pevcap_capture(&digest, &canonical_copy)
+            .unwrap();
+        assert_eq!(fs::read(canonical_copy).unwrap(), bytes);
+        database.shutdown().unwrap();
+    }
+
+    #[test]
     fn recorded_export_uses_canonical_bytes_after_managed_duplicate_is_removed() {
         let (directory, database, artifact_id, bytes) = retained_file_writer_capture();
         let documents = directory.path().join("Documents");
@@ -635,6 +735,111 @@ mod tests {
             .unwrap();
         assert_eq!(fs::read(destination).unwrap(), bytes);
         reopened.shutdown().unwrap();
+    }
+
+    #[test]
+    fn legacy_reservation_closes_publication_gap_and_restart_keeps_logical_bytes() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let (directory, database, _artifact_id, bytes) = retained_writer_capture();
+        let documents = directory.path().join("Documents");
+        let original = capture_file(
+            &documents,
+            &btle_name(&uuid::Uuid::new_v4().hyphenated().to_string()),
+            &bytes,
+        );
+        let digest = hex::encode(Sha256::digest(&bytes));
+        let size = u64::try_from(bytes.len()).unwrap();
+
+        // Crash after canonical publication but before the Prepared row is committed.
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            database.prepare_legacy_capture_submission_with_hook(
+                &original,
+                &digest,
+                PevcapEncoding::Jsonl,
+                || panic!("simulate process interruption after publication"),
+            )
+        }));
+        assert!(interrupted.is_err());
+        assert!(
+            database
+                .managed_capture_file_submission_reserved(&digest, size)
+                .unwrap()
+        );
+        let during_gap = database
+            .deduplicate_managed_capture_files(&documents)
+            .unwrap();
+        assert_eq!(during_gap.removed_files, 0);
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+        database.shutdown().unwrap();
+
+        // The durable reservation survives restart and is reused to finish preparation.
+        let database_path = directory.path().join("ride.sqlite");
+        let reopened = RideDatabase::open(&database_path).unwrap();
+        assert!(
+            reopened
+                .managed_capture_file_submission_reserved(&digest, size)
+                .unwrap()
+        );
+        let after_restart = reopened
+            .deduplicate_managed_capture_files(&documents)
+            .unwrap();
+        assert_eq!(after_restart.removed_files, 0);
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+
+        let prepared = reopened
+            .prepare_legacy_capture_submission(&original, &digest, PevcapEncoding::Jsonl)
+            .unwrap();
+        assert_eq!(prepared.metadata.sha256, digest);
+        let operation_id = prepared.operation_id.clone();
+        reopened.shutdown().unwrap();
+
+        // Once the durable canonical copy exists, exact duplicate cleanup may retire the
+        // redundant file even before receipt; the private logical payload remains retryable.
+        let unconfirmed = RideDatabase::open(&database_path).unwrap();
+        let status = unconfirmed
+            .capture_submission(crate::CaptureSubmissionSource::RecordedArtifact(
+                crate::CaptureArtifactId::parse(&prepared.metadata.provenance.source_artifact_id)
+                    .unwrap(),
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.operation_id, operation_id);
+        assert_eq!(
+            status.local_payload_state,
+            crate::CaptureSubmissionLocalPayloadState::Retained
+        );
+        let removed_duplicate = unconfirmed
+            .deduplicate_managed_capture_files(&documents)
+            .unwrap();
+        assert_eq!(removed_duplicate.removed_files, 1);
+        assert!(!original.exists());
+        let canonical_copy = directory.path().join("canonical-after-dedup.jsonl");
+        unconfirmed
+            .export_pevcap_capture(&digest, &canonical_copy)
+            .unwrap();
+        assert_eq!(fs::read(canonical_copy).unwrap(), bytes);
+        unconfirmed.shutdown().unwrap();
+
+        // A failed/unconfirmed attempt after restart still has the same operation and bytes.
+        let retry = RideDatabase::open(&database_path).unwrap();
+        let recovered = retry
+            .capture_submission(crate::CaptureSubmissionSource::RecordedArtifact(
+                crate::CaptureArtifactId::parse(&prepared.metadata.provenance.source_artifact_id)
+                    .unwrap(),
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.operation_id, operation_id);
+        assert!(recovered.receipt.is_none());
+        assert_eq!(
+            recovered.local_payload_state,
+            crate::CaptureSubmissionLocalPayloadState::Retained
+        );
+        let retry_bytes = directory.path().join("retry-from-canonical.jsonl");
+        retry.export_pevcap_capture(&digest, &retry_bytes).unwrap();
+        assert_eq!(fs::read(retry_bytes).unwrap(), bytes);
+        retry.shutdown().unwrap();
     }
 
     #[test]

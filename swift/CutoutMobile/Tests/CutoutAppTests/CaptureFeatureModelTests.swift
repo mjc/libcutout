@@ -939,7 +939,10 @@ final class CaptureLibraryModelTests: XCTestCase {
         MobileLiveCaptureHistoryEntryDto(
             liveCaptureId: id, interrupted: false, integrity: .complete, recording: nil,
             platformIdentifier: "wheel", startedAtMilliseconds: 100, finishedAtMilliseconds: 200,
-            eventCount: 1, storedBytes: 100
+            eventCount: 1, storedBytes: 100,
+            submission: MobileCaptureHistorySubmissionDto(
+                source: .liveCapture(id: id), sourceArtifactId: id, status: nil
+            )
         )
     }
 

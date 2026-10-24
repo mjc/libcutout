@@ -2,11 +2,11 @@
 
 use crate::{
     CaptureJsonlExport, CaptureWriterFinish, CaptureWriterSlot, MobileCaptureArtifactIdDto,
-    MobileCaptureOriginDto, MobilePevcapCaptureBuilder, MobilePevcapEncodingDto,
-    MobilePevcapImportReceiptDto, MobileRideDatabaseError, MobileRideIdDto,
-    MobileVerifiedStringDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
-    map_ride_database_error, mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id,
-    persistence,
+    MobileCaptureOriginDto, MobileCaptureSubmissionSourceDto, MobileCaptureSubmissionStatusDto,
+    MobilePevcapCaptureBuilder, MobilePevcapEncodingDto, MobilePevcapImportReceiptDto,
+    MobileRideDatabaseError, MobileRideIdDto, MobileVerifiedStringDto,
+    MobileWallClockUnixMillisDto, RideDatabaseHandle, map_ride_database_error,
+    mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id, persistence,
 };
 use std::{
     path::Path,
@@ -82,6 +82,35 @@ pub struct MobileStoredPevcapCaptureDto {
     /// Locations admitted to the derived ride, not all raw observations.
     pub location_count: u64,
     pub ride_id: Option<MobileRideIdDto>,
+    /// Canonical source alias and private Send state, distinct from the import receipt.
+    pub submission: MobileCaptureHistorySubmissionDto,
+}
+
+/// Receipt-backed private Send projection for one capture-history row.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureHistorySubmissionDto {
+    /// Typed Rust-supported locator for evidence, preparation and receipt lookup.
+    pub source: MobileCaptureSubmissionSourceDto,
+    /// Stable artifact identity to use for Rust-owned Send preparation and status lookup.
+    pub source_artifact_id: String,
+    /// Durable private Send operation, retained after local payload cleanup.
+    pub status: Option<MobileCaptureSubmissionStatusDto>,
+}
+
+impl From<persistence::CaptureSubmissionSource> for MobileCaptureSubmissionSourceDto {
+    fn from(source: persistence::CaptureSubmissionSource) -> Self {
+        match source {
+            persistence::CaptureSubmissionSource::LiveCapture(id) => {
+                Self::LiveCapture { id: id.to_string() }
+            }
+            persistence::CaptureSubmissionSource::RecordedArtifact(id) => {
+                Self::RecordedArtifact { id: id.to_string() }
+            }
+            persistence::CaptureSubmissionSource::PevcapDigest(digest) => Self::PevcapDigest {
+                sha256: digest.to_string(),
+            },
+        }
+    }
 }
 
 /// One Rust-bounded page of SQLite-backed captures.
@@ -200,6 +229,11 @@ impl RideDatabaseHandle {
                         record_count: capture.record_count,
                         location_count: capture.location_count,
                         ride_id: capture.ride_id.map(mobile_ride_id),
+                        submission: MobileCaptureHistorySubmissionDto {
+                            source: capture.submission.source.into(),
+                            source_artifact_id: capture.submission.source_artifact_id,
+                            status: capture.submission.status.map(Into::into),
+                        },
                     })
                     .collect(),
                 next_cursor: page.next_cursor.map(|cursor| MobilePevcapCaptureCursorDto {
@@ -241,6 +275,8 @@ pub struct MobileLiveCaptureHistoryEntryDto {
     pub event_count: u64,
     /// Uncompressed retained bytes excluding line delimiters.
     pub stored_bytes: u64,
+    /// Canonical source alias and durable private Send state, distinct from import receipt.
+    pub submission: MobileCaptureHistorySubmissionDto,
 }
 
 /// One bounded page of inactive database captures.
@@ -299,6 +335,11 @@ impl RideDatabaseHandle {
                     finished_at_milliseconds: capture.finished_at_ms,
                     event_count: capture.event_count,
                     stored_bytes: capture.stored_bytes,
+                    submission: MobileCaptureHistorySubmissionDto {
+                        source: capture.submission.source.into(),
+                        source_artifact_id: capture.submission.source_artifact_id,
+                        status: capture.submission.status.map(Into::into),
+                    },
                 })
                 .collect(),
             next_cursor: page

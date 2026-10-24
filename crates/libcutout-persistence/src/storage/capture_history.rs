@@ -69,6 +69,19 @@ pub struct StoredPevcapCapture {
     pub location_count: u64,
     /// Optional derived ride; GPS-free captures remain independently queryable.
     pub ride_id: Option<RideId>,
+    /// Stable Send source identity and its durable private receipt-backed status, if any.
+    pub submission: CaptureSubmissionHistory,
+}
+
+/// The canonical source alias and optional private Send status for one history row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureSubmissionHistory {
+    /// Stable supported locator for evidence, preparation and receipt lookup.
+    pub source: super::capture_submission::CaptureSubmissionSource,
+    /// Stable artifact identity used to prepare or look up private Send.
+    pub source_artifact_id: String,
+    /// Durable private Send operation; distinct from a PEVCAP import receipt.
+    pub status: Option<super::capture_submission::CaptureSubmissionStatus>,
 }
 
 /// A bounded capture-history page and continuation only when another row exists.
@@ -83,11 +96,23 @@ pub struct PevcapCapturePage {
 pub(super) const HISTORY_INDEX: &str = "CREATE INDEX IF NOT EXISTS pevcap_imports_history
      ON pevcap_imports(imported_at_ms DESC, artifact_digest DESC);";
 
-const SELECT_CAPTURES: &str =
-    "SELECT i.artifact_digest, c.encoding, c.artifact_size, i.imported_at_ms,
-            i.record_count, i.location_count, i.ride_id
+const SELECT_CAPTURES: &str = "SELECT i.artifact_digest,
+            coalesce(c.encoding, json_extract(s.status_json, '$.metadata.encoding')),
+            coalesce(c.artifact_size, i.artifact_size), i.imported_at_ms,
+            i.record_count, i.location_count, i.ride_id, s.status_json
      FROM pevcap_imports AS i
-     JOIN pevcap_captures AS c ON c.receipt_digest = i.artifact_digest";
+     LEFT JOIN pevcap_captures AS c ON c.receipt_digest = i.artifact_digest
+     LEFT JOIN capture_submissions AS s ON s.operation_id = (
+        SELECT CASE WHEN count(DISTINCT candidate.source_artifact_id) = 1
+                    THEN min(candidate.operation_id) END
+        FROM capture_submissions AS candidate
+        WHERE candidate.source_artifact_id = (
+                SELECT recording.artifact_id FROM pevcap_recordings AS recording
+                WHERE recording.artifact_digest = i.artifact_digest LIMIT 1)
+           OR candidate.source_artifact_id IN (
+                SELECT alias.source_artifact_id FROM capture_submission_source_aliases AS alias
+                WHERE alias.artifact_digest = i.artifact_digest))
+     ";
 
 pub(super) fn list(
     connection: &Connection,
@@ -98,9 +123,10 @@ pub(super) fn list(
         usize::try_from(limit.get()).map_err(|_| StorageError::InvalidQueryLimit(limit.get()))?;
     let fetch_limit = i64::from(limit.get()) + 1;
     let predicate = if cursor.is_some() {
-        "WHERE (i.imported_at_ms, i.artifact_digest) < (?2, ?3)"
+        "WHERE (i.imported_at_ms, i.artifact_digest) < (?2, ?3)
+           AND (c.receipt_digest = i.artifact_digest OR s.operation_id IS NOT NULL)"
     } else {
-        ""
+        "WHERE c.receipt_digest = i.artifact_digest OR s.operation_id IS NOT NULL"
     };
     let sql = format!(
         "{SELECT_CAPTURES} {predicate}
@@ -172,8 +198,50 @@ fn read_capture(
             })
         })
         .transpose()?;
+    let status_json = row.get::<_, Option<String>>(7)?;
+    let status = status_json
+        .as_deref()
+        .map(super::capture_submission::decode_status)
+        .transpose()?;
+    let recording = super::recorded_capture::lookup(connection, &artifact_digest)?;
+    let alias =
+        super::capture_submission::lookup_submission_source_alias(connection, &artifact_digest)?;
+    let source_artifact_id = status
+        .as_ref()
+        .map(|status| status.metadata.provenance.source_artifact_id.clone())
+        .map_or_else(
+            || {
+                alias.map_or_else(
+                    || {
+                        recording.as_ref().map_or_else(
+                            || {
+                                super::capture_submission::legacy_capture_artifact_id(
+                                    &artifact_digest,
+                                )
+                                .map(|id| id.to_string())
+                                .map_err(|_| {
+                                    StorageError::InvalidStoredValue {
+                                        field: "capture source identity",
+                                        value: artifact_digest.clone(),
+                                    }
+                                })
+                            },
+                            |recording| Ok(recording.artifact_id.to_string()),
+                        )
+                    },
+                    |alias| Ok(alias.to_string()),
+                )
+            },
+            Ok,
+        )?;
+    let source = super::capture_submission::PevcapDigest::parse(&artifact_digest)
+        .map(super::capture_submission::CaptureSubmissionSource::PevcapDigest)
+        .map_err(|_| StorageError::InvalidStoredValue {
+            field: "capture source identity",
+            value: artifact_digest.clone(),
+        })?;
     Ok(StoredPevcapCapture {
-        recording: super::recorded_capture::lookup(connection, &artifact_digest)?,
+        recording,
         artifact_digest,
         encoding,
         artifact_size: row.get(2)?,
@@ -181,6 +249,11 @@ fn read_capture(
         record_count: row.get(4)?,
         location_count: row.get(5)?,
         ride_id,
+        submission: CaptureSubmissionHistory {
+            source,
+            source_artifact_id,
+            status,
+        },
     })
 }
 
@@ -262,6 +335,92 @@ mod tests {
         let cursor = PevcapCaptureCursor::new(1234, &"ab".repeat(32)).unwrap();
         assert_eq!(cursor.imported_at_milliseconds(), 1234);
         assert_eq!(cursor.artifact_digest(), "ab".repeat(32));
+    }
+
+    #[test]
+    fn capture_history_retains_private_send_receipt_after_payload_retirement() {
+        let connection = connection();
+        let digest = receipt(&connection, 'a', 10);
+        stored(&connection, &digest, true);
+        // The durable operation's provenance is authoritative even when the current
+        // catalog row can resolve to a different legacy/recording identity.
+        let source_artifact_id = "00000000-0000-4000-8000-000000000088".to_owned();
+        let operation_id = "00000000-0000-4000-8000-000000000099";
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "evidence": null,
+                "sha256": digest,
+                "bytes": 1,
+                "encoding": "jsonl",
+                "origin": "unknown",
+                "integrity": "unknown",
+                "provenance": {
+                    "source_artifact_id": source_artifact_id,
+                    "live_capture_id": null,
+                    "source_sha256": digest,
+                    "transformation": "unmodified"
+                }
+            },
+            "categories": {
+                "device_identifiers": false,
+                "location": false,
+                "notes": false,
+                "annotations": false,
+                "settings_observations": false
+            },
+            "phase": "sent",
+            "local_payload_state": "removed",
+            "account_id": null,
+            "receipt": {
+                "operation_id": operation_id,
+                "sha256": digest,
+                "bytes": 1,
+                "received_at_milliseconds": 1_700_000_000_000_u64
+            },
+            "failure": null,
+            "revision": 0
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![source_artifact_id, operation_id, digest, status.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM pevcap_captures WHERE artifact_digest = ?1",
+                [&digest],
+            )
+            .unwrap();
+
+        let page = list(&connection, None, QueryLimit::new(10).unwrap()).unwrap();
+
+        assert_eq!(page.captures.len(), 1);
+        let capture = &page.captures[0];
+        assert_eq!(capture.artifact_digest, digest);
+        assert_eq!(capture.submission.source_artifact_id, source_artifact_id);
+        let submission = capture.submission.status.as_ref().unwrap();
+        assert_eq!(
+            submission.phase,
+            super::super::capture_submission::CaptureSubmissionPhase::Sent
+        );
+        assert_eq!(
+            submission.local_payload_state,
+            super::super::capture_submission::CaptureSubmissionLocalPayloadState::Removed
+        );
+        assert_eq!(
+            submission.receipt.as_ref().unwrap().operation_id,
+            operation_id
+        );
     }
 
     #[test]

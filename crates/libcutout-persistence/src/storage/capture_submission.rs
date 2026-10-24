@@ -1,4 +1,4 @@
-//! Explicit private submission of an immutable, durably completed Bluetooth capture.
+//! Explicit private submission of an immutable, nonempty inactive Bluetooth capture.
 
 use super::{
     CapturePublication, LiveCaptureHistoryEntry, LiveCaptureId, LiveCaptureIntegrity,
@@ -7,9 +7,9 @@ use super::{
 use crate::CaptureArtifactId;
 use cutout_core::{
     CaptureAttachments, CaptureEvidenceError, CaptureEvidenceManifest, CaptureSubmissionCategories,
-    CaptureSubmissionIntegrity, CaptureSubmissionMetadata, CaptureSubmissionProvenance,
-    CaptureSubmissionReceipt, CaptureSubmissionTransformation, PevcapEncoding,
-    validate_capture_submission,
+    CaptureSubmissionIntegrity, CaptureSubmissionMetadata, CaptureSubmissionOrigin,
+    CaptureSubmissionProvenance, CaptureSubmissionReceipt, CaptureSubmissionTransformation,
+    PevcapEncoding, validate_capture_submission,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,48 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Canonical SHA-256 locator for a retained PEVCAP import.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PevcapDigest([u8; 32]);
+
+impl PevcapDigest {
+    /// Parses exactly 64 lowercase hexadecimal SHA-256 digits.
+    ///
+    /// # Errors
+    /// Returns [`CaptureSubmissionError::InvalidCapture`] for noncanonical input.
+    pub fn parse(value: &str) -> Result<Self, CaptureSubmissionError> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(CaptureSubmissionError::InvalidCapture);
+        }
+        let mut digest = [0; 32];
+        hex::decode_to_slice(value, &mut digest)
+            .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        Ok(Self(digest))
+    }
+
+    /// Returns the exact 32 digest bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Returns canonical lowercase hexadecimal.
+    #[must_use]
+    pub fn as_hex(self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+impl std::fmt::Display for PevcapDigest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&hex::encode(self.0))
+    }
+}
+
 /// A lookup key, never independent authority to submit an arbitrary file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureSubmissionSource {
@@ -31,6 +73,8 @@ pub enum CaptureSubmissionSource {
     LiveCapture(LiveCaptureId),
     /// A consumed writer's retained identity, including database aliases.
     RecordedArtifact(CaptureArtifactId),
+    /// An imported canonical PEVCAP source, including captures without writer provenance.
+    PevcapDigest(PevcapDigest),
 }
 
 /// Persisted progress of one explicit Send operation.
@@ -219,8 +263,8 @@ pub enum CaptureSubmissionError {
     /// The source or operation does not exist.
     #[error("capture submission was not found")]
     NotFound,
-    /// No finished writer state exists, or its integrity is unknown.
-    #[error("capture recording is not durably finished")]
+    /// The capture is active or contains no retained events.
+    #[error("capture recording is active or empty")]
     NotFinished,
     /// A real consumed-writer provenance publication is still required.
     #[error("capture recording provenance is unavailable")]
@@ -228,6 +272,9 @@ pub enum CaptureSubmissionError {
     /// Full-stream validation or original digest verification failed.
     #[error("capture submission bytes are invalid")]
     InvalidCapture,
+    /// The complete raw capture plus its selected evidence exceeds the existing transfer bound.
+    #[error("capture submission exceeds the supported transfer size")]
+    TooLarge,
     /// This operation belongs to another credential identity.
     #[error("capture submission belongs to another account")]
     WrongAccount,
@@ -391,6 +438,18 @@ CREATE TABLE IF NOT EXISTS capture_submissions (
         CHECK(coalesce(json_extract(status_json, '$.metadata.evidence.capture_sha256'), json_extract(status_json, '$.metadata.sha256')) = snapshot_digest)
         CHECK(json_extract(status_json, '$.metadata.provenance.source_artifact_id') = source_artifact_id)
 );
+CREATE TABLE IF NOT EXISTS capture_submission_reservations (
+    source_artifact_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_artifact_id) = 36),
+    operation_id TEXT NOT NULL UNIQUE CHECK(length(operation_id) = 36),
+    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+    source_size INTEGER NOT NULL CHECK(source_size >= 0)
+);
+CREATE TABLE IF NOT EXISTS capture_submission_source_aliases (
+    artifact_digest TEXT NOT NULL CHECK(length(artifact_digest) = 64)
+        CHECK(artifact_digest NOT GLOB '*[^0-9a-f]*'),
+    source_artifact_id TEXT NOT NULL CHECK(length(source_artifact_id) = 36),
+    PRIMARY KEY (artifact_digest, source_artifact_id)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS capture_evidence (
     source_artifact_id TEXT PRIMARY KEY NOT NULL CHECK(length(source_artifact_id) = 36),
     evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json))
@@ -399,10 +458,15 @@ CREATE TABLE IF NOT EXISTS capture_evidence (
 pub(super) enum SourceRecord {
     Live(LiveCaptureHistoryEntry),
     File(PevcapImportReceipt),
+    /// Canonical bytes plus the durable operation owner's identity when a digest aliases it.
+    FileWithIdentity {
+        receipt: PevcapImportReceipt,
+        source_artifact_id: CaptureArtifactId,
+    },
 }
 
 struct SnapshotSource {
-    origin: cutout_core::CaptureOrigin,
+    origin: CaptureSubmissionOrigin,
     integrity: CaptureSubmissionIntegrity,
     provenance: CaptureSubmissionProvenance,
     encoding: PevcapEncoding,
@@ -456,6 +520,30 @@ pub(super) enum Command {
         size: u64,
         reply: Reply<bool>,
     },
+    ManagedFileSubmissionProtection {
+        digest: String,
+        size: u64,
+        reply: Reply<bool>,
+    },
+    ReserveLegacy {
+        source_artifact_id: String,
+        operation_id: String,
+        source_sha256: String,
+        source_size: u64,
+        reply: Reply<String>,
+    },
+    FindLegacyReservation {
+        source_artifact_id: String,
+        source_sha256: String,
+        source_size: u64,
+        reply: Reply<Option<String>>,
+    },
+    InsertReserved {
+        status: Box<CaptureSubmissionStatus>,
+        source_sha256: String,
+        evidence_json: Option<String>,
+        reply: Reply<CaptureSubmissionStatus>,
+    },
     Insert {
         status: Box<CaptureSubmissionStatus>,
         evidence_json: Option<String>,
@@ -483,6 +571,70 @@ impl RideDatabase {
         })
     }
 
+    pub(crate) fn managed_capture_file_submission_reserved(
+        &self,
+        digest: &str,
+        size: u64,
+    ) -> Result<bool, StorageError> {
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::ManagedFileSubmissionProtection {
+                digest: digest.to_owned(),
+                size,
+                reply,
+            })
+        })
+    }
+
+    fn reserve_legacy_capture_submission(
+        &self,
+        source_artifact_id: &CaptureArtifactId,
+        source_sha256: &str,
+        source_size: u64,
+    ) -> Result<String, StorageError> {
+        let operation_id = Uuid::new_v4().to_string();
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::ReserveLegacy {
+                source_artifact_id: source_artifact_id.to_string(),
+                operation_id,
+                source_sha256: source_sha256.to_owned(),
+                source_size,
+                reply,
+            })
+        })
+    }
+
+    fn insert_reserved_legacy_capture_submission(
+        &self,
+        status: CaptureSubmissionStatus,
+        source_sha256: &str,
+        evidence_json: Option<&str>,
+    ) -> Result<CaptureSubmissionStatus, StorageError> {
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::InsertReserved {
+                status: Box::new(status),
+                source_sha256: source_sha256.to_owned(),
+                evidence_json: evidence_json.map(str::to_owned),
+                reply,
+            })
+        })
+    }
+
+    fn find_legacy_capture_reservation(
+        &self,
+        source_artifact_id: &CaptureArtifactId,
+        source_sha256: &str,
+        source_size: u64,
+    ) -> Result<Option<String>, StorageError> {
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::FindLegacyReservation {
+                source_artifact_id: source_artifact_id.to_string(),
+                source_sha256: source_sha256.to_owned(),
+                source_size,
+                reply,
+            })
+        })
+    }
+
     pub(super) fn submission_source(
         &self,
         source: CaptureSubmissionSource,
@@ -501,13 +653,9 @@ impl RideDatabase {
         // A recorded identity may still resolve a prepared snapshot after local source cleanup.
         let artifact_id = match source {
             CaptureSubmissionSource::RecordedArtifact(id) => id.to_string(),
-            CaptureSubmissionSource::LiveCapture(_) => match self.submission_source(source)? {
-                SourceRecord::Live(entry) => match entry.recording {
-                    Some(recording) => recording.artifact_id.to_string(),
-                    None => return Ok(None),
-                },
-                SourceRecord::File(_) => return Err(CaptureSubmissionError::NotFound),
-            },
+            CaptureSubmissionSource::LiveCapture(_) | CaptureSubmissionSource::PevcapDigest(_) => {
+                source_record_artifact_id(&self.submission_source(source)?)?.to_string()
+            }
         };
         self.request(|reply| {
             super::Command::CaptureSubmission(Command::Lookup { artifact_id, reply })
@@ -549,11 +697,11 @@ impl RideDatabase {
         })?
     }
 
-    /// Freezes and validates one durable recording locally, without network effects.
+    /// Freezes and validates one nonempty inactive capture locally, without network effects.
     /// The private original is preserved; the snapshot reuses the canonical PEVCAP store.
     /// Call off native callback and UI threads.
     /// # Errors
-    /// Returns typed durability/provenance, malformed capture or storage failures.
+    /// Returns active/empty, unavailable provenance, malformed capture or storage failures.
     pub fn prepare_capture_submission(
         &self,
         source: CaptureSubmissionSource,
@@ -596,6 +744,8 @@ impl RideDatabase {
         metadata
             .validate()
             .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        let source_artifact_id = CaptureArtifactId::parse(&metadata.provenance.source_artifact_id)
+            .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
         let preview = super::preflight_pevcap(
             &snapshot,
             encoding,
@@ -608,7 +758,7 @@ impl RideDatabase {
         self.confirm_pevcap_publication(
             &preview,
             super::ride_write::wall_clock_now_milliseconds()?,
-            &CapturePublication::SubmissionSnapshot,
+            &CapturePublication::SubmissionSnapshot { source_artifact_id },
         )?;
         if let Some(json) = &evidence_json {
             use sha2::Digest;
@@ -639,8 +789,16 @@ impl RideDatabase {
         }
         let mut categories = summary.categories;
         categories.notes |= !evidence.note.is_empty();
+        let reserved_source_sha256 = metadata.provenance.source_sha256.clone();
+        let reservation = if let Some(source_sha256) = reserved_source_sha256.as_deref() {
+            self.find_legacy_capture_reservation(&source_artifact_id, source_sha256, summary.bytes)?
+        } else {
+            None
+        };
         let status = CaptureSubmissionStatus {
-            operation_id: Uuid::new_v4().to_string(),
+            operation_id: reservation
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
             metadata,
             categories,
             phase: CaptureSubmissionPhase::Prepared,
@@ -650,14 +808,144 @@ impl RideDatabase {
             failure: None,
             revision: 0,
         };
-        self.request(|reply| {
-            super::Command::CaptureSubmission(Command::Insert {
-                status: Box::new(status),
-                evidence_json,
-                reply,
+        if reservation.is_some() {
+            self.insert_reserved_legacy_capture_submission(
+                status,
+                reserved_source_sha256
+                    .as_deref()
+                    .ok_or(CaptureSubmissionError::InvalidCapture)?,
+                evidence_json.as_deref(),
+            )
+            .map_err(Into::into)
+        } else {
+            self.request(|reply| {
+                super::Command::CaptureSubmission(Command::Insert {
+                    status: Box::new(status),
+                    evidence_json,
+                    reply,
+                })
             })
-        })
-        .map_err(Into::into)
+            .map_err(Into::into)
+        }
+    }
+
+    /// Prepares an exact legacy file snapshot after a bounded managed-file inventory selected it.
+    /// The input is copied, rehashed, fully validated and published into the canonical database
+    /// before a durable Unknown-origin/Unknown-integrity Send operation is inserted.
+    ///
+    /// # Errors
+    /// Returns an invalid or changed source, validation, provenance, durability or storage error.
+    pub(crate) fn prepare_legacy_capture_submission(
+        &self,
+        source_path: &std::path::Path,
+        source_sha256: &str,
+        encoding: PevcapEncoding,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
+        self.prepare_legacy_capture_submission_inner(source_path, source_sha256, encoding, || {})
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_legacy_capture_submission_with_hook<F>(
+        &self,
+        source_path: &std::path::Path,
+        source_sha256: &str,
+        encoding: PevcapEncoding,
+        after_publication: F,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError>
+    where
+        F: FnOnce(),
+    {
+        self.prepare_legacy_capture_submission_inner(
+            source_path,
+            source_sha256,
+            encoding,
+            after_publication,
+        )
+    }
+
+    fn prepare_legacy_capture_submission_inner<F>(
+        &self,
+        source_path: &std::path::Path,
+        source_sha256: &str,
+        encoding: PevcapEncoding,
+        after_publication: F,
+    ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError>
+    where
+        F: FnOnce(),
+    {
+        let source_artifact_id = legacy_capture_artifact_id(source_sha256)?;
+        if let Some(status) = self.capture_submission(CaptureSubmissionSource::RecordedArtifact(
+            source_artifact_id,
+        ))? {
+            return Ok(status);
+        }
+        let temporary = tempfile::tempdir().map_err(StorageError::from)?;
+        let snapshot = temporary.path().join("legacy-snapshot");
+        match std::fs::copy(source_path, &snapshot) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.export_pevcap_capture(source_sha256, &snapshot)?;
+            }
+            Err(error) => return Err(StorageError::Io(error).into()),
+        }
+        let summary = validate_capture_submission(
+            std::fs::File::open(&snapshot).map_err(StorageError::from)?,
+            encoding,
+        )
+        .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        if summary.sha256 != source_sha256 {
+            return Err(CaptureSubmissionError::InvalidCapture);
+        }
+        let metadata = CaptureSubmissionMetadata {
+            evidence: None,
+            sha256: summary.sha256.clone(),
+            bytes: summary.bytes,
+            encoding,
+            origin: CaptureSubmissionOrigin::Unknown,
+            integrity: CaptureSubmissionIntegrity::Unknown,
+            provenance: CaptureSubmissionProvenance {
+                source_artifact_id: source_artifact_id.to_string(),
+                live_capture_id: None,
+                source_sha256: Some(source_sha256.to_owned()),
+                transformation: CaptureSubmissionTransformation::Unmodified,
+            },
+        };
+        metadata
+            .validate()
+            .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        let preview = super::preflight_pevcap(
+            &snapshot,
+            encoding,
+            Some(crate::pevcap_limits::PevcapLimits::IMPORT),
+        )?;
+        if preview.artifact_digest() != metadata.sha256 || preview.artifact_size() != metadata.bytes
+        {
+            return Err(CaptureSubmissionError::InvalidCapture);
+        }
+        let operation_id = self.reserve_legacy_capture_submission(
+            &source_artifact_id,
+            source_sha256,
+            summary.bytes,
+        )?;
+        self.confirm_pevcap_publication(
+            &preview,
+            super::ride_write::wall_clock_now_milliseconds()?,
+            &CapturePublication::SubmissionSnapshot { source_artifact_id },
+        )?;
+        after_publication();
+        let status = CaptureSubmissionStatus {
+            operation_id,
+            metadata,
+            categories: summary.categories,
+            phase: CaptureSubmissionPhase::Prepared,
+            local_payload_state: CaptureSubmissionLocalPayloadState::Retained,
+            account_id: None,
+            receipt: None,
+            failure: None,
+            revision: 0,
+        };
+        self.insert_reserved_legacy_capture_submission(status, source_sha256, None)
+            .map_err(Into::into)
     }
 
     fn export_submission_source(
@@ -665,30 +953,35 @@ impl RideDatabase {
         record: SourceRecord,
         snapshot: &std::path::Path,
     ) -> Result<SnapshotSource, CaptureSubmissionError> {
+        let source_artifact_id = source_record_artifact_id(&record)?;
         match record {
             SourceRecord::Live(entry) => {
-                if entry.state != LiveCaptureState::Finished {
+                if entry.state == LiveCaptureState::Active || entry.event_count == 0 {
                     return Err(CaptureSubmissionError::NotFinished);
+                }
+                if entry.state == LiveCaptureState::Finished && entry.recording.is_none() {
+                    return Err(CaptureSubmissionError::ProvenanceUnavailable);
                 }
                 let integrity = match entry.integrity {
                     LiveCaptureIntegrity::Complete => CaptureSubmissionIntegrity::Complete,
                     LiveCaptureIntegrity::Incomplete { dropped_messages } => {
                         CaptureSubmissionIntegrity::Incomplete { dropped_messages }
                     }
-                    LiveCaptureIntegrity::Unknown => {
-                        return Err(CaptureSubmissionError::NotFinished);
-                    }
+                    LiveCaptureIntegrity::Unknown => CaptureSubmissionIntegrity::Unknown,
                 };
-                let recording = entry
+                let origin = entry
                     .recording
-                    .ok_or(CaptureSubmissionError::ProvenanceUnavailable)?;
+                    .as_ref()
+                    .map_or(CaptureSubmissionOrigin::Unknown, |recording| {
+                        recording.origin.into()
+                    });
                 self.export_live_capture(entry.id, snapshot)
                     .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
                 Ok(SnapshotSource {
-                    origin: recording.origin,
+                    origin,
                     integrity,
                     provenance: CaptureSubmissionProvenance {
-                        source_artifact_id: recording.artifact_id.to_string(),
+                        source_artifact_id: source_artifact_id.to_string(),
                         live_capture_id: Some(entry.id.to_string()),
                         source_sha256: None,
                         transformation:
@@ -697,10 +990,19 @@ impl RideDatabase {
                     encoding: PevcapEncoding::Jsonl,
                 })
             }
-            SourceRecord::File(receipt) => {
-                let recording = receipt
-                    .recording
-                    .ok_or(CaptureSubmissionError::ProvenanceUnavailable)?;
+            SourceRecord::File(receipt) | SourceRecord::FileWithIdentity { receipt, .. } => {
+                let (origin, integrity) = receipt.recording.as_ref().map_or(
+                    (
+                        CaptureSubmissionOrigin::Unknown,
+                        CaptureSubmissionIntegrity::Unknown,
+                    ),
+                    |recording| {
+                        (
+                            recording.origin.into(),
+                            CaptureSubmissionIntegrity::Complete,
+                        )
+                    },
+                );
                 let temporary = tempfile::tempdir().map_err(StorageError::from)?;
                 let original = temporary.path().join("original");
                 self.export_pevcap_capture(&receipt.artifact_digest, &original)
@@ -717,10 +1019,10 @@ impl RideDatabase {
                 std::fs::copy(&original, snapshot).map_err(StorageError::from)?;
                 let transformation = CaptureSubmissionTransformation::Unmodified;
                 Ok(SnapshotSource {
-                    origin: recording.origin,
-                    integrity: CaptureSubmissionIntegrity::Complete,
+                    origin,
+                    integrity,
                     provenance: CaptureSubmissionProvenance {
-                        source_artifact_id: recording.artifact_id.to_string(),
+                        source_artifact_id: source_artifact_id.to_string(),
                         live_capture_id: None,
                         source_sha256: Some(receipt.artifact_digest),
                         transformation,
@@ -965,18 +1267,139 @@ fn source_record(
     connection: &Connection,
     source: CaptureSubmissionSource,
 ) -> Result<Option<SourceRecord>, StorageError> {
-    let (live, artifact) = match source {
-        CaptureSubmissionSource::LiveCapture(id) => (Some(id), None),
-        CaptureSubmissionSource::RecordedArtifact(id) => (None, Some(id)),
-    };
-    if let Some(entry) = super::live_capture_history::lookup(connection, live, artifact)? {
-        return Ok(Some(SourceRecord::Live(entry)));
+    match source {
+        CaptureSubmissionSource::LiveCapture(id) => {
+            super::live_capture_history::lookup(connection, Some(id), None)
+                .map(|entry| entry.map(SourceRecord::Live))
+        }
+        CaptureSubmissionSource::RecordedArtifact(id) => {
+            if let Some(entry) = super::live_capture_history::lookup(connection, None, Some(id))? {
+                return Ok(Some(SourceRecord::Live(entry)));
+            }
+            if let Some(receipt) = super::recorded_capture::receipt_for_id(connection, id)? {
+                return Ok(Some(SourceRecord::File(receipt)));
+            }
+            let Ok(live_id) = LiveCaptureId::parse(&id.to_string()) else {
+                return Ok(None);
+            };
+            Ok(
+                super::live_capture_history::lookup(connection, Some(live_id), None)?
+                    .filter(|entry| entry.recording.is_none())
+                    .map(SourceRecord::Live),
+            )
+        }
+        CaptureSubmissionSource::PevcapDigest(digest) => {
+            let digest = digest.to_string();
+            let receipt = super::pevcap_import_receipt(connection, &digest, true)?;
+            let Some(receipt) = receipt else {
+                return Ok(None);
+            };
+            let owner = lookup_submission_source_alias(connection, &digest)?;
+            if let Some(source_artifact_id) = owner {
+                if let Some(entry) =
+                    super::live_capture_history::lookup(connection, None, Some(source_artifact_id))?
+                {
+                    return Ok(Some(SourceRecord::Live(entry)));
+                }
+                if let Ok(live_id) = LiveCaptureId::parse(&source_artifact_id.to_string())
+                    && let Some(entry) =
+                        super::live_capture_history::lookup(connection, Some(live_id), None)?
+                    && entry.recording.is_none()
+                {
+                    return Ok(Some(SourceRecord::Live(entry)));
+                }
+                return Ok(Some(SourceRecord::FileWithIdentity {
+                    receipt,
+                    source_artifact_id,
+                }));
+            }
+            Ok(Some(SourceRecord::File(receipt)))
+        }
     }
-    match artifact {
-        Some(id) => super::recorded_capture::receipt_for_id(connection, id)
-            .map(|receipt| receipt.map(SourceRecord::File)),
-        None => Ok(None),
+}
+
+pub(super) fn lookup_submission_source_alias(
+    connection: &Connection,
+    digest: &str,
+) -> Result<Option<CaptureArtifactId>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT source_artifact_id FROM capture_submission_source_aliases
+         WHERE artifact_digest = ?1
+         UNION
+         SELECT source_artifact_id FROM capture_submissions
+         WHERE coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         ) = ?1
+            OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?1",
+    )?;
+    let rows = statement.query_map([digest], |row| row.get::<_, String>(0))?;
+    let mut owner = None;
+    for row in rows {
+        let value = row?;
+        let id =
+            CaptureArtifactId::parse(&value).map_err(|_| StorageError::InvalidStoredValue {
+                field: "capture submission source identity",
+                value,
+            })?;
+        if owner.is_some_and(|existing| existing != id) {
+            return Err(StorageError::InvalidStoredValue {
+                field: "ambiguous capture submission source identity",
+                value: digest.to_owned(),
+            });
+        }
+        owner = Some(id);
     }
+    Ok(owner)
+}
+
+fn source_record_artifact_id(
+    record: &SourceRecord,
+) -> Result<CaptureArtifactId, CaptureSubmissionError> {
+    match record {
+        SourceRecord::Live(entry) => Ok(source_artifact_id(entry)?),
+        SourceRecord::File(receipt) => receipt.recording.as_ref().map_or_else(
+            || legacy_capture_artifact_id(&receipt.artifact_digest),
+            |recording| Ok(recording.artifact_id),
+        ),
+        SourceRecord::FileWithIdentity {
+            source_artifact_id, ..
+        } => Ok(*source_artifact_id),
+    }
+}
+
+fn source_artifact_id(entry: &LiveCaptureHistoryEntry) -> Result<CaptureArtifactId, StorageError> {
+    entry.recording.as_ref().map_or_else(
+        || CaptureArtifactId::parse(&entry.id.to_string()),
+        |recording| Ok(recording.artifact_id),
+    )
+}
+
+/// Builds a stable RFC 9562 UUIDv8 in a private domain namespace from a canonical SHA-256.
+/// The digest remains separately recorded as the source identity and is never truncated for
+/// validation; UUIDv8 is only the existing UUID-shaped submission key.
+pub(crate) fn legacy_capture_artifact_id(
+    source_sha256: &str,
+) -> Result<CaptureArtifactId, CaptureSubmissionError> {
+    if source_sha256.len() != 64
+        || !source_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CaptureSubmissionError::InvalidCapture);
+    }
+    let source_digest =
+        hex::decode(source_sha256).map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+    let mut digest = sha2::Sha256::new();
+    use sha2::Digest;
+    digest.update(b"libcutout legacy capture artifact identity v1\0");
+    digest.update(source_digest);
+    let digest = digest.finalize();
+    let mut uuid = [0; 16];
+    uuid.copy_from_slice(&digest[..16]);
+    uuid[6] = (uuid[6] & 0x0f) | 0x80;
+    uuid[8] = (uuid[8] & 0x3f) | 0x80;
+    Ok(CaptureArtifactId::from_uuid(Uuid::from_bytes(uuid)))
 }
 
 fn invalid_status() -> StorageError {
@@ -986,7 +1409,7 @@ fn invalid_status() -> StorageError {
     }
 }
 
-fn decode_status(json: &str) -> Result<CaptureSubmissionStatus, StorageError> {
+pub(super) fn decode_status(json: &str) -> Result<CaptureSubmissionStatus, StorageError> {
     let status: CaptureSubmissionStatus =
         serde_json::from_str(json).map_err(|_| invalid_status())?;
     status.metadata.validate().map_err(|_| invalid_status())?;
@@ -1060,6 +1483,110 @@ fn insert_status(
     connection.execute("INSERT INTO capture_submissions (source_artifact_id, operation_id, snapshot_digest, status_json, evidence_json) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![status.metadata.provenance.source_artifact_id, status.operation_id, status.metadata.capture_sha256(), json, evidence_json])?;
     Ok(status.clone())
+}
+
+fn reserve_legacy(
+    connection: &mut Connection,
+    source_artifact_id: &str,
+    operation_id: &str,
+    source_sha256: &str,
+    source_size: u64,
+) -> Result<String, StorageError> {
+    let source_size = i64::try_from(source_size).map_err(|_| invalid_status())?;
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO capture_submission_reservations
+         (source_artifact_id, operation_id, source_sha256, source_size) VALUES (?1, ?2, ?3, ?4)",
+        params![source_artifact_id, operation_id, source_sha256, source_size],
+    )?;
+    let reservation: (String, String, i64) = transaction.query_row(
+        "SELECT operation_id, source_sha256, source_size
+         FROM capture_submission_reservations WHERE source_artifact_id = ?1",
+        [source_artifact_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    if reservation.1 != source_sha256 || reservation.2 != source_size {
+        return Err(invalid_status());
+    }
+    transaction.commit()?;
+    Ok(reservation.0)
+}
+
+fn find_legacy_reservation(
+    connection: &Connection,
+    source_artifact_id: &str,
+    source_sha256: &str,
+    source_size: u64,
+) -> Result<Option<String>, StorageError> {
+    let reservation: Option<(String, String, i64)> = connection
+        .query_row(
+            "SELECT operation_id, source_sha256, source_size
+             FROM capture_submission_reservations WHERE source_artifact_id = ?1",
+            [source_artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((operation_id, reserved_sha256, reserved_size)) = reservation else {
+        return Ok(None);
+    };
+    let expected_size = i64::try_from(source_size).map_err(|_| invalid_status())?;
+    if reserved_sha256 != source_sha256 || reserved_size != expected_size {
+        return Err(invalid_status());
+    }
+    Ok(Some(operation_id))
+}
+
+fn insert_reserved_status(
+    connection: &mut Connection,
+    status: &CaptureSubmissionStatus,
+    source_sha256: &str,
+    evidence_json: Option<&str>,
+) -> Result<CaptureSubmissionStatus, StorageError> {
+    let transaction = connection.transaction()?;
+    let reservation: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT operation_id, source_sha256 FROM capture_submission_reservations
+             WHERE source_artifact_id = ?1",
+            [&status.metadata.provenance.source_artifact_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if reservation.as_ref() != Some(&(status.operation_id.clone(), source_sha256.to_owned())) {
+        return Err(invalid_status());
+    }
+    let inserted = insert_status(&transaction, status, evidence_json)?;
+    if inserted.operation_id != status.operation_id {
+        return Err(invalid_status());
+    }
+    transaction.execute(
+        "DELETE FROM capture_submission_reservations
+         WHERE source_artifact_id = ?1 AND operation_id = ?2 AND source_sha256 = ?3",
+        params![
+            status.metadata.provenance.source_artifact_id,
+            status.operation_id,
+            source_sha256
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(inserted)
+}
+
+fn managed_file_submission_reserved(
+    connection: &Connection,
+    digest: &str,
+    size: u64,
+) -> Result<bool, StorageError> {
+    let size = i64::try_from(size).map_err(|_| invalid_status())?;
+    let reservation_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM capture_submission_reservations
+         WHERE source_sha256 = ?1 AND source_size = ?2)",
+        params![digest, size],
+        |row| row.get(0),
+    )?;
+    if reservation_exists {
+        return Ok(true);
+    }
+    Ok(reservation_exists)
 }
 
 fn apply(
@@ -1446,7 +1973,8 @@ fn managed_file_removal_authorized(
                    AND coalesce(json_extract(status_json, '$.local_payload_state'), 'retained')
                        IN ('retained', 'removal_pending', 'removed')
                    AND (json_extract(status_json, '$.metadata.sha256') = ?2
-                        OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?2)
+                        OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?2
+                        OR json_extract(status_json, '$.metadata.evidence.capture_sha256') = ?2)
                    AND json_extract(status_json, '$.receipt.sha256') =
                        json_extract(status_json, '$.metadata.sha256')
                    AND json_extract(status_json, '$.receipt.bytes') =
@@ -1492,7 +2020,10 @@ fn managed_file_removal_authorized(
                 status.metadata.sha256 == digest && status.metadata.bytes == file_size;
             let source_match = status.metadata.provenance.source_sha256.as_deref() == Some(digest)
                 && source_artifact_owns_file(connection, &status, digest, size)?;
-            if (snapshot_match || source_match)
+            let evidence_match = status.metadata.evidence.as_ref().is_some_and(|manifest| {
+                manifest.capture_sha256 == digest && manifest.capture_bytes == file_size
+            });
+            if (snapshot_match || source_match || evidence_match)
                 && submission_payload_is_exclusive(connection, &status)?
             {
                 return Ok(true);
@@ -1674,6 +2205,54 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
         } => {
             let _ = reply.send(managed_file_removal_authorized(connection, &digest, size));
         }
+        Command::ManagedFileSubmissionProtection {
+            digest,
+            size,
+            reply,
+        } => {
+            let _ = reply.send(managed_file_submission_reserved(connection, &digest, size));
+        }
+        Command::ReserveLegacy {
+            source_artifact_id,
+            operation_id,
+            source_sha256,
+            source_size,
+            reply,
+        } => {
+            let _ = reply.send(reserve_legacy(
+                connection,
+                &source_artifact_id,
+                &operation_id,
+                &source_sha256,
+                source_size,
+            ));
+        }
+        Command::FindLegacyReservation {
+            source_artifact_id,
+            source_sha256,
+            source_size,
+            reply,
+        } => {
+            let _ = reply.send(find_legacy_reservation(
+                connection,
+                &source_artifact_id,
+                &source_sha256,
+                source_size,
+            ));
+        }
+        Command::InsertReserved {
+            status,
+            source_sha256,
+            evidence_json,
+            reply,
+        } => {
+            let _ = reply.send(insert_reserved_status(
+                connection,
+                &status,
+                &source_sha256,
+                evidence_json.as_deref(),
+            ));
+        }
         Command::Insert {
             status,
             evidence_json,
@@ -1694,18 +2273,16 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
 #[cfg(test)]
 mod tests;
 
+mod bulk;
+pub use bulk::*;
+
 fn evidence_command(
     connection: &mut Connection,
     source: CaptureSubmissionSource,
     save: Option<CaptureAttachments>,
 ) -> Result<CaptureAttachments, CaptureSubmissionError> {
     let record = source_record(connection, source)?.ok_or(CaptureSubmissionError::NotFound)?;
-    let artifact = match record {
-        SourceRecord::Live(entry) => entry.recording.map(|r| r.artifact_id),
-        SourceRecord::File(entry) => entry.recording.map(|r| r.artifact_id),
-    }
-    .ok_or(CaptureSubmissionError::ProvenanceUnavailable)?
-    .to_string();
+    let artifact = source_record_artifact_id(&record)?.to_string();
     let transaction = connection.transaction().map_err(StorageError::from)?;
     if let Some(evidence) = save {
         evidence.validate()?;
