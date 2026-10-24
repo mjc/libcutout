@@ -1,5 +1,5 @@
 //! Private diagnostic evidence, with one atomic SQLite publication boundary.
-use super::{Actor, QuotaWindow, Store, begin_write, db_error, ensure_actor, json, now_ms, quota};
+use super::{Actor, Store, begin_write, db_error, ensure_actor, json, now_ms};
 use crate::Error;
 use cutout_core::{
     CaptureSubmissionMetadata, CaptureSubmissionPayloadSummary, CaptureSubmissionReceipt,
@@ -17,11 +17,6 @@ use uuid::Uuid;
 
 const OWNER_BYTES: u64 = 1024 * 1024 * 1024;
 const GLOBAL_BYTES: u64 = 10 * OWNER_BYTES;
-/// One account can drain a phone library. Storage quota still caps the bytes.
-const CAPTURE_UPLOADS_PER_MINUTE: u32 = 120;
-const CAPTURE_UPLOADS_PER_HOUR: u32 = 4_000;
-const CAPTURE_READS_PER_MINUTE: u32 = 240;
-const CAPTURE_READS_PER_HOUR: u32 = 8_000;
 const STAGING_PREFIX: &str = "cutout-capture-";
 pub(crate) const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
@@ -118,29 +113,6 @@ impl Store {
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
             ensure_actor(&transaction, &actor)?;
-            let now = now_ms()?;
-            let principal = format!("capture-request:{}", actor.id);
-            quota(
-                &transaction,
-                &principal,
-                QuotaWindow::Minute,
-                CAPTURE_UPLOADS_PER_MINUTE,
-                now,
-            )?;
-            quota(
-                &transaction,
-                &principal,
-                QuotaWindow::Hour,
-                CAPTURE_UPLOADS_PER_HOUR,
-                now,
-            )?;
-            quota(
-                &transaction,
-                "capture-request-global",
-                QuotaWindow::Minute,
-                CAPTURE_UPLOADS_PER_MINUTE,
-                now,
-            )?;
             transaction.commit().map_err(db_error)
         })
         .await
@@ -150,29 +122,6 @@ impl Store {
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
             ensure_actor(&transaction, &actor)?;
-            let now = now_ms()?;
-            let principal = format!("capture-read:{}", actor.id);
-            quota(
-                &transaction,
-                &principal,
-                QuotaWindow::Minute,
-                CAPTURE_READS_PER_MINUTE,
-                now,
-            )?;
-            quota(
-                &transaction,
-                &principal,
-                QuotaWindow::Hour,
-                CAPTURE_READS_PER_HOUR,
-                now,
-            )?;
-            quota(
-                &transaction,
-                "capture-read-global",
-                QuotaWindow::Minute,
-                600,
-                now,
-            )?;
             transaction.commit().map_err(db_error)
         })
         .await
@@ -230,17 +179,15 @@ impl Store {
         Ok((stage, tokio::fs::File::from_std(file)))
     }
 
-    /// Budget attempts before body ingestion; failed transfers still consume their budget.
+    /// Checks storage before body ingestion. Capture uploads are not rate limited.
     pub(crate) async fn admit_capture(
         &self,
         actor: Actor,
         operation: String,
         metadata: CaptureSubmissionMetadata,
     ) -> Result<(), Error> {
-        self.call(move |connection| {
-            admit_capture_at(connection, &actor, &operation, &metadata, now_ms()?)
-        })
-        .await
+        self.call(move |connection| admit_capture_at(connection, &actor, &operation, &metadata))
+            .await
     }
 
     pub(crate) async fn commit_capture(
@@ -306,9 +253,6 @@ impl Store {
                 if stored.deleted { return Ok(()); }
                 transaction.execute("UPDATE capture_submissions SET deleted=1,metadata=NULL,receipt=NULL,summary=NULL,bytes=0,payload=NULL WHERE operation_id=?1",[&operation]).map_err(db_error)?;
             } else {
-                let now=now_ms()?;
-                quota(&transaction,&format!("capture-cancel:{}",actor.id),QuotaWindow::Minute,3,now)?;
-                quota(&transaction,&format!("capture-cancel:{}",actor.id),QuotaWindow::Hour,30,now)?;
                 transaction.execute("INSERT INTO capture_submissions(operation_id,owner_id,deleted) VALUES(?1,?2,1)",params![operation,actor.id]).map_err(db_error)?;
             }
             transaction.commit().map_err(db_error)
@@ -436,7 +380,6 @@ fn admit_capture_at(
     actor: &Actor,
     operation: &str,
     metadata: &CaptureSubmissionMetadata,
-    now: u64,
 ) -> Result<(), Error> {
     let transaction = begin_write(connection)?;
     ensure_actor(&transaction, actor)?;
@@ -444,28 +387,6 @@ fn admit_capture_at(
         return Ok(());
     }
     check_storage(&transaction, actor, metadata.bytes)?;
-    let principal = format!("capture-upload:{}", actor.id);
-    quota(
-        &transaction,
-        &principal,
-        QuotaWindow::Minute,
-        CAPTURE_UPLOADS_PER_MINUTE,
-        now,
-    )?;
-    quota(
-        &transaction,
-        &principal,
-        QuotaWindow::Hour,
-        CAPTURE_UPLOADS_PER_HOUR,
-        now,
-    )?;
-    quota(
-        &transaction,
-        "capture-upload-global",
-        QuotaWindow::Minute,
-        CAPTURE_UPLOADS_PER_MINUTE,
-        now,
-    )?;
     transaction.commit().map_err(db_error)
 }
 fn load(connection: &Connection, operation: &str) -> Result<Option<Stored>, Error> {
@@ -635,18 +556,12 @@ mod tests {
                 transformation: cutout_core::CaptureSubmissionTransformation::Unmodified,
             },
         };
-        for _ in 0..CAPTURE_UPLOADS_PER_MINUTE {
+        for _ in 0..3 {
             let actor = actor.clone();
             let metadata = metadata.clone();
             store
                 .call(move |connection| {
-                    admit_capture_at(
-                        connection,
-                        &actor,
-                        &Uuid::new_v4().to_string(),
-                        &metadata,
-                        1_000,
-                    )
+                    admit_capture_at(connection, &actor, &Uuid::new_v4().to_string(), &metadata)
                 })
                 .await
                 .expect("attempt");
@@ -654,18 +569,27 @@ mod tests {
         drop(store);
         let store = Store::open(&path).expect("reopen");
         let stale_actor = actor.clone();
-        assert_eq!(
-            store
-                .call(move |connection| admit_capture_at(
+        let metadata_for_reopen = metadata.clone();
+        store
+            .call(move |connection| {
+                admit_capture_at(
                     connection,
                     &stale_actor,
                     &Uuid::new_v4().to_string(),
-                    &metadata,
-                    1_001
-                ))
-                .await,
-            Err(Error::Throttled)
-        );
+                    &metadata_for_reopen,
+                )?;
+                let counted: i64 = connection
+                    .query_row(
+                        "SELECT count(*) FROM quotas WHERE principal LIKE 'capture-%'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_error)?;
+                assert_eq!(counted, 0, "capture uploads and reads are not rate limited");
+                Ok(())
+            })
+            .await
+            .expect("reopened attempt");
         store.revoke(actor.id.clone()).await.expect("revoke");
         assert_eq!(
             store
