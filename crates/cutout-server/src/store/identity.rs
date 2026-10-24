@@ -137,8 +137,8 @@ impl Store {
         .await
     }
 
-    pub(crate) async fn authenticate(&self, token: String) -> Result<Actor, Error> {
-        let token = ContributorTokenHash::from_token(&token)?;
+    pub(crate) async fn authenticate(&self, token: &str) -> Result<Actor, Error> {
+        let token = ContributorTokenHash::from_token(token)?;
         self.call(move |connection| authenticated_actor(connection, &token))
             .await
     }

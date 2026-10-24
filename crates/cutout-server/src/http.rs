@@ -85,10 +85,10 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
             .route("/healthz", get(|| async { StatusCode::OK }))
             .route("/readyz", get(ready))
             .merge(charging_routes())
-            .merge(site_routes())
-            .layer(Extension(signup)),
+            .merge(site_api(signup)),
         store.clone(),
     )
+    .merge(crate::site::router())
     .merge(capture_submissions::router().with_state(store))
 }
 
@@ -110,10 +110,10 @@ pub(crate) fn site_router(store: Store, signup: crate::signup::SignupState) -> R
         Router::new()
             .route("/healthz", get(|| async { StatusCode::OK }))
             .route("/readyz", get(ready))
-            .merge(site_routes())
-            .layer(Extension(signup)),
+            .merge(site_api(signup)),
         store,
     )
+    .merge(crate::site::router())
 }
 
 fn charging_routes() -> Router<Store> {
@@ -141,7 +141,7 @@ fn charging_routes() -> Router<Store> {
         .route("/v1/moderation/audit", get(audit))
 }
 
-fn site_routes() -> Router<Store> {
+fn site_api(signup: crate::signup::SignupState) -> Router<Store> {
     Router::new()
         .route("/v1/alpha-signup/config", get(crate::signup::public_config))
         .route("/v1/alpha-signup/requests", post(crate::signup::submit))
@@ -149,6 +149,7 @@ fn site_routes() -> Router<Store> {
             "/v1/alpha-signup-removals",
             post(crate::signup::submit_removal),
         )
+        .layer(Extension(signup))
         .route("/v1/moderation/alpha-signups", get(alpha_signups))
         .route(
             "/v1/moderation/alpha-signup-removals",
@@ -162,7 +163,6 @@ fn site_routes() -> Router<Store> {
             "/v1/moderation/alpha-signups/{id}",
             delete(withdraw_alpha_signup),
         )
-        .merge(crate::site::router())
 }
 
 fn finish_router(router: Router<Store>, store: Store) -> Router {
@@ -194,7 +194,7 @@ async fn deadline(request: axum::extract::Request, next: axum::middleware::Next)
 
 pub(crate) async fn actor(store: &Store, headers: &HeaderMap) -> Result<Actor, Error> {
     let token = bearer_token(headers)?;
-    store.authenticate(token.to_owned()).await
+    store.authenticate(token).await
 }
 
 pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, Error> {

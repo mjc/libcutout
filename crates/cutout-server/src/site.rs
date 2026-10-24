@@ -1,4 +1,3 @@
-use crate::Store;
 use axum::{
     Router,
     http::{HeaderValue, header},
@@ -89,7 +88,7 @@ const ASSETS: &[Asset] = &[
     },
 ];
 
-pub(crate) fn router() -> Router<Store> {
+pub(crate) fn router() -> Router {
     let mut router = Router::new();
     for asset in ASSETS {
         let asset = *asset;
@@ -100,9 +99,11 @@ pub(crate) fn router() -> Router<Store> {
 
 fn serve(asset: Asset) -> Response {
     let mut response = asset.body.into_response();
-    response.headers_mut().insert(
+    let headers = response.headers_mut();
+    headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(asset.content_type),
     );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }

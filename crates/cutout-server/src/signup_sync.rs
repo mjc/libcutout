@@ -862,7 +862,7 @@ mod tests {
             .await
             .expect("revoked moderator");
         let stale_revoked_actor = store
-            .authenticate(revoked_identity.token)
+            .authenticate(&revoked_identity.token)
             .await
             .expect("authenticate before revocation")
             .into_moderator()
@@ -894,7 +894,7 @@ mod tests {
             .await
             .expect("demoted moderator");
         let stale_demoted_actor = store
-            .authenticate(demoted_identity.token)
+            .authenticate(&demoted_identity.token)
             .await
             .expect("authenticate before demotion")
             .into_moderator()

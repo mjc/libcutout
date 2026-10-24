@@ -495,7 +495,7 @@ mod tests {
             })
             .await
             .expect("contributor");
-        store.authenticate(identity.token).await.expect("actor")
+        store.authenticate(&identity.token).await.expect("actor")
     }
 
     #[tokio::test]
@@ -551,10 +551,7 @@ mod tests {
             })
             .await
             .expect("moderator");
-        let actor = store
-            .authenticate(identity.token.clone())
-            .await
-            .expect("actor");
+        let actor = store.authenticate(&identity.token).await.expect("actor");
         let check_actor = actor.clone();
         store
             .call(move |connection| {
@@ -572,7 +569,7 @@ mod tests {
             .await
             .expect("reviewer");
         let reviewer = store
-            .authenticate(reviewer.token)
+            .authenticate(&reviewer.token)
             .await
             .expect("reviewer actor");
         assert_eq!(reviewer.role, Role::Contributor);

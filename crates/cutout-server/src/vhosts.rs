@@ -3,12 +3,12 @@
 use axum::{
     Router,
     extract::{ConnectInfo, Request, State},
-    http::{HeaderMap, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderName, StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use tower::ServiceExt;
 
@@ -169,14 +169,16 @@ fn same_ip(left: IpAddr, right: IpAddr) -> bool {
     left.to_canonical() == right.to_canonical()
 }
 
-const REJECTED_METADATA: &[&str] = &[
-    "forwarded",
-    "x-forwarded-host",
-    "x-original-host",
-    "x-cutout-host",
-    "x-cutout-vhost",
-    "x-cutout-route",
-];
+static REJECTED_METADATA: LazyLock<[HeaderName; 6]> = LazyLock::new(|| {
+    [
+        HeaderName::from_static("forwarded"),
+        HeaderName::from_static("x-forwarded-host"),
+        HeaderName::from_static("x-original-host"),
+        HeaderName::from_static("x-cutout-host"),
+        HeaderName::from_static("x-cutout-vhost"),
+        HeaderName::from_static("x-cutout-route"),
+    ]
+});
 
 fn request_host<'a>(headers: &'a HeaderMap, uri: &Uri) -> Option<&'a str> {
     if uri.authority().is_some() {
@@ -187,8 +189,8 @@ fn request_host<'a>(headers: &'a HeaderMap, uri: &Uri) -> Option<&'a str> {
     if hosts.next().is_some() {
         return None;
     }
-    for name in REJECTED_METADATA {
-        if headers.contains_key(*name) {
+    for name in &*REJECTED_METADATA {
+        if headers.contains_key(name) {
             return None;
         }
     }

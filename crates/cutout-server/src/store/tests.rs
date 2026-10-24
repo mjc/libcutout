@@ -91,7 +91,7 @@ async fn moderator_credentials_are_rechecked_after_authentication() {
         .await
         .expect("identity");
     let moderator = store
-        .authenticate(identity.token.clone())
+        .authenticate(&identity.token)
         .await
         .expect("authenticate")
         .into_moderator()
@@ -106,7 +106,7 @@ async fn moderator_credentials_are_rechecked_after_authentication() {
     assert_moderation_rejects(&store, &moderator, Error::Forbidden).await;
     assert_eq!(
         store
-            .authenticate(identity.token.clone())
+            .authenticate(&identity.token)
             .await
             .expect("contributor")
             .into_moderator()
@@ -130,7 +130,7 @@ async fn a_write_authenticated_before_deletion_is_fenced_in_its_transaction() {
         .await
         .expect("identity");
     let stale_actor = store
-        .authenticate(identity.token.clone())
+        .authenticate(&identity.token)
         .await
         .expect("authenticate before deletion");
     store
@@ -189,7 +189,7 @@ async fn anonymous_principal_cannot_authenticate_even_if_its_row_is_misconfigure
 
     assert_eq!(
         store
-            .authenticate(token)
+            .authenticate(&token)
             .await
             .expect_err("Anonymous is never a login"),
         Error::Unauthorized
@@ -503,7 +503,7 @@ async fn authentication_rejects_unknown_persisted_roles() {
         .expect("damaged role");
     assert_eq!(
         store
-            .authenticate(identity.token)
+            .authenticate(&identity.token)
             .await
             .expect_err("unknown role rejected"),
         Error::Unavailable

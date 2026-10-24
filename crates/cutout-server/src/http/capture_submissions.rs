@@ -785,7 +785,7 @@ mod tests {
             .await
             .expect("stranger");
         let stranger = store
-            .authenticate(stranger.token)
+            .authenticate(&stranger.token)
             .await
             .expect("stranger actor");
         let old_limit = store
