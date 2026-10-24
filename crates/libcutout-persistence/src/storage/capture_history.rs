@@ -105,20 +105,15 @@ const SELECT_CAPTURES: &str = "SELECT i.artifact_digest,
      LEFT JOIN capture_submissions AS s ON s.source_artifact_id = (
         SELECT CASE WHEN min(candidate.source_artifact_id) = max(candidate.source_artifact_id)
                     THEN min(candidate.source_artifact_id) END
-        FROM (
-            SELECT recording.artifact_id AS source_artifact_id
-            FROM pevcap_recordings AS recording
-            WHERE recording.artifact_digest = i.artifact_digest
-            UNION ALL
-            SELECT alias.source_artifact_id
-            FROM capture_submission_source_aliases AS alias
-            WHERE alias.artifact_digest = i.artifact_digest
-            UNION ALL
-            SELECT candidate.source_artifact_id
-            FROM capture_submissions AS candidate
-            WHERE candidate.snapshot_digest = i.artifact_digest
-               OR json_extract(candidate.status_json, '$.metadata.provenance.source_sha256') = i.artifact_digest
-        ) AS candidate)
+        FROM capture_submissions AS candidate
+        WHERE candidate.source_artifact_id = (
+                SELECT recording.artifact_id FROM pevcap_recordings AS recording
+                WHERE recording.artifact_digest = i.artifact_digest LIMIT 1)
+           OR candidate.source_artifact_id IN (
+                SELECT alias.source_artifact_id FROM capture_submission_source_aliases AS alias
+                WHERE alias.artifact_digest = i.artifact_digest)
+           OR candidate.snapshot_digest = i.artifact_digest
+           OR json_extract(candidate.status_json, '$.metadata.provenance.source_sha256') = i.artifact_digest)
      ";
 
 pub(super) fn list(
@@ -396,6 +391,22 @@ mod tests {
                 params![source_artifact_id, operation_id, digest, status.to_string()],
             )
             .unwrap();
+        let writer_artifact_id = "00000000-0000-4000-8000-000000000077";
+        connection
+            .execute(
+                "INSERT INTO pevcap_recordings
+                    (artifact_id, artifact_digest, origin, platform_identifier, started_at_ms)
+                 VALUES (?1, ?2, 'manual', 'test-platform', 1)",
+                params![writer_artifact_id, digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO capture_submission_source_aliases
+                    (artifact_digest, source_artifact_id) VALUES (?1, ?2)",
+                params![digest, source_artifact_id],
+            )
+            .unwrap();
         connection
             .execute(
                 "DELETE FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
@@ -428,6 +439,70 @@ mod tests {
             submission.receipt.as_ref().unwrap().operation_id,
             operation_id
         );
+    }
+
+    #[test]
+    fn capture_history_suppresses_multiple_actual_status_owners() {
+        let connection = connection();
+        let digest = receipt(&connection, 'b', 10);
+        stored(&connection, &digest, true);
+        for (source_artifact_id, operation_id) in [
+            (
+                "00000000-0000-4000-8000-000000000081",
+                "00000000-0000-4000-8000-000000000091",
+            ),
+            (
+                "00000000-0000-4000-8000-000000000082",
+                "00000000-0000-4000-8000-000000000092",
+            ),
+        ] {
+            let status = serde_json::json!({
+                "operation_id": operation_id,
+                "metadata": {
+                    "evidence": null,
+                    "sha256": digest,
+                    "bytes": 1,
+                    "encoding": "jsonl",
+                    "origin": "unknown",
+                    "integrity": "unknown",
+                    "provenance": {
+                        "source_artifact_id": source_artifact_id,
+                        "live_capture_id": null,
+                        "source_sha256": digest,
+                        "transformation": "unmodified"
+                    }
+                },
+                "categories": {
+                    "device_identifiers": false,
+                    "location": false,
+                    "notes": false,
+                    "annotations": false,
+                    "settings_observations": false
+                },
+                "phase": "sent",
+                "local_payload_state": "removed",
+                "account_id": null,
+                "receipt": null,
+                "failure": null,
+                "revision": 0
+            });
+            connection
+                .execute(
+                    "INSERT INTO capture_submissions
+                        (source_artifact_id, operation_id, snapshot_digest, status_json)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![source_artifact_id, operation_id, digest, status.to_string()],
+                )
+                .unwrap();
+        }
+
+        assert!(matches!(
+            list(&connection, None, QueryLimit::new(10).unwrap()),
+            Err(StorageError::InvalidStoredValue {
+                field: "ambiguous capture submission source identity",
+                ..
+            })
+        ));
     }
 
     #[test]
