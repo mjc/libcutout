@@ -59,6 +59,13 @@ class AndroidChargingClient(
         { task -> Thread(task, "CutoutChargingIO").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
+    // Capture batches can wait on large HTTP transfers. Keep that work off the shared
+    // charging/database worker while bounding both concurrency and queued batches.
+    private val captureBatchWorker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(1),
+        { task -> Thread(task, "CutoutCaptureBatchIO").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
     @Volatile var status: ChargingClientStatus = ChargingClientStatus(MobileChargingSyncCredentialState.MISSING)
         private set
     @Volatile private var closed = false
@@ -78,6 +85,25 @@ class AndroidChargingClient(
                     check(!closed) { "Charging client is closed" }
                     val database = runtime.databaseForNativeOwner()
                     runBlocking { operation(database) }
+                }
+                main.post { completed(result) }
+            }
+        } catch (error: RejectedExecutionException) {
+            main.post { completed(Result.failure(error)) }
+        }
+    }
+
+    /** Runs one admitted, long-running capture batch away from charging/database work. */
+    internal fun <T> runCaptureBatch(operation: suspend () -> T, completed: (Result<T>) -> Unit) {
+        if (closed) {
+            main.post { completed(Result.failure(IllegalStateException("Charging client is closed"))) }
+            return
+        }
+        try {
+            captureBatchWorker.execute {
+                val result = runCatching {
+                    check(!closed) { "Charging client is closed" }
+                    runBlocking { operation() }
                 }
                 main.post { completed(result) }
             }
@@ -311,5 +337,6 @@ class AndroidChargingClient(
         closed = true
         reportOperations.close()
         worker.shutdown()
+        captureBatchWorker.shutdown()
     }
 }
