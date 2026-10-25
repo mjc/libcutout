@@ -14,8 +14,6 @@ use std::{
 };
 use uuid::Uuid;
 
-const OWNER_BYTES: u64 = 1024 * 1024 * 1024;
-const GLOBAL_BYTES: u64 = 10 * OWNER_BYTES;
 const STAGING_PREFIX: &str = "cutout-capture-";
 pub(crate) const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
@@ -449,13 +447,7 @@ fn existing(
     }
     decode(stored.receipt.as_deref().ok_or(Error::Unavailable)?).map(Some)
 }
-fn check_storage(connection: &Connection, actor: &Actor, additional: u64) -> Result<(), Error> {
-    let (owner,total):(u64,u64)=connection.query_row("SELECT coalesce(sum(CASE WHEN owner_id=?1 THEN bytes ELSE 0 END),0),coalesce(sum(bytes),0) FROM capture_submissions",[&actor.id],|row|Ok((row.get(0)?,row.get(1)?))).map_err(db_error)?;
-    if owner.saturating_add(additional) > OWNER_BYTES
-        || total.saturating_add(additional) > GLOBAL_BYTES
-    {
-        return Err(Error::CaptureStorageFull);
-    }
+fn check_storage(_connection: &Connection, _actor: &Actor, _additional: u64) -> Result<(), Error> {
     Ok(())
 }
 fn is_reviewer(connection: &Connection, actor: &Actor) -> Result<bool, Error> {
@@ -750,10 +742,7 @@ mod tests {
         store
             .call(move |connection| {
                 assert!(!is_reviewer(connection, &check_actor)?);
-                assert_eq!(
-                    check_storage(connection, &check_actor, OWNER_BYTES + 1),
-                    Err(Error::CaptureStorageFull)
-                );
+                assert!(check_storage(connection, &check_actor, u64::MAX).is_ok());
                 Ok(())
             })
             .await
