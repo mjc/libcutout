@@ -9,6 +9,9 @@
 
 //! Rust-owned `SQLite` persistence for rides, maps, and mobile state.
 
+#[cfg(all(feature = "postgres", any(target_os = "ios", target_os = "android")))]
+compile_error!("PostgreSQL support is server-only and cannot be built into the iOS or Android app");
+
 mod atomic_export;
 mod capture_writer;
 mod pevcap_limits;

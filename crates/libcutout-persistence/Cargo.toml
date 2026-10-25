@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Rust-owned SQLite persistence for Cutout rides and mobile state"
 
+[features]
+default = []
+postgres = []
+
 [lints]
 workspace = true
 

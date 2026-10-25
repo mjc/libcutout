@@ -12,6 +12,9 @@
 //! Upgrading from full-address IPv6 keys starts fresh prefix budgets because
 //! old hashes cannot be regrouped; existing global budget counts are retained.
 
+#[cfg(all(feature = "postgres", any(target_os = "ios", target_os = "android")))]
+compile_error!("PostgreSQL support is server-only and cannot be built into the iOS or Android app");
+
 mod content_filter;
 mod http;
 mod model;

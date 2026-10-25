@@ -216,7 +216,10 @@ in
     ];
   };
 
-  tasks."project:dependency-policy".exec = "cargo deny --locked check";
+  tasks."project:dependency-policy".exec = ''
+    cargo deny --locked check
+    python3 scripts/check-phone-dependencies.py
+  '';
 
   tasks."check:android-camera-protocols".exec =
     "cargo check --locked -p cutout-protocols --target aarch64-linux-android";
