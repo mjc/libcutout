@@ -157,8 +157,9 @@ struct EucRideInstruments: View {
     var body: some View {
         GeometryReader { geometry in
             let bounds = geometry.frame(in: .global)
-            // The native floating accessory can cover content without changing its proposal.
-            // Read only its intersection with this viewport; do not subtract safe-area insets again.
+            // The compact player can cover this surface without changing its proposal.
+            // Shorten only when that player intersects the viewport. The speed, gauge,
+            // and readings stay in one block under the header, above the tab bar.
             let obstruction = musicCompactPlayerFrame?.intersection(bounds)
             let visibleHeight =
                 obstruction.map {
@@ -167,7 +168,12 @@ struct EucRideInstruments: View {
             let landscape =
                 verticalSizeClass == .compact
                 || (verticalSizeClass == nil && geometry.size.width > geometry.size.height)
-            let constrainedScale = max(0.45, min(1, (visibleHeight - 344) / 256))
+            // Full-size instruments fit in 600pt. A player below that line must not
+            // resize them; a player that cuts into the cluster scales to the room left.
+            let fullPortraitLayoutHeight: CGFloat = 600
+            let scaleBasis =
+                visibleHeight >= fullPortraitLayoutHeight ? geometry.size.height : visibleHeight
+            let constrainedScale = max(0.45, min(1, (scaleBasis - 344) / 256))
             let speedPointSize = portraitSpeedPointSize * constrainedScale
             let gaugeWidth = min(portraitGaugeWidth, max(0, geometry.size.width - 48)) * constrainedScale
             VStack(spacing: 12) {
@@ -188,7 +194,6 @@ struct EucRideInstruments: View {
                     primaryInstruments(
                         landscape: false, speedPointSize: speedPointSize, gaugeWidth: gaugeWidth
                     )
-                    .frame(maxHeight: .infinity)
                     VStack(spacing: 10) {
                         energyReadings
                         secondaryReadings

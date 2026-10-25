@@ -293,53 +293,59 @@ final class EucRideInstrumentTests: XCTestCase {
     }
 
     #if os(macOS)
-        func testDashboardReadingsUseTheBottomOfTheOfferedViewport() throws {
-            for height: CGFloat in [600, 700] {
-                let image = try XCTUnwrap(renderedDashboard(height: height, playerFrame: nil))
-                let fullImage = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-                let pixels = try normalizedPixels(in: image, region: fullImage)
-                let lastForegroundRow = try XCTUnwrap(
-                    lastForegroundRow(in: pixels, width: image.width, height: image.height)
-                )
-                XCTAssertGreaterThan(
-                    lastForegroundRow, Int((height - 40) * 2), "Readings must not leave a large unused footer")
-                XCTAssertLessThan(lastForegroundRow, Int((height - 8) * 2), "Readings need bottom clearance")
-                _ = pngArtifactPath(for: image, name: "cutout-ride-filled-\(Int(height)).png")
+        func testDashboardClusterStaysUnderTheGaugeAsTheViewportGrows() throws {
+            let shorter = try XCTUnwrap(renderedDashboard(height: 600, playerFrame: nil))
+            let taller = try XCTUnwrap(renderedDashboard(height: 700, playerFrame: nil))
+            let shorterBounds = try instrumentBounds(in: shorter)
+            let tallerBounds = try instrumentBounds(in: taller)
+            for index in shorterBounds.indices {
+                XCTAssertEqual(tallerBounds[index].origin.y, shorterBounds[index].origin.y, accuracy: 1)
+                XCTAssertEqual(tallerBounds[index].height, shorterBounds[index].height, accuracy: 1)
             }
+            let shorterBottom = try foregroundBottom(in: shorter)
+            let tallerBottom = try foregroundBottom(in: taller)
+            XCTAssertEqual(
+                tallerBottom, shorterBottom, accuracy: 2,
+                "A taller screen must not drop the voltage row toward the tab bar")
+            XCTAssertLessThan(
+                shorterBottom, Int((600 - 30) * 2),
+                "Voltage, power, and temperature stay above the bottom of a 600pt viewport")
+            _ = pngArtifactPath(for: shorter, name: "cutout-ride-cluster-600.png")
+            _ = pngArtifactPath(for: taller, name: "cutout-ride-cluster-700.png")
         }
 
-        func testDashboardLeavesCompactPlayerFrameUncovered() throws {
+        func testDashboardClusterDoesNotMoveForAPlayerBelowIt() throws {
             let playerFrame = CGRect(x: 0, y: 620, width: 393, height: 64)
-            let image = try XCTUnwrap(renderedDashboard(height: 700, playerFrame: playerFrame))
-            let fullImage = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-            let pixels = try normalizedPixels(in: image, region: fullImage)
-            let lastForegroundRow = try XCTUnwrap(
-                lastForegroundRow(in: pixels, width: image.width, height: image.height)
-            )
+            let parked = try XCTUnwrap(renderedDashboard(height: 700, playerFrame: nil))
+            let playing = try XCTUnwrap(renderedDashboard(height: 700, playerFrame: playerFrame))
+            let parkedBounds = try instrumentBounds(in: parked)
+            let playingBounds = try instrumentBounds(in: playing)
+            for index in parkedBounds.indices {
+                XCTAssertEqual(playingBounds[index].origin.y, parkedBounds[index].origin.y, accuracy: 1)
+                XCTAssertEqual(playingBounds[index].height, parkedBounds[index].height, accuracy: 1)
+            }
+            let parkedBottom = try foregroundBottom(in: parked)
+            let playingBottom = try foregroundBottom(in: playing)
+            XCTAssertEqual(playingBottom, parkedBottom, accuracy: 2)
             XCTAssertLessThan(
-                lastForegroundRow, Int(playerFrame.minY * 2),
+                playingBottom, Int(playerFrame.minY * 2),
                 "The dashboard must end before the compact player begins at \(playerFrame.minY)pt"
             )
-            XCTAssertGreaterThan(
-                lastForegroundRow, Int((playerFrame.minY - 50) * 2), "Readings must stay near the player")
-            _ = pngArtifactPath(for: image, name: "cutout-ride-filled-with-music.png")
+            _ = pngArtifactPath(for: playing, name: "cutout-ride-cluster-with-music.png")
         }
 
         func testConstrainedDashboardKeepsReadingsAboveThePlayer() throws {
             let playerFrame = CGRect(x: 0, y: 510, width: 393, height: 74)
             let image = try XCTUnwrap(renderedDashboard(height: 600, playerFrame: playerFrame))
-            let pixels = try normalizedPixels(
-                in: image, region: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-            let bottom = try XCTUnwrap(lastForegroundRow(in: pixels, width: image.width, height: image.height))
+            let bottom = try foregroundBottom(in: image)
             XCTAssertLessThan(bottom, Int((playerFrame.minY - 12) * 2))
-            XCTAssertGreaterThan(bottom, Int((playerFrame.minY - 50) * 2))
+            XCTAssertGreaterThan(bottom, Int(120 * 2), "The scaled readings must remain on screen")
             _ = pngArtifactPath(for: image, name: "cutout-ride-filled-compact.png")
         }
 
         func testDashboardInstrumentLayoutIsStableAcrossPlayerFramesAndViewportHeights() throws {
             let viewportHeights: [CGFloat] = [600, 650, 700]
             let baseline = try XCTUnwrap(renderedDashboard(height: 600, playerFrame: nil))
-            // Instruments may move to balance available space, but must retain their rendered sizes.
             let baselineBounds = try instrumentBounds(in: baseline)
             let commonDashboardRegion = CGRect(x: 0, y: 0, width: baseline.width, height: 100)
             let baselinePixels = try normalizedPixels(in: baseline, region: commonDashboardRegion)
@@ -356,6 +362,7 @@ final class EucRideInstrumentTests: XCTestCase {
                     let image = try XCTUnwrap(renderedDashboard(height: height, playerFrame: playerFrame))
                     let bounds = try instrumentBounds(in: image)
                     for index in baselineBounds.indices {
+                        XCTAssertEqual(bounds[index].origin.y, baselineBounds[index].origin.y, accuracy: 1)
                         XCTAssertEqual(bounds[index].width, baselineBounds[index].width, accuracy: 1)
                         XCTAssertEqual(bounds[index].height, baselineBounds[index].height, accuracy: 1)
                     }
@@ -489,6 +496,12 @@ final class EucRideInstrumentTests: XCTestCase {
             }
             XCTAssertFalse(gauge.isNull, "The rendered gauge must be present")
             return [try XCTUnwrap(hero, "The rendered speed must be present"), gauge]
+        }
+
+        private func foregroundBottom(in image: CGImage) throws -> Int {
+            let pixels = try normalizedPixels(
+                in: image, region: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return try XCTUnwrap(lastForegroundRow(in: pixels, width: image.width, height: image.height))
         }
 
         private func lastForegroundRow(in pixels: Data, width: Int, height: Int) -> Int? {
