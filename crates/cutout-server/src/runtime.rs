@@ -12,7 +12,7 @@ use std::{
 #[derive(Debug, Parser)]
 #[command(
     name = "cutout-server",
-    about = "Cutout music, charging and website server"
+    about = "Cutout music, charging, ride, and website server"
 )]
 struct Arguments {
     #[arg(long, env = "CHARGING_DATABASE")]
@@ -30,8 +30,8 @@ enum Command {
         /// Trust X-Real-IP only from this peer; the proxy must overwrite that header.
         #[arg(long, env = "CHARGING_TRUSTED_PROXY")]
         trusted_proxy: Option<IpAddr>,
-        /// Serve music, charging and website routes on separate canonical hosts.
-        #[arg(long, requires = "trusted_proxy")]
+        /// Accepted for the existing unit. The `Host` header selects the handler.
+        #[arg(long, hide = true)]
         music: bool,
         #[arg(long, default_value = "music.cutout.lol", value_parser = parse_host)]
         music_host: crate::vhosts::PublicHost,
@@ -39,6 +39,9 @@ enum Command {
         rides_host: crate::vhosts::PublicHost,
         #[arg(long, default_value = "cutout.lol", value_parser = parse_host)]
         site_host: crate::vhosts::PublicHost,
+        /// Ride database for this process. Defaults to `ride.sqlite` beside the charging database.
+        #[arg(long, env = "CUTOUT_RIDE_DATABASE")]
+        ride_database: Option<PathBuf>,
     },
     /// Provision an operator or contributor credential; stdout contains the secret.
     Identity {
@@ -84,8 +87,9 @@ enum AlphaSignupCommand {
 pub async fn run_from_arguments() -> Result<(), Error> {
     let arguments = Arguments::parse();
     validate_listener(&arguments.command)?;
+    let charging_database = arguments.database.clone();
     let store = open_store(&arguments)?;
-    dispatch_command(arguments.command, store).await
+    dispatch_command(arguments.command, store, charging_database).await
 }
 
 fn open_store(arguments: &Arguments) -> Result<Store, Error> {
@@ -98,30 +102,34 @@ fn open_store(arguments: &Arguments) -> Result<Store, Error> {
     }
 }
 
-async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
+async fn dispatch_command(
+    command: Command,
+    store: Store,
+    charging_database: PathBuf,
+) -> Result<(), Error> {
     match command {
         Command::Serve {
             listen,
             trusted_proxy,
-            music,
+            music: _,
             music_host,
             rides_host,
             site_host,
+            ride_database,
         } => {
-            let mode = match (music, trusted_proxy) {
-                (true, Some(proxy)) => ServiceMode::Combined(
-                    crate::vhosts::PublicVhosts::new(
-                        music_host,
-                        rides_host,
-                        site_host,
-                        crate::TrustedProxy(proxy),
-                    )
-                    .map_err(|_| Error::Invalid)?,
-                ),
-                (true, None) => return Err(Error::Invalid),
-                (false, proxy) => ServiceMode::Directory(proxy),
+            let Some(proxy) = trusted_proxy else {
+                return Err(Error::Invalid);
             };
-            serve(listen, mode, store).await
+            let vhosts = crate::vhosts::PublicVhosts::new(
+                music_host,
+                rides_host,
+                site_host,
+                crate::TrustedProxy(proxy),
+            )
+            .map_err(|_| Error::Invalid)?;
+            let ride_database =
+                ride_database.unwrap_or_else(|| charging_database.with_file_name("ride.sqlite"));
+            serve(listen, vhosts, store, ride_database).await
         }
         Command::Identity {
             moderator,
@@ -164,38 +172,70 @@ async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
     }
 }
 
-enum ServiceMode {
-    Directory(Option<IpAddr>),
-    Combined(crate::vhosts::PublicVhosts),
-}
-
 fn parse_host(value: &str) -> Result<crate::vhosts::PublicHost, crate::vhosts::HostConfigError> {
     crate::vhosts::PublicHost::parse(value)
 }
 
 fn validate_listener(command: &Command) -> Result<(), Error> {
     if let Command::Serve {
-        music: true,
         listen,
+        trusted_proxy,
         ..
     } = command
-        && !listen.ip().is_loopback()
+        && (trusted_proxy.is_none() || !listen.ip().is_loopback())
     {
         return Err(Error::Invalid);
     }
     Ok(())
 }
 
-async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<(), Error> {
+async fn open_ride_service(path: PathBuf) -> Result<libcutout_persistence::RideDatabase, Error> {
+    tokio::task::spawn_blocking(
+        move || -> Result<libcutout_persistence::RideDatabase, libcutout_persistence::StorageError> {
+            let database = libcutout_persistence::RideDatabase::open(&path)?;
+            database.capabilities()?;
+            Ok(database)
+        },
+    )
+    .await
+    .map_err(|_| Error::Unavailable)?
+    .map_err(|error| {
+        tracing::error!(%error, "ride service failed to open");
+        Error::Unavailable
+    })
+}
+
+async fn shutdown_ride_service(database: libcutout_persistence::RideDatabase) -> Result<(), Error> {
+    tokio::task::spawn_blocking(move || database.shutdown())
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|error| {
+            tracing::error!(%error, "ride service shutdown failed");
+            Error::Unavailable
+        })
+}
+
+async fn serve(
+    listen: SocketAddr,
+    vhosts: crate::vhosts::PublicVhosts,
+    store: Store,
+    ride_database: PathBuf,
+) -> Result<(), Error> {
+    let ride_service = open_ride_service(ride_database).await?;
+    let result = serve_http(listen, vhosts, store, ride_service.clone()).await;
+    shutdown_ride_service(ride_service).await?;
+    result
+}
+
+async fn serve_http(
+    listen: SocketAddr,
+    vhosts: crate::vhosts::PublicVhosts,
+    store: Store,
+    ride: libcutout_persistence::RideDatabase,
+) -> Result<(), Error> {
     let lific_worker = crate::signup_sync::LificSync::from_env();
-    let signup_state = match (
-        crate::signup::SignupState::enabled_from_env(),
-        lific_worker.is_some(),
-    ) {
-        (Some(state), true) => state,
-        _ => crate::signup::SignupState::from_env(),
-    };
-    let router = build_router(store.clone(), mode, signup_state).await?;
+    let signup = signup_state(lific_worker.is_some());
+    let router = build_router(store.clone(), vhosts, signup, ride).await?;
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .map_err(|_| Error::Unavailable)?;
@@ -218,40 +258,34 @@ async fn serve(listen: SocketAddr, mode: ServiceMode, store: Store) -> Result<()
     result
 }
 
-async fn build_router(
-    store: Store,
-    mode: ServiceMode,
-    signup: crate::signup::SignupState,
-) -> Result<axum::Router, Error> {
-    match mode {
-        ServiceMode::Directory(proxy) => Ok(build_router_with_signup(store, proxy, signup)),
-        ServiceMode::Combined(policy) => {
-            let music = cutout_soundcloud_auth_broker::MusicBroker::from_environment()
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "music broker initialization failed");
-                    Error::Unavailable
-                })?;
-            Ok(crate::vhosts::router(
-                policy,
-                music.router(),
-                crate::http::charging_router(store.clone()),
-                crate::http::site_router(store, signup),
-            ))
-        }
+fn signup_state(worker_configured: bool) -> crate::signup::SignupState {
+    match (
+        crate::signup::SignupState::enabled_from_env(),
+        worker_configured,
+    ) {
+        (Some(state), true) => state,
+        _ => crate::signup::SignupState::from_env(),
     }
 }
 
-fn build_router_with_signup(
+async fn build_router(
     store: Store,
-    trusted_proxy: Option<IpAddr>,
+    vhosts: crate::vhosts::PublicVhosts,
     signup: crate::signup::SignupState,
-) -> axum::Router {
-    match trusted_proxy {
-        Some(proxy) => crate::http::router_with_signup_state(store, signup)
-            .layer(axum::Extension(crate::TrustedProxy(proxy))),
-        None => crate::http::router_with_signup_state(store, signup),
-    }
+    ride: libcutout_persistence::RideDatabase,
+) -> Result<axum::Router, Error> {
+    let music = cutout_soundcloud_auth_broker::MusicBroker::from_environment()
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "music broker initialization failed");
+            Error::Unavailable
+        })?;
+    Ok(crate::vhosts::router(
+        vhosts,
+        music.router(),
+        crate::http::charging_router(store.clone(), ride),
+        crate::http::site_router(store, signup),
+    ))
 }
 
 async fn shutdown() {
@@ -277,25 +311,20 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn combined_service_requires_an_explicit_trusted_proxy() {
-        let result = Arguments::try_parse_from([
-            "cutout-server",
-            "--database",
-            "unused.sqlite",
-            "serve",
-            "--music",
-        ]);
-        assert!(result.is_err());
+    fn server_requires_an_explicit_trusted_proxy() {
+        let arguments =
+            Arguments::try_parse_from(["cutout-server", "--database", "unused.sqlite", "serve"])
+                .expect("valid command syntax");
+        assert!(validate_listener(&arguments.command).is_err());
     }
 
     #[test]
-    fn combined_service_rejects_a_public_listener() {
+    fn server_rejects_a_public_listener() {
         let arguments = Arguments::try_parse_from([
             "cutout-server",
             "--database",
             "unused.sqlite",
             "serve",
-            "--music",
             "--trusted-proxy",
             "127.0.0.1",
             "--listen",
@@ -306,13 +335,12 @@ mod tests {
     }
 
     #[test]
-    fn combined_service_rejects_noncanonical_host_configuration() {
+    fn server_rejects_noncanonical_host_configuration() {
         let result = Arguments::try_parse_from([
             "cutout-server",
             "--database",
             "unused.sqlite",
             "serve",
-            "--music",
             "--trusted-proxy",
             "127.0.0.1",
             "--music-host",

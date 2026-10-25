@@ -4,13 +4,16 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-//! Cutout's music broker, charging directory and website, served on separate hosts.
+//! Cutout's music broker, charging directory, ride database, and website, served by one process.
 //!
 //! Public registration budgets group canonical IPv4 addresses and IPv6 /64
 //! prefixes. IPv4-mapped IPv6 addresses use the corresponding IPv4 budget.
 //! Only hashes of those source keys are stored; global budgets remain separate.
 //! Upgrading from full-address IPv6 keys starts fresh prefix budgets because
 //! old hashes cannot be regrouped; existing global budget counts are retained.
+
+#[cfg(all(feature = "postgres", any(target_os = "ios", target_os = "android")))]
+compile_error!("PostgreSQL support is server-only and cannot be built into the iOS or Android app");
 
 mod content_filter;
 mod http;

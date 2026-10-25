@@ -13,7 +13,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Extension, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -85,22 +85,21 @@ pub(crate) fn router_with_signup_state(store: Store, signup: crate::signup::Sign
             .route("/healthz", get(|| async { StatusCode::OK }))
             .route("/readyz", get(ready))
             .merge(charging_routes())
-            .merge(site_routes()),
+            .merge(site_api(signup)),
         store.clone(),
-        signup,
     )
+    .merge(crate::site::router())
     .merge(capture_submissions::router().with_state(store))
 }
 
-/// Charging API router for host-isolated combined deployments.
-pub(crate) fn charging_router(store: Store) -> Router {
+/// Charging routes for `rides.cutout.lol`. Readiness pings the ride database thread.
+pub(crate) fn charging_router(store: Store, ride: libcutout_persistence::RideDatabase) -> Router {
     finish_router(
         Router::new()
             .route("/healthz", get(|| async { StatusCode::OK }))
-            .route("/readyz", get(ready))
+            .route("/readyz", rides_ready(ride))
             .merge(charging_routes()),
         store.clone(),
-        crate::signup::SignupState::from_env(),
     )
     .merge(capture_submissions::router().with_state(store))
 }
@@ -111,10 +110,10 @@ pub(crate) fn site_router(store: Store, signup: crate::signup::SignupState) -> R
         Router::new()
             .route("/healthz", get(|| async { StatusCode::OK }))
             .route("/readyz", get(ready))
-            .merge(site_routes()),
+            .merge(site_api(signup)),
         store,
-        signup,
     )
+    .merge(crate::site::router())
 }
 
 fn charging_routes() -> Router<Store> {
@@ -142,7 +141,7 @@ fn charging_routes() -> Router<Store> {
         .route("/v1/moderation/audit", get(audit))
 }
 
-fn site_routes() -> Router<Store> {
+fn site_api(signup: crate::signup::SignupState) -> Router<Store> {
     Router::new()
         .route("/v1/alpha-signup/config", get(crate::signup::public_config))
         .route("/v1/alpha-signup/requests", post(crate::signup::submit))
@@ -150,6 +149,7 @@ fn site_routes() -> Router<Store> {
             "/v1/alpha-signup-removals",
             post(crate::signup::submit_removal),
         )
+        .layer(Extension(signup))
         .route("/v1/moderation/alpha-signups", get(alpha_signups))
         .route(
             "/v1/moderation/alpha-signup-removals",
@@ -163,19 +163,20 @@ fn site_routes() -> Router<Store> {
             "/v1/moderation/alpha-signups/{id}",
             delete(withdraw_alpha_signup),
         )
-        .merge(crate::site::router())
 }
 
-fn finish_router(
-    router: Router<Store>,
-    store: Store,
-    signup: crate::signup::SignupState,
-) -> Router {
+fn finish_router(router: Router<Store>, store: Store) -> Router {
     router
         .layer(DefaultBodyLimit::max(32 * 1024))
-        .layer(axum::Extension(signup))
         .layer(axum::middleware::from_fn(deadline))
         .with_state(store)
+}
+
+fn rides_ready(ride: libcutout_persistence::RideDatabase) -> axum::routing::MethodRouter<Store> {
+    get(move |State(store): State<Store>| {
+        let ride = ride.clone();
+        async move { ready_ride(store, ride).await }
+    })
 }
 
 async fn deadline(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
@@ -193,7 +194,7 @@ async fn deadline(request: axum::extract::Request, next: axum::middleware::Next)
 
 pub(crate) async fn actor(store: &Store, headers: &HeaderMap) -> Result<Actor, Error> {
     let token = bearer_token(headers)?;
-    store.authenticate(token.to_owned()).await
+    store.authenticate(token).await
 }
 
 pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, Error> {
@@ -206,6 +207,18 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, Error> {
 
 async fn ready(State(store): State<Store>) -> Result<StatusCode, Error> {
     store.ready().await?;
+    Ok(StatusCode::OK)
+}
+
+async fn ready_ride(
+    store: Store,
+    ride: libcutout_persistence::RideDatabase,
+) -> Result<StatusCode, Error> {
+    store.ready().await?;
+    tokio::task::spawn_blocking(move || ride.capabilities())
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)?;
     Ok(StatusCode::OK)
 }
 

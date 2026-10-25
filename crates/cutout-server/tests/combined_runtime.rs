@@ -19,12 +19,72 @@ const SITE_HOST: &str = "cutout.lol";
 const ACCESS_TOKEN: &str = "cached-mobile-access-token";
 
 #[tokio::test]
+async fn combined_server_opens_the_ride_database_in_process() {
+    let fixture = RuntimeFixture::new();
+    let address = SocketAddr::from(([127, 0, 0, 1], reserve_port()));
+    let mut server = start_server(
+        address,
+        &fixture.database_path,
+        Some(&fixture.ride_database_path),
+        &fixture.credentials_directory,
+        &fixture.state_path,
+    );
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("HTTP client");
+
+    wait_until_ready(&mut server, &client).await;
+    for host in [MUSIC_HOST, RIDES_HOST, SITE_HOST] {
+        let response = request(&client, address, host, "/readyz").await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let ride_database =
+        rusqlite::Connection::open(&fixture.ride_database_path).expect("ride database");
+    let rides: i64 = ride_database
+        .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get(0))
+        .expect("ride service schema");
+    assert_eq!(rides, 0);
+}
+
+#[tokio::test]
+async fn server_opens_the_ride_database_beside_the_charging_database() {
+    let fixture = RuntimeFixture::new();
+    let address = SocketAddr::from(([127, 0, 0, 1], reserve_port()));
+    let mut server = start_server(
+        address,
+        &fixture.database_path,
+        None,
+        &fixture.credentials_directory,
+        &fixture.state_path,
+    );
+    let client = cutout_core::http::client_builder()
+        .expect("platform verifier")
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("HTTP client");
+
+    wait_until_ready(&mut server, &client).await;
+    let response = request(&client, address, RIDES_HOST, "/readyz").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let ride_database =
+        rusqlite::Connection::open(fixture.database_path.with_file_name("ride.sqlite"))
+            .expect("default ride database");
+    let rides: i64 = ride_database
+        .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get(0))
+        .expect("ride database schema");
+    assert_eq!(rides, 0);
+}
+
+#[tokio::test]
 async fn combined_runtime_routes_isolates_and_drains_with_cached_music_state() {
     let fixture = RuntimeFixture::new();
     let address = SocketAddr::from(([127, 0, 0, 1], reserve_port()));
     let mut server = start_server(
         address,
         &fixture.database_path,
+        Some(&fixture.ride_database_path),
         &fixture.credentials_directory,
         &fixture.state_path,
     );
@@ -57,6 +117,7 @@ struct RuntimeFixture {
     _directory: TempDir,
     credentials_directory: std::path::PathBuf,
     database_path: std::path::PathBuf,
+    ride_database_path: std::path::PathBuf,
     initial_cache: Vec<u8>,
     state_path: std::path::PathBuf,
 }
@@ -92,6 +153,7 @@ impl RuntimeFixture {
 
         Self {
             database_path: directory.path().join("charging.sqlite"),
+            ride_database_path: directory.path().join("rides.sqlite"),
             _directory: directory,
             credentials_directory,
             initial_cache,
@@ -324,18 +386,23 @@ fn reserve_port() -> u16 {
 fn start_server(
     address: SocketAddr,
     database_path: &std::path::Path,
+    ride_database_path: Option<&std::path::Path>,
     credentials_directory: &std::path::Path,
     state_path: &std::path::Path,
 ) -> RunningServer {
-    let child = Command::new(env!("CARGO_BIN_EXE_cutout-server"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cutout-server"));
+    command
         .arg("--database")
         .arg(database_path)
         .arg("serve")
-        .arg("--music")
         .arg("--listen")
         .arg(address.to_string())
         .arg("--trusted-proxy")
-        .arg("127.0.0.1")
+        .arg("127.0.0.1");
+    if let Some(ride_database_path) = ride_database_path {
+        command.arg("--ride-database").arg(ride_database_path);
+    }
+    let child = command
         .env("CREDENTIALS_DIRECTORY", credentials_directory)
         .env("SOUNDCLOUD_TOKEN_STATE_FILE", state_path)
         .stdout(Stdio::null())

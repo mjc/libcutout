@@ -12,6 +12,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 use uuid::Uuid;
@@ -24,7 +25,7 @@ const MAX_REMOVAL_REQUESTS: u32 = 5_000;
 
 #[derive(Clone)]
 pub(crate) struct SignupState {
-    config: Option<Config>,
+    config: Option<Arc<Config>>,
     client: Option<Client>,
     #[cfg(test)]
     siteverify_url: String,
@@ -41,7 +42,7 @@ impl SignupState {
     pub(crate) fn from_env() -> Self {
         Self {
             config: None,
-            client: turnstile_client(),
+            client: None,
             #[cfg(test)]
             siteverify_url: SITEVERIFY_URL.to_owned(),
         }
@@ -56,11 +57,11 @@ impl SignupState {
         }
         let client = turnstile_client()?;
         Some(Self {
-            config: Some(Config {
+            config: Some(Arc::new(Config {
                 site_key,
                 secret,
                 hostname,
-            }),
+            })),
             client: Some(client),
             #[cfg(test)]
             siteverify_url: SITEVERIFY_URL.to_owned(),
@@ -70,11 +71,11 @@ impl SignupState {
     #[cfg(test)]
     fn for_test(siteverify_url: String) -> Self {
         Self {
-            config: Some(Config {
+            config: Some(Arc::new(Config {
                 site_key: "test-site-key".into(),
                 secret: "test-secret".into(),
                 hostname: "cutout.lol".into(),
-            }),
+            })),
             client: turnstile_client(),
             siteverify_url,
         }
@@ -193,7 +194,7 @@ pub(crate) async fn submit(
     {
         return Ok((StatusCode::ACCEPTED, Json(receipt)));
     }
-    let config = state.config.as_ref().ok_or(Error::Unavailable)?;
+    let config = state.config.as_deref().ok_or(Error::Unavailable)?;
     let source = crate::http::registration::registration_source(
         peer.ip(),
         trusted_proxy.map(|Extension(proxy)| proxy),
@@ -274,7 +275,7 @@ pub(crate) async fn submit_removal(
     {
         return Ok((StatusCode::ACCEPTED, Json(receipt)));
     }
-    let config = state.config.as_ref().ok_or(Error::Unavailable)?;
+    let config = state.config.as_deref().ok_or(Error::Unavailable)?;
     let source = crate::http::registration::registration_source(
         peer.ip(),
         trusted_proxy.map(|Extension(proxy)| proxy),
