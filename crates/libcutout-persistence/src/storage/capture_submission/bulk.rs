@@ -329,8 +329,14 @@ fn collect_live_history(
             }
             let status = entry.submission.status.clone();
             let fingerprint = status_fingerprint(status.as_ref());
-            let evidence =
-                database.capture_evidence(CaptureSubmissionSource::LiveCapture(entry.id))?;
+            let (evidence, evidence_failure) =
+                match database.capture_evidence(CaptureSubmissionSource::LiveCapture(entry.id)) {
+                    Ok(evidence) => (evidence, None),
+                    Err(_) => (
+                        CaptureAttachments::default(),
+                        Some(CaptureSubmissionBatchEligibility::Unavailable),
+                    ),
+                };
             let source = PlannedSource::LiveCapture {
                 id: entry.id,
                 digest: String::new(),
@@ -338,7 +344,9 @@ fn collect_live_history(
                 status_fingerprint: fingerprint,
                 evidence_fingerprint: evidence_fingerprint(&evidence),
             };
-            let preview = if entry.state == LiveCaptureState::Active {
+            let preview = if evidence_failure.is_some() {
+                Err(CaptureSubmissionBatchEligibility::Unavailable)
+            } else if entry.state == LiveCaptureState::Active {
                 Err(CaptureSubmissionBatchEligibility::Active)
             } else if entry.event_count == 0 {
                 Err(CaptureSubmissionBatchEligibility::Empty)
@@ -456,7 +464,13 @@ fn collect_canonical_capture(
             evidence_fingerprint: String::new(),
         }
     };
-    let evidence = database.capture_evidence(locator)?;
+    let (evidence, evidence_failure) = match database.capture_evidence(locator) {
+        Ok(evidence) => (evidence, None),
+        Err(_) => (
+            CaptureAttachments::default(),
+            Some(CaptureSubmissionBatchEligibility::Unavailable),
+        ),
+    };
     let source = match source {
         PlannedSource::RecordedArtifact {
             locator,
@@ -490,7 +504,11 @@ fn collect_canonical_capture(
         },
         source => source,
     };
-    let (summary, failure) = preview_canonical_candidate(database, capture, &evidence, &digest);
+    let (summary, failure) = if evidence_failure.is_some() {
+        (None, evidence_failure)
+    } else {
+        preview_canonical_candidate(database, capture, &evidence, &digest)
+    };
     let candidate = candidate_for_imported(
         source_id.clone(),
         capture,
@@ -545,14 +563,16 @@ fn collect_managed_files(
         let Some((canonical_root, is_export_root)) = validated_root(root)? else {
             continue;
         };
-        let mut paths = fs::read_dir(&canonical_root)
-            .map_err(super::StorageError::from)?
-            .map(|entry| {
-                entry
-                    .map(|entry| entry.path())
-                    .map_err(super::StorageError::from)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut paths = Vec::new();
+        let Ok(entries) = fs::read_dir(&canonical_root) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            paths.push(entry.path());
+        }
         paths.sort();
         for path in paths {
             let Some(kind) = super::super::capture_file_dedup::managed_capture_file_kind(
@@ -629,11 +649,13 @@ fn inspect_managed_file(
         candidates.push(unavailable_file_candidate(path));
         return Ok(None);
     };
+    let Ok(opened) = file.metadata() else {
+        candidates.push(unavailable_file_candidate(path));
+        return Ok(None);
+    };
     if !normalization::same_file_identity(
         fingerprint,
-        normalization::FileFingerprint::from_metadata(
-            &file.metadata().map_err(super::StorageError::from)?,
-        ),
+        normalization::FileFingerprint::from_metadata(&opened),
     ) {
         candidates.push(unavailable_file_candidate(path));
         return Ok(None);
@@ -642,9 +664,12 @@ fn inspect_managed_file(
         candidates.push(unavailable_file_candidate(path));
         return Ok(None);
     };
-    if !file_path_still_matches(path, &file, fingerprint)? {
-        candidates.push(unavailable_file_candidate(path));
-        return Ok(None);
+    match file_path_still_matches(path, &file, fingerprint) {
+        Ok(true) => {}
+        Ok(false) | Err(_) => {
+            candidates.push(unavailable_file_candidate(path));
+            return Ok(None);
+        }
     }
     Ok(Some((fingerprint, digest)))
 }
@@ -1085,10 +1110,10 @@ fn validated_root(path: &Path) -> Result<Option<(PathBuf, bool)>, CaptureSubmiss
         "Documents" | "DiagnosticCaptures" => false,
         _ => return Ok(None),
     };
-    Ok(Some((
-        fs::canonicalize(path).map_err(super::StorageError::from)?,
-        is_export_root,
-    )))
+    let Ok(canonical) = fs::canonicalize(path) else {
+        return Ok(None);
+    };
+    Ok(Some((canonical, is_export_root)))
 }
 
 fn hash_file(file: &mut File, expected_bytes: u64) -> Result<String, std::io::Error> {
