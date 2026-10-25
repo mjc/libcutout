@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run the account-deletion UI tests against a disposable local directory DB."""
+"""Run the account-deletion UI tests against a disposable local server."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
+import http.server
 import json
 import os
 import platform
@@ -14,6 +16,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -22,8 +25,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SERVICE_PORT = 45986
 PORT = 45987
+RIDES_HOST = "rides.cutout.lol"
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+DROPPED_REQUEST_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "forwarded", "x-forwarded-host", "x-original-host", "x-cutout-host",
+    "x-cutout-vhost", "x-cutout-route", "x-real-ip",
+}
+RESPONSE_HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "content-length"}
+FIXTURE_CREDENTIALS = b'{"client_id":"fixture-client","client_secret":"fixture-secret"}'
 ANONYMOUS_ID = "00000000-0000-4000-8000-000000000001"
 FIXTURES = [
     ("11111111-1111-4111-8111-111111111111", "c" * 64, "normal"),
@@ -41,6 +54,69 @@ BODY = {
     "price": None,
     "supplies": [],
 }
+
+
+def music_environment(evidence: Path) -> dict[str, str]:
+    credentials = evidence / "credentials"
+    credentials.mkdir()
+    (credentials / "soundcloud.json").write_bytes(FIXTURE_CREDENTIALS)
+    return {
+        "CREDENTIALS_DIRECTORY": str(credentials),
+        "SOUNDCLOUD_TOKEN_STATE_FILE": str(evidence / "music-tokens.json"),
+    }
+
+
+class RidesProxy(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, _format: str, *_args) -> None:
+        return
+
+    def do_GET(self) -> None:
+        self.forward()
+
+    def do_POST(self) -> None:
+        self.forward()
+
+    def do_PUT(self) -> None:
+        self.forward()
+
+    def do_PATCH(self) -> None:
+        self.forward()
+
+    def do_DELETE(self) -> None:
+        self.forward()
+
+    def forward(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else None
+        headers = {key: value for key, value in self.headers.items()
+                   if key.lower() not in DROPPED_REQUEST_HEADERS}
+        headers["Host"] = RIDES_HOST
+        headers["X-Real-IP"] = "127.0.0.1"
+        connection = http.client.HTTPConnection("127.0.0.1", SERVICE_PORT, timeout=10)
+        try:
+            connection.request(self.command, self.path, body=body, headers=headers)
+            response = connection.getresponse()
+            response_body = response.read()
+            self.send_response(response.status)
+            for key, value in response.getheaders():
+                if key.lower() not in RESPONSE_HOP_HEADERS:
+                    self.send_header(key, value)
+            self.send_header("Content-Length", str(len(response_body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(response_body)
+        except OSError:
+            payload = b'{"error":"local_service_unavailable"}'
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload)
+        finally:
+            connection.close()
 
 
 def run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -93,11 +169,12 @@ def check_environment(udid: str) -> dict:
     free_gib = shutil.disk_usage(ROOT).free / (1024 ** 3)
     if free_gib < 10:
         raise RuntimeError(f"Need at least 10 GiB free for the existing build caches; found {free_gib:.1f} GiB.")
-    with socket.socket() as sock:
-        try:
-            sock.bind(("127.0.0.1", PORT))
-        except OSError as error:
-            raise RuntimeError(f"Port {PORT} is occupied; stop the owning service yourself and retry.") from error
+    for port in (SERVICE_PORT, PORT):
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError as error:
+                raise RuntimeError(f"Port {port} is occupied; stop the owning service yourself and retry.") from error
     return {"rust": actual, "simulator": device, "free_disk_gib": round(free_gib, 1)}
 
 
@@ -215,10 +292,12 @@ def main() -> int:
         "started_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "rust": environment["rust"], "simulator": environment["simulator"],
-        "free_disk_gib": environment["free_disk_gib"], "database": str(database), "port": PORT,
+        "free_disk_gib": environment["free_disk_gib"], "database": str(database),
+        "service_port": SERVICE_PORT, "port": PORT,
     }, indent=2) + "\n")
     print(f"Evidence: {evidence}", flush=True)
     server = None
+    proxy = None
     try:
         with (evidence / "cargo-build.log").open("w") as log:
             run(["cargo", "build", "-p", "cutout-server", "--locked"], stdout=log, stderr=subprocess.STDOUT)
@@ -231,10 +310,14 @@ def main() -> int:
         receipt["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
         (evidence / "run.json").write_text(json.dumps(receipt, indent=2) + "\n")
         seed_database(binary, database)
+        proxy = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), RidesProxy)
+        threading.Thread(target=proxy.serve_forever, name="account-deletion-proxy", daemon=True).start()
         with (evidence / "server.log").open("w") as log:
-            server = subprocess.Popen([str(binary), "--database", str(database), "serve",
-                                       "--listen", f"127.0.0.1:{PORT}"], cwd=ROOT,
-                                      stdout=log, stderr=subprocess.STDOUT)
+            server = subprocess.Popen(
+                [str(binary), "--database", str(database), "serve", "--listen",
+                 f"127.0.0.1:{SERVICE_PORT}", "--trusted-proxy", "127.0.0.1"],
+                cwd=ROOT, env={**os.environ, **music_environment(evidence)},
+                stdout=log, stderr=subprocess.STDOUT)
             wait_ready(server, log)
             points = create_points()
             (evidence / "seeded-public-spots.json").write_text(json.dumps(
@@ -255,6 +338,9 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 server.kill()
                 server.wait()
+        if proxy is not None:
+            proxy.shutdown()
+            proxy.server_close()
     print(f"Passed; evidence retained at {evidence}")
     return 0
 

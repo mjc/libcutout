@@ -11,8 +11,9 @@ devenv shell -- python3 scripts/run-account-deletion-ui-tests.py \
 
 Find available UDIDs with `xcrun simctl list devices available`. The harness
 checks the active Devenv Rust compiler against `rust-toolchain.toml`, the
-Simulator, free port `127.0.0.1:45987`, and available disk space before it
-builds anything. It refuses an occupied port and never signals its owner.
+Simulator, free ports `127.0.0.1:45986` and `127.0.0.1:45987`, and available
+disk space before it builds anything. It refuses an occupied port and never
+signals its owner.
 
 Each run creates a fresh SQLite database and evidence directory under
 `~/Library/Logs/Cutout/account-deletion-ui-tests/`, outside disposable build
@@ -21,8 +22,12 @@ repository Cargo target and the UI runner's existing `target/xcode-ui-tests`
 Derived Data cache. The
 harness initializes the database with `cutout-server`, seeds the three fixed
 test contributor IDs using SHA-256 token hashes, and creates their public
-points through the real local HTTP API. It starts only its own server process
-and stops that process on success or failure.
+points through the real local HTTP API. The UI and the harness both use
+`http://127.0.0.1:45987/`. A proxy on that port sets `Host: rides.cutout.lol`
+and one `X-Real-IP`, then forwards to the server on `127.0.0.1:45986`. The
+server is started with `--trusted-proxy 127.0.0.1` and a fixture SoundCloud
+credential file. The harness stops the server and the proxy on success or
+failure.
 
 Builds use two Cargo jobs with incremental compilation disabled and two Xcode
 jobs. The UI runner disables parallel testing. Coordinate one existing Simulator

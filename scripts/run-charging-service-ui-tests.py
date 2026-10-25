@@ -32,8 +32,24 @@ TEST_NAME = "testTwoClientsConvergeThroughService"
 SELECTOR = f"CutoutAppUITests/ChargingMapDeviceUITests/{TEST_NAME}"
 UI_FINAL_NOTE = "Service sync outlet. Use the north entrance."
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+RIDES_HOST = "rides.cutout.lol"
 HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
                "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
+DROPPED_REQUEST_HEADERS = HOP_HEADERS | {
+    "forwarded", "x-forwarded-host", "x-original-host", "x-cutout-host",
+    "x-cutout-vhost", "x-cutout-route", "x-real-ip",
+}
+FIXTURE_CREDENTIALS = b'{"client_id":"fixture-client","client_secret":"fixture-secret"}'
+
+
+def music_environment(evidence: Path) -> dict[str, str]:
+    credentials = evidence / "credentials"
+    credentials.mkdir()
+    (credentials / "soundcloud.json").write_bytes(FIXTURE_CREDENTIALS)
+    return {
+        "CREDENTIALS_DIRECTORY": str(credentials),
+        "SOUNDCLOUD_TOKEN_STATE_FILE": str(evidence / "music-tokens.json"),
+    }
 
 
 def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -227,7 +243,8 @@ def make_proxy_handler(state: ProxyState):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else None
             headers = [(key, value) for key, value in self.headers.items()
-                       if key.lower() not in HOP_HEADERS]
+                       if key.lower() not in DROPPED_REQUEST_HEADERS]
+            headers.append(("Host", RIDES_HOST))
             headers.append(("X-Real-IP", "127.0.0.1"))
             connection = http.client.HTTPConnection("127.0.0.1", SERVICE_PORT, timeout=10)
             try:
@@ -405,8 +422,11 @@ def main() -> int:
         proxy_thread = threading.Thread(target=proxy.serve_forever, name="charging-sync-proxy", daemon=True)
         proxy_thread.start()
         with (evidence / "server.log").open("w") as log:
-            server = subprocess.Popen([str(binary), "--database", str(database), "serve", "--listen",
-                                       f"127.0.0.1:{SERVICE_PORT}"], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+            server = subprocess.Popen(
+                [str(binary), "--database", str(database), "serve", "--listen",
+                 f"127.0.0.1:{SERVICE_PORT}", "--trusted-proxy", "127.0.0.1"],
+                cwd=ROOT, env={**os.environ, **music_environment(evidence)},
+                stdout=log, stderr=subprocess.STDOUT)
             wait_ready(server)
             origin = f"http://127.0.0.1:{PROXY_PORT}/"
             test_environment = {
