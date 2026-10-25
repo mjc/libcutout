@@ -25,7 +25,7 @@
     <string name="capture_review_private_send">Review private Send</string>
     <string name="capture_retry_notes">Retry loading notes</string>
     <string name="capture_sent_privately">Sent privately</string>
-    <string name="capture_sent_remote_deleted">Sent privately · remote copy deleted</string>
+    <string name="capture_sent_local_deleted">Sent and local copy deleted</string>
     <string name="capture_file_unavailable">Capture file is unavailable.</string>
     <string name="capture_loading">Loading…</string>
     <string name="capture_error">Capture operation failed</string>

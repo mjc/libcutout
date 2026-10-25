@@ -14,7 +14,7 @@ import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionStatusDto
 
 class LocalCaptureSubmissionGateTest {
     @Test
-    fun historyBadgeRequiresDurableSendReceiptAndKeepsRemoteDeletionDistinct() {
+    fun historyBadgeRequiresDurableSendReceiptAndReportsLocalRemoval() {
         assertEquals(null, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, null)))
         val receipt = MobileCaptureSubmissionReceiptDto(
             operationId = "fixed-operation",
@@ -23,7 +23,15 @@ class LocalCaptureSubmissionGateTest {
             receivedAtMilliseconds = 1_700_000_000_000uL,
         )
         assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, receipt)))
-        assertEquals(CaptureHistorySendBadge.REMOTE_DELETED, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt)))
+        assertEquals(
+            CaptureHistorySendBadge.LOCAL_DELETED,
+            captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, receipt, MobileCaptureSubmissionLocalPayloadStateDto.REMOVED)),
+        )
+        assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt)))
+        assertEquals(
+            CaptureHistorySendBadge.LOCAL_DELETED,
+            captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt, MobileCaptureSubmissionLocalPayloadStateDto.REMOVED)),
+        )
         assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETING, receipt)))
         assertEquals(null, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.PREPARED, receipt)))
     }
@@ -31,12 +39,13 @@ class LocalCaptureSubmissionGateTest {
     private fun status(
         phase: MobileCaptureSubmissionPhaseDto,
         receipt: MobileCaptureSubmissionReceiptDto?,
+        localPayloadState: MobileCaptureSubmissionLocalPayloadStateDto = MobileCaptureSubmissionLocalPayloadStateDto.RETAINED,
     ) = MobileCaptureSubmissionStatusDto(
         operationId = "fixed-operation",
         phase = phase,
         origin = MobileCaptureSubmissionOriginDto.UNKNOWN,
         integrity = MobileCaptureIntegrityDto.Unknown,
-        localPayloadState = MobileCaptureSubmissionLocalPayloadStateDto.RETAINED,
+        localPayloadState = localPayloadState,
         categories = MobileCaptureSubmissionCategoriesDto(
             deviceIdentifiers = true, location = false, notes = false,
             annotations = false, settingsObservations = false,

@@ -74,15 +74,7 @@ internal class CaptureEvidenceDialog(
         .apply { tag = "captures.evidence.retry" }
     private val send = ui.action(context.getString(R.string.capture_review_private_send), primary = true) { review() }
         .apply { tag = "captures.send.review" }
-    private val remove = ui.action("Cancel Send") {
-        val next = status
-        if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT || next?.phase == MobileCaptureSubmissionPhaseDto.DELETING) {
-            removalConfirmationDialog = AlertDialog.Builder(context).setTitle("Delete the sent copy?")
-                .setMessage("Remove the private server copy. Local payload removal is handled separately after receipt confirmation. Operator backups and copies already downloaded may remain.")
-                .setNegativeButton("Keep sent copy", null).setPositiveButton("Delete sent copy") { _, _ -> removeSent(true) }
-                .create().also { it.show() }
-        } else removeSent(false)
-    }.apply { tag = "captures.send.remove" }
+    private val remove = ui.action("Cancel Send") { removeSent(false) }.apply { tag = "captures.send.remove" }
 
     fun show() {
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(20))
@@ -128,8 +120,13 @@ internal class CaptureEvidenceDialog(
             MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
             MobileCaptureSubmissionPhaseDto.REJECTED, MobileCaptureSubmissionPhaseDto.CANCELLING,
             MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)
-        remove.visibility = if (status == null || status?.phase in setOf(MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)) android.view.View.GONE else android.view.View.VISIBLE
-        remove.text = if (status?.phase in setOf(MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING)) "Delete sent copy" else "Cancel Send"
+        remove.visibility = if (status == null || status?.phase in setOf(
+            MobileCaptureSubmissionPhaseDto.SENT,
+            MobileCaptureSubmissionPhaseDto.DELETING,
+            MobileCaptureSubmissionPhaseDto.CANCELLED,
+            MobileCaptureSubmissionPhaseDto.DELETED,
+        )) android.view.View.GONE else android.view.View.VISIBLE
+        remove.text = "Cancel Send"
         remove.isEnabled = !working
     }
 
@@ -180,7 +177,7 @@ internal class CaptureEvidenceDialog(
         loaded = true; dirty = false
         message.text = when (next?.localPayloadState) {
             MobileCaptureSubmissionLocalPayloadStateDto.REMOVAL_PENDING -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Removing local capture payload"
-            MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Local capture payload removed"
+            MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> context.getString(R.string.capture_sent_local_deleted)
             else -> if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT) "Received privately · ${next.receipt?.operationId.orEmpty()}" else ""
         }
     }

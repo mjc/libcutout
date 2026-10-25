@@ -31,7 +31,6 @@ struct CaptureSubmissionSection: View {
     @State private var model: CaptureSubmissionModel
     @State private var evidence: CaptureEvidenceEditorModel
     @State private var showsSendConfirmation = false
-    @State private var showsDeleteConfirmation = false
     let onLocalPayloadStateChange: (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void
     let onStatusChange: (MobileCaptureSubmissionStatusDto?) -> Void
 
@@ -86,16 +85,6 @@ struct CaptureSubmissionSection: View {
                     Button("Not now", role: .cancel) {}
                 } message: {
                     Text(confirmationText)
-                }
-                .confirmationDialog(
-                    "Delete the sent copy?", isPresented: $showsDeleteConfirmation, titleVisibility: .visible
-                ) {
-                    Button("Delete sent copy", role: .destructive) { Task { await model.delete() } }
-                    Button("Keep sent copy", role: .cancel) {}
-                } message: {
-                    Text(
-                        "Remove the private server copy. Local payload removal is handled separately after receipt confirmation. Operator backups and copies already downloaded may remain."
-                    )
                 }
             if let status = model.status {
                 disclosure(status)
@@ -170,7 +159,7 @@ struct CaptureSubmissionSection: View {
             Text("Local capture payload removal is in progress.")
                 .accessibilityIdentifier("captures.send.localRemovalPending")
         } else if status.localPayloadState == .removed {
-            Text("Local capture payload was removed after receipt confirmation.")
+            Text(localizedAppText("capture.history.local_deleted"))
                 .accessibilityIdentifier("captures.send.localPayloadRemoved")
         }
     }
@@ -191,25 +180,24 @@ struct CaptureSubmissionSection: View {
         case .rejected:
             Text("The service rejected this snapshot. This Send cannot be retried.")
             cancelButton
-        case .sent:
-            if status.receipt != nil {
-                Label(localizedAppText("capture.submission.received"), systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(PevColors.green)
-            }
-            Button("Delete sent copy", role: .destructive) { showsDeleteConfirmation = true }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("captures.send.delete")
+        case .sent, .deleting, .deleted:
+            sentOutcome(status)
         case .cancelling:
             Text("Cancellation is pending.")
             cancelButton
         case .cancelled:
             Label("Send cancelled", systemImage: "xmark.circle")
-        case .deleting:
-            Text("Deletion is pending. The sent copy has not been confirmed removed.")
-            Button("Retry deletion", role: .destructive) { showsDeleteConfirmation = true }
-                .disabled(model.isWorking)
-        case .deleted:
-            Label("Sent copy deleted", systemImage: "checkmark.circle")
+        }
+    }
+
+    @ViewBuilder
+    private func sentOutcome(_ status: MobileCaptureSubmissionStatusDto) -> some View {
+        if status.localPayloadState == .removed {
+            Label(localizedAppText("capture.history.local_deleted"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(PevColors.green)
+        } else if status.receipt != nil {
+            Label(localizedAppText("capture.submission.received"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(PevColors.green)
         }
     }
 

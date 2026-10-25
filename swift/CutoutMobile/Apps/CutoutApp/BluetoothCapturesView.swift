@@ -911,8 +911,8 @@ private struct DatabaseCaptureRow: View {
             }
             if let badge = captureHistorySendBadge(capture.submission.status) {
                 Label(
-                    badge == .remoteDeleted
-                        ? localizedAppText("capture.history.remote_deleted")
+                    badge == .localDeleted
+                        ? localizedAppText("capture.history.local_deleted")
                         : localizedAppText("capture.history.sent"), systemImage: "checkmark.circle.fill"
                 )
                 .foregroundStyle(PevColors.green)
@@ -924,15 +924,16 @@ private struct DatabaseCaptureRow: View {
 
 enum CaptureHistorySendBadge: Equatable {
     case sent
-    case remoteDeleted
+    case localDeleted
 }
 
 func captureHistorySendBadge(_ status: MobileCaptureSubmissionStatusDto?) -> CaptureHistorySendBadge? {
     guard let status, status.receipt != nil else { return nil }
-    return switch status.phase {
-    case .sent, .deleting: .sent
-    case .deleted: .remoteDeleted
-    default: nil
+    switch status.phase {
+    case .sent, .deleting, .deleted:
+        return status.localPayloadState == .removed ? .localDeleted : .sent
+    default:
+        return nil
     }
 }
 

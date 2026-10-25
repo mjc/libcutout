@@ -23,7 +23,7 @@ import uniffi.cutout_mobile_ffi.*
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LocalCaptureEvidenceDialogTest {
     @Test
-    fun remoteDeleteStatusRefreshesHistoryWithoutRequestingReceiptCleanup() {
+    fun sentCaptureDoesNotOfferServerDeletion() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
         val receipt = MobileCaptureSubmissionReceiptDto(
@@ -45,38 +45,25 @@ class LocalCaptureEvidenceDialogTest {
             note = "", screenshots = emptyList(), noteLimitBytes = 1_024u,
             screenshotLimit = 4u, screenshotLimitBytes = 5uL * 1_024uL * 1_024uL,
         )
-        var statusRefreshes = 0
-        var receiptCleanups = 0
         val dialog = CaptureEvidenceDialog(
             context = activity,
             charging = (activity.application as CutoutApplication).charging,
             source = MobileCaptureSubmissionSourceDto.LiveCapture("live-id"),
             pickImages = null,
-            onReceiptConfirmed = { receiptCleanups += 1 },
-            onStatusChanged = { statusRefreshes += 1 },
+            onReceiptConfirmed = {},
+            onStatusChanged = {},
             testOperations = CaptureEvidenceDialog.TestOperations(
                 load = { status(MobileCaptureSubmissionPhaseDto.SENT) to evidence },
                 prepare = { error("A sent capture cannot be prepared again") },
                 send = { _, _ -> error("No send expected") },
-                remove = { operation, deleting ->
-                    assertEquals("fixed-operation", operation)
-                    assertTrue(deleting)
-                    status(MobileCaptureSubmissionPhaseDto.DELETING)
-                },
+                remove = { _, _ -> error("A sent capture is not deleted from the server") },
             ),
         )
 
         try {
             dialog.show()
             val remove = find(dialog.currentDialog, "captures.send.remove")
-            assertTrue(remove.performClick())
-            val confirmation = checkNotNull(dialog.removalConfirmationDialog)
-            assertTrue(confirmation.isShowing)
-            shadowOf(Looper.getMainLooper()).idle()
-            confirmation.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
-            shadowOf(Looper.getMainLooper()).idle()
-            assertEquals(1, statusRefreshes)
-            assertEquals("Remote delete cannot authorize local receipt cleanup", 0, receiptCleanups)
+            assertEquals(View.GONE, remove.visibility)
         } finally {
             dialog.removalConfirmationDialog?.dismiss()
             dialog.currentDialog?.dismiss()

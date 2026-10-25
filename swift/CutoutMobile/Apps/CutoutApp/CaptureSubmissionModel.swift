@@ -154,7 +154,7 @@ final class CaptureSubmissionModel {
     static func message(for error: Error) -> String {
         guard let error = error as? MobileCaptureSubmissionError else {
             if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
-                return "The account cannot authorize this transfer. A remote copy has not been confirmed removed."
+                return "The account cannot authorize this transfer."
             }
             return "The private transfer could not be completed. Your original recording is still on this device."
         }
@@ -167,7 +167,7 @@ final class CaptureSubmissionModel {
         case .NotReady: return "This recording is not ready for private Send."
         case .Unavailable: return "Private Send is unavailable. Try again later."
         case .Unauthorized:
-            return "The account cannot authorize this transfer. A remote copy has not been confirmed removed."
+            return "The account cannot authorize this transfer."
         case .RateLimited: return "Too many requests. Try again later."
         case .QuotaExceeded: return "Private capture storage is full. Try again later."
         case .InvalidCapture: return "The recording could not be validated for private Send."

@@ -13,14 +13,19 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-internal enum class CaptureHistorySendBadge { SENT, REMOTE_DELETED }
+internal enum class CaptureHistorySendBadge { SENT, LOCAL_DELETED }
 
 internal fun captureHistorySendBadge(status: MobileCaptureSubmissionStatusDto?): CaptureHistorySendBadge? {
     if (status?.receipt == null) return null
     return when (status.phase) {
         MobileCaptureSubmissionPhaseDto.SENT,
-        MobileCaptureSubmissionPhaseDto.DELETING -> CaptureHistorySendBadge.SENT
-        MobileCaptureSubmissionPhaseDto.DELETED -> CaptureHistorySendBadge.REMOTE_DELETED
+        MobileCaptureSubmissionPhaseDto.DELETING,
+        MobileCaptureSubmissionPhaseDto.DELETED ->
+            if (status.localPayloadState == MobileCaptureSubmissionLocalPayloadStateDto.REMOVED) {
+                CaptureHistorySendBadge.LOCAL_DELETED
+            } else {
+                CaptureHistorySendBadge.SENT
+            }
         else -> null
     }
 }
@@ -245,8 +250,8 @@ class DiagnosticCapturePanel(
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         val badge = captureHistorySendBadge(entry.submission.status)
         if (badge != null) {
-            val sentLabel = if (badge == CaptureHistorySendBadge.REMOTE_DELETED) {
-                R.string.capture_sent_remote_deleted
+            val sentLabel = if (badge == CaptureHistorySendBadge.LOCAL_DELETED) {
+                R.string.capture_sent_local_deleted
             } else {
                 R.string.capture_sent_privately
             }

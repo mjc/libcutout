@@ -40,27 +40,37 @@ final class CaptureSubmissionModelTests: XCTestCase {
     private func status(
         _ phase: MobileCaptureSubmissionPhaseDto,
         operationID: String = "fixed-operation",
-        receipt: MobileCaptureSubmissionReceiptDto? = nil
+        receipt: MobileCaptureSubmissionReceiptDto? = nil,
+        localPayloadState: MobileCaptureSubmissionLocalPayloadStateDto = .retained
     )
         -> MobileCaptureSubmissionStatusDto
     {
         MobileCaptureSubmissionStatusDto(
             operationId: operationID, phase: phase, origin: .unknown, integrity: .unknown,
-            localPayloadState: .retained,
+            localPayloadState: localPayloadState,
             categories: MobileCaptureSubmissionCategoriesDto(
                 deviceIdentifiers: true, location: false, notes: true, annotations: true, settingsObservations: false
             ), droppedMessages: 2, byteCount: 100, receipt: receipt, failure: nil
         )
     }
 
-    func testHistoryBadgeRequiresDurableSendReceiptAndKeepsRemoteDeletionDistinct() {
+    func testHistoryBadgeRequiresDurableSendReceiptAndReportsLocalRemoval() {
         XCTAssertNil(captureHistorySendBadge(status(.sent)))
         let receipt = MobileCaptureSubmissionReceiptDto(
             operationId: "fixed-operation", sha256: String(repeating: "a", count: 64),
             bytes: 100, receivedAtMilliseconds: 1_700_000_000_000
         )
         XCTAssertEqual(captureHistorySendBadge(status(.sent, receipt: receipt)), .sent)
-        XCTAssertEqual(captureHistorySendBadge(status(.deleted, receipt: receipt)), .remoteDeleted)
+        XCTAssertEqual(
+            captureHistorySendBadge(status(.sent, receipt: receipt, localPayloadState: .removed)),
+            .localDeleted)
+        XCTAssertEqual(captureHistorySendBadge(status(.deleted, receipt: receipt)), .sent)
+        XCTAssertEqual(
+            captureHistorySendBadge(status(.deleted, receipt: receipt, localPayloadState: .removed)),
+            .localDeleted)
+        XCTAssertEqual(
+            captureHistorySendBadge(status(.sent, receipt: receipt, localPayloadState: .removalPending)),
+            .sent)
         XCTAssertEqual(captureHistorySendBadge(status(.deleting, receipt: receipt)), .sent)
         XCTAssertNil(captureHistorySendBadge(status(.prepared, receipt: receipt)))
     }

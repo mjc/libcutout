@@ -3071,28 +3071,11 @@ final class CutoutAppUITests: XCTestCase {
         restoredCapture.tap()
         assertStoredCaptureDetail()
         let restoredDetail = app.collectionViews.firstMatch
-        let delete = app.buttons["captures.send.delete"]
-        scrollElementFrameIntoViewport(delete, in: restoredDetail, maxScrolls: 12)
         XCTAssertEqual(try receiptOperationID(in: restoredDetail), operationID)
-        waitForReady(delete)
-        delete.tap()
-        let deleteConfirmation = app.sheets["Delete the sent copy?"]
-        let confirmDeletion = deleteConfirmation.buttons.matching(identifier: "Delete sent copy").firstMatch
-        waitForReady(confirmDeletion)
-        confirmDeletion.tap()
-        XCTAssertTrue(app.staticTexts["Sent copy deleted"].waitForExistence(timeout: 60), app.debugDescription)
+        XCTAssertFalse(app.buttons["captures.send.delete"].exists)
         livePrivateSendCleanup = nil
         XCTAssertFalse(app.descendants(matching: .any)["captures.send.error"].exists)
-
-        let export = app.buttons["Export recording"]
-        scrollElementFrameIntoViewport(export, in: restoredDetail, maxScrolls: 12)
-        waitForReady(export)
-        export.tap()
-        let share = app.buttons["Share recording"]
-        waitForReady(share)
-        share.tap()
-        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
-        retainCaptureScreenshot("Synthetic \(caseName) Send deleted; original recording remains shareable")
+        retainCaptureScreenshot("Synthetic \(caseName) sent; server copy kept")
     }
 
     /// Failure cleanup never invokes assertion helpers: the original test failure
@@ -3147,16 +3130,7 @@ final class CutoutAppUITests: XCTestCase {
             recoveredOperationID = values.first(where: { UUID(uuidString: $0) != nil }) ?? recoveredOperationID
         }
         let detail = app.collectionViews.firstMatch
-        if tapIfReachable(app.buttons["captures.send.delete"], in: detail) {
-            let confirmation = app.sheets["Delete the sent copy?"]
-            let confirm = confirmation.buttons.matching(identifier: "Delete sent copy").firstMatch
-            guard confirm.waitForExistence(timeout: 5), tapIfReachable(confirm, in: confirmation, maxScrolls: 0) else {
-                return
-            }
-            removed = app.staticTexts["Sent copy deleted"].waitForExistence(
-                timeout: max(0, deadline.timeIntervalSinceNow)
-            )
-        } else if tapIfReachable(app.buttons["captures.send.cancel"], in: detail) {
+        if tapIfReachable(app.buttons["captures.send.cancel"], in: detail) {
             removed = app.staticTexts["Send cancelled"].waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow))
         }
     }
