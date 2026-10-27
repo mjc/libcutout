@@ -119,7 +119,7 @@ internal class CaptureEvidenceDialog(
         send.isEnabled = captureSubmissionEvidenceIsReviewable(loaded, working, dirty) && status?.phase !in setOf(
             MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
             MobileCaptureSubmissionPhaseDto.REJECTED, MobileCaptureSubmissionPhaseDto.CANCELLING,
-            MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)
+            MobileCaptureSubmissionPhaseDto.DELETED)
         remove.visibility = if (status == null || status?.phase in setOf(
             MobileCaptureSubmissionPhaseDto.SENT,
             MobileCaptureSubmissionPhaseDto.DELETING,
@@ -178,7 +178,11 @@ internal class CaptureEvidenceDialog(
         message.text = when (next?.localPayloadState) {
             MobileCaptureSubmissionLocalPayloadStateDto.REMOVAL_PENDING -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Removing local capture payload"
             MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> context.getString(R.string.capture_sent_local_deleted)
-            else -> if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT) "Received privately · ${next.receipt?.operationId.orEmpty()}" else ""
+            else -> when (next?.phase) {
+                MobileCaptureSubmissionPhaseDto.SENT -> "Received privately · ${next.receipt?.operationId.orEmpty()}"
+                MobileCaptureSubmissionPhaseDto.CANCELLED -> "Send cancelled"
+                else -> ""
+            }
         }
     }
 

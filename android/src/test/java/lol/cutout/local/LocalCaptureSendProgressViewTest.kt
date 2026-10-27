@@ -112,6 +112,25 @@ class LocalCaptureSendProgressViewTest {
         }
     }
 
+    @Test
+    fun replacedOperationIdStillReportsThisAttempt() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val view = CaptureSendProgressView(host.get())
+        host.get().setContentView(view)
+        try {
+            val label = checkNotNull(view.findViewWithTag<TextView>("captures.send.progress.label"))
+            val listener = view.begin("cancelled-operation")
+            listener.onProgress(progress(100uL, 1000uL).copy(operationId = "replacement"))
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("Sending · 10%", label.text.toString())
+            listener.onProgress(progress(500uL, 1000uL).copy(operationId = "cancelled-operation"))
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("Sending · 10%", label.text.toString())
+        } finally {
+            host.pause().stop().destroy()
+        }
+    }
+
     private fun progress(
         sent: ULong,
         total: ULong,

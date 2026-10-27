@@ -85,12 +85,12 @@ final class CaptureSubmissionModel {
             let generation = self.publicationGeneration
             let credential = try await self.credential()
             return try await self.sendOperation(operationID, credential) { [weak self] progress in
-                guard let self, self.isSending, generation == self.publicationGeneration,
-                    progress.operationId == operationID
-                else { return }
+                guard let self, self.isSending, generation == self.publicationGeneration else { return }
+                // A cancelled attempt is replaced with a new operation id before upload.
                 // Main-actor deliveries can be queued; never move the display backwards.
                 if let previous = self.progress {
-                    guard progress.attemptId == previous.attemptId,
+                    guard progress.operationId == previous.operationId,
+                        progress.attemptId == previous.attemptId,
                         progress.bytesSent >= previous.bytesSent,
                         previous.phase != .verifyingReceipt || progress.phase == .verifyingReceipt
                     else { return }

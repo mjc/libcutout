@@ -187,6 +187,7 @@ struct CaptureSubmissionSection: View {
             cancelButton
         case .cancelled:
             Label("Send cancelled", systemImage: "xmark.circle")
+            sendButton("Send privately")
         }
     }
 

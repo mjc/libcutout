@@ -156,6 +156,51 @@ class LocalCaptureEvidenceDialogTest {
         }
     }
 
+    @Test
+    fun cancelledCaptureOffersPrivateSendAgain() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val evidence = MobileCaptureEvidenceDto(
+            note = "", screenshots = emptyList(), noteLimitBytes = 1_024u,
+            screenshotLimit = 4u, screenshotLimitBytes = 5uL * 1_024uL * 1_024uL,
+        )
+        val cancelled = MobileCaptureSubmissionStatusDto(
+            operationId = "cancelled-operation",
+            phase = MobileCaptureSubmissionPhaseDto.CANCELLED,
+            origin = MobileCaptureSubmissionOriginDto.UNKNOWN,
+            integrity = MobileCaptureIntegrityDto.Unknown,
+            localPayloadState = MobileCaptureSubmissionLocalPayloadStateDto.RETAINED,
+            categories = MobileCaptureSubmissionCategoriesDto(
+                deviceIdentifiers = true, location = false, notes = false,
+                annotations = false, settingsObservations = false,
+            ),
+            droppedMessages = 0uL, byteCount = 100uL, receipt = null, failure = null,
+        )
+        val dialog = CaptureEvidenceDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            source = MobileCaptureSubmissionSourceDto.LiveCapture("live-id"),
+            pickImages = null,
+            testOperations = CaptureEvidenceDialog.TestOperations(
+                load = { cancelled to evidence },
+                prepare = { cancelled },
+                send = { _, _ -> error("This test only checks that Send is offered") },
+            ),
+        )
+
+        try {
+            dialog.show()
+            val review = find(dialog.currentDialog, "captures.send.review")
+            val message = find(dialog.currentDialog, "captures.send.error") as android.widget.TextView
+            assertTrue(review.isEnabled)
+            assertEquals("Send cancelled", message.text.toString())
+            assertEquals(View.GONE, find(dialog.currentDialog, "captures.send.remove").visibility)
+        } finally {
+            dialog.currentDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
     private fun find(dialog: AlertDialog?, tag: String): View {
         val root = checkNotNull(dialog?.window?.decorView)
         return checkNotNull(root.findViewWithTag(tag))

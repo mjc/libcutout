@@ -1393,7 +1393,6 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
         let progress = BatchProgressEmitter {
             callback: Arc::clone(&self.progress),
             source_artifact_id: source_id.to_owned(),
-            operation_id: operation_id.to_owned(),
             total: self.total,
             position: self.position,
             summary: self.summary.clone(),
@@ -1478,7 +1477,6 @@ async fn prepare_and_send_one<T: CaptureSubmissionTransport>(
     let progress = BatchProgressEmitter {
         callback: Arc::clone(&sender.progress),
         source_artifact_id: source_id.to_owned(),
-        operation_id: operation_id.clone(),
         total: sender.total,
         position: sender.position,
         summary: sender.summary.clone(),
@@ -1740,7 +1738,6 @@ fn planned_evidence_fingerprint(source: &PlannedSource) -> String {
 struct BatchProgressEmitter {
     callback: CaptureSubmissionBatchProgressCallback,
     source_artifact_id: String,
-    operation_id: String,
     total: usize,
     position: usize,
     summary: CaptureSubmissionBatchSummary,
@@ -1751,7 +1748,7 @@ impl BatchProgressEmitter {
         (self.callback)(CaptureSubmissionBatchProgress {
             source_artifact_id: self.source_artifact_id.clone(),
             phase: CaptureSubmissionBatchItemPhase::Current,
-            operation_id: Some(self.operation_id.clone()),
+            operation_id: Some(progress.operation_id.clone()),
             status: None,
             reason: None,
             total: self.total,
@@ -2407,14 +2404,12 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_cancelled_and_rejected_sources_are_unavailable_and_never_retried() {
+    fn reviewed_cancelled_source_can_be_sent_and_rejected_source_stays_unavailable() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("ride.sqlite");
         let database = RideDatabase::open(&database_path).unwrap();
         let ((cancelled_source, cancelled), (rejected_source, rejected)) =
             cancelled_and_rejected_sources(&database, directory.path());
-        let cancelled_bytes =
-            exported_capture_bytes(&database, directory.path(), cancelled_source, "before");
         let rejected_bytes =
             exported_capture_bytes(&database, directory.path(), rejected_source, "before");
 
@@ -2439,18 +2434,24 @@ mod tests {
                     .is_some_and(|status| status.operation_id == rejected.operation_id)
             })
             .unwrap();
-        for (candidate, phase) in [
-            (cancelled_candidate, CaptureSubmissionPhase::Cancelled),
-            (rejected_candidate, CaptureSubmissionPhase::Rejected),
-        ] {
-            assert_eq!(candidate.status.as_ref().unwrap().phase, phase);
-            assert_eq!(
-                candidate.eligibility,
-                CaptureSubmissionBatchEligibility::Unavailable
-            );
-        }
+        assert_eq!(
+            cancelled_candidate.status.as_ref().unwrap().phase,
+            CaptureSubmissionPhase::Cancelled
+        );
+        assert_eq!(
+            cancelled_candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert_eq!(
+            rejected_candidate.status.as_ref().unwrap().phase,
+            CaptureSubmissionPhase::Rejected
+        );
+        assert_eq!(
+            rejected_candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Unavailable
+        );
 
-        let no_upload = BatchTransport::default();
+        let transport = BatchTransport::default();
         let selected = vec![
             cancelled_candidate.source_artifact_id.clone(),
             rejected_candidate.source_artifact_id.clone(),
@@ -2460,28 +2461,38 @@ mod tests {
             &selected,
             ACCOUNT,
             "secret",
-            &no_upload,
+            &transport,
             Arc::new(|_| {}),
         ))
         .unwrap();
-        assert_eq!(result.skipped, 2);
+        assert_eq!(result.sent, 1);
+        assert_eq!(result.skipped, 1);
         assert_eq!(result.failed, 0);
-        assert_eq!(no_upload.uploads.load(Ordering::Acquire), 0);
-        for (source, prior) in [(cancelled_source, cancelled), (rejected_source, rejected)] {
-            let current = database
-                .capture_submission(CaptureSubmissionSource::LiveCapture(source))
-                .unwrap()
-                .unwrap();
-            assert_eq!(current.operation_id, prior.operation_id);
-            assert_eq!(current.phase, prior.phase);
-            assert_eq!(
-                current.local_payload_state,
-                CaptureSubmissionLocalPayloadState::Retained
-            );
-        }
+        assert_eq!(transport.uploads.load(Ordering::Acquire), 1);
         assert_eq!(
-            exported_capture_bytes(&database, directory.path(), cancelled_source, "after"),
-            cancelled_bytes
+            result.pending_cleanup_source_artifact_ids,
+            vec![cancelled_candidate.source_artifact_id.clone()]
+        );
+        let resent = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(cancelled_source))
+            .unwrap()
+            .unwrap();
+        assert_ne!(resent.operation_id, cancelled.operation_id);
+        assert_eq!(resent.phase, CaptureSubmissionPhase::Sent);
+        assert!(resent.receipt.is_some());
+        assert_ne!(
+            resent.local_payload_state,
+            CaptureSubmissionLocalPayloadState::Retained
+        );
+        let rejected_current = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(rejected_source))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rejected_current.operation_id, rejected.operation_id);
+        assert_eq!(rejected_current.phase, rejected.phase);
+        assert_eq!(
+            rejected_current.local_payload_state,
+            CaptureSubmissionLocalPayloadState::Retained
         );
         assert_eq!(
             exported_capture_bytes(&database, directory.path(), rejected_source, "after"),

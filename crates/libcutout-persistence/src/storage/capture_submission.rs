@@ -118,7 +118,8 @@ pub enum CaptureSubmissionLocalPayloadState {
 /// Current durable operation, projected without granting access to its bytes.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CaptureSubmissionStatus {
-    /// Stable UUID for every retry of this snapshot.
+    /// Operation id for this attempt. Retries of the same attempt keep it.
+    /// The next explicit Send after cancellation replaces it.
     pub operation_id: String,
     /// Exact immutable bytes and their source provenance.
     pub metadata: CaptureSubmissionMetadata,
@@ -149,9 +150,11 @@ impl CaptureSubmissionStatus {
             CaptureSubmissionPhase::Rejected => {
                 retained && self.failure == Some(CaptureSubmissionTransferError::Rejected)
             }
+            // The local capture is still here. A receipt means this attempt already
+            // finished, so cancellation does not open another send of that receipt.
+            CaptureSubmissionPhase::Cancelled => retained && self.receipt.is_none(),
             CaptureSubmissionPhase::Sending
             | CaptureSubmissionPhase::CancellationPending
-            | CaptureSubmissionPhase::Cancelled
             | CaptureSubmissionPhase::Sent
             | CaptureSubmissionPhase::DeletionPending
             | CaptureSubmissionPhase::Deleted => false,
@@ -1131,12 +1134,13 @@ impl RideDatabase {
                 account_id: account_id.to_owned(),
             },
         )?;
+        let operation_id = status.operation_id.clone();
         if status.phase == CaptureSubmissionPhase::Sent {
             return Ok(status);
         }
         let progress = progress.map(|callback| CaptureSubmissionProgressReporter {
             database: self.clone(),
-            operation_id: status.operation_id.clone(),
+            operation_id: operation_id.clone(),
             attempt_id: status.revision,
             total_bytes: status.metadata.bytes,
             callback,
@@ -1146,10 +1150,10 @@ impl RideDatabase {
         if let Some(progress) = &progress {
             progress.report(0);
         }
-        let result = match transport.receipt(operation_id, token).await {
+        let result = match transport.receipt(&operation_id, token).await {
             Ok(Some(receipt)) => Ok(receipt),
             Ok(None) => {
-                let current = self.submission_operation(operation_id)?;
+                let current = self.submission_operation(&operation_id)?;
                 if current.revision != status.revision
                     || current.phase != CaptureSubmissionPhase::Sending
                 {
@@ -1158,29 +1162,34 @@ impl RideDatabase {
                 let mut payload = self.submission_payload(&status)?;
                 payload.progress = progress;
                 transport
-                    .upload(operation_id, token, &status.metadata, payload)
+                    .upload(&operation_id, token, &status.metadata, payload)
                     .await
             }
             Err(error) => Err(error),
         };
         match result {
-            Ok(receipt) if receipt.validate_for(operation_id, &status.metadata).is_ok() => self
-                .submission_action(
-                    operation_id,
+            Ok(receipt)
+                if receipt
+                    .validate_for(&operation_id, &status.metadata)
+                    .is_ok() =>
+            {
+                self.submission_action(
+                    &operation_id,
                     Action::Complete {
                         revision: status.revision,
                         receipt,
                     },
-                ),
+                )
+            }
             Ok(_) => self.submission_action(
-                operation_id,
+                &operation_id,
                 Action::Failure {
                     revision: status.revision,
                     failure: CaptureSubmissionTransferError::Conflict,
                 },
             ),
             Err(failure) => self.submission_action(
-                operation_id,
+                &operation_id,
                 Action::Failure {
                     revision: status.revision,
                     failure,
@@ -1485,13 +1494,17 @@ fn lookup_status(
 
 fn persist_status(
     connection: &Connection,
+    previous_operation_id: &str,
     status: &CaptureSubmissionStatus,
 ) -> Result<(), StorageError> {
     let json = serde_json::to_string(status).map_err(|_| invalid_status())?;
-    connection.execute(
-        "UPDATE capture_submissions SET status_json = ?2 WHERE operation_id = ?1",
-        params![status.operation_id, json],
+    let updated = connection.execute(
+        "UPDATE capture_submissions SET operation_id = ?2, status_json = ?3 WHERE operation_id = ?1",
+        params![previous_operation_id, status.operation_id, json],
     )?;
+    if updated != 1 {
+        return Err(invalid_status());
+    }
     Ok(())
 }
 
@@ -1642,6 +1655,7 @@ fn apply(
 ) -> Result<CaptureSubmissionStatus, CaptureSubmissionError> {
     let mut status = lookup_status(connection, None, Some(operation_id))?
         .ok_or(CaptureSubmissionError::NotFound)?;
+    let previous_operation_id = status.operation_id.clone();
     match action {
         Action::Start { account_id } => {
             if !start(connection, &mut status, account_id)? {
@@ -1704,7 +1718,7 @@ fn apply(
         .revision
         .checked_add(1)
         .ok_or(CaptureSubmissionError::InvalidState)?;
-    persist_status(connection, &status)?;
+    persist_status(connection, &previous_operation_id, &status)?;
     Ok(status)
 }
 
@@ -1736,6 +1750,12 @@ fn start(
     }
     if !status.can_start_transfer() {
         return Err(CaptureSubmissionError::InvalidState);
+    }
+    if status.phase == CaptureSubmissionPhase::Cancelled {
+        // The cancelled attempt may already have a service tombstone. Replacing
+        // the operation id keeps a late upload of that attempt from completing
+        // this send.
+        status.operation_id = Uuid::new_v4().to_string();
     }
     status.account_id = Some(account_id);
     status.phase = CaptureSubmissionPhase::Sending;
@@ -1837,7 +1857,7 @@ pub(super) fn cleanup_sent_capture_batch(
         }
         if status.local_payload_state == PayloadState::Retained {
             status.local_payload_state = PayloadState::RemovalPending;
-            persist_status(&transaction, &status)?;
+            persist_status(&transaction, &status.operation_id, &status)?;
         }
         let mut has_payload = false;
         let mut removable_payload = false;
@@ -1981,7 +2001,7 @@ pub(super) fn cleanup_sent_capture_batch(
         status.local_payload_state = PayloadState::Removed;
         // `revision` fences an in-flight Send/Delete transport action. Local
         // maintenance must not invalidate a remote delete already in progress.
-        persist_status(&transaction, &status)?;
+        persist_status(&transaction, &status.operation_id, &status)?;
     }
     if payload_removed {
         transaction.execute(

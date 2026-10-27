@@ -2931,7 +2931,9 @@ final class CutoutAppUITests: XCTestCase {
         let restoredCancelled = app.staticTexts["Send cancelled"]
         scrollElementFrameIntoViewport(restoredCancelled, in: restoredDetail, maxScrolls: 12)
         XCTAssertFalse(app.descendants(matching: .any)["captures.send.receipt"].exists)
-        XCTAssertFalse(app.buttons["captures.send"].exists)
+        let sendAgain = app.buttons["captures.send"]
+        scrollElementFrameIntoViewport(sendAgain, in: restoredDetail, maxScrolls: 12)
+        XCTAssertTrue(sendAgain.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.buttons["captures.send.review"].exists)
 
         let export = app.buttons["Export recording"]

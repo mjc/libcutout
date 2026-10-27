@@ -2360,15 +2360,28 @@ fn capture_submission_cancel_fences_delayed_upload_and_retries_remote_tombstone(
             .unwrap();
     assert_eq!(cancelled.phase, CaptureSubmissionPhase::Cancelled);
     assert_eq!(transport.deleted.lock().unwrap().len(), 2);
-    assert!(matches!(
-        ready(database.send_capture_submission(
-            &prepared.operation_id,
-            ACCOUNT,
-            "secret",
-            &transport
-        )),
-        Err(CaptureSubmissionError::InvalidState)
-    ));
+    let resent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(resent.phase, CaptureSubmissionPhase::Sent);
+    assert_ne!(resent.operation_id, prepared.operation_id);
+    assert!(resent.receipt.is_some());
+    let uploads = transport.uploads.lock().unwrap();
+    assert_eq!(uploads.len(), 2);
+    assert_eq!(uploads[0].0, prepared.operation_id);
+    assert_eq!(uploads[1].0, resent.operation_id);
+    assert!(
+        transport
+            .deleted
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|id| id == &prepared.operation_id)
+    );
 }
 
 #[test]
@@ -2388,7 +2401,20 @@ fn capture_submission_prepared_cancel_is_local_and_preserves_original() {
     assert!(transport.deleted.lock().unwrap().is_empty());
     let exported = directory.path().join("still-local.jsonl");
     database.export_live_capture(id, &exported).unwrap();
-    assert_ne!(std::fs::read(exported).unwrap(), [] as [u8; 0]);
+    let original = std::fs::read(&exported).unwrap();
+    assert_ne!(original, [] as [u8; 0]);
+    let resent = ready(database.send_capture_submission(
+        &prepared.operation_id,
+        ACCOUNT,
+        "secret",
+        &transport,
+    ))
+    .unwrap();
+    assert_eq!(resent.phase, CaptureSubmissionPhase::Sent);
+    assert_ne!(resent.operation_id, prepared.operation_id);
+    assert_eq!(transport.uploads.lock().unwrap().len(), 1);
+    assert_eq!(transport.uploads.lock().unwrap()[0].0, resent.operation_id);
+    assert_ne!(transport.uploads.lock().unwrap()[0].1, [] as [u8; 0]);
 }
 
 #[test]
@@ -2420,10 +2446,16 @@ fn transfer_admission_requires_retryable_or_prepared_and_retained_payload() {
         for payload_state in payload_states {
             status.phase = phase;
             status.local_payload_state = payload_state;
-            let expected = matches!(
-                phase,
-                CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable
-            ) && payload_state == CaptureSubmissionLocalPayloadState::Retained;
+            let expected = match phase {
+                CaptureSubmissionPhase::Prepared | CaptureSubmissionPhase::Retryable => {
+                    payload_state == CaptureSubmissionLocalPayloadState::Retained
+                }
+                CaptureSubmissionPhase::Cancelled => {
+                    payload_state == CaptureSubmissionLocalPayloadState::Retained
+                        && status.receipt.is_none()
+                }
+                _ => false,
+            };
             assert_eq!(
                 status.can_start_transfer(),
                 expected,
@@ -2442,6 +2474,18 @@ fn transfer_admission_requires_retryable_or_prepared_and_retained_payload() {
     assert!(
         !status.can_start_transfer(),
         "a conflicting receipt stays terminal"
+    );
+    status.phase = CaptureSubmissionPhase::Cancelled;
+    status.failure = None;
+    status.receipt = Some(CaptureSubmissionReceipt {
+        operation_id: status.operation_id.clone(),
+        sha256: status.metadata.sha256.clone(),
+        bytes: status.metadata.bytes,
+        received_at_milliseconds: 1_700_000_002_000,
+    });
+    assert!(
+        !status.can_start_transfer(),
+        "a cancelled attempt that already has a receipt stays closed"
     );
     database.shutdown().unwrap();
 }
