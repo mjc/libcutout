@@ -1,5 +1,7 @@
 //! Resource bounds for externally supplied PEVCAP imports, never live recordings.
 
+use cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PevcapLimits {
     pub(crate) artifact_bytes: u64,
@@ -10,7 +12,7 @@ pub(crate) struct PevcapLimits {
 impl PevcapLimits {
     /// Bounds for caller-supplied artifacts, which may be malformed or hostile.
     pub(crate) const IMPORT: Self = Self {
-        artifact_bytes: 512 * 1024 * 1024,
+        artifact_bytes: MAX_CAPTURE_SUBMISSION_BYTES,
         records: 10_000_000,
         duration_milliseconds: 24 * 60 * 60 * 1_000,
     };

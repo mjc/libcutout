@@ -27,7 +27,7 @@ pub(super) const SCHEMA: &str = "
         artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
         receipt_digest TEXT UNIQUE REFERENCES pevcap_imports(artifact_digest) ON DELETE CASCADE,
         encoding TEXT NOT NULL CHECK (encoding IN ('jsonl', 'binary')),
-        artifact_size INTEGER NOT NULL CHECK (artifact_size BETWEEN 1 AND 536870912),
+        artifact_size INTEGER NOT NULL CHECK (artifact_size BETWEEN 1 AND 20000000000),
         written_bytes INTEGER NOT NULL DEFAULT 0 CHECK (written_bytes BETWEEN 0 AND artifact_size),
         next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
         CHECK (receipt_digest IS NULL OR (receipt_digest = artifact_digest AND written_bytes = artifact_size))

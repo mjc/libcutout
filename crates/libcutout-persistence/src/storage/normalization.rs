@@ -630,7 +630,7 @@ fn start_legacy_artifact_scan(
     )?;
     let (file, size, original_file) = match source {
         ManagedArtifactSource::Present(file, actual_size, fingerprint) => {
-            if actual_size == 0 || actual_size > 536_870_912 {
+            if actual_size == 0 || actual_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
                 advance_artifact_cursor(connection, &candidate.digest)?;
                 return Ok(ArchiveState::Pending);
             }

@@ -12,8 +12,8 @@ pub use validation::{
     validate_capture_submission_payload,
 };
 
-/// Maximum submitted body length supported by the public service's ingress.
-pub const MAX_CAPTURE_SUBMISSION_BYTES: u64 = 100_000_000;
+/// Maximum capture body accepted for recording, import, review, and upload.
+pub const MAX_CAPTURE_SUBMISSION_BYTES: u64 = 20_000_000_000;
 /// Maximum events across all PEVCAP event kinds.
 pub const MAX_CAPTURE_SUBMISSION_EVENTS: u64 = 10_000_000;
 /// Maximum span of capture-relative event timestamps.

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 64;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 65;
 const ARCHIVE_REPAIR_SCHEMA_VERSION: i64 = 61;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
@@ -84,6 +84,13 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         61 => migrate_v61_to_current(connection)?,
         62 => migrate_v62_to_current(connection)?,
         63 => migrate_v63_to_current(connection)?,
+        64 => {
+            if application_id != APPLICATION_ID {
+                return Err(StorageError::InvalidDatabaseIdentity);
+            }
+            raise_capture_byte_ceiling(connection)?;
+            connection.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+        }
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -95,6 +102,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     if version < CURRENT_SCHEMA_VERSION {
         backfill_capture_submission_source_aliases(connection)?;
     }
+    raise_capture_byte_ceiling(connection)?;
     Ok(())
 }
 
@@ -2494,6 +2502,110 @@ fn migrate_v63_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+/// Replaces the 512 MiB capture checks with the submission ceiling.
+///
+/// Only the small session and capture-header tables are rebuilt. Event and chunk
+/// rows stay in place.
+fn raise_capture_byte_ceiling(connection: &mut Connection) -> Result<(), StorageError> {
+    let needs_sessions = table_sql_contains(connection, "live_capture_sessions", "536870912")?;
+    let needs_captures = table_sql_contains(connection, "pevcap_captures", "536870912")?;
+    if !needs_sessions && !needs_captures {
+        return Ok(());
+    }
+    let foreign_keys: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if needs_sessions {
+            widen_live_capture_sessions(&transaction)?;
+        }
+        if needs_captures {
+            widen_pevcap_captures(&transaction)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    })();
+    let restore = connection.pragma_update(None, "foreign_keys", foreign_keys);
+    match (result, restore) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn table_sql_contains(
+    connection: &Connection,
+    table: &str,
+    needle: &str,
+) -> Result<bool, StorageError> {
+    let sql: Option<String> = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(sql.is_some_and(|sql| sql.contains(needle)))
+}
+
+fn widen_live_capture_sessions(connection: &Connection) -> Result<(), StorageError> {
+    let limit = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
+    connection.execute_batch(&format!(
+        "CREATE TABLE live_capture_sessions_v65 (
+            capture_id TEXT PRIMARY KEY NOT NULL CHECK (length(capture_id) = 36),
+            state TEXT NOT NULL CHECK (state IN ('active', 'finished', 'interrupted')),
+            integrity TEXT NOT NULL CHECK (integrity IN ('complete', 'incomplete', 'unknown')),
+            dropped_messages INTEGER NOT NULL DEFAULT 0 CHECK (dropped_messages >= 0),
+            header_json BLOB NOT NULL CHECK (length(header_json) BETWEEN 1 AND 65536),
+            started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+            finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
+            next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
+            stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND {limit}),
+            recording_context_json TEXT,
+            CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
+            CHECK ((integrity = 'complete' AND dropped_messages = 0)
+                OR (integrity = 'incomplete' AND dropped_messages > 0)
+                OR integrity = 'unknown')
+        );
+        INSERT INTO live_capture_sessions_v65 (
+            capture_id, state, integrity, dropped_messages, header_json,
+            started_at_ms, finished_at_ms, next_sequence, stored_bytes,
+            recording_context_json
+        )
+        SELECT capture_id, state, integrity, dropped_messages, header_json,
+            started_at_ms, finished_at_ms, next_sequence, stored_bytes,
+            recording_context_json
+        FROM live_capture_sessions;
+        DROP TABLE live_capture_sessions;
+        ALTER TABLE live_capture_sessions_v65 RENAME TO live_capture_sessions;"
+    ))?;
+    Ok(())
+}
+
+fn widen_pevcap_captures(connection: &Connection) -> Result<(), StorageError> {
+    let limit = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
+    connection.execute_batch(&format!(
+        "CREATE TABLE pevcap_captures_v65 (
+            artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+            receipt_digest TEXT UNIQUE REFERENCES pevcap_imports(artifact_digest) ON DELETE CASCADE,
+            encoding TEXT NOT NULL CHECK (encoding IN ('jsonl', 'binary')),
+            artifact_size INTEGER NOT NULL CHECK (artifact_size BETWEEN 1 AND {limit}),
+            written_bytes INTEGER NOT NULL DEFAULT 0 CHECK (written_bytes BETWEEN 0 AND artifact_size),
+            next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
+            CHECK (receipt_digest IS NULL OR (receipt_digest = artifact_digest AND written_bytes = artifact_size))
+        );
+        INSERT INTO pevcap_captures_v65 (
+            artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence
+        )
+        SELECT artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence
+        FROM pevcap_captures;
+        DROP TABLE pevcap_captures;
+        ALTER TABLE pevcap_captures_v65 RENAME TO pevcap_captures;"
+    ))?;
+    Ok(())
+}
+
 fn backfill_capture_submission_source_aliases(connection: &Connection) -> Result<(), StorageError> {
     connection.execute(
         "INSERT OR IGNORE INTO capture_submission_source_aliases
@@ -2555,6 +2667,175 @@ fn requeue_legacy_archives(connection: &Connection) -> Result<(), StorageError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_v64_reopens_at_the_current_capture_limit() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions (
+                    capture_id, state, integrity, dropped_messages, header_json,
+                    started_at_ms, finished_at_ms, next_sequence, stored_bytes
+                ) VALUES (?1, 'finished', 'complete', 0, X'7B7D', 1, 2, 0, 100)",
+                ["00000000-0000-4000-8000-000000000001"],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 64;")
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+        let stored: i64 = connection
+            .query_row(
+                "SELECT stored_bytes FROM live_capture_sessions",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, 100);
+        connection
+            .execute(
+                "UPDATE live_capture_sessions SET stored_bytes = ?1",
+                [cutout_core::MAX_CAPTURE_SUBMISSION_BYTES],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_byte_ceiling_migration_keeps_event_and_chunk_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE pevcap_imports (
+                    artifact_digest TEXT PRIMARY KEY
+                );
+                CREATE TABLE live_capture_sessions (
+                    capture_id TEXT PRIMARY KEY NOT NULL CHECK (length(capture_id) = 36),
+                    state TEXT NOT NULL CHECK (state IN ('active', 'finished', 'interrupted')),
+                    integrity TEXT NOT NULL CHECK (integrity IN ('complete', 'incomplete', 'unknown')),
+                    dropped_messages INTEGER NOT NULL DEFAULT 0 CHECK (dropped_messages >= 0),
+                    header_json BLOB NOT NULL CHECK (length(header_json) BETWEEN 1 AND 65536),
+                    started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+                    finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
+                    next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
+                    stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 536870912),
+                    recording_context_json TEXT,
+                    CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
+                    CHECK ((integrity = 'complete' AND dropped_messages = 0)
+                        OR (integrity = 'incomplete' AND dropped_messages > 0)
+                        OR integrity = 'unknown')
+                );
+                INSERT INTO live_capture_sessions (
+                    capture_id, state, integrity, dropped_messages, header_json,
+                    started_at_ms, finished_at_ms, next_sequence, stored_bytes
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000001', 'finished', 'complete', 0, X'7B7D',
+                    1, 2, 1, 100
+                );
+                CREATE TABLE live_capture_events (
+                    capture_id TEXT NOT NULL REFERENCES live_capture_sessions(capture_id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+                    event_kind TEXT NOT NULL,
+                    receipt_monotonic_ms INTEGER NOT NULL,
+                    payload BLOB NOT NULL,
+                    PRIMARY KEY (capture_id, sequence)
+                ) WITHOUT ROWID;
+                INSERT INTO live_capture_events (
+                    capture_id, sequence, event_kind, receipt_monotonic_ms, payload
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000001', 0, 'metadata', 1, X'01'
+                );
+                CREATE TABLE pevcap_captures (
+                    artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+                    receipt_digest TEXT UNIQUE REFERENCES pevcap_imports(artifact_digest) ON DELETE CASCADE,
+                    encoding TEXT NOT NULL CHECK (encoding IN ('jsonl', 'binary')),
+                    artifact_size INTEGER NOT NULL CHECK (artifact_size BETWEEN 1 AND 536870912),
+                    written_bytes INTEGER NOT NULL DEFAULT 0 CHECK (written_bytes BETWEEN 0 AND artifact_size),
+                    next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
+                    CHECK (receipt_digest IS NULL OR (receipt_digest = artifact_digest AND written_bytes = artifact_size))
+                );
+                INSERT INTO pevcap_captures (
+                    artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence
+                ) VALUES (
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    NULL, 'jsonl', 100, 100, 1
+                );
+                CREATE TABLE pevcap_capture_chunks (
+                    artifact_digest TEXT NOT NULL REFERENCES pevcap_captures(artifact_digest) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    payload BLOB NOT NULL,
+                    PRIMARY KEY (artifact_digest, sequence)
+                ) WITHOUT ROWID;
+                INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload) VALUES (
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    0, X'02'
+                );",
+            )
+            .unwrap();
+        raise_capture_byte_ceiling(&mut connection).unwrap();
+        let events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM live_capture_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let chunks: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pevcap_capture_chunks", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!((events, chunks), (1, 1));
+        let limit = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
+        connection
+            .execute(
+                "UPDATE live_capture_sessions SET stored_bytes = ?1",
+                [limit],
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE live_capture_sessions SET stored_bytes = ?1",
+                    [limit + 1],
+                )
+                .is_err()
+        );
+        connection
+            .execute(
+                "UPDATE pevcap_captures SET artifact_size = ?1, written_bytes = ?1",
+                [limit],
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute("UPDATE pevcap_captures SET artifact_size = ?1", [limit + 1],)
+                .is_err()
+        );
+        raise_capture_byte_ceiling(&mut connection).unwrap();
+        let events_after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM live_capture_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(events_after, 1);
+    }
+
+    #[test]
+    fn capture_schemas_advertise_the_submission_byte_limit() {
+        let limit = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES.to_string();
+        assert!(super::super::live_capture::SCHEMA.contains(&limit));
+        assert!(super::super::capture_data::SCHEMA.contains(&limit));
+        assert!(!super::super::live_capture::SCHEMA.contains("536870912"));
+        assert!(!super::super::capture_data::SCHEMA.contains("536870912"));
+    }
 
     fn create_v61_bms_table(connection: &Connection) {
         initialize_current_schema(connection).unwrap();

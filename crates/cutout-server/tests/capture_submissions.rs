@@ -1,3 +1,4 @@
+use cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
 use cutout_server::{Store, router};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::{Value, json};
@@ -507,7 +508,7 @@ async fn private_capture_authentication_limits_and_format_errors_are_classified(
         StatusCode::UNAUTHORIZED
     );
     let mut too_large = metadata(&capture(), "manual");
-    too_large["bytes"] = json!(512_u64 * 1024 * 1024 + 1);
+    too_large["bytes"] = json!(MAX_CAPTURE_SUBMISSION_BYTES + 1);
     assert_eq!(
         server
             .put_metadata(&Uuid::new_v4().to_string(), &owner, &capture(), too_large)

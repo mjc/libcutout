@@ -306,7 +306,7 @@ pub(crate) fn next_change(connection: &Connection) -> Result<u64, Error> {
         .map_err(db_error)
 }
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 fn database_sibling(database: &Path, suffix: &str) -> PathBuf {
     let mut name = database.as_os_str().to_owned();
@@ -384,6 +384,11 @@ fn prepare_schema(
         }
         6 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
             capture_submissions::migrate_capture_files(connection, database)?;
+            capture_submissions::migrate_capture_byte_limit(connection)?;
+            return Ok(());
+        }
+        7 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
+            capture_submissions::migrate_capture_byte_limit(connection)?;
             return Ok(());
         }
         SCHEMA_VERSION if application == 0x4353_5054 => return Ok(()),
@@ -403,6 +408,7 @@ fn prepare_schema(
         .map_err(db_error)?;
     transaction.commit().map_err(db_error)?;
     capture_submissions::migrate_capture_files(connection, database)?;
+    capture_submissions::migrate_capture_byte_limit(connection)?;
     Ok(())
 }
 

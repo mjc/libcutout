@@ -17,7 +17,7 @@ pub const LIVE_CAPTURE_HEADER_LIMIT_BYTES: usize = 65_536;
 /// Maximum event payload size accepted by one live-capture write.
 pub const LIVE_CAPTURE_EVENT_LIMIT_BYTES: usize = 65_536;
 /// Maximum total header and event bytes retained for one live capture.
-pub const LIVE_CAPTURE_TOTAL_LIMIT_BYTES: u64 = 536_870_912;
+pub const LIVE_CAPTURE_TOTAL_LIMIT_BYTES: u64 = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
 
 /// Rust-issued identity for one live capture, independent of ride and artifact identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -354,7 +354,7 @@ pub(super) const SCHEMA: &str = "
         started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
         finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
         next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
-        stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 536870912),
+        stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 20000000000),
         recording_context_json TEXT,
         CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
         CHECK ((integrity = 'complete' AND dropped_messages = 0)

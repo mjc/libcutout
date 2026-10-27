@@ -6670,7 +6670,7 @@ fn pevcap_preflight_rejects_artifact_and_duration_limit_overruns() {
     ));
     std::fs::File::create(&oversized_path)
         .unwrap()
-        .set_len(512 * 1024 * 1024 + 1)
+        .set_len(cutout_core::MAX_CAPTURE_SUBMISSION_BYTES + 1)
         .unwrap();
     assert!(matches!(
         database.preflight_pevcap(&oversized_path, PevcapEncoding::Jsonl),

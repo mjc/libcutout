@@ -32,7 +32,7 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
     let path = directory.path().join("future.sqlite");
     let connection = Connection::open(&path).expect("database");
     connection
-        .pragma_update(None, "user_version", 8)
+        .pragma_update(None, "user_version", 9)
         .expect("future version");
     assert_eq!(
         Store::open(&path).expect_err("future schema rejected"),
@@ -41,7 +41,7 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 }
 
 #[test]
@@ -60,7 +60,8 @@ fn schema_one_receives_signup_account_deletion_sync_and_removal_migrations() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
+    assert_capture_byte_ceiling(&connection);
     let (token_hash, revoked_at_ms): (String, Option<u64>) = connection
         .query_row(
             "SELECT token_hash, revoked_at_ms FROM contributors
@@ -375,7 +376,8 @@ fn schema_six_capture_blobs_move_into_files_and_a_finished_file_is_kept() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
+    assert_capture_byte_ceiling(&connection);
     let payload_column: u32 = connection
         .query_row(
             "SELECT count(*) FROM pragma_table_info('capture_submissions') WHERE name='payload'",
@@ -412,4 +414,16 @@ fn schema_six_capture_blobs_move_into_files_and_a_finished_file_is_kept() {
         std::fs::read(kept).expect("file survives reopen"),
         b"\x01\x02\x03\x04"
     );
+}
+
+fn assert_capture_byte_ceiling(connection: &Connection) {
+    let sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'capture_submissions'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("capture table");
+    assert!(sql.contains("20000000000"), "{sql}");
+    assert!(!sql.contains("536870912"), "{sql}");
 }

@@ -474,6 +474,14 @@ pub(super) fn migrate_capture_files(
     transaction.commit().map_err(db_error)
 }
 
+pub(super) fn migrate_capture_byte_limit(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../../migrations/008_capture_byte_limit.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
+}
+
 fn extract_capture_blobs(connection: &mut Connection, directory: &Path) -> Result<(), Error> {
     staging_directory(directory)?;
     let rows = {
