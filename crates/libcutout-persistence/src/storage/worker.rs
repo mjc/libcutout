@@ -186,6 +186,35 @@ impl DatabaseWorker<'_> {
         legacy_artifact_scan: &mut Option<super::normalization::LegacyArtifactScan>,
         capture_cleanup_cursor: &mut Option<String>,
     ) -> super::normalization::BatchState {
+        use super::normalization::BatchState;
+        // Retire receipted captures on every pass. Older normalization work does not
+        // hold an already-sent session in the library.
+        let capture_cleanup = super::capture_submission::cleanup_sent_capture_batch(
+            connection,
+            capture_cleanup_cursor,
+        )
+        .unwrap_or(BatchState::Deferred);
+        let rest = Self::normalize_retained_storage(
+            connection,
+            database_path,
+            legacy_artifact_scan,
+            capture_cleanup_cursor,
+        );
+        if capture_cleanup == BatchState::Pending || rest == BatchState::Pending {
+            BatchState::Pending
+        } else if capture_cleanup == BatchState::Deferred || rest == BatchState::Deferred {
+            BatchState::Deferred
+        } else {
+            BatchState::Finished
+        }
+    }
+
+    fn normalize_retained_storage(
+        connection: &mut Connection,
+        database_path: &std::path::Path,
+        legacy_artifact_scan: &mut Option<super::normalization::LegacyArtifactScan>,
+        capture_cleanup_cursor: &mut Option<String>,
+    ) -> super::normalization::BatchState {
         match super::bms_voltage::normalize_legacy_batch(
             connection,
             legacy_artifact_scan

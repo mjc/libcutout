@@ -1328,8 +1328,12 @@ fn source_record(
 ) -> Result<Option<SourceRecord>, StorageError> {
     match source {
         CaptureSubmissionSource::LiveCapture(id) => {
-            super::live_capture_history::lookup(connection, Some(id), None)
-                .map(|entry| entry.map(|entry| SourceRecord::Live(Box::new(entry))))
+            if let Some(entry) = super::live_capture_history::lookup(connection, Some(id), None)? {
+                return Ok(Some(SourceRecord::Live(Box::new(entry))));
+            }
+            // The session row is the library entry. After it is deleted, the
+            // submission still holds this capture's receipt and evidence manifest.
+            retired_live_submission(connection, id)
         }
         CaptureSubmissionSource::RecordedArtifact(id) => {
             if let Some(entry) = super::live_capture_history::lookup(connection, None, Some(id))? {
@@ -1338,14 +1342,17 @@ fn source_record(
             if let Some(receipt) = super::recorded_capture::receipt_for_id(connection, id)? {
                 return Ok(Some(SourceRecord::File(receipt)));
             }
-            let Ok(live_id) = LiveCaptureId::parse(&id.to_string()) else {
-                return Ok(None);
-            };
-            Ok(
-                super::live_capture_history::lookup(connection, Some(live_id), None)?
-                    .filter(|entry| entry.recording.is_none())
-                    .map(|entry| SourceRecord::Live(Box::new(entry))),
-            )
+            if let Ok(live_id) = LiveCaptureId::parse(&id.to_string())
+                && let Some(entry) =
+                    super::live_capture_history::lookup(connection, Some(live_id), None)?
+                        .filter(|entry| entry.recording.is_none())
+            {
+                return Ok(Some(SourceRecord::Live(Box::new(entry))));
+            }
+            // Writer provenance for a database capture lives on the session row.
+            // After that session is deleted, the submission and its import still
+            // name this artifact, and evidence reads must keep resolving it.
+            retired_recorded_submission(connection, id)
         }
         CaptureSubmissionSource::PevcapDigest(digest) => {
             let digest = digest.to_string();
@@ -1410,6 +1417,64 @@ pub(super) fn lookup_submission_source_alias(
         owner = Some(id);
     }
     Ok(owner)
+}
+
+fn retired_recorded_submission(
+    connection: &Connection,
+    id: CaptureArtifactId,
+) -> Result<Option<SourceRecord>, StorageError> {
+    let Some(status) = lookup_status(connection, Some(&id.to_string()), None)? else {
+        return Ok(None);
+    };
+    submission_source_from_status(connection, &status)
+}
+
+fn retired_live_submission(
+    connection: &Connection,
+    id: LiveCaptureId,
+) -> Result<Option<SourceRecord>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT status_json FROM capture_submissions
+         WHERE json_extract(status_json, '$.metadata.provenance.live_capture_id') = ?1",
+    )?;
+    let rows = statement.query_map([id.to_string()], |row| row.get::<_, String>(0))?;
+    let mut found = None;
+    for row in rows {
+        let status = decode_status(&row?)?;
+        if found.is_some() {
+            return Err(StorageError::InvalidStoredValue {
+                field: "ambiguous capture submission source identity",
+                value: id.to_string(),
+            });
+        }
+        found = Some(status);
+    }
+    let Some(status) = found else {
+        return Ok(None);
+    };
+    submission_source_from_status(connection, &status)
+}
+
+fn submission_source_from_status(
+    connection: &Connection,
+    status: &CaptureSubmissionStatus,
+) -> Result<Option<SourceRecord>, StorageError> {
+    let Some(receipt) =
+        super::pevcap_import_receipt(connection, status.metadata.capture_sha256(), true)?
+    else {
+        return Ok(None);
+    };
+    let source_artifact_id =
+        CaptureArtifactId::parse(&status.metadata.provenance.source_artifact_id).map_err(|_| {
+            StorageError::InvalidStoredValue {
+                field: "capture submission source identity",
+                value: status.metadata.provenance.source_artifact_id.clone(),
+            }
+        })?;
+    Ok(Some(SourceRecord::FileWithIdentity {
+        receipt,
+        source_artifact_id,
+    }))
 }
 
 fn source_record_artifact_id(
@@ -1802,8 +1867,11 @@ pub(super) fn recover(connection: &Connection) -> Result<(), StorageError> {
 
 /// Scans one bounded status page and removes at most one receipt-authorized payload batch.
 ///
-/// The cursor belongs to the worker. It advances over skipped rows and completed
-/// operations, stays before a partially removed operation, and resets at end-of-scan.
+/// Once that payload is gone, the live capture session is deleted too. The submission
+/// receipt and its import row stay, so a later import of the same bytes can still see
+/// that this capture was already sent. The cursor belongs to the worker. It advances
+/// over skipped rows and completed operations, stays before a partially removed
+/// operation, and resets at end-of-scan.
 #[allow(
     clippy::too_many_lines,
     reason = "receipt validation, bounded deletion and its progress commit share one transaction"
@@ -1824,7 +1892,7 @@ pub(super) fn cleanup_sent_capture_batch(
                AND json_extract(status_json, '$.phase')
                     IN ('sent', 'deleted', 'cancellation_pending', 'cancelled', 'deletion_pending')
                AND coalesce(json_extract(status_json, '$.local_payload_state'), 'retained')
-                    IN ('retained', 'removal_pending')
+                    IN ('retained', 'removal_pending', 'removed')
              ORDER BY operation_id LIMIT 64",
         )?;
         let rows = statement.query_map([cursor.as_deref().unwrap_or("")], |row| {
@@ -1848,9 +1916,21 @@ pub(super) fn cleanup_sent_capture_batch(
                 && status.phase != Phase::Cancelled
                 && status.phase != Phase::DeletionPending)
             || status.receipt.is_none()
-            || status.local_payload_state == PayloadState::Removed
         {
             continue;
+        }
+        if status.local_payload_state == PayloadState::Removed {
+            let Some(live_id) = status.metadata.provenance.live_capture_id.as_deref() else {
+                continue;
+            };
+            let session_exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM live_capture_sessions WHERE capture_id = ?1)",
+                [live_id],
+                |row| row.get(0),
+            )?;
+            if !session_exists {
+                continue;
+            }
         }
         if !submission_payload_is_exclusive(&transaction, &status)? {
             continue;
@@ -1946,6 +2026,9 @@ pub(super) fn cleanup_sent_capture_batch(
         if remaining_chunk_budget == 0 {
             break;
         }
+        if import_artifact_pending(&transaction, digest)? {
+            continue;
+        }
         if no_unfinished_submission_references(
             &transaction,
             &status.operation_id,
@@ -1981,8 +2064,10 @@ pub(super) fn cleanup_sent_capture_batch(
             [digest],
             |row| row.get::<_, bool>(0),
         )?;
-        archive_payload_remains |= exists;
+        let artifact_pending = import_artifact_pending(&transaction, digest)?;
+        archive_payload_remains |= exists || artifact_pending;
         if !exists
+            && !artifact_pending
             && no_unfinished_submission_references(
                 &transaction,
                 &status.operation_id,
@@ -1997,11 +2082,27 @@ pub(super) fn cleanup_sent_capture_batch(
             payload_removed |= removed != 0;
         }
     }
-    if !live_payload_remains && !archive_payload_remains {
-        status.local_payload_state = PayloadState::Removed;
-        // `revision` fences an in-flight Send/Delete transport action. Local
-        // maintenance must not invalidate a remote delete already in progress.
-        persist_status(&transaction, &status.operation_id, &status)?;
+    if !live_payload_remains {
+        if let Some(live_id) = live_id
+            && no_unfinished_submission_references(
+                &transaction,
+                &status.operation_id,
+                None,
+                Some(live_id),
+            )?
+        {
+            let removed = transaction.execute(
+                "DELETE FROM live_capture_sessions WHERE capture_id = ?1",
+                [live_id],
+            )?;
+            payload_removed |= removed != 0;
+        }
+        if !archive_payload_remains {
+            status.local_payload_state = PayloadState::Removed;
+            // `revision` fences an in-flight Send/Delete transport action. Local
+            // maintenance must not invalidate a remote delete already in progress.
+            persist_status(&transaction, &status.operation_id, &status)?;
+        }
     }
     if payload_removed {
         transaction.execute(
@@ -2155,6 +2256,17 @@ fn submission_payload_is_exclusive(
         }
     }
     Ok(true)
+}
+
+fn import_artifact_pending(connection: &Connection, digest: &str) -> Result<bool, StorageError> {
+    Ok(connection
+        .query_row(
+            "SELECT artifact_path IS NOT NULL FROM pevcap_imports WHERE artifact_digest = ?1",
+            [digest],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
 }
 
 fn cleanup_digests(

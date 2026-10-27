@@ -260,7 +260,8 @@ impl RideDatabase {
     /// Returns an error when a history page cannot be read. A full command queue is waited
     /// out. One session whose stored header cannot be decoded, one imported capture whose
     /// stored row cannot be decoded, and one managed file whose submission row cannot be
-    /// read stay on that row.
+    /// read stay on that row. A capture that already has a durable send receipt is omitted.
+    /// Maintenance deletes that live session after its payload is gone.
     pub fn review_capture_submission_batch_with_updates(
         &self,
         managed_capture_directories: &[PathBuf],
@@ -427,6 +428,9 @@ fn collect_live_history(
                 continue;
             }
             let status = entry.submission.status.clone();
+            if status.as_ref().is_some_and(valid_receipt) {
+                continue;
+            }
             let fingerprint = status_fingerprint(status.as_ref());
             let Some(evidence_read) = wait_for_queue(notify.cancel, || {
                 row_result(
@@ -586,6 +590,9 @@ fn collect_canonical_capture(
         return Ok(());
     }
     let status = capture.submission.status.clone();
+    if status.as_ref().is_some_and(valid_receipt) {
+        return Ok(());
+    }
     let source = if capture.recording.is_some() {
         PlannedSource::RecordedArtifact {
             locator,
@@ -980,6 +987,24 @@ fn register_managed_alias(
         .push(locator);
 }
 
+fn receipt_authorizes_managed_file(
+    database: &RideDatabase,
+    locator: &ManagedFileLocator,
+    notify: &ReviewNotify<'_>,
+) -> Result<bool, CaptureSubmissionError> {
+    let Some(authorized) = wait_for_queue(notify.cancel, || {
+        row_result(
+            database
+                .managed_capture_file_removal_authorized(&locator.digest, locator.bytes)
+                .map_err(CaptureSubmissionError::Storage),
+        )
+    })?
+    else {
+        return Ok(true);
+    };
+    Ok(authorized.unwrap_or(false))
+}
+
 fn add_managed_capture_candidate(
     database: &RideDatabase,
     locator: ManagedFileLocator,
@@ -1006,6 +1031,12 @@ fn add_managed_capture_candidate(
             return Ok(());
         }
     };
+    if status.as_ref().is_some_and(valid_receipt) {
+        return Ok(());
+    }
+    if receipt_authorizes_managed_file(database, &locator, notify)? {
+        return Ok(());
+    }
     let evidence = CaptureAttachments::default();
     let preview = if locator.bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
         Err(CaptureSubmissionBatchEligibility::TooLarge)
@@ -2440,6 +2471,33 @@ mod tests {
         database.shutdown().unwrap();
     }
 
+    fn live_source_id(plan: &CaptureSubmissionBatchPlan, id: LiveCaptureId) -> String {
+        plan.sources
+            .iter()
+            .find_map(|(source_id, source)| match source {
+                PlannedSource::LiveCapture { id: live_id, .. } if *live_id == id => {
+                    Some(source_id.clone())
+                }
+                _ => None,
+            })
+            .expect("live capture is in the review plan")
+    }
+
+    fn receipted_session_is_retired(database: &RideDatabase, id: LiveCaptureId) -> bool {
+        for _ in 0..50 {
+            let history = database
+                .list_live_capture_history(None, QueryLimit::new(100).unwrap())
+                .unwrap();
+            let listed = history.captures.iter().any(|capture| capture.id == id)
+                || history.unreadable.iter().any(|capture| capture.id == id);
+            if !listed && history.next_cursor.is_none() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    }
+
     fn eligible_ids(plan: &CaptureSubmissionBatchPlan) -> Vec<String> {
         plan.candidates()
             .iter()
@@ -2780,59 +2838,46 @@ mod tests {
         .unwrap();
         assert_eq!(first.sent, 1);
 
-        let mut status = database
-            .capture_submission(CaptureSubmissionSource::LiveCapture(source))
-            .unwrap()
-            .unwrap();
-        for _ in 0..20 {
-            if status.local_payload_state == CaptureSubmissionLocalPayloadState::Removed {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            status = database
-                .capture_submission(CaptureSubmissionSource::LiveCapture(source))
-                .unwrap()
-                .unwrap();
-        }
-        assert_eq!(
-            status.local_payload_state,
-            CaptureSubmissionLocalPayloadState::Removed
-        );
+        assert!(receipted_session_is_retired(&database, source));
 
         let retry_plan = database.review_capture_submission_batch(&[]).unwrap();
-        let candidate = retry_plan
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.status.as_ref().is_some_and(valid_receipt))
-            .expect("durable receipt remains visible after payload retirement");
-        assert_eq!(
-            candidate.eligibility,
-            CaptureSubmissionBatchEligibility::AlreadySubmitted
+        assert!(
+            retry_plan
+                .candidates()
+                .iter()
+                .all(|candidate| !candidate.status.as_ref().is_some_and(valid_receipt)),
+            "a receipted capture is deleted from review"
         );
-        let second = ready(database.send_capture_submission_batch(
-            &retry_plan,
-            std::slice::from_ref(&candidate.source_artifact_id),
-            ACCOUNT,
-            "secret",
-            &BatchTransport::default(),
-            Arc::new(|_| {}),
-        ))
-        .unwrap();
-        assert_eq!(second.sent, 1);
-        assert_eq!(second.cleaned, 1);
+        assert!(
+            database
+                .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .captures
+                .is_empty(),
+            "the receipted live session is deleted"
+        );
+        let connection = Connection::open(directory.path().join("ride.sqlite")).unwrap();
+        let receipts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM capture_submissions
+                 WHERE json_type(status_json, '$.receipt') = 'object'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(
-            second.pending_cleanup_source_artifact_ids,
-            Vec::<String>::new()
+            receipts, 1,
+            "the send receipt stays after the session is deleted"
         );
         database.shutdown().unwrap();
     }
 
     #[test]
-    fn reviewed_already_submitted_source_without_current_receipt_is_failed_not_sent() {
+    fn reviewed_receipt_is_omitted_from_the_next_review() {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("ride.sqlite");
         let database = RideDatabase::open(&database_path).unwrap();
-        let source = finished_capture(&database, directory.path(), 0x46);
+        let _source = finished_capture(&database, directory.path(), 0x46);
         let initial_plan = database.review_capture_submission_batch(&[]).unwrap();
         let selected = eligible_ids(&initial_plan);
         let initial = ready(database.send_capture_submission_batch(
@@ -2847,53 +2892,69 @@ mod tests {
         assert_eq!(initial.sent, 1);
 
         let reviewed = database.review_capture_submission_batch(&[]).unwrap();
-        let candidate = reviewed
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.status.as_ref().is_some_and(valid_receipt))
-            .expect("successful receipt is included in the review");
-        assert_eq!(
-            candidate.eligibility,
-            CaptureSubmissionBatchEligibility::AlreadySubmitted
+        assert!(
+            reviewed
+                .candidates()
+                .iter()
+                .all(|candidate| !candidate.status.as_ref().is_some_and(valid_receipt)),
+            "a capture with a send receipt is not offered again"
         );
-        let status = candidate.status.as_ref().unwrap();
         let connection = Connection::open(&database_path).unwrap();
-        connection
-            .execute(
-                "DELETE FROM capture_submissions WHERE operation_id = ?1",
-                [&status.operation_id],
+        let receipts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM capture_submissions
+                 WHERE json_type(status_json, '$.receipt') = 'object'",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
-        drop(connection);
+        assert_eq!(receipts, 1, "the send receipt stays in the submission row");
+        database.shutdown().unwrap();
+    }
 
-        let no_upload = BatchTransport::default();
-        let result = ready(database.send_capture_submission_batch(
-            &reviewed,
-            std::slice::from_ref(&candidate.source_artifact_id),
+    #[test]
+    fn receipted_capture_is_deleted_while_an_unsent_capture_stays_sendable() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let sent_id = finished_capture(&database, directory.path(), 0x51);
+        let unsent_id = finished_capture(&database, directory.path(), 0x52);
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let sent_source = live_source_id(&plan, sent_id);
+        let unsent_source = live_source_id(&plan, unsent_id);
+        let sent = ready(database.send_capture_submission_batch(
+            &plan,
+            std::slice::from_ref(&sent_source),
             ACCOUNT,
             "secret",
-            &no_upload,
+            &BatchTransport::default(),
             Arc::new(|_| {}),
         ))
         .unwrap();
+        assert_eq!(sent.sent, 1);
+        assert!(receipted_session_is_retired(&database, sent_id));
 
-        assert_eq!(result.sent, 0);
-        assert_eq!(result.failed, 1);
-        assert_eq!(
-            result.failed_source_artifact_ids,
-            vec![candidate.source_artifact_id.clone()]
-        );
-        assert_eq!(
-            result.pending_cleanup_source_artifact_ids,
-            Vec::<String>::new()
-        );
-        assert_eq!(no_upload.uploads.load(Ordering::Acquire), 0);
+        let again = database.review_capture_submission_batch(&[]).unwrap();
         assert!(
-            database
-                .capture_submission(CaptureSubmissionSource::LiveCapture(source))
-                .unwrap()
-                .is_none()
+            again
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.source_artifact_id != sent_source)
         );
+        let unsent = again
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.source_artifact_id == unsent_source)
+            .expect("unsent capture stays in review");
+        assert_eq!(
+            unsent.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert!(unsent.transfer_sha256.is_some());
+        let history = database
+            .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+            .unwrap();
+        assert_eq!(history.captures.len(), 1);
+        assert_eq!(history.captures[0].id, unsent_id);
         database.shutdown().unwrap();
     }
 

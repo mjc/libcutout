@@ -1643,8 +1643,8 @@ fn assert_cleanup_retains_receipt_and_catalog(
                 |row| row.get(0),
             )
             .unwrap(),
-        1,
-        "the recording catalog row remains"
+        0,
+        "a receipted capture session is deleted with its payload"
     );
     assert_eq!(
         connection
