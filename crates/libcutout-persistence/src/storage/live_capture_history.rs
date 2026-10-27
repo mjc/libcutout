@@ -44,11 +44,24 @@ pub struct LiveCaptureHistoryEntry {
     pub submission: super::capture_history::CaptureSubmissionHistory,
 }
 
+/// One session row whose stored header or provenance could not be decoded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnreadableLiveCapture {
+    /// Session identity from the durable row.
+    pub id: LiveCaptureId,
+    /// Recording start from the durable row.
+    pub started_at_ms: u64,
+    /// Stored byte count from the durable row.
+    pub stored_bytes: u64,
+}
+
 /// Bounded session history page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiveCaptureHistoryPage {
     /// Inactive captures, newest recording first.
     pub captures: Vec<LiveCaptureHistoryEntry>,
+    /// Rows on this page whose header or provenance could not be decoded.
+    pub(crate) unreadable: Vec<UnreadableLiveCapture>,
     /// Present only when more session rows exist.
     pub next_cursor: Option<LiveCaptureHistoryCursor>,
 }
@@ -110,7 +123,9 @@ impl RideDatabase {
     /// sessions and provenance-publication failures; neither is hidden by a missing export.
     ///
     /// # Errors
-    /// Returns invalid stored metadata, cursor or storage failures.
+    /// Returns a cursor, limit, or storage failure. One session whose header or provenance
+    /// cannot be decoded is returned in [`LiveCaptureHistoryPage::unreadable`] and does not
+    /// fail the page.
     pub fn list_live_capture_history(
         &self,
         cursor: Option<LiveCaptureHistoryCursor>,
@@ -269,7 +284,9 @@ pub(super) fn list(
             finished_at_ms, next_sequence, stored_bytes, recording_context_json,
             (SELECT status_json FROM capture_submissions AS submission
              WHERE submission.source_artifact_id = COALESCE(
-                 json_extract(live_capture_sessions.recording_context_json, '$.artifact_id'),
+                 CASE WHEN json_valid(live_capture_sessions.recording_context_json)
+                      THEN json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
+                 END,
                  live_capture_sessions.capture_id
              ))
          FROM live_capture_sessions
@@ -283,21 +300,45 @@ pub(super) fn list(
         ],
         HistoryRow::from_row,
     )?;
-    let mut captures = rows
-        .map(|row| row?.into_entry())
-        .collect::<Result<Vec<_>, StorageError>>()?;
-    let has_more = captures.len() > limit.get() as usize;
-    captures.truncate(limit.get() as usize);
+    let mut raw_rows = Vec::new();
+    for row in rows {
+        raw_rows.push(row?);
+    }
+    let has_more = raw_rows.len() > limit.get() as usize;
+    raw_rows.truncate(limit.get() as usize);
     let next_cursor = if has_more {
-        captures.last().map(|last| LiveCaptureHistoryCursor {
+        let Some(last) = raw_rows.last() else {
+            return Err(invalid("live capture history page", "empty"));
+        };
+        Some(LiveCaptureHistoryCursor {
             started_at_ms: last.started_at_ms,
-            id: last.id,
+            id: LiveCaptureId::parse(&last.id)?,
         })
     } else {
         None
     };
+    let mut captures = Vec::new();
+    let mut unreadable = Vec::new();
+    for row in raw_rows {
+        let id = row.id.clone();
+        let started_at_ms = row.started_at_ms;
+        let stored_bytes = row.stored_bytes;
+        match row.into_entry() {
+            Ok(entry) => captures.push(entry),
+            Err(_) => {
+                if let Ok(id) = LiveCaptureId::parse(&id) {
+                    unreadable.push(UnreadableLiveCapture {
+                        id,
+                        started_at_ms,
+                        stored_bytes,
+                    });
+                }
+            }
+        }
+    }
     Ok(LiveCaptureHistoryPage {
         captures,
+        unreadable,
         next_cursor,
     })
 }
@@ -313,12 +354,15 @@ pub(super) fn lookup(
             finished_at_ms, next_sequence, stored_bytes, recording_context_json,
             (SELECT status_json FROM capture_submissions AS submission
              WHERE submission.source_artifact_id = COALESCE(
-                 json_extract(live_capture_sessions.recording_context_json, '$.artifact_id'),
+                 CASE WHEN json_valid(live_capture_sessions.recording_context_json)
+                      THEN json_extract(live_capture_sessions.recording_context_json, '$.artifact_id')
+                 END,
                  live_capture_sessions.capture_id
              ))
          FROM live_capture_sessions
          WHERE (?1 IS NOT NULL AND capture_id = ?1)
-            OR (?2 IS NOT NULL AND json_extract(recording_context_json, '$.artifact_id') = ?2)",
+            OR (?2 IS NOT NULL AND json_valid(recording_context_json)
+                AND json_extract(recording_context_json, '$.artifact_id') = ?2)",
             params![
                 id.map(|id| id.to_string()),
                 artifact_id.map(|id| id.to_string())

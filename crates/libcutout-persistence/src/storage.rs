@@ -4537,7 +4537,9 @@ impl RideDatabase {
     /// when the first page is refreshed, not while continuing an older page.
     ///
     /// # Errors
-    /// Returns [`StorageError`] when the worker or stored metadata cannot be read.
+    /// Returns [`StorageError`] when the worker or a history page cannot be read.
+    /// One stored row that cannot be decoded is omitted from the returned captures
+    /// and does not fail the page.
     pub fn list_pevcap_captures(
         &self,
         cursor: Option<PevcapCaptureCursor>,

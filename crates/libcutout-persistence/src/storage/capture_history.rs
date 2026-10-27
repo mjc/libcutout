@@ -84,11 +84,22 @@ pub struct CaptureSubmissionHistory {
     pub status: Option<super::capture_submission::CaptureSubmissionStatus>,
 }
 
+/// One published row whose stored metadata could not be decoded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnreadablePevcapCapture {
+    /// SHA-256 identity from the durable row.
+    pub artifact_digest: String,
+    /// Original byte length from the durable row.
+    pub artifact_size: u64,
+}
+
 /// A bounded capture-history page and continuation only when another row exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapCapturePage {
     /// Published captures, newest import first with descending digest for ties.
     pub captures: Vec<StoredPevcapCapture>,
+    /// Rows on this page whose stored metadata could not be decoded.
+    pub(crate) unreadable: Vec<UnreadablePevcapCapture>,
     /// Continue after the last returned entry; refresh without a cursor for new imports.
     pub next_cursor: Option<PevcapCaptureCursor>,
 }
@@ -144,24 +155,69 @@ pub(super) fn list(
     } else {
         statement.query([fetch_limit])?
     };
-    let mut captures = Vec::with_capacity(count + 1);
-    while let Some(row) = rows.next()? {
-        captures.push(read_capture(connection, row)?);
+    struct ListedCapture {
+        imported_at_milliseconds: u64,
+        artifact_digest: String,
+        artifact_size: u64,
+        decoded: Option<StoredPevcapCapture>,
     }
-    let has_more = captures.len() > count;
-    captures.truncate(count);
+
+    let mut listed = Vec::with_capacity(count + 1);
+    while let Some(row) = rows.next()? {
+        let artifact_digest: String = row.get(0)?;
+        let artifact_size: u64 = row.get(2)?;
+        let imported_at_milliseconds: u64 = row.get(3)?;
+        let decoded = match read_capture(connection, row) {
+            Ok(capture) => Some(capture),
+            Err(StorageError::InvalidStoredValue {
+                field: "ambiguous capture submission source identity",
+                ..
+            }) => {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "ambiguous capture submission source identity",
+                    value: artifact_digest,
+                });
+            }
+            Err(StorageError::InvalidStoredValue { .. }) => None,
+            Err(error) => return Err(error),
+        };
+        listed.push(ListedCapture {
+            imported_at_milliseconds,
+            artifact_digest,
+            artifact_size,
+            decoded,
+        });
+    }
+    let has_more = listed.len() > count;
+    listed.truncate(count);
     let next_cursor = if has_more {
-        captures
-            .last()
-            .map(|capture| {
-                PevcapCaptureCursor::new(capture.imported_at_milliseconds, &capture.artifact_digest)
-            })
-            .transpose()?
+        let Some(last) = listed.last() else {
+            return Err(StorageError::InvalidStoredValue {
+                field: "capture history page",
+                value: "empty".to_owned(),
+            });
+        };
+        Some(PevcapCaptureCursor::new(
+            last.imported_at_milliseconds,
+            &last.artifact_digest,
+        )?)
     } else {
         None
     };
+    let mut captures = Vec::new();
+    let mut unreadable = Vec::new();
+    for row in listed {
+        match row.decoded {
+            Some(capture) => captures.push(capture),
+            None => unreadable.push(UnreadablePevcapCapture {
+                artifact_digest: row.artifact_digest,
+                artifact_size: row.artifact_size,
+            }),
+        }
+    }
     Ok(PevcapCapturePage {
         captures,
+        unreadable,
         next_cursor,
     })
 }

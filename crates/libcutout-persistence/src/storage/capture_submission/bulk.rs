@@ -258,7 +258,9 @@ impl RideDatabase {
     /// # Errors
     ///
     /// Returns an error when a history page cannot be read. A full command queue is waited
-    /// out. One capture's read failure stays on that row.
+    /// out. One session whose stored header cannot be decoded, one imported capture whose
+    /// stored row cannot be decoded, and one managed file whose submission row cannot be
+    /// read stay on that row.
     pub fn review_capture_submission_batch_with_updates(
         &self,
         managed_capture_directories: &[PathBuf],
@@ -490,6 +492,22 @@ fn collect_live_history(
             publish(&candidate, notify);
             inventory.candidates.push(candidate);
         }
+        for unread in page.unreadable {
+            let source_id = unread.id.to_string();
+            if inventory.source_indices.contains_key(&source_id) {
+                continue;
+            }
+            let candidate = unavailable_candidate(
+                &source_id,
+                CaptureSubmissionBatchSourceKind::LiveCapture,
+                &source_id,
+                unread.stored_bytes,
+            );
+            let index = inventory.candidates.len();
+            inventory.source_indices.insert(source_id, index);
+            publish(&candidate, notify);
+            inventory.candidates.push(candidate);
+        }
         live_cursor = page.next_cursor;
         if live_cursor.is_none() || notify.cancel.load(Ordering::Acquire) {
             break;
@@ -520,6 +538,22 @@ fn collect_canonical_history(
             if notify.cancel.load(Ordering::Acquire) {
                 return Ok(());
             }
+        }
+        for unread in page.unreadable {
+            let source_id = unread.artifact_digest;
+            if inventory.source_indices.contains_key(&source_id) {
+                continue;
+            }
+            let candidate = unavailable_candidate(
+                &source_id,
+                CaptureSubmissionBatchSourceKind::RecordedArtifact,
+                "Imported capture",
+                unread.artifact_size,
+            );
+            let index = inventory.candidates.len();
+            inventory.source_indices.insert(source_id, index);
+            publish(&candidate, notify);
+            inventory.candidates.push(candidate);
         }
         capture_cursor = page.next_cursor;
         if capture_cursor.is_none() {
@@ -955,11 +989,22 @@ fn add_managed_capture_candidate(
 ) -> Result<(), CaptureSubmissionError> {
     let artifact_id = super::legacy_capture_artifact_id(&locator.digest)?;
     let source_id = artifact_id.to_string();
-    let Some(status) = wait_for_queue(notify.cancel, || {
-        database.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id))
+    let Some(status_read) = wait_for_queue(notify.cancel, || {
+        row_result(
+            database.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id)),
+        )
     })?
     else {
         return Ok(());
+    };
+    let status = match status_read {
+        Ok(status) => status,
+        Err(_) => {
+            let candidate = unavailable_file_candidate(&locator.path);
+            publish(&candidate, notify);
+            inventory.candidates.push(candidate);
+            return Ok(());
+        }
     };
     let evidence = CaptureAttachments::default();
     let preview = if locator.bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
@@ -1119,6 +1164,31 @@ fn candidate_for_file(
     );
     candidate.source_sha256 = Some(digest.to_owned());
     candidate
+}
+
+fn unavailable_candidate(
+    source_artifact_id: &str,
+    source_kind: CaptureSubmissionBatchSourceKind,
+    display_name: &str,
+    stored_bytes: u64,
+) -> CaptureSubmissionBatchCandidate {
+    CaptureSubmissionBatchCandidate {
+        source_artifact_id: source_artifact_id.to_owned(),
+        source_kind,
+        display_name: display_name.to_owned(),
+        eligibility: CaptureSubmissionBatchEligibility::Unavailable,
+        source_sha256: None,
+        source_bytes: stored_bytes,
+        transfer_sha256: None,
+        transfer_bytes: None,
+        origin: CaptureSubmissionOrigin::Unknown,
+        integrity: CaptureSubmissionIntegrity::Unknown,
+        categories: None,
+        evidence: None,
+        status: None,
+        skip_reason: Some(CaptureSubmissionBatchEligibility::Unavailable),
+        alias_count: 0,
+    }
 }
 
 fn unavailable_file_candidate(path: &Path) -> CaptureSubmissionBatchCandidate {
@@ -2237,6 +2307,105 @@ mod tests {
         assert!(candidate.transfer_sha256.is_some());
         assert!(candidate.transfer_bytes.is_some());
         database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_keeps_going_when_a_stored_header_cannot_be_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 9);
+        let unreadable = database
+            .begin_live_capture(b"{}".to_vec(), 1_700_000_300_000)
+            .unwrap();
+        database
+            .finish_live_capture(unreadable, 1_700_000_300_001)
+            .unwrap();
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let candidates = plan.candidates();
+        assert!(candidates.iter().any(|candidate| {
+            candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
+                && candidate.transfer_sha256.is_some()
+        }));
+        assert!(candidates.iter().any(|candidate| {
+            candidate.source_artifact_id == unreadable.to_string()
+                && candidate.eligibility == CaptureSubmissionBatchEligibility::Unavailable
+                && candidate.transfer_sha256.is_none()
+        }));
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_keeps_going_when_an_imported_capture_cannot_be_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        finished_capture(&database, directory.path(), 4);
+        let digest = import_one_capture(&database, &directory.path().join("import.jsonl"));
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&database_path).unwrap();
+        let source_id = "22222222-2222-4222-8222-222222222222";
+        let operation_id = "11111111-1111-4111-8111-111111111111";
+        let status = format!(
+            "{{\"operation_id\":\"{operation_id}\",\"metadata\":{{\"sha256\":\"{digest}\",\"provenance\":{{\"source_artifact_id\":\"{source_id}\"}}}}}}"
+        );
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![source_id, operation_id, digest, status],
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = RideDatabase::open(&database_path).unwrap();
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        let candidates = plan.candidates();
+        assert!(candidates.iter().any(|candidate| {
+            candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
+                && candidate.transfer_sha256.is_some()
+        }));
+        assert!(candidates.iter().any(|candidate| {
+            candidate.source_artifact_id == digest
+                && candidate.eligibility == CaptureSubmissionBatchEligibility::Unavailable
+                && candidate.transfer_sha256.is_none()
+        }));
+        database.shutdown().unwrap();
+    }
+
+    fn import_one_capture(database: &RideDatabase, source_path: &Path) -> String {
+        let header = cutout_core::PevcapHeader::new(
+            WallClockUnixTimestamp::new(1234),
+            "legacy-wheel",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let record = PevcapRecord::inbound_notification(
+            MonotonicTimestamp::new(1),
+            GattChannel::from_bytes([0x11; 16]),
+            GattChannel::from_bytes([0x22; 16]),
+            vec![0xff, 0x00, 0xa5],
+        );
+        let mut bytes = header.to_jsonl_line().unwrap().into_bytes();
+        bytes.push(b'\n');
+        bytes.extend_from_slice(&record.to_jsonl_line().unwrap().into_bytes());
+        bytes.push(b'\n');
+        fs::write(source_path, &bytes).unwrap();
+        let preview = database
+            .preflight_pevcap(source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let imported = database
+            .confirm_pevcap_import(&preview, 1_700_000_001_000)
+            .unwrap();
+        imported.artifact_digest
     }
 
     #[test]
