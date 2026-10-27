@@ -385,6 +385,7 @@ internal data class CaptureBatchCandidate(
     val noteBytes: ULong,
     val screenshotCount: UInt,
     val receipt: String?,
+    val checking: Boolean = false,
 )
 
 internal data class CaptureBatchProgress(
@@ -413,6 +414,12 @@ internal data class CaptureBatchSummary(
 /** The Rust adapter owns inventory, send ordering, receipt validation and cleanup. */
 internal interface CaptureSubmissionBatchOperations {
     fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit)
+    fun reviewIncremental(
+        onCandidate: (CaptureBatchCandidate) -> Unit,
+        completed: (Result<List<CaptureBatchCandidate>>) -> Unit,
+    ) {
+        review(completed)
+    }
     fun sendSelected(
         sourceArtifactIds: List<String>,
         progress: (CaptureBatchProgress) -> Unit,
@@ -450,6 +457,7 @@ internal class CaptureSubmissionBatchDialog(
     private var requiresFreshReview = false
     private var sendCompleted = false
     private var retrySelection: Set<String>? = null
+    private var userAdjustedSelection = false
     private var reviewHeader: LinearLayout? = null
     private var candidateAdapter: CaptureBatchCandidateAdapter? = null
     private val batchOperations by lazy {
@@ -492,6 +500,7 @@ internal class CaptureSubmissionBatchDialog(
             }
             render(header)
         }
+        reviewDialog?.setOnDismissListener { operations().requestCancel() }
         reviewDialog?.show()
         beginReview()
     }
@@ -505,26 +514,52 @@ internal class CaptureSubmissionBatchDialog(
         progressText = null
         itemResults.clear()
         summary = null
+        userAdjustedSelection = false
         renderCurrent()
-        operations().review { result -> main.post {
+        operations().reviewIncremental({ row -> main.post { upsertCandidate(row) } }) { result -> main.post {
             isReviewing = false
             result.onSuccess { rows ->
                 candidates = rows
-                selected.clear()
+                val eligibleIds = rows.filter { it.eligible }.map { it.sourceArtifactId }.toSet()
                 val failedBeforeReview = retrySelection
-                rows.filter { it.eligible && (failedBeforeReview == null || it.sourceArtifactId in failedBeforeReview) }
-                    .forEach { selected += it.sourceArtifactId }
-                requiresFreshReview = false
-                stopRequested = false
-                summary = null
-                progressText = null
-                itemResults.clear()
-                failedIds = emptyList()
-                retrySelection = null
-                sendCompleted = false
-            }.onFailure { reviewError = it.message ?: context.getString(R.string.capture_batch_review_failed) }
+                if (!userAdjustedSelection) {
+                    selected.clear()
+                    rows.filter { it.eligible && (failedBeforeReview == null || it.sourceArtifactId in failedBeforeReview) }
+                        .forEach { selected += it.sourceArtifactId }
+                } else {
+                    selected.retainAll(eligibleIds)
+                }
+                val finished = rows.none { it.checking }
+                requiresFreshReview = !finished
+                if (finished) {
+                    stopRequested = false
+                    summary = null
+                    progressText = null
+                    itemResults.clear()
+                    failedIds = emptyList()
+                    retrySelection = null
+                    sendCompleted = false
+                }
+            }.onFailure { reviewError = context.getString(R.string.capture_batch_review_failed) }
             renderCurrent()
         } }
+    }
+
+    private fun upsertCandidate(row: CaptureBatchCandidate) {
+        val index = candidates.indexOfFirst { it.sourceArtifactId == row.sourceArtifactId }
+        if (index >= 0) {
+            if (candidates[index].eligible && row.checking) return
+            candidates = candidates.toMutableList().also { it[index] = row }
+        } else {
+            candidates = candidates + row
+        }
+        if (!row.eligible) {
+            selected -= row.sourceArtifactId
+        } else if (!userAdjustedSelection) {
+            val allowed = retrySelection?.contains(row.sourceArtifactId) ?: true
+            if (allowed) selected += row.sourceArtifactId
+        }
+        renderCurrent()
     }
 
     private fun confirm() {
@@ -614,7 +649,10 @@ internal class CaptureSubmissionBatchDialog(
         }
         content.addView(ui.text(context.getString(R.string.capture_batch_explanation), 14f, color = ui.muted))
         content.addView(ui.space(10))
-        if (isReviewing) content.addView(ProgressBar(context).apply { isIndeterminate = true })
+        if (isReviewing) {
+            content.addView(ProgressBar(context).apply { isIndeterminate = true })
+            content.addView(ui.text(context.getString(R.string.capture_batch_reviewing), 14f, color = ui.muted))
+        }
         reviewError?.let { error ->
             content.addView(ui.text(error, 14f, color = ui.red))
             if (!isSending) content.addView(ui.action(context.getString(
@@ -623,7 +661,12 @@ internal class CaptureSubmissionBatchDialog(
                 if (failedIds.isEmpty()) beginReview() else retryFailedReview()
             }.apply { tag = if (failedIds.isEmpty()) "captures.batch.retryReview" else "captures.batch.reviewFailedAgain" })
         }
-        content.addView(ui.text(context.getString(R.string.capture_batch_counts, selected.size, candidates.count { it.eligible }, candidates.count { !it.eligible }), 14f, true))
+        content.addView(ui.text(context.getString(
+            R.string.capture_batch_counts,
+            selected.size,
+            candidates.count { it.eligible },
+            candidates.count { !it.eligible && !it.checking },
+        ), 14f, true))
         progressText?.let { content.addView(ui.text(it, 14f, color = ui.muted)) }
         if (isSending) {
             content.addView(ui.space(8))
@@ -671,15 +714,20 @@ internal class CaptureSubmissionBatchDialog(
                     tag = "captures.batch.candidate.${candidate.sourceArtifactId}"
                     setOnCheckedChangeListener(null)
                     isChecked = candidate.sourceArtifactId in selected
-                    isEnabled = !isSending && !isReviewing && !sendCompleted && !requiresFreshReview
+                    isEnabled = !isSending && !sendCompleted
                     setOnCheckedChangeListener { _, checked ->
+                        userAdjustedSelection = true
                         if (checked) selected += candidate.sourceArtifactId else selected -= candidate.sourceArtifactId
                         reviewHeader?.let(::render)
                     }
                 })
             } else {
                 row.addView(ui.text(title, 15f, true))
-                row.addView(ui.text(candidate.skipReason ?: context.getString(R.string.capture_batch_skipped), 13f, color = ui.orange))
+                row.addView(ui.text(
+                    candidate.skipReason ?: context.getString(R.string.capture_batch_skipped),
+                    13f,
+                    color = if (candidate.checking) ui.muted else ui.orange,
+                ))
             }
             row.addView(ui.text(context.getString(R.string.capture_batch_origin_integrity, candidate.origin, candidate.integrity), 13f, color = ui.muted))
             row.addView(ui.text(context.getString(R.string.capture_batch_source, candidate.sourceBytes.toLong(), candidate.sourceSha256 ?: context.getString(R.string.capture_batch_unavailable)), 12f, color = ui.muted))
@@ -705,10 +753,26 @@ private class RustCaptureSubmissionBatchOperations(
     @Volatile private var plan: CaptureSubmissionBatchPlanHandle? = null
 
     override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
-        charging.withDatabase({ database ->
+        reviewIncremental({}, completed)
+    }
+
+    override fun reviewIncremental(
+        onCandidate: (CaptureBatchCandidate) -> Unit,
+        completed: (Result<List<CaptureBatchCandidate>>) -> Unit,
+    ) {
+        charging.runCaptureReview({ database ->
             val client = CaptureSubmissionClientHandle(database)
-            val plan = client.reviewAll(directories.map { it.absolutePath })
             this.client = client
+            val listener = object : MobileCaptureSubmissionBatchReviewListener {
+                override fun onCandidate(candidate: MobileCaptureSubmissionBatchCandidateDto) {
+                    val projected = runCatching { projectCandidate(candidate) }.getOrNull() ?: return
+                    onCandidate(projected)
+                }
+            }
+            val plan = client.reviewAll(
+                managedCaptureDirectories = directories.map { it.absolutePath },
+                listener = listener,
+            )
             this.plan = plan
             plan.candidates().map(::projectCandidate)
         }, completed)
@@ -756,6 +820,7 @@ private class RustCaptureSubmissionBatchOperations(
     }
 
     override fun requestCancel() {
+        client?.cancelReview()
         plan?.requestCancel()
     }
 
@@ -789,6 +854,7 @@ private class RustCaptureSubmissionBatchOperations(
             noteBytes = value.evidence?.noteBytes?.toULong() ?: 0uL,
             screenshotCount = value.evidence?.screenshots ?: 0u,
             receipt = value.status?.receipt?.operationId,
+            checking = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.CHECKING,
         )
     }
 
@@ -848,5 +914,6 @@ private class RustCaptureSubmissionBatchOperations(
         MobileCaptureSubmissionBatchEligibilityDto.TOO_LARGE -> context.getString(R.string.capture_batch_reason_too_large)
         MobileCaptureSubmissionBatchEligibilityDto.CORRUPT -> context.getString(R.string.capture_batch_reason_corrupt)
         MobileCaptureSubmissionBatchEligibilityDto.UNAVAILABLE -> context.getString(R.string.capture_batch_reason_unavailable)
+        MobileCaptureSubmissionBatchEligibilityDto.CHECKING -> context.getString(R.string.capture_batch_reason_checking)
     }
 }

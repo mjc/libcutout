@@ -160,9 +160,9 @@ private struct CaptureSubmissionBatchReviewView: View {
                     if let error = model.error {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(PevColors.warningText)
-                        if model.candidates.isEmpty {
+                        if !model.isSending {
                             Button(localizedAppText("capture.batch.retry_review")) { Task { await model.review() } }
-                                .disabled(model.isReviewing || model.isSending)
+                                .disabled(model.isReviewing)
                         }
                     }
                 }
@@ -217,10 +217,12 @@ private struct CaptureSubmissionBatchReviewView: View {
                                             ? candidate.sourceKind : candidate.skipReason ?? "Unavailable"
                                     )
                                     .font(.subheadline)
-                                    .foregroundStyle(candidate.isEligible ? .secondary : PevColors.warningText)
+                                    .foregroundStyle(
+                                        candidate.isEligible || candidate.isChecking
+                                            ? .secondary : PevColors.warningText)
                                 }
                             }
-                            .disabled(!candidate.isEligible || model.isSending || model.isReviewing)
+                            .disabled(!candidate.isEligible || model.isSending)
                             candidateDisclosure(candidate)
                             if let item = model.itemProgress[candidate.sourceArtifactID] {
                                 Label(
@@ -311,6 +313,8 @@ private struct CaptureSubmissionBatchReviewView: View {
                 Button(localizedAppText("capture.batch.not_now"), role: .cancel) {}
             }
             .task { if model.candidates.isEmpty { await model.review() } }
+            .onDisappear { model.cancelReview() }
+            .interactiveDismissDisabled(model.isSending)
         }
     }
 
@@ -357,6 +361,7 @@ struct CaptureSubmissionBatchCandidate: Identifiable, Equatable, Sendable {
     let sourceKind: String
     let displayName: String?
     let isEligible: Bool
+    let isChecking: Bool
     let skipReason: String?
     let origin: String
     let integrity: String
@@ -396,14 +401,15 @@ struct CaptureSubmissionBatchSummary: Equatable, Sendable {
 
 struct CaptureSubmissionBatchAdapter {
     typealias ProgressUpdate = @MainActor @Sendable (CaptureSubmissionBatchProgress) -> Void
-    var review: @MainActor () async throws -> [CaptureSubmissionBatchCandidate]
+    typealias CandidateUpdate = @MainActor @Sendable (CaptureSubmissionBatchCandidate) -> Void
+    var review: @MainActor (CandidateUpdate) async throws -> [CaptureSubmissionBatchCandidate]
     var sendSelected: @MainActor ([String], @escaping ProgressUpdate) async throws -> CaptureSubmissionBatchSummary
     var requestCancel: @MainActor () -> Void
 
     static var live: CaptureSubmissionBatchAdapter {
         let state = CaptureSubmissionBatchFFIState()
         return CaptureSubmissionBatchAdapter(
-            review: { try await state.review() },
+            review: { onCandidate in try await state.review(onCandidate: onCandidate) },
             sendSelected: { ids, update in try await state.sendSelected(ids, update: update) },
             requestCancel: { state.requestCancel() }
         )
@@ -415,7 +421,9 @@ private final class CaptureSubmissionBatchFFIState {
     private var client: CaptureSubmissionClientHandle?
     private var plan: CaptureSubmissionBatchPlanHandle?
 
-    func review() async throws -> [CaptureSubmissionBatchCandidate] {
+    func review(onCandidate: @escaping CaptureSubmissionBatchAdapter.CandidateUpdate) async throws
+        -> [CaptureSubmissionBatchCandidate]
+    {
         let database = try await RustPersistenceStore.open()
         let client = try CaptureSubmissionClientHandle(database: database)
         let fileManager = FileManager.default
@@ -426,10 +434,15 @@ private final class CaptureSubmissionBatchFFIState {
             documents.path,
             fileManager.temporaryDirectory.appendingPathComponent("CaptureExports", isDirectory: true).path,
         ]
-        let plan = try await client.reviewAll(managedCaptureDirectories: roots)
         self.client = client
-        self.plan = plan
-        return try plan.candidates().map(Self.project)
+        let listener = CaptureSubmissionBatchReviewListenerAdapter(update: onCandidate)
+        return try await withTaskCancellationHandler {
+            let plan = try await client.reviewAll(managedCaptureDirectories: roots, listener: listener)
+            self.plan = plan
+            return try plan.candidates().map(Self.project)
+        } onCancel: {
+            client.cancelReview()
+        }
     }
 
     func sendSelected(
@@ -453,9 +466,12 @@ private final class CaptureSubmissionBatchFFIState {
         )
     }
 
-    func requestCancel() { plan?.requestCancel() }
+    func requestCancel() {
+        client?.cancelReview()
+        plan?.requestCancel()
+    }
 
-    private static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto) throws
+    nonisolated fileprivate static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto) throws
         -> CaptureSubmissionBatchCandidate
     {
         if candidate.eligibility == .eligible,
@@ -476,11 +492,13 @@ private final class CaptureSubmissionBatchFFIState {
                 return included
             } ?? []
         let eligible = candidate.eligibility == .eligible
+        let checking = candidate.eligibility == .checking
         return CaptureSubmissionBatchCandidate(
             sourceArtifactID: candidate.sourceArtifactId,
             sourceKind: sourceKindLabel(candidate.sourceKind),
             displayName: candidate.displayName.isEmpty ? nil : candidate.displayName,
             isEligible: eligible,
+            isChecking: checking,
             skipReason: eligible ? nil : eligibilityLabel(candidate.skipReason ?? candidate.eligibility),
             origin: captureSubmissionOriginLabel(candidate.origin),
             integrity: captureSubmissionIntegrityLabel(candidate.integrity),
@@ -495,7 +513,7 @@ private final class CaptureSubmissionBatchFFIState {
         )
     }
 
-    private static func sourceKindLabel(_ kind: MobileCaptureSubmissionBatchSourceKindDto) -> String {
+    nonisolated private static func sourceKindLabel(_ kind: MobileCaptureSubmissionBatchSourceKindDto) -> String {
         switch kind {
         case .liveCapture: localizedAppText("capture.batch.kind_live")
         case .recordedArtifact: localizedAppText("capture.batch.kind_imported")
@@ -514,6 +532,7 @@ private final class CaptureSubmissionBatchFFIState {
         case .tooLarge: localizedAppText("capture.batch.reason_too_large")
         case .corrupt: localizedAppText("capture.batch.reason_corrupt")
         case .unavailable: localizedAppText("capture.batch.reason_unavailable")
+        case .checking: localizedAppText("capture.batch.reason_checking")
         }
     }
 
@@ -532,6 +551,20 @@ private final class CaptureSubmissionBatchFFIState {
         case .quotaExceeded: "The server has no room for more captures."
         case .cancelled: "The send was cancelled."
         }
+    }
+}
+
+private final class CaptureSubmissionBatchReviewListenerAdapter: MobileCaptureSubmissionBatchReviewListener,
+    Sendable
+{
+    private let update: CaptureSubmissionBatchAdapter.CandidateUpdate
+
+    init(update: @escaping CaptureSubmissionBatchAdapter.CandidateUpdate) { self.update = update }
+
+    func onCandidate(candidate: MobileCaptureSubmissionBatchCandidateDto) {
+        guard let projected = try? CaptureSubmissionBatchFFIState.project(candidate) else { return }
+        let update = self.update
+        Task { @MainActor in update(projected) }
     }
 }
 
@@ -623,6 +656,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
     private(set) var summary: CaptureSubmissionBatchSummary?
     private(set) var failedSourceArtifactIDs: [String] = []
     private var sendAttempt: UInt64 = 0
+    private var userAdjustedSelection = false
     @ObservationIgnored private let adapter: CaptureSubmissionBatchAdapter
     @ObservationIgnored private let onTerminalUpdate: @MainActor () -> Void
 
@@ -641,7 +675,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
     }
 
     var eligibleCount: Int { candidates.filter(\.isEligible).count }
-    var skippedCount: Int { candidates.count - eligibleCount }
+    var skippedCount: Int { candidates.filter { !$0.isEligible && !$0.isChecking }.count }
     var selectedCount: Int { selectedSourceArtifactIDs.count }
     func review() async {
         await review(preselecting: nil)
@@ -652,6 +686,10 @@ final class CaptureSubmissionBatchModel: Identifiable {
         await review(preselecting: Set(failedSourceArtifactIDs))
     }
 
+    func cancelReview() {
+        adapter.requestCancel()
+    }
+
     private func review(preselecting previousFailures: Set<String>?) async {
         guard !isReviewing, !isSending else { return }
         isReviewing = true
@@ -659,30 +697,65 @@ final class CaptureSubmissionBatchModel: Identifiable {
         error = nil
         candidates = []
         selectedSourceArtifactIDs = []
+        userAdjustedSelection = false
         progress = nil
         itemProgress = [:]
         summary = nil
         didFinishSend = false
         defer { isReviewing = false }
         do {
-            let reviewed = try await adapter.review()
+            let reviewed = try await adapter.review { [weak self] candidate in
+                self?.upsertReviewed(candidate, preselecting: previousFailures)
+            }
+            let finished = !Task.isCancelled && !reviewed.contains(where: \.isChecking)
             candidates = reviewed
-            requiresFreshReview = false
-            didRequestStop = false
-            selectedSourceArtifactIDs = Set(
-                reviewed.filter { candidate in
-                    guard candidate.isEligible else { return false }
-                    return previousFailures?.contains(candidate.sourceArtifactID) ?? true
-                }.map(\.sourceArtifactID))
-            failedSourceArtifactIDs = []
-        } catch {
-            self.error = error.localizedDescription
+            let eligible = Set(reviewed.filter(\.isEligible).map(\.sourceArtifactID))
+            if finished && !userAdjustedSelection {
+                selectedSourceArtifactIDs = Set(
+                    reviewed.filter { candidate in
+                        guard candidate.isEligible else { return false }
+                        return previousFailures?.contains(candidate.sourceArtifactID) ?? true
+                    }.map(\.sourceArtifactID))
+            } else {
+                selectedSourceArtifactIDs.formIntersection(eligible)
+            }
+            requiresFreshReview = !finished
+            if finished {
+                didRequestStop = false
+                failedSourceArtifactIDs = []
+            }
+        } catch is CancellationError {
             requiresFreshReview = true
+        } catch {
+            self.error = localizedAppText("capture.batch.review_error")
+            requiresFreshReview = true
+        }
+    }
+
+    private func upsertReviewed(
+        _ candidate: CaptureSubmissionBatchCandidate,
+        preselecting previousFailures: Set<String>?
+    ) {
+        if let index = candidates.firstIndex(where: { $0.sourceArtifactID == candidate.sourceArtifactID }) {
+            if candidates[index].isEligible && candidate.isChecking { return }
+            candidates[index] = candidate
+        } else {
+            candidates.append(candidate)
+        }
+        guard candidate.isEligible else {
+            selectedSourceArtifactIDs.remove(candidate.sourceArtifactID)
+            return
+        }
+        guard !userAdjustedSelection else { return }
+        let allowed = previousFailures?.contains(candidate.sourceArtifactID) ?? true
+        if allowed {
+            selectedSourceArtifactIDs.insert(candidate.sourceArtifactID)
         }
     }
 
     func setSelected(_ selected: Bool, candidate: CaptureSubmissionBatchCandidate) {
         guard candidate.isEligible, !isSending else { return }
+        userAdjustedSelection = true
         if selected {
             selectedSourceArtifactIDs.insert(candidate.sourceArtifactID)
         } else {

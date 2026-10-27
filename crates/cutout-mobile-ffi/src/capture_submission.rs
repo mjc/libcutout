@@ -7,7 +7,7 @@ pub use bulk::*;
 use crate::{RideDatabaseHandle, persistence};
 use cutout_core::{CaptureSubmissionIntegrity, CaptureSubmissionReceipt};
 use http::HttpCaptureTransport;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicBool};
 
 /// A retained capture identity, never a foreign path or eligibility decision.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -437,6 +437,7 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
 pub struct CaptureSubmissionClientHandle {
     database: persistence::RideDatabase,
     transport: HttpCaptureTransport,
+    review_cancel: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for CaptureSubmissionClientHandle {
@@ -465,6 +466,7 @@ impl CaptureSubmissionClientHandle {
         Ok(Arc::new(Self {
             database: database.inner.clone(),
             transport,
+            review_cancel: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -878,6 +880,7 @@ mod tests {
         );
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
+            review_cancel: Arc::new(AtomicBool::new(false)),
             transport: HttpCaptureTransport::loopback("http://127.0.0.1:1/")?,
         };
         let projected = client.status(source).await?.ok_or("status missing")?;
@@ -911,6 +914,7 @@ mod tests {
         let (database, source) = finished_capture(&directory.0)?;
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
+            review_cancel: Arc::new(AtomicBool::new(false)),
             transport: HttpCaptureTransport::loopback("http://127.0.0.1:1/")?,
         };
         assert!(client.status(source.clone()).await?.is_none());
@@ -974,6 +978,7 @@ mod tests {
             .to_owned();
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
+            review_cancel: Arc::new(AtomicBool::new(false)),
             transport: HttpCaptureTransport::loopback(&base_url)?,
         };
         assert!(client.status(source.clone()).await?.is_none());
@@ -1162,6 +1167,7 @@ mod tests {
             });
             let client = CaptureSubmissionClientHandle {
                 database: database.inner.clone(),
+                review_cancel: Arc::new(AtomicBool::new(false)),
                 transport: HttpCaptureTransport::loopback(&base_url)?,
             };
             client

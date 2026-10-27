@@ -42,6 +42,8 @@ pub enum CaptureSubmissionBatchEligibility {
     Corrupt,
     /// The managed source is not available for a bounded read.
     Unavailable,
+    /// The row is listed, and its payload has not been read yet.
+    Checking,
 }
 
 /// Kind of the selected source; aliases collapse onto the canonical source identity.
@@ -243,7 +245,27 @@ impl RideDatabase {
         &self,
         managed_capture_directories: &[PathBuf],
     ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
-        review(self, managed_capture_directories)
+        self.review_capture_submission_batch_with_updates(
+            managed_capture_directories,
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+    }
+
+    /// Lists captures before reading their payloads. `cancel` stops payload reads.
+    /// `on_candidate` runs for the first listing and again when a payload check finishes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a history page cannot be read. A full command queue is waited
+    /// out. One capture's read failure stays on that row.
+    pub fn review_capture_submission_batch_with_updates(
+        &self,
+        managed_capture_directories: &[PathBuf],
+        cancel: Arc<AtomicBool>,
+        on_candidate: &dyn Fn(&CaptureSubmissionBatchCandidate),
+    ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
+        review(self, managed_capture_directories, cancel, on_candidate)
     }
 
     /// Sends only reviewed candidate identities, in one shared serial owner.
@@ -278,18 +300,58 @@ struct ReviewInventory {
     source_indices: HashMap<String, usize>,
     canonical_digests: HashMap<String, String>,
     managed_aliases: HashMap<String, Vec<ManagedFileLocator>>,
+    previews: Vec<DeferredPreview>,
+}
+
+struct DeferredLivePreview {
+    source_id: String,
+    id: LiveCaptureId,
+    entry: super::LiveCaptureHistoryEntry,
+    status: Option<CaptureSubmissionStatus>,
+    evidence: CaptureAttachments,
+}
+
+struct DeferredCanonicalPreview {
+    source_id: String,
+    capture: StoredPevcapCapture,
+    evidence: CaptureAttachments,
+    digest: String,
+}
+
+enum DeferredPreview {
+    Live(Box<DeferredLivePreview>),
+    Canonical(Box<DeferredCanonicalPreview>),
+}
+
+struct ReviewNotify<'a> {
+    cancel: &'a AtomicBool,
+    on_candidate: &'a dyn Fn(&CaptureSubmissionBatchCandidate),
 }
 
 fn review(
     database: &RideDatabase,
     managed_capture_directories: &[PathBuf],
+    cancel: Arc<AtomicBool>,
+    on_candidate: &dyn Fn(&CaptureSubmissionBatchCandidate),
 ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
     let limit = QueryLimit::new(BATCH_HISTORY_PAGE_SIZE)?;
     let mut inventory = ReviewInventory::default();
+    let notify = ReviewNotify {
+        cancel: cancel.as_ref(),
+        on_candidate,
+    };
 
-    collect_live_history(database, limit, &mut inventory)?;
-    collect_canonical_history(database, limit, &mut inventory)?;
-    collect_managed_files(database, managed_capture_directories, &mut inventory)?;
+    collect_live_history(database, limit, &mut inventory, &notify)?;
+    collect_canonical_history(database, limit, &mut inventory, &notify)?;
+    finish_previews(database, &mut inventory, &notify);
+    if !cancel.load(Ordering::Acquire) {
+        collect_managed_files(
+            database,
+            managed_capture_directories,
+            &mut inventory,
+            &notify,
+        )?;
+    }
 
     inventory
         .candidates
@@ -299,44 +361,111 @@ fn review(
         sources: Arc::new(inventory.sources),
         managed_aliases: Arc::new(inventory.managed_aliases),
         database_path: database.path.as_ref().clone(),
-        cancelled: Arc::new(AtomicBool::new(false)),
+        cancelled: cancel,
         running: Arc::new(AtomicBool::new(false)),
     })
+}
+
+fn wait_for_queue<T>(
+    cancel: &AtomicBool,
+    mut operation: impl FnMut() -> Result<T, CaptureSubmissionError>,
+) -> Result<Option<T>, CaptureSubmissionError> {
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        match operation() {
+            Err(CaptureSubmissionError::Storage(super::StorageError::QueueFull)) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(value) => return Ok(Some(value)),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn publish(candidate: &CaptureSubmissionBatchCandidate, notify: &ReviewNotify<'_>) {
+    (notify.on_candidate)(candidate);
+}
+
+/// Queue pressure is retried by [`wait_for_queue`]. Any other outcome stays with the row.
+fn row_result<T>(
+    result: Result<T, CaptureSubmissionError>,
+) -> Result<Result<T, CaptureSubmissionError>, CaptureSubmissionError> {
+    match result {
+        Err(CaptureSubmissionError::Storage(super::StorageError::QueueFull)) => Err(
+            CaptureSubmissionError::Storage(super::StorageError::QueueFull),
+        ),
+        other => Ok(other),
+    }
 }
 
 fn collect_live_history(
     database: &RideDatabase,
     limit: QueryLimit,
     inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
-    let ReviewInventory {
-        candidates,
-        sources,
-        source_indices,
-        canonical_digests,
-        ..
-    } = inventory;
     let mut live_cursor = None;
     loop {
-        let page = database.list_live_capture_history(live_cursor.clone(), limit)?;
+        let Some(page) = wait_for_queue(notify.cancel, || {
+            database
+                .list_live_capture_history(live_cursor.clone(), limit)
+                .map_err(Into::into)
+        })?
+        else {
+            break;
+        };
         for entry in page.captures {
             let source_id = entry.submission.source_artifact_id.clone();
             if entry.submission.source != CaptureSubmissionSource::LiveCapture(entry.id) {
                 return Err(CaptureSubmissionError::InvalidCapture);
             }
-            if source_indices.contains_key(&source_id) {
+            if inventory.source_indices.contains_key(&source_id) {
                 continue;
             }
             let status = entry.submission.status.clone();
             let fingerprint = status_fingerprint(status.as_ref());
-            let (evidence, evidence_failure) =
-                match database.capture_evidence(CaptureSubmissionSource::LiveCapture(entry.id)) {
-                    Ok(evidence) => (evidence, None),
-                    Err(_) => (
-                        CaptureAttachments::default(),
-                        Some(CaptureSubmissionBatchEligibility::Unavailable),
-                    ),
-                };
+            let Some(evidence_read) = wait_for_queue(notify.cancel, || {
+                row_result(
+                    database.capture_evidence(CaptureSubmissionSource::LiveCapture(entry.id)),
+                )
+            })?
+            else {
+                return Ok(());
+            };
+            let (evidence, evidence_failure) = match evidence_read {
+                Ok(evidence) => (evidence, None),
+                Err(_) => (
+                    CaptureAttachments::default(),
+                    Some(CaptureSubmissionBatchEligibility::Unavailable),
+                ),
+            };
+            let already_submitted = status.as_ref().is_some_and(valid_receipt);
+            let failure = if evidence_failure.is_some() {
+                Some(CaptureSubmissionBatchEligibility::Unavailable)
+            } else if already_submitted {
+                None
+            } else if entry.state == LiveCaptureState::Active {
+                Some(CaptureSubmissionBatchEligibility::Active)
+            } else if entry.event_count == 0 {
+                Some(CaptureSubmissionBatchEligibility::Empty)
+            } else if entry.stored_bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
+                Some(CaptureSubmissionBatchEligibility::TooLarge)
+            } else {
+                match validate_live_capture_submission_provenance(&entry) {
+                    Ok(()) => Some(CaptureSubmissionBatchEligibility::Checking),
+                    Err(error) => Some(map_preview_error(&error)),
+                }
+            };
+            let candidate = candidate_for_live(
+                source_id.clone(),
+                &entry,
+                status.clone(),
+                &evidence,
+                None,
+                failure,
+            );
             let source = PlannedSource::LiveCapture {
                 id: entry.id,
                 digest: String::new(),
@@ -344,59 +473,25 @@ fn collect_live_history(
                 status_fingerprint: fingerprint,
                 evidence_fingerprint: evidence_fingerprint(&evidence),
             };
-            let preview = if evidence_failure.is_some() {
-                Err(CaptureSubmissionBatchEligibility::Unavailable)
-            } else if entry.state == LiveCaptureState::Active {
-                Err(CaptureSubmissionBatchEligibility::Active)
-            } else if entry.event_count == 0 {
-                Err(CaptureSubmissionBatchEligibility::Empty)
-            } else if entry.stored_bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
-                Err(CaptureSubmissionBatchEligibility::TooLarge)
-            } else {
-                validate_live_capture_submission_provenance(&entry)
-                    .and_then(|()| preview_live_capture(database, entry.id, &evidence))
-                    .map_err(|error| map_preview_error(&error))
-            };
-            let (summary, failure) = match preview {
-                Ok(summary) => (Some(summary), None),
-                Err(failure) => (None, Some(failure)),
-            };
-            let candidate = candidate_for_live(
-                source_id.clone(),
-                &entry,
-                status,
-                &evidence,
-                summary.as_ref(),
-                failure,
-            );
-            let source = match (source, candidate.source_sha256.as_ref()) {
-                (
-                    PlannedSource::LiveCapture {
-                        id,
-                        status_fingerprint,
-                        evidence_fingerprint,
-                        ..
-                    },
-                    Some(digest),
-                ) => PlannedSource::LiveCapture {
-                    id,
-                    digest: digest.clone(),
-                    bytes: candidate.source_bytes,
-                    status_fingerprint,
-                    evidence_fingerprint,
-                },
-                (source, _) => source,
-            };
-            if let Some(digest) = candidate.source_sha256.clone() {
-                canonical_digests.insert(digest, source_id.clone());
+            if failure == Some(CaptureSubmissionBatchEligibility::Checking) {
+                inventory
+                    .previews
+                    .push(DeferredPreview::Live(Box::new(DeferredLivePreview {
+                        source_id: source_id.clone(),
+                        id: entry.id,
+                        entry: entry.clone(),
+                        status,
+                        evidence: evidence.clone(),
+                    })));
             }
-            let index = candidates.len();
-            source_indices.insert(source_id.clone(), index);
-            sources.insert(source_id, source);
-            candidates.push(candidate);
+            let index = inventory.candidates.len();
+            inventory.source_indices.insert(source_id.clone(), index);
+            inventory.sources.insert(source_id, source);
+            publish(&candidate, notify);
+            inventory.candidates.push(candidate);
         }
         live_cursor = page.next_cursor;
-        if live_cursor.is_none() {
+        if live_cursor.is_none() || notify.cancel.load(Ordering::Acquire) {
             break;
         }
     }
@@ -408,12 +503,23 @@ fn collect_canonical_history(
     database: &RideDatabase,
     limit: QueryLimit,
     inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
     let mut capture_cursor: Option<PevcapCaptureCursor> = None;
     loop {
-        let page = database.list_pevcap_captures(capture_cursor, limit)?;
+        let Some(page) = wait_for_queue(notify.cancel, || {
+            database
+                .list_pevcap_captures(capture_cursor, limit)
+                .map_err(Into::into)
+        })?
+        else {
+            break;
+        };
         for capture in page.captures {
-            collect_canonical_capture(database, &capture, inventory)?;
+            collect_canonical_capture(database, &capture, inventory, notify)?;
+            if notify.cancel.load(Ordering::Acquire) {
+                return Ok(());
+            }
         }
         capture_cursor = page.next_cursor;
         if capture_cursor.is_none() {
@@ -428,6 +534,7 @@ fn collect_canonical_capture(
     database: &RideDatabase,
     capture: &StoredPevcapCapture,
     inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
     let ReviewInventory {
         candidates,
@@ -464,14 +571,60 @@ fn collect_canonical_capture(
             evidence_fingerprint: String::new(),
         }
     };
-    let (evidence, evidence_failure) = match database.capture_evidence(locator) {
+    let Some(evidence_read) = wait_for_queue(notify.cancel, || {
+        row_result(database.capture_evidence(locator))
+    })?
+    else {
+        return Ok(());
+    };
+    let (evidence, evidence_failure) = match evidence_read {
         Ok(evidence) => (evidence, None),
         Err(_) => (
             CaptureAttachments::default(),
             Some(CaptureSubmissionBatchEligibility::Unavailable),
         ),
     };
-    let source = match source {
+    let source = planned_source_with_evidence(source, &evidence);
+    let already_submitted = status.as_ref().is_some_and(valid_receipt);
+    let failure = if evidence_failure.is_some() {
+        evidence_failure
+    } else if already_submitted {
+        None
+    } else if capture.record_count == 0 {
+        Some(CaptureSubmissionBatchEligibility::Empty)
+    } else if capture.artifact_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
+        Some(CaptureSubmissionBatchEligibility::TooLarge)
+    } else {
+        Some(CaptureSubmissionBatchEligibility::Checking)
+    };
+    let deferred_preview =
+        (failure == Some(CaptureSubmissionBatchEligibility::Checking)).then(|| {
+            DeferredPreview::Canonical(Box::new(DeferredCanonicalPreview {
+                source_id: source_id.clone(),
+                capture: capture.clone(),
+                evidence: evidence.clone(),
+                digest: digest.clone(),
+            }))
+        });
+    let candidate =
+        candidate_for_imported(source_id.clone(), capture, status, &evidence, None, failure);
+    canonical_digests.insert(digest, source_id.clone());
+    source_indices.insert(source_id.clone(), candidates.len());
+    sources.insert(source_id, source);
+    publish(&candidate, notify);
+    candidates.push(candidate);
+    if let Some(job) = deferred_preview {
+        inventory.previews.push(job);
+    }
+    Ok(())
+}
+
+fn planned_source_with_evidence(
+    source: PlannedSource,
+    evidence: &CaptureAttachments,
+) -> PlannedSource {
+    let evidence_fingerprint = evidence_fingerprint(evidence);
+    match source {
         PlannedSource::RecordedArtifact {
             locator,
             digest,
@@ -485,7 +638,7 @@ fn collect_canonical_capture(
             bytes,
             encoding,
             status_fingerprint,
-            evidence_fingerprint: evidence_fingerprint(&evidence),
+            evidence_fingerprint,
         },
         PlannedSource::CanonicalCapture {
             locator,
@@ -500,63 +653,162 @@ fn collect_canonical_capture(
             bytes,
             encoding,
             status_fingerprint,
-            evidence_fingerprint: evidence_fingerprint(&evidence),
+            evidence_fingerprint,
         },
         source => source,
+    }
+}
+
+fn finish_previews(
+    database: &RideDatabase,
+    inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
+) {
+    let jobs = std::mem::take(&mut inventory.previews);
+    for job in jobs {
+        if notify.cancel.load(Ordering::Acquire) {
+            break;
+        }
+        match job {
+            DeferredPreview::Live(job) => {
+                let DeferredLivePreview {
+                    source_id,
+                    id,
+                    entry,
+                    status,
+                    evidence,
+                } = *job;
+                let preview = match wait_for_queue(notify.cancel, || {
+                    preview_live_capture(database, id, &evidence)
+                }) {
+                    Ok(None) => break,
+                    Ok(Some(summary)) => Ok(summary),
+                    Err(error) => Err(map_preview_error(&error)),
+                };
+                apply_live_preview(
+                    inventory, notify, source_id, &entry, status, &evidence, preview,
+                );
+            }
+            DeferredPreview::Canonical(job) => {
+                let DeferredCanonicalPreview {
+                    source_id,
+                    capture,
+                    evidence,
+                    digest,
+                } = *job;
+                let preview = match wait_for_queue(notify.cancel, || {
+                    preview_canonical_capture(
+                        database,
+                        &digest,
+                        capture.artifact_size,
+                        capture.encoding,
+                        &evidence,
+                    )
+                }) {
+                    Ok(None) => break,
+                    Ok(Some(summary)) => {
+                        if summary.summary.bytes != capture.artifact_size
+                            || summary.summary.sha256 != digest
+                        {
+                            Err(CaptureSubmissionBatchEligibility::Corrupt)
+                        } else {
+                            Ok(summary)
+                        }
+                    }
+                    Err(error) => Err(map_preview_error(&error)),
+                };
+                apply_imported_preview(inventory, notify, source_id, &capture, &evidence, preview);
+            }
+        }
+    }
+}
+
+fn apply_live_preview(
+    inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
+    source_id: String,
+    entry: &super::LiveCaptureHistoryEntry,
+    status: Option<CaptureSubmissionStatus>,
+    evidence: &CaptureAttachments,
+    preview: Result<ReviewedPayload, CaptureSubmissionBatchEligibility>,
+) {
+    let Some(index) = inventory.source_indices.get(&source_id).copied() else {
+        return;
     };
-    let (summary, failure) = if evidence_failure.is_some() {
-        (None, evidence_failure)
-    } else {
-        preview_canonical_candidate(database, capture, &evidence, &digest)
+    let (summary, failure) = match preview {
+        Ok(summary) => (Some(summary), None),
+        Err(failure) => (None, Some(failure)),
     };
-    let candidate = candidate_for_imported(
+    let mut candidate = candidate_for_live(
         source_id.clone(),
-        capture,
+        entry,
         status,
-        &evidence,
+        evidence,
         summary.as_ref(),
         failure,
     );
-    canonical_digests.insert(digest, source_id.clone());
-    source_indices.insert(source_id.clone(), candidates.len());
-    sources.insert(source_id, source);
-    candidates.push(candidate);
-    Ok(())
+    candidate.alias_count = inventory.candidates[index].alias_count;
+    if let Some(digest) = candidate.source_sha256.clone() {
+        inventory
+            .canonical_digests
+            .insert(digest.clone(), source_id.clone());
+        let updated = match inventory.sources.get(&source_id) {
+            Some(PlannedSource::LiveCapture {
+                id,
+                status_fingerprint,
+                evidence_fingerprint,
+                ..
+            }) => Some(PlannedSource::LiveCapture {
+                id: *id,
+                digest,
+                bytes: candidate.source_bytes,
+                status_fingerprint: status_fingerprint.clone(),
+                evidence_fingerprint: evidence_fingerprint.clone(),
+            }),
+            _ => None,
+        };
+        if let Some(updated) = updated {
+            inventory.sources.insert(source_id, updated);
+        }
+    }
+    inventory.candidates[index] = candidate;
+    publish(&inventory.candidates[index], notify);
 }
 
-fn preview_canonical_candidate(
-    database: &RideDatabase,
+fn apply_imported_preview(
+    inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
+    source_id: String,
     capture: &StoredPevcapCapture,
     evidence: &CaptureAttachments,
-    digest: &str,
-) -> (
-    Option<ReviewedPayload>,
-    Option<CaptureSubmissionBatchEligibility>,
+    preview: Result<ReviewedPayload, CaptureSubmissionBatchEligibility>,
 ) {
-    let preview = if capture.record_count == 0 {
-        Err(CaptureSubmissionBatchEligibility::Empty)
-    } else if capture.artifact_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
-        Err(CaptureSubmissionBatchEligibility::TooLarge)
-    } else {
-        preview_canonical_capture(
-            database,
-            digest,
-            capture.artifact_size,
-            capture.encoding,
-            evidence,
-        )
-        .map_err(|error| map_preview_error(&error))
+    let Some(index) = inventory.source_indices.get(&source_id).copied() else {
+        return;
     };
-    match preview {
+    let status = capture.submission.status.clone();
+    let (summary, failure) = match preview {
         Ok(summary) => (Some(summary), None),
         Err(failure) => (None, Some(failure)),
-    }
+    };
+    let mut candidate = candidate_for_imported(
+        source_id,
+        capture,
+        status,
+        evidence,
+        summary.as_ref(),
+        failure,
+    );
+    candidate.alias_count = inventory.candidates[index].alias_count;
+    inventory.candidates[index] = candidate;
+    publish(&inventory.candidates[index], notify);
 }
 
 fn collect_managed_files(
     database: &RideDatabase,
     managed_capture_directories: &[PathBuf],
     inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
     let mut file_digests = HashMap::<String, String>::new();
     for root in managed_capture_directories {
@@ -592,7 +844,11 @@ fn collect_managed_files(
                 canonical_root.clone(),
                 inventory,
                 &mut file_digests,
+                notify,
             )?;
+            if notify.cancel.load(Ordering::Acquire) {
+                return Ok(());
+            }
         }
     }
 
@@ -605,6 +861,7 @@ fn collect_managed_file(
     root: PathBuf,
     inventory: &mut ReviewInventory,
     file_digests: &mut HashMap<String, String>,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
     let Some((fingerprint, digest)) = inspect_managed_file(&path, &mut inventory.candidates)?
     else {
@@ -625,7 +882,7 @@ fn collect_managed_file(
         register_managed_alias(&source_id, locator, inventory);
         return Ok(());
     }
-    add_managed_capture_candidate(database, locator, inventory, file_digests)
+    add_managed_capture_candidate(database, locator, inventory, file_digests, notify)
 }
 
 fn inspect_managed_file(
@@ -694,11 +951,16 @@ fn add_managed_capture_candidate(
     locator: ManagedFileLocator,
     inventory: &mut ReviewInventory,
     file_digests: &mut HashMap<String, String>,
+    notify: &ReviewNotify<'_>,
 ) -> Result<(), CaptureSubmissionError> {
     let artifact_id = super::legacy_capture_artifact_id(&locator.digest)?;
     let source_id = artifact_id.to_string();
-    let status =
-        database.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id))?;
+    let Some(status) = wait_for_queue(notify.cancel, || {
+        database.capture_submission(CaptureSubmissionSource::RecordedArtifact(artifact_id))
+    })?
+    else {
+        return Ok(());
+    };
     let evidence = CaptureAttachments::default();
     let preview = if locator.bytes > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
         Err(CaptureSubmissionBatchEligibility::TooLarge)
@@ -740,6 +1002,7 @@ fn add_managed_capture_candidate(
     inventory
         .source_indices
         .insert(source_id, inventory.candidates.len());
+    publish(&candidate, notify);
     inventory.candidates.push(candidate);
     Ok(())
 }
@@ -1944,6 +2207,68 @@ mod tests {
                 Ok(())
             })
         }
+    }
+
+    #[test]
+    fn review_lists_captures_before_reading_their_payloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 7);
+        let seen = Mutex::new(Vec::new());
+        let plan = database
+            .review_capture_submission_batch_with_updates(
+                &[],
+                Arc::new(AtomicBool::new(false)),
+                &|candidate| seen.lock().unwrap().push(candidate.eligibility),
+            )
+            .unwrap();
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[
+                CaptureSubmissionBatchEligibility::Checking,
+                CaptureSubmissionBatchEligibility::Eligible,
+            ]
+        );
+        let candidate = plan.candidates().first().expect("reviewed capture");
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert!(candidate.transfer_sha256.is_some());
+        assert!(candidate.transfer_bytes.is_some());
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_stops_payload_reads_when_cancelled() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 8);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let seen = Mutex::new(Vec::new());
+        let cancel_for_callback = Arc::clone(&cancel);
+        let plan = database
+            .review_capture_submission_batch_with_updates(&[], cancel, &|candidate| {
+                seen.lock().unwrap().push(candidate.eligibility);
+                if candidate.eligibility == CaptureSubmissionBatchEligibility::Checking {
+                    cancel_for_callback.store(true, Ordering::Release);
+                }
+            })
+            .unwrap();
+        let eligibilities = seen.lock().unwrap().clone();
+        assert_eq!(
+            eligibilities,
+            vec![CaptureSubmissionBatchEligibility::Checking]
+        );
+        assert_eq!(
+            plan.candidates()
+                .first()
+                .expect("listed capture")
+                .eligibility,
+            CaptureSubmissionBatchEligibility::Checking
+        );
+        assert!(plan.candidates()[0].transfer_sha256.is_none());
+        database.shutdown().unwrap();
     }
 
     fn eligible_ids(plan: &CaptureSubmissionBatchPlan) -> Vec<String> {

@@ -93,6 +93,14 @@ class AndroidChargingClient(
         }
     }
 
+    /** Runs one local capture review away from the charging worker. */
+    internal fun <T> runCaptureReview(
+        operation: suspend (RideDatabaseHandle) -> T,
+        completed: (Result<T>) -> Unit,
+    ) {
+        runCaptureBatch({ operation(runtime.databaseForNativeOwner()) }, completed)
+    }
+
     /** Runs one admitted, long-running capture batch away from charging/database work. */
     internal fun <T> runCaptureBatch(operation: suspend () -> T, completed: (Result<T>) -> Unit) {
         if (closed) {

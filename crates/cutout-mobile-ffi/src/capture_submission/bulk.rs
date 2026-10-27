@@ -5,7 +5,10 @@ use super::{
     MobileCaptureSubmissionStatusDto,
 };
 use crate::{MobileCaptureIntegrityDto, persistence};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, atomic::Ordering},
+};
 
 /// Eligibility for one immutable Rust-reviewed source row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -17,6 +20,8 @@ pub enum MobileCaptureSubmissionBatchEligibilityDto {
     TooLarge,
     Corrupt,
     Unavailable,
+    /// Listed from saved metadata. The payload has not been read yet.
+    Checking,
 }
 
 impl From<persistence::CaptureSubmissionBatchEligibility>
@@ -32,6 +37,7 @@ impl From<persistence::CaptureSubmissionBatchEligibility>
             Eligibility::TooLarge => Self::TooLarge,
             Eligibility::Corrupt => Self::Corrupt,
             Eligibility::Unavailable => Self::Unavailable,
+            Eligibility::Checking => Self::Checking,
         }
     }
 }
@@ -199,6 +205,12 @@ pub trait MobileCaptureSubmissionBatchProgressListener: Send + Sync {
     fn on_progress(&self, progress: MobileCaptureSubmissionBatchProgressDto);
 }
 
+/// Receives one capture when review first lists it, and again when its payload check finishes.
+#[uniffi::export(callback_interface)]
+pub trait MobileCaptureSubmissionBatchReviewListener: Send + Sync {
+    fn on_candidate(&self, candidate: MobileCaptureSubmissionBatchCandidateDto);
+}
+
 /// Aggregate result of one user-confirmed serial operation.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCaptureSubmissionBatchSummaryDto {
@@ -251,6 +263,11 @@ impl CaptureSubmissionBatchPlanHandle {
 #[uniffi::export(async_runtime = "tokio")]
 #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary values")]
 impl CaptureSubmissionClientHandle {
+    /// Stops payload reads for the review in progress. Send uses the same flag once a plan exists.
+    pub fn cancel_review(&self) {
+        self.review_cancel.store(true, Ordering::Release);
+    }
+
     /// Inventories every page and supported app-owned managed root locally for review.
     ///
     /// # Errors
@@ -259,14 +276,21 @@ impl CaptureSubmissionClientHandle {
     pub async fn review_all(
         &self,
         managed_capture_directories: Vec<String>,
+        listener: Box<dyn MobileCaptureSubmissionBatchReviewListener>,
     ) -> Result<Arc<CaptureSubmissionBatchPlanHandle>, MobileCaptureSubmissionError> {
+        self.review_cancel.store(false, Ordering::Release);
         let database = self.database.clone();
+        let cancel = Arc::clone(&self.review_cancel);
         let directories = managed_capture_directories
             .into_iter()
             .map(PathBuf::from)
             .collect::<Vec<_>>();
         let plan = tokio::task::spawn_blocking(move || {
-            database.review_capture_submission_batch(&directories)
+            database.review_capture_submission_batch_with_updates(
+                &directories,
+                cancel,
+                &|candidate| listener.on_candidate(candidate.clone().into()),
+            )
         })
         .await
         .map_err(|_| MobileCaptureSubmissionError::StorageFailure)??;

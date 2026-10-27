@@ -78,7 +78,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
     func testBatchReviewIsLocalAndConfirmationDelegatesOneSharedSend() async {
         let candidate = CaptureSubmissionBatchCandidate(
             sourceArtifactID: "source-a", sourceKind: "Live capture", displayName: "Capture A",
-            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown", integrity: "Unknown",
             sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
             transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
             categories: ["device identifiers"], noteBytes: 4, screenshotCount: 1, receipt: nil
@@ -88,7 +88,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         var terminalUpdates = 0
         let model = CaptureSubmissionBatchModel(
             adapter: CaptureSubmissionBatchAdapter(
-                review: { [candidate] },
+                review: { _ in [candidate] },
                 sendSelected: { ids, update in
                     sends.append(ids)
                     update(
@@ -125,7 +125,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
     func testBatchRetryIgnoresLateProgressFromPreviousAttempt() async {
         let candidate = CaptureSubmissionBatchCandidate(
             sourceArtifactID: "source-a", sourceKind: "Live capture", displayName: nil,
-            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown", integrity: "Unknown",
             sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
             transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
             categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
@@ -135,7 +135,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         var previousUpdate: CaptureSubmissionBatchAdapter.ProgressUpdate?
         let model = CaptureSubmissionBatchModel(
             adapter: CaptureSubmissionBatchAdapter(
-                review: {
+                review: { _ in
                     reviews += 1
                     return [candidate]
                 },
@@ -183,7 +183,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
     func testStoppedBatchRequiresFreshLocalReviewBeforeAnotherSend() async {
         let candidate = CaptureSubmissionBatchCandidate(
             sourceArtifactID: "source-stop", sourceKind: "Live capture", displayName: nil,
-            isEligible: true, skipReason: nil, origin: "Unknown", integrity: "Unknown",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown", integrity: "Unknown",
             sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
             transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
             categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
@@ -192,7 +192,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
         var sends = 0
         var model: CaptureSubmissionBatchModel?
         let adapter = CaptureSubmissionBatchAdapter(
-            review: {
+            review: { _ in
                 reviews += 1
                 return [candidate]
             },
@@ -222,6 +222,80 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertFalse(model?.requiresFreshReview ?? true)
         XCTAssertEqual(reviews, 2)
         XCTAssertEqual(sends, 1, "A fresh local review still does not send before confirmation")
+    }
+
+    func testReviewFailureUsesTheReviewMessageInsteadOfTheRawStorageCase() async {
+        struct StorageCase: Error, LocalizedError {
+            var errorDescription: String? { "cutoutmobileffi.mobilecapturesubmission.storagefailure" }
+        }
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { _ in throw StorageCase() },
+                sendSelected: { _, _ in
+                    CaptureSubmissionBatchSummary(
+                        sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {}
+            ))
+        await model.review()
+        XCTAssertEqual(model.error, localizedAppText("capture.batch.review_error"))
+        XCTAssertFalse(model.error?.localizedCaseInsensitiveContains("storagefailure") ?? false)
+        XCTAssertTrue(model.requiresFreshReview)
+    }
+
+    @MainActor
+    func testReviewListsACaptureWhileItsPayloadIsStillBeingChecked() async {
+        let checking = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "source-check", sourceKind: "Live capture", displayName: "Capture",
+            isEligible: false, isChecking: true, skipReason: "Checking", origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 120, sourceSHA256: nil, transferBytes: nil,
+            transferSHA256: nil, categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let eligible = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "source-check", sourceKind: "Live capture", displayName: "Capture",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let release = AsyncStream<Void>.makeStream()
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { onCandidate in
+                    onCandidate(checking)
+                    for await _ in release.stream { break }
+                    onCandidate(eligible)
+                    return [eligible]
+                },
+                sendSelected: { _, _ in
+                    CaptureSubmissionBatchSummary(
+                        sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {}
+            ))
+        let task = Task { await model.review() }
+        var sawChecking = false
+        for _ in 0..<40 {
+            if model.candidates.contains(where: \.isChecking) {
+                sawChecking = true
+                break
+            }
+            await Task.yield()
+        }
+        XCTAssertTrue(sawChecking)
+        XCTAssertTrue(model.isReviewing)
+        XCTAssertTrue(model.requiresFreshReview)
+        XCTAssertEqual(model.selectedCount, 0)
+        release.continuation.yield(())
+        release.continuation.finish()
+        await task.value
+        XCTAssertFalse(model.isReviewing)
+        XCTAssertEqual(model.candidates.first?.isEligible, true)
+        XCTAssertFalse(model.requiresFreshReview)
+        XCTAssertEqual(model.selectedCount, 1)
+        XCTAssertNil(model.error)
     }
 
     func testRetryUsesThePreparedRustOperationAndNeverPreparesAReplacement() async {

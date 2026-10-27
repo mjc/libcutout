@@ -64,7 +64,7 @@ class LocalCaptureBatchDialogTest {
         try {
             dialog.show()
             shadowOf(Looper.getMainLooper()).idle()
-            assertTrue(containsText(dialog.reviewDialog, "local review failed"))
+            assertTrue(containsText(dialog.reviewDialog, "Could not review saved recordings."))
             assertEquals(0, sends)
             find(dialog.reviewDialog, "captures.batch.retryReview").performClick()
             shadowOf(Looper.getMainLooper()).idle()

@@ -71,6 +71,8 @@
     <string name="capture_batch_reason_too_large">Exceeds the supported size</string>
     <string name="capture_batch_reason_corrupt">Could not be validated</string>
     <string name="capture_batch_reason_unavailable">Source unavailable</string>
+    <string name="capture_batch_reason_checking">Checking</string>
+    <string name="capture_batch_reviewing">Checking which captures can be sent</string>
     <string name="capture_batch_category_identifiers">device and platform identifiers</string>
     <string name="capture_batch_category_location">location</string>
     <string name="capture_batch_category_notes">descriptions and notes</string>
