@@ -1,9 +1,12 @@
 //! Capture lifecycle through the existing session-state owner.
 
-use crate::{CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto, MobileCaptureWriterStatusDto};
+use crate::{
+    CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto, MobileCaptureWriterStatusDto,
+    MobileConnectionAttemptTokenDto,
+};
 use cutout_core::{
     CaptureAttemptSnapshot, CaptureCompletionDisposition, CaptureFinishToken, CaptureGeneration,
-    CaptureOrigin, CaptureStage,
+    CaptureOrigin, CaptureStage, CaptureTransportOwnership, CaptureTransportRelease,
 };
 
 macro_rules! capture_enum {
@@ -21,6 +24,12 @@ macro_rules! capture_enum {
 }
 
 capture_enum!(MobileCaptureOriginDto, CaptureOrigin, Automatic, Manual);
+capture_enum!(
+    MobileCaptureTransportOwnershipDto,
+    CaptureTransportOwnership,
+    Borrowed,
+    CaptureOwned
+);
 capture_enum!(
     MobileCaptureStageDto,
     CaptureStage,
@@ -59,6 +68,20 @@ pub enum MobileCaptureFlushOutcomeDto {
     Failed {
         /// First fatal writer cause.
         message: String,
+    },
+}
+
+/// Rust's decision about transport cleanup after one capture flush.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureTransportReleaseDto {
+    /// The flush was rejected or failed, so retry ownership remains active.
+    Rejected,
+    /// Writer finalization may continue without releasing a transport.
+    WriterOnly,
+    /// Release exactly the connection attempt created for this capture.
+    ReleaseOwnedTransport {
+        /// Connection identity retained when capture ownership was admitted.
+        connection_attempt: MobileConnectionAttemptTokenDto,
     },
 }
 
@@ -209,8 +232,29 @@ impl CutoutSessionStateHandle {
     ) -> Option<MobileCaptureGenerationDto> {
         self.lock_inner()
             .session_state_mut()
-            .capture
-            .begin(origin.into())
+            .begin_capture(origin.into(), CaptureTransportOwnership::Borrowed, None)
+            .map(Into::into)
+    }
+
+    /// Admits a capture together with its native transport-creation observation.
+    pub fn begin_consented_capture(
+        &self,
+        origin: MobileCaptureOriginDto,
+        transport_ownership: MobileCaptureTransportOwnershipDto,
+        connection_attempt: Option<MobileConnectionAttemptTokenDto>,
+    ) -> Option<MobileCaptureGenerationDto> {
+        if !crate::diagnostic_consent::admits_capture_origin(origin) {
+            return None;
+        }
+        let mut inner = self.lock_inner();
+        let state = inner.session_state_mut();
+        let connection_attempt = connection_attempt.map(Into::into);
+        state
+            .begin_capture(
+                origin.into(),
+                transport_ownership.into(),
+                connection_attempt,
+            )
             .map(Into::into)
     }
 
@@ -251,16 +295,23 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileCaptureFinishTokenDto,
         outcome: MobileCaptureFlushOutcomeDto,
-    ) -> bool {
+    ) -> MobileCaptureTransportReleaseDto {
         let succeeded = match outcome {
             MobileCaptureFlushOutcomeDto::Flushed => true,
             MobileCaptureFlushOutcomeDto::Rejected
             | MobileCaptureFlushOutcomeDto::Failed { .. } => false,
         };
-        self.lock_inner()
-            .session_state_mut()
-            .capture
-            .finish_flush(token.into(), succeeded)
+        let mut inner = self.lock_inner();
+        let state = inner.session_state_mut();
+        match state.finish_capture_flush(token.into(), succeeded) {
+            CaptureTransportRelease::Rejected => MobileCaptureTransportReleaseDto::Rejected,
+            CaptureTransportRelease::WriterOnly => MobileCaptureTransportReleaseDto::WriterOnly,
+            CaptureTransportRelease::ReleaseOwnedTransport(token) => {
+                MobileCaptureTransportReleaseDto::ReleaseOwnedTransport {
+                    connection_attempt: (&token).into(),
+                }
+            }
+        }
     }
 
     /// Interprets one flush receipt without native queue or writer-health policy.
@@ -420,6 +471,89 @@ mod tests {
             handle.capture_lifecycle_snapshot().attempt.unwrap().stage,
             MobileCaptureStageDto::SaveFailed
         );
+    }
+
+    #[test]
+    fn borrowed_capture_remains_borrowed_after_record_only_transition() {
+        let handle = CutoutSessionStateHandle::new();
+        let connection = handle.begin_connection_attempt("borrowed".into(), 1);
+        let token = connection.token.unwrap();
+        let generation = handle
+            .begin_consented_capture(
+                MobileCaptureOriginDto::Manual,
+                MobileCaptureTransportOwnershipDto::Borrowed,
+                Some(token.clone()),
+            )
+            .unwrap();
+        assert!(handle.capture_writer_started(generation));
+        handle.set_device_connection_intent(crate::DeviceConnectionIntentDto::RecordOnly);
+        assert_eq!(
+            handle
+                .expire_connection_attempt(token.clone(), 20_000)
+                .readiness,
+            crate::MobileConnectionReadinessDto::RecordOnly
+        );
+        let finish = handle.begin_capture_finish(generation).unwrap();
+        assert_eq!(
+            handle.finish_capture_flush(finish, MobileCaptureFlushOutcomeDto::Flushed),
+            MobileCaptureTransportReleaseDto::WriterOnly
+        );
+        assert!(handle.connection_attempt_is_current(token));
+    }
+
+    #[test]
+    fn capture_owned_manual_attempt_is_admitted_without_verified_protocol_readiness() {
+        let handle = CutoutSessionStateHandle::new();
+        handle.set_device_connection_intent(crate::DeviceConnectionIntentDto::RecordOnly);
+        let connection = handle.begin_connection_attempt("unsupported".into(), 1);
+        let token = connection.token.unwrap();
+        assert_eq!(
+            connection.readiness,
+            crate::MobileConnectionReadinessDto::Pending
+        );
+        let generation = handle
+            .begin_consented_capture(
+                MobileCaptureOriginDto::Manual,
+                MobileCaptureTransportOwnershipDto::CaptureOwned,
+                Some(token.clone()),
+            )
+            .unwrap();
+        assert!(handle.capture_writer_started(generation));
+        let finish = handle.begin_capture_finish(generation).unwrap();
+        assert_eq!(
+            handle.finish_capture_flush(finish, MobileCaptureFlushOutcomeDto::Flushed),
+            MobileCaptureTransportReleaseDto::ReleaseOwnedTransport {
+                connection_attempt: token,
+            }
+        );
+    }
+
+    #[test]
+    fn stale_borrowed_observation_is_rejected_without_reserving_generation() {
+        let handle = CutoutSessionStateHandle::new();
+        let stale = handle
+            .begin_connection_attempt("old".into(), 1)
+            .token
+            .unwrap();
+        handle.begin_connection_attempt("current".into(), 2);
+
+        assert!(
+            handle
+                .begin_consented_capture(
+                    MobileCaptureOriginDto::Manual,
+                    MobileCaptureTransportOwnershipDto::Borrowed,
+                    Some(stale),
+                )
+                .is_none()
+        );
+        let fixture = handle
+            .begin_consented_capture(
+                MobileCaptureOriginDto::Manual,
+                MobileCaptureTransportOwnershipDto::Borrowed,
+                None,
+            )
+            .unwrap();
+        assert_eq!(fixture.value, 1);
     }
 
     #[test]

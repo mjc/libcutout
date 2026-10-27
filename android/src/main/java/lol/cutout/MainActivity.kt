@@ -147,6 +147,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume(); resumed = true
         client.observe(::render)
+        client.diagnostics.deduplicateManagedCaptureFiles()
         app.music.refreshSessions()
         app.refreshPhoneAlarmAuthorization()
         app.locations.setAuthorizationEvidence(if (preferences.getBoolean("location.asked", false))

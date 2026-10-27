@@ -39,9 +39,8 @@ can cancel an operation before upload completes; later PUT retries cannot
 recreate it. Wrong-owner access returns not found. Private capture review needs
 the separately provisioned `identity --private-capture-reviewer` capability;
 charging moderation alone does not permit access. The upload API permits up to
-100 MB (100,000,000 bytes) per capture, 1 GiB retained per owner, and 10 GiB
-retained globally, with two concurrent transfers globally, one per account, and
-bounded request budgets.
+100 MB (100,000,000 bytes) per capture. Retained captures have no per-owner or
+global byte cap, and capture uploads are not rate limited.
 It uses private staging
 files, removed on failure and reclaimed on service startup, then commits bytes
 and the receipt together in SQLite. Request cancellation can race with a

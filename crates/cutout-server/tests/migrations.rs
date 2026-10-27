@@ -32,7 +32,7 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
     let path = directory.path().join("future.sqlite");
     let connection = Connection::open(&path).expect("database");
     connection
-        .pragma_update(None, "user_version", 7)
+        .pragma_update(None, "user_version", 8)
         .expect("future version");
     assert_eq!(
         Store::open(&path).expect_err("future schema rejected"),
@@ -41,7 +41,7 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn schema_one_receives_signup_account_deletion_sync_and_removal_migrations() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     let (token_hash, revoked_at_ms): (String, Option<u64>) = connection
         .query_row(
             "SELECT token_hash, revoked_at_ms FROM contributors
@@ -172,7 +172,7 @@ fn assert_retained_signup_data(connection: &Connection, version: u32) {
     let actual: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(actual, 6);
+    assert_eq!(actual, 7);
     let (role,review):(String,bool)=connection.query_row("SELECT role,private_capture_review FROM contributors WHERE id='00000000-0000-4000-8000-000000000002'",[],|row|Ok((row.get(0)?,row.get(1)?))).expect("moderator");
     assert_eq!(role, "moderator");
     assert!(
@@ -308,4 +308,108 @@ fn unpublished_capture_schema_three_is_refused_without_mutating_its_data() {
         )
         .expect("no partial migration");
     assert_eq!(signup_tables, 0);
+}
+
+fn schema_six_with_capture_blobs(path: &std::path::Path) {
+    let connection = Connection::open(path).expect("database");
+    for migration in [
+        include_str!("../migrations/001_directory.sql"),
+        include_str!("../migrations/002_account_deletion.sql"),
+        include_str!("../migrations/003_alpha_signup.sql"),
+        include_str!("../migrations/004_alpha_signup_sync.sql"),
+        include_str!("../migrations/005_alpha_signup_removal.sql"),
+        include_str!("../migrations/006_private_capture_submissions.sql"),
+    ] {
+        connection.execute_batch(migration).expect("schema six");
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO contributors(id,token_hash,role,created_at_ms)
+             VALUES('00000000-0000-4000-8000-000000000002','retained-hash','contributor',1);
+             INSERT INTO capture_submissions(
+                operation_id,owner_id,metadata,receipt,summary,bytes,payload)
+             VALUES('00000000-0000-4000-8000-000000000009',
+                '00000000-0000-4000-8000-000000000002','{}','{}','{}',4,X'01020304');
+             INSERT INTO capture_submissions(
+                operation_id,owner_id,metadata,receipt,summary,bytes,payload)
+             VALUES('00000000-0000-4000-8000-00000000000b',
+                '00000000-0000-4000-8000-000000000002','{}','{}','{}',3,X'0a0b0c');
+             INSERT INTO capture_submissions(operation_id,owner_id,deleted)
+             VALUES('00000000-0000-4000-8000-00000000000a',
+                '00000000-0000-4000-8000-000000000002',1);",
+        )
+        .expect("schema six captures");
+}
+
+fn capture_object_directory(database: &std::path::Path) -> std::path::PathBuf {
+    let mut objects = database
+        .canonicalize()
+        .expect("database path")
+        .into_os_string();
+    objects.push(".capture-objects");
+    std::path::PathBuf::from(objects)
+}
+
+#[test]
+fn schema_six_capture_blobs_move_into_files_and_a_finished_file_is_kept() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("schema-six.sqlite");
+    schema_six_with_capture_blobs(&path);
+    let objects = capture_object_directory(&path);
+    let kept = objects.join("00000000-0000-4000-8000-000000000009");
+    std::fs::create_dir(&objects).expect("objects from an interrupted extract");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o700))
+            .expect("private object directory");
+    }
+    std::fs::write(&kept, b"\x01\x02\x03\x04").expect("already extracted bytes");
+    assert!(
+        Store::open_existing(&path).is_err(),
+        "schema six must not migrate in existing-only mode"
+    );
+
+    drop(Store::open(&path).expect("move blobs to files"));
+    let connection = Connection::open(&path).expect("migrated database");
+    let version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("version");
+    assert_eq!(version, 7);
+    let payload_column: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('capture_submissions') WHERE name='payload'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("payload column");
+    assert_eq!(payload_column, 0);
+    let (bytes, deleted_rows): (u64, u64) = connection
+        .query_row(
+            "SELECT coalesce(sum(bytes),0), coalesce(sum(deleted),0) FROM capture_submissions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("retained rows");
+    assert_eq!((bytes, deleted_rows), (7, 1));
+    assert_eq!(
+        std::fs::read(&kept).expect("capture file"),
+        b"\x01\x02\x03\x04"
+    );
+    assert_eq!(
+        std::fs::read(objects.join("00000000-0000-4000-8000-00000000000b"))
+            .expect("extracted blob"),
+        b"\x0a\x0b\x0c"
+    );
+    assert!(
+        !objects
+            .join("00000000-0000-4000-8000-00000000000a")
+            .exists()
+    );
+    drop(connection);
+    assert!(Store::open(&path).is_ok(), "file migration must not repeat");
+    assert_eq!(
+        std::fs::read(kept).expect("file survives reopen"),
+        b"\x01\x02\x03\x04"
+    );
 }

@@ -8,6 +8,7 @@ use std::{
 use crate::{
     MobileCaptureOriginDto, MobileCaptureWriteOutcomeDto, MobilePevcapCaptureBuilder,
     MobileTransportWriteLimitDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
+    diagnostic_consent::admits_capture_origin,
 };
 
 /// Native observations for one capture startup; Rust owns normalization and admission.
@@ -40,7 +41,7 @@ pub enum MobileCaptureStartError {
     AlreadyStarted,
     #[error("capture writer could not start")]
     WriterStartFailed,
-    #[error("automatic diagnostic recording requires consent")]
+    #[error("diagnostic captures require an explicit manual start")]
     AutomaticRecordingDisabled,
 }
 
@@ -48,18 +49,7 @@ pub enum MobileCaptureStartError {
 struct PreparedCaptureWriter {
     builder: Arc<MobilePevcapCaptureBuilder>,
     path: String,
-    database: Option<Arc<RideDatabaseHandle>>,
     origin: MobileCaptureOriginDto,
-}
-
-fn admits_recording(origin: MobileCaptureOriginDto, database: Option<&RideDatabaseHandle>) -> bool {
-    origin == MobileCaptureOriginDto::Manual
-        || database.is_some_and(|database| {
-            database
-                .inner
-                .automatic_diagnostic_recording_enabled()
-                .unwrap_or(false)
-        })
 }
 
 /// Admitted startup metadata. The writer remains untouched until `start` consumes it.
@@ -150,7 +140,7 @@ fn startup_owned_annotation(annotation: &str) -> bool {
 ///
 /// # Errors
 /// Rejects an invalid clock/path/nonce, truncated service evidence, contradictory
-/// startup annotations, missing automatic-diagnostic consent, or metadata that
+/// startup annotations, a non-manual origin, or metadata that
 /// consumes reserved label-closure space.
 #[uniffi::export]
 pub fn prepare_capture_writer(
@@ -216,11 +206,11 @@ pub fn prepare_capture_writer(
             return Err(MobileCaptureStartError::InvalidMetadata);
         }
     }
-    if !admits_recording(request.origin, database.as_deref()) {
+    if !admits_capture_origin(request.origin) {
         return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
     }
-    if let Some(database) = database.as_ref()
-        && !builder.set_database(Arc::clone(database))
+    if let Some(database) = database
+        && !builder.set_database(database)
     {
         return Err(MobileCaptureStartError::InvalidMetadata);
     }
@@ -228,7 +218,6 @@ pub fn prepare_capture_writer(
         prepared: Mutex::new(Some(PreparedCaptureWriter {
             builder,
             path: path.to_string_lossy().into_owned(),
-            database,
             origin: request.origin,
         })),
     }))
@@ -239,8 +228,8 @@ impl MobilePreparedCaptureStart {
     /// Consumes admitted preparation once, including when the actual writer cannot start.
     ///
     /// # Errors
-    /// Returns `AlreadyStarted` for reuse, `AutomaticRecordingDisabled` after consent
-    /// withdrawal, and `WriterStartFailed` for writer admission failure.
+    /// Returns `AlreadyStarted` for reuse, rejects automatic origins, and returns
+    /// `WriterStartFailed` for writer admission failure.
     pub fn start(
         &self,
         monotonic_ms: u64,
@@ -251,7 +240,7 @@ impl MobilePreparedCaptureStart {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .ok_or(MobileCaptureStartError::AlreadyStarted)?;
-        if !admits_recording(prepared.origin, prepared.database.as_deref()) {
+        if !admits_capture_origin(prepared.origin) {
             return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
         }
         if !prepared
@@ -321,40 +310,46 @@ mod tests {
     }
 
     #[test]
-    fn automatic_capture_requires_consent_before_writer_preparation() {
-        let directory = Directory::new();
-        let mut request = request(&directory);
-        request.origin = MobileCaptureOriginDto::Automatic;
-        assert!(prepare_capture_writer(request, None).is_err());
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn automatic_capture_rechecks_persisted_consent_at_writer_start_and_fails_closed() {
+    fn automatic_capture_is_rejected_even_when_legacy_consent_is_enabled() {
         let directory = Directory::new();
         let database_path = directory.0.join("rides.sqlite");
         let database =
             crate::open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
-        let mut request = request(&directory);
-        request.origin = MobileCaptureOriginDto::Automatic;
-        assert_eq!(
-            prepare_capture_writer(request.clone(), Some(Arc::clone(&database))).err(),
-            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
-        );
         database
             .inner
             .save_automatic_diagnostic_recording_enabled(true)
             .unwrap();
-        let prepared =
-            prepare_capture_writer(request.clone(), Some(Arc::clone(&database))).unwrap();
-        database
-            .inner
-            .save_automatic_diagnostic_recording_enabled(false)
-            .unwrap();
+        let files_before = fs::read_dir(&directory.0).unwrap().count();
+        let mut request = request(&directory);
+        request.origin = MobileCaptureOriginDto::Automatic;
+        assert_eq!(
+            prepare_capture_writer(request, Some(Arc::clone(&database))).err(),
+            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
+        );
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), files_before);
+        let wall_clock = wall_clock_unix_milliseconds(1_700_000_000.0).unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(
+            wall_clock,
+            "legacy-automatic-device".to_owned(),
+            Some(MobileTransportWriteLimitDto { bytes: 23 }),
+        );
+        assert!(builder.set_recording_origin(MobileCaptureOriginDto::Automatic));
+        let prepared = MobilePreparedCaptureStart {
+            prepared: Mutex::new(Some(PreparedCaptureWriter {
+                builder,
+                path: directory
+                    .0
+                    .join("legacy.jsonl")
+                    .to_string_lossy()
+                    .into_owned(),
+                origin: MobileCaptureOriginDto::Automatic,
+            })),
+        };
         assert_eq!(
             prepared.start(100).err(),
             Some(MobileCaptureStartError::AutomaticRecordingDisabled)
         );
+        assert!(!directory.0.join("legacy.jsonl").exists());
         let sql = rusqlite::Connection::open(&database_path).unwrap();
         assert_eq!(
             sql.query_row("SELECT COUNT(*) FROM live_capture_sessions", [], |row| row
@@ -366,10 +361,21 @@ mod tests {
         );
         drop(sql);
         database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn manual_capture_is_available_without_recording_preference_for_any_device_id() {
+        let directory = Directory::new();
+        let mut request = request(&directory);
+        request.platform_id = "supported-model-without-special-casing".to_owned();
+        request.origin = MobileCaptureOriginDto::Manual;
+        let prepared = prepare_capture_writer(request, None).unwrap();
+        let started = prepared.start(100).unwrap();
         assert_eq!(
-            prepare_capture_writer(request, Some(database)).err(),
-            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
+            Path::new(&started.path).extension(),
+            Some(std::ffi::OsStr::new("jsonl"))
         );
+        let _ = finished_capture(&started);
     }
 
     #[test]
@@ -470,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_start_reserves_policy_and_active_label_closure_at_exact_capacity() {
+    fn manual_capture_reserves_active_label_closure_at_exact_capacity() {
         let directory = Directory::new();
         let database_path = directory.0.join("rides.sqlite");
         let database =
@@ -480,12 +486,12 @@ mod tests {
             .save_automatic_diagnostic_recording_enabled(true)
             .unwrap();
         let mut request = request(&directory);
-        request.origin = MobileCaptureOriginDto::Automatic;
+        request.origin = MobileCaptureOriginDto::Manual;
         request
             .annotations
             .push("capture_label=ride_start".to_owned());
-        // Four startup annotations, one automatic policy and one reserved stop.
-        let padding = cutout_core::PEVCAP_MAX_ANNOTATIONS - 6 - request.annotations.len();
+        // Four startup annotations, the active start label and one reserved stop.
+        let padding = cutout_core::PEVCAP_MAX_ANNOTATIONS - 5 - request.annotations.len();
         request
             .annotations
             .extend((0..padding).map(|index| format!("note={index}")));
@@ -523,9 +529,9 @@ mod tests {
             0
         );
         assert!(
-            annotations
+            !annotations
                 .iter()
-                .any(|annotation| annotation == "capture_recording_policy=material_changes")
+                .any(|annotation| annotation.starts_with("capture_recording_policy="))
         );
         assert_eq!(
             sql.query_row("SELECT COUNT(*) FROM live_capture_sessions", [], |row| row

@@ -11,13 +11,38 @@ import android.widget.*
 import uniffi.cutout_mobile_ffi.*
 import java.io.ByteArrayOutputStream
 
+internal fun captureSubmissionEvidenceIsReviewable(loaded: Boolean, working: Boolean, dirty: Boolean): Boolean =
+    loaded && !working && !dirty
+
+internal fun captureSubmissionOriginLabel(context: Context, origin: MobileCaptureSubmissionOriginDto): String = when (origin) {
+    MobileCaptureSubmissionOriginDto.AUTOMATIC -> context.getString(R.string.capture_send_origin_automatic)
+    MobileCaptureSubmissionOriginDto.MANUAL -> context.getString(R.string.capture_send_origin_manual)
+    MobileCaptureSubmissionOriginDto.UNKNOWN -> context.getString(R.string.capture_send_origin_unknown)
+}
+
+internal fun captureSubmissionIntegrityLabel(context: Context, integrity: MobileCaptureIntegrityDto): String = when (integrity) {
+    MobileCaptureIntegrityDto.Complete -> context.getString(R.string.capture_complete)
+    is MobileCaptureIntegrityDto.Incomplete -> context.getString(R.string.capture_incomplete)
+    MobileCaptureIntegrityDto.Unknown -> context.getString(R.string.capture_integrity_unknown)
+}
+
 /** Native editing and image effects; Rust owns limits, persistence and immutable Send. */
 internal class CaptureEvidenceDialog(
     private val context: Context,
     private val charging: AndroidChargingClient,
     private val source: MobileCaptureSubmissionSourceDto,
     private val pickImages: (((List<Uri>) -> Unit) -> Unit)?,
+    private val onReceiptConfirmed: () -> Unit = {},
+    private val onStatusChanged: () -> Unit = {},
+    private val testOperations: TestOperations? = null,
 ) {
+    internal class TestOperations(
+        val load: () -> Pair<MobileCaptureSubmissionStatusDto?, MobileCaptureEvidenceDto>,
+        val prepare: () -> MobileCaptureSubmissionStatusDto,
+        val send: (String, MobileCaptureSubmissionProgressListener) -> MobileCaptureSubmissionStatusDto,
+        val remove: ((String, Boolean) -> MobileCaptureSubmissionStatusDto)? = null,
+    )
+
     private val ui = CutoutUi(context)
     private val content = ui.column()
     private val note = EditText(context).apply {
@@ -27,7 +52,7 @@ internal class CaptureEvidenceDialog(
     }
     private val count = ui.text("0 / 1024 bytes", 13f, color = ui.muted)
     private val images = ui.column()
-    private val message = ui.text("", 14f, color = ui.muted)
+    private val message = ui.text("", 14f, color = ui.muted).apply { tag = "captures.send.error" }
     private val sendProgress = CaptureSendProgressView(context)
     private var screenshots = listOf<ByteArray>()
     private var status: MobileCaptureSubmissionStatusDto? = null
@@ -37,26 +62,29 @@ internal class CaptureEvidenceDialog(
     private var dismissed = false
     private var noteLimit = 1024
     private var screenshotLimit = 4
+    internal var currentDialog: AlertDialog? = null
+        private set
+    internal var confirmationDialog: AlertDialog? = null
+        private set
+    internal var removalConfirmationDialog: AlertDialog? = null
+        private set
     private val add = ui.action("Add screenshots") { pickImages?.invoke(::importImages) }
     private val save = ui.action("Save note and screenshots") { save() }
-    private val send = ui.action("Review private Send", primary = true) { review() }
-    private val remove = ui.action("Cancel Send") {
-        val next = status
-        if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT || next?.phase == MobileCaptureSubmissionPhaseDto.DELETING) {
-            AlertDialog.Builder(context).setTitle("Delete the sent copy?")
-                .setMessage("Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain.")
-                .setNegativeButton("Keep sent copy", null).setPositiveButton("Delete sent copy") { _, _ -> removeSent(true) }.show()
-        } else removeSent(false)
-    }
+    private val retryLoad = ui.action(context.getString(R.string.capture_retry_notes)) { refresh() }
+        .apply { tag = "captures.evidence.retry" }
+    private val send = ui.action(context.getString(R.string.capture_review_private_send), primary = true) { review() }
+        .apply { tag = "captures.send.review" }
+    private val remove = ui.action("Cancel Send") { removeSent(false) }.apply { tag = "captures.send.remove" }
 
     fun show() {
         content.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(20))
         content.addView(note); content.addView(count); content.addView(images)
-        content.addView(add); content.addView(save); content.addView(send); content.addView(sendProgress)
+        content.addView(add); content.addView(save); content.addView(retryLoad); content.addView(send); content.addView(sendProgress)
         content.addView(remove); content.addView(message)
         val dialog = AlertDialog.Builder(context).setTitle("Recording notes")
             .setView(ScrollView(context).apply { addView(content) })
             .setNegativeButton("Close", null).create()
+        currentDialog = dialog
         dialog.setOnDismissListener {
             dismissed = true
             sendProgress.clear()
@@ -86,12 +114,19 @@ internal class CaptureEvidenceDialog(
         add.text = "Add screenshots (${screenshots.size}/$screenshotLimit)"
         add.isEnabled = loaded && !working && editable() && screenshots.size < screenshotLimit && pickImages != null
         save.isEnabled = loaded && !working && editable() && dirty && bytes <= noteLimit
-        send.isEnabled = loaded && !working && !dirty && status?.phase !in setOf(
+        retryLoad.visibility = if (!loaded && !working) android.view.View.VISIBLE else android.view.View.GONE
+        retryLoad.isEnabled = !working
+        send.isEnabled = captureSubmissionEvidenceIsReviewable(loaded, working, dirty) && status?.phase !in setOf(
             MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
             MobileCaptureSubmissionPhaseDto.REJECTED, MobileCaptureSubmissionPhaseDto.CANCELLING,
-            MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)
-        remove.visibility = if (status == null || status?.phase in setOf(MobileCaptureSubmissionPhaseDto.CANCELLED, MobileCaptureSubmissionPhaseDto.DELETED)) android.view.View.GONE else android.view.View.VISIBLE
-        remove.text = if (status?.phase in setOf(MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING)) "Delete sent copy" else "Cancel Send"
+            MobileCaptureSubmissionPhaseDto.DELETED)
+        remove.visibility = if (status == null || status?.phase in setOf(
+            MobileCaptureSubmissionPhaseDto.SENT,
+            MobileCaptureSubmissionPhaseDto.DELETING,
+            MobileCaptureSubmissionPhaseDto.CANCELLED,
+            MobileCaptureSubmissionPhaseDto.DELETED,
+        )) android.view.View.GONE else android.view.View.VISIBLE
+        remove.text = "Cancel Send"
         remove.isEnabled = !working
     }
 
@@ -125,13 +160,30 @@ internal class CaptureEvidenceDialog(
         }
     }
 
-    private fun refresh() = run({ database ->
-        CaptureSubmissionClientHandle(database).use { client -> client.status(source) to client.evidence(source) }
-    }) { (next, evidence) ->
+    private fun refresh() {
+        val test = testOperations
+        if (test != null) {
+            runTestOperation(test.load) { (next, evidence) -> applyEvidence(next, evidence) }
+        } else {
+            run({ database ->
+                CaptureSubmissionClientHandle(database).use { client -> client.status(source) to client.evidence(source) }
+            }) { (next, evidence) -> applyEvidence(next, evidence) }
+        }
+    }
+
+    private fun applyEvidence(next: MobileCaptureSubmissionStatusDto?, evidence: MobileCaptureEvidenceDto) {
         status = next; note.setText(evidence.note); screenshots = evidence.screenshots
         noteLimit = evidence.noteLimitBytes.toInt(); screenshotLimit = evidence.screenshotLimit.toInt()
         loaded = true; dirty = false
-        message.text = if (next?.phase == MobileCaptureSubmissionPhaseDto.SENT) "Received privately · ${next.receipt?.operationId.orEmpty()}" else ""
+        message.text = when (next?.localPayloadState) {
+            MobileCaptureSubmissionLocalPayloadStateDto.REMOVAL_PENDING -> "Received privately · ${next.receipt?.operationId.orEmpty()} · Removing local capture payload"
+            MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> context.getString(R.string.capture_sent_local_deleted)
+            else -> when (next?.phase) {
+                MobileCaptureSubmissionPhaseDto.SENT -> "Received privately · ${next.receipt?.operationId.orEmpty()}"
+                MobileCaptureSubmissionPhaseDto.CANCELLED -> "Send cancelled"
+                else -> ""
+            }
+        }
     }
 
     private fun save() {
@@ -145,9 +197,18 @@ internal class CaptureEvidenceDialog(
         }
     }
 
-    private fun review() = run({ database ->
-        CaptureSubmissionClientHandle(database).use { it.prepare(source) }
-    }) { prepared ->
+    private fun review() {
+        val test = testOperations
+        if (test != null) {
+            runTestOperation(test.prepare) { showSendConfirmation(it) }
+        } else {
+            run({ database -> CaptureSubmissionClientHandle(database).use { it.prepare(source) } }) {
+                showSendConfirmation(it)
+            }
+        }
+    }
+
+    private fun showSendConfirmation(prepared: MobileCaptureSubmissionStatusDto) {
         status = prepared
         val categories = buildList {
             add("raw Bluetooth evidence, event order and timing")
@@ -158,28 +219,68 @@ internal class CaptureEvidenceDialog(
             if (prepared.categories.settingsObservations) add("user-entered settings values")
             if (screenshots.isNotEmpty()) add("${screenshots.size} selected screenshots")
         }
-        AlertDialog.Builder(context).setTitle("Send this capture privately?")
-            .setMessage("Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. Your original recording stays on this device.")
+        val confirmation = AlertDialog.Builder(context).setTitle("Send this capture privately?")
+            .setMessage("Origin: ${captureSubmissionOriginLabel(context, prepared.origin)}. Integrity: ${captureSubmissionIntegrityLabel(context, prepared.integrity)}. Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. A matching receipt starts removal of the local capture payload.")
             .setNegativeButton("Not now", null)
-            .setPositiveButton("Send privately") { _, _ ->
+            .setPositiveButton("Send privately", null)
+            .create()
+        confirmationDialog = confirmation
+        confirmation.setOnShowListener {
+            confirmation.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                confirmation.dismiss()
                 message.text = ""
                 val listener = sendProgress.begin(prepared.operationId)
-                run({ database ->
+                val test = testOperations
+                if (test != null) {
+                    runTestOperation({ test.send(prepared.operationId, listener) }, onFinished = {
+                        sendProgress.clear()
+                    }) { publishSendResult(it) }
+                } else run({ database ->
                     val credential = charging.captureCredential()
                     CaptureSubmissionClientHandle(database).use { client ->
                         client.sendWithProgress(prepared.operationId, credential.identityId, credential.token, listener)
                     }
                 }, onFinished = {
                     sendProgress.clear()
-                }) { next ->
-                    status = next
-                    message.text = if (next.receipt != null) "Received privately · ${next.receipt!!.operationId}" else "Send has not completed. Retry to confirm its receipt."
-                }
-            }.show()
+                }) { publishSendResult(it) }
+            }
+        }
+        confirmation.show()
+    }
+
+    private fun publishSendResult(next: MobileCaptureSubmissionStatusDto) {
+        status = next
+        if (next.phase == MobileCaptureSubmissionPhaseDto.SENT && next.receipt != null) {
+            onReceiptConfirmed()
+            message.text = "Received privately · ${next.receipt!!.operationId} · Removing local capture payload"
+        } else {
+            message.text = "Send has not completed. Retry to confirm its receipt."
+        }
+        onStatusChanged()
+    }
+
+    private fun <T> runTestOperation(operation: () -> T, done: (T) -> Unit) =
+        runTestOperation(operation, onFinished = {}, done = done)
+
+    private fun <T> runTestOperation(operation: () -> T, onFinished: () -> Unit, done: (T) -> Unit) {
+        if (working || dismissed) return
+        working = true; update()
+        runCatching(operation).onSuccess(done).onFailure { message.text = it.message ?: "The recording could not be updated." }
+        onFinished()
+        working = false; renderImages(); update()
     }
 
     private fun removeSent(deleting: Boolean) {
         val operation = status?.operationId ?: return
+        val testRemove = testOperations?.remove
+        if (testRemove != null) {
+            runTestOperation({ testRemove(operation, deleting) }) { next ->
+                status = next
+                onStatusChanged()
+                message.text = if (next.phase == MobileCaptureSubmissionPhaseDto.DELETED) "Sent copy deleted" else if (next.phase == MobileCaptureSubmissionPhaseDto.CANCELLED) "Send cancelled" else "Removal is pending. Retry to confirm it."
+            }
+            return
+        }
         run({ database ->
             val credential = charging.existingCaptureCredential()
             CaptureSubmissionClientHandle(database).use { client ->
@@ -190,6 +291,7 @@ internal class CaptureEvidenceDialog(
             }
         }) { next ->
             status = next
+            onStatusChanged()
             message.text = if (next.phase == MobileCaptureSubmissionPhaseDto.DELETED) "Sent copy deleted" else if (next.phase == MobileCaptureSubmissionPhaseDto.CANCELLED) "Send cancelled" else "Removal is pending. Retry to confirm it."
         }
     }

@@ -144,64 +144,72 @@ impl Store {
     }
 
     pub(crate) async fn delete_current(&self, token: String) -> Result<DeletionReceipt, Error> {
-        self.call(move |connection| {
-            let transaction = begin_write(connection)?;
-            let now = now_ms()?;
-            purge_expired_deletion_receipts(&transaction, now)?;
-            let token = match ContributorTokenHash::from_token(&token) {
-                Ok(token) => token,
-                Err(error) => {
+        let objects = self.capture_objects.clone();
+        let (receipt, capture_ids) = self
+            .call(move |connection| {
+                let transaction = begin_write(connection)?;
+                let now = now_ms()?;
+                purge_expired_deletion_receipts(&transaction, now)?;
+                let token = match ContributorTokenHash::from_token(&token) {
+                    Ok(token) => token,
+                    Err(error) => {
+                        transaction.commit().map_err(db_error)?;
+                        return Err(error);
+                    }
+                };
+                if let Some(receipt) = completed_deletion(&transaction, &token, now)? {
                     transaction.commit().map_err(db_error)?;
-                    return Err(error);
+                    return Ok((receipt, Vec::new()));
                 }
-            };
-            if let Some(receipt) = completed_deletion(&transaction, &token, now)? {
-                transaction.commit().map_err(db_error)?;
-                return Ok(receipt);
-            }
-            let actor = match deletion_actor(&transaction, &token) {
-                Ok(actor) => actor,
-                Err(error @ Error::Unauthorized) => {
-                    transaction.commit().map_err(db_error)?;
-                    return Err(error);
-                }
-                Err(error) => return Err(error),
-            };
+                let actor = match deletion_actor(&transaction, &token) {
+                    Ok(actor) => actor,
+                    Err(error @ Error::Unauthorized) => {
+                        transaction.commit().map_err(db_error)?;
+                        return Err(error);
+                    }
+                    Err(error) => return Err(error),
+                };
 
-            let affected_spots = deletion_affected_spots(&transaction, &actor.id)?;
-            retain_public_spots(&transaction, &actor.id)?;
-            delete_private_account_data(&transaction, &actor.id)?;
-            for spot_id in affected_spots {
-                let sequence = next_change(&transaction)?;
+                let affected_spots = deletion_affected_spots(&transaction, &actor.id)?;
+                let capture_ids = capture_operation_ids(&transaction, &actor.id)?;
+                retain_public_spots(&transaction, &actor.id)?;
+                delete_private_account_data(&transaction, &actor.id)?;
+                for spot_id in affected_spots {
+                    let sequence = next_change(&transaction)?;
+                    transaction
+                        .execute(
+                            "UPDATE spots SET change_sequence = ?2 WHERE id = ?1",
+                            params![spot_id, sequence],
+                        )
+                        .map_err(db_error)?;
+                }
+                transaction
+                    .execute("DELETE FROM contributors WHERE id = ?1", [&actor.id])
+                    .map_err(db_error)?;
+
+                let expires_at = now
+                    .checked_add(DELETION_RECEIPT_RETENTION_MS)
+                    .filter(|value| i64::try_from(*value).is_ok())
+                    .ok_or(Error::Conflict)?;
                 transaction
                     .execute(
-                        "UPDATE spots SET change_sequence = ?2 WHERE id = ?1",
-                        params![spot_id, sequence],
+                        "INSERT INTO deletion_receipts (token_hash, completed_at_ms, expires_at_ms)
+                     VALUES (?1, ?2, ?3)",
+                        params![token.0, now, expires_at],
                     )
                     .map_err(db_error)?;
-            }
-            transaction
-                .execute("DELETE FROM contributors WHERE id = ?1", [&actor.id])
-                .map_err(db_error)?;
-
-            let expires_at = now
-                .checked_add(DELETION_RECEIPT_RETENTION_MS)
-                .filter(|value| i64::try_from(*value).is_ok())
-                .ok_or(Error::Conflict)?;
-            transaction
-                .execute(
-                    "INSERT INTO deletion_receipts (token_hash, completed_at_ms, expires_at_ms)
-                     VALUES (?1, ?2, ?3)",
-                    params![token.0, now, expires_at],
-                )
-                .map_err(db_error)?;
-            transaction.commit().map_err(db_error)?;
-            Ok(DeletionReceipt {
-                status: "completed",
-                completed_at_ms: now,
+                transaction.commit().map_err(db_error)?;
+                Ok((
+                    DeletionReceipt {
+                        status: "completed",
+                        completed_at_ms: now,
+                    },
+                    capture_ids,
+                ))
             })
-        })
-        .await
+            .await?;
+        super::capture_submissions::remove_capture_files(objects.as_ref(), &capture_ids);
+        Ok(receipt)
     }
 
     pub(crate) async fn revoke(&self, target: String) -> Result<(), Error> {
@@ -290,6 +298,17 @@ fn retain_public_spots(connection: &Connection, target: &str) -> Result<(), Erro
         )
         .map_err(db_error)?;
     Ok(())
+}
+
+fn capture_operation_ids(connection: &Connection, owner: &str) -> Result<Vec<String>, Error> {
+    let mut statement = connection
+        .prepare("SELECT operation_id FROM capture_submissions WHERE owner_id=?1")
+        .map_err(db_error)?;
+    statement
+        .query_map([owner], |row| row.get(0))
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)
 }
 
 fn delete_private_account_data(connection: &Connection, target: &str) -> Result<(), Error> {

@@ -1,15 +1,12 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 59;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 64;
+const ARCHIVE_REPAIR_SCHEMA_VERSION: i64 = 61;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
     format!("PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {version};")
-}
-
-fn current_schema_pragmas() -> String {
-    schema_pragmas(CURRENT_SCHEMA_VERSION)
 }
 
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
@@ -82,6 +79,11 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         56 => migrate_v56_to_current(connection)?,
         57 => migrate_v57_to_current(connection)?,
         58 => migrate_v58_to_current(connection)?,
+        59 => migrate_v59_to_current(connection)?,
+        60 => migrate_v60_to_current(connection)?,
+        61 => migrate_v61_to_current(connection)?,
+        62 => migrate_v62_to_current(connection)?,
+        63 => migrate_v63_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -89,7 +91,11 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         _ => return Err(StorageError::InvalidDatabaseIdentity),
     }
-    migrate_remaining_versions(connection)
+    migrate_remaining_versions(connection)?;
+    if version < CURRENT_SCHEMA_VERSION {
+        backfill_capture_submission_source_aliases(connection)?;
+    }
+    Ok(())
 }
 
 fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), StorageError> {
@@ -158,6 +164,12 @@ fn migrate_remaining_versions(connection: &mut Connection) -> Result<(), Storage
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 58 {
             migrate_v58_to_current(connection)?;
         }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 61 {
+            migrate_v61_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 62 {
+            migrate_v62_to_current(connection)?;
+        }
     }
     Ok(())
 }
@@ -205,11 +217,16 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
                 .map_err(Into::into)
         })
         .and_then(|()| ensure_capture_payload_encoding(connection))
+        .and_then(|()| super::ride_inactivity::verify_schema(connection))
+        .and_then(|()| create_compact_bms_schema(connection))
     {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
-    connection.execute_batch(&format!("{} COMMIT;", current_schema_pragmas()))?;
+    connection.execute_batch(&format!(
+        "{} COMMIT;",
+        schema_pragmas(CURRENT_SCHEMA_VERSION)
+    ))?;
     Ok(())
 }
 
@@ -494,6 +511,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::capture_submission::SCHEMA)?;
     ensure_charging_sync_schema(connection)?;
     ensure_community_account_columns(connection)?;
+    connection.execute_batch(super::ride_inactivity::SCHEMA)?;
     Ok(())
 }
 
@@ -701,7 +719,8 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2026,6 +2045,16 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
             return Err(StorageError::InvalidDatabaseIdentity);
         }
     }
+    for column in [
+        "source_artifact_id",
+        "operation_id",
+        "source_sha256",
+        "source_size",
+    ] {
+        if !table_has_column(connection, "capture_submission_reservations", column)? {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
     if !table_has_column(connection, "charging_outbox", "blocked_kind")?
         || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?
     {
@@ -2042,6 +2071,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    super::ride_inactivity::verify_schema(connection)?;
     Ok(())
 }
 
@@ -2088,7 +2118,12 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         "map_points_rtree",
         "ride_music_history",
         "ride_music_event",
-        "bms_voltage_samples",
+        "ride_inactivity_evidence",
+        "bms_voltage_samples_legacy",
+        "bms_devices",
+        "bms_sessions",
+        "bms_cell_samples",
+        "bms_voltage_backfill_progress",
         "last_connected_device",
     ] {
         let exists: bool = connection.query_row(
@@ -2099,6 +2134,14 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    let bms_view: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = 'bms_voltage_samples')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !bms_view {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
 }
@@ -2387,7 +2430,9 @@ fn migrate_v57_to_current(connection: &mut Connection) -> Result<(), StorageErro
         INSERT OR IGNORE INTO storage_normalization_progress (singleton) VALUES (1);",
     )?;
     transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
     Ok(())
 }
@@ -2396,14 +2441,803 @@ fn migrate_v58_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(super::phone_control::DEVICE_SCHEMA)?;
     super::phone_control::verify_schema(&transaction)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    requeue_legacy_archives(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v59_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::ride_inactivity::SCHEMA)?;
+    super::ride_inactivity::verify_schema(&transaction)?;
+    requeue_legacy_archives(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v60_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    requeue_legacy_archives(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(ARCHIVE_REPAIR_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v61_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    create_compact_bms_schema(&transaction)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v62_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    backfill_capture_submission_source_aliases(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v63_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(super::capture_submission::SCHEMA)?;
+    backfill_capture_submission_source_aliases(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn backfill_capture_submission_source_aliases(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT OR IGNORE INTO capture_submission_source_aliases
+            (artifact_digest, source_artifact_id)
+         SELECT coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         ), source_artifact_id FROM capture_submissions
+         WHERE length(coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         )) = 64
+           AND coalesce(
+             json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+             json_extract(status_json, '$.metadata.sha256')
+         ) NOT GLOB '*[^0-9a-f]*'
+         UNION
+         SELECT json_extract(status_json, '$.metadata.provenance.source_sha256'), source_artifact_id
+         FROM capture_submissions
+         WHERE json_extract(status_json, '$.metadata.provenance.source_sha256') IS NOT NULL
+           AND length(json_extract(status_json, '$.metadata.provenance.source_sha256')) = 64
+           AND json_extract(status_json, '$.metadata.provenance.source_sha256') NOT GLOB '*[^0-9a-f]*'",
+        [],
+    )?;
+    Ok(())
+}
+
+fn create_compact_bms_schema(connection: &Connection) -> Result<(), StorageError> {
+    let kind: Option<String> = connection
+        .query_row(
+            "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match kind.as_deref() {
+        Some("table") => {
+            connection.execute_batch(
+                "ALTER TABLE bms_voltage_samples RENAME TO bms_voltage_samples_legacy;",
+            )?;
+            super::bms_voltage::create_compact_schema(connection)
+        }
+        Some("view") => Ok(()),
+        _ => Err(StorageError::InvalidDatabaseIdentity),
+    }
+}
+
+fn requeue_legacy_archives(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "UPDATE storage_normalization_progress
+         SET artifact_digest = NULL, artifact_complete = 0,
+             compaction_pending = 0, compaction_complete = 0
+         WHERE EXISTS (SELECT 1 FROM pevcap_imports WHERE artifact_path IS NOT NULL)",
+        [],
+    )?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_v61_bms_table(connection: &Connection) {
+        initialize_current_schema(connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP VIEW bms_voltage_samples;
+                 DROP TABLE bms_voltage_backfill_progress;
+                 DROP TABLE bms_cell_samples;
+                 DROP TABLE bms_sessions;
+                 DROP TABLE bms_devices;
+                 DROP TABLE bms_voltage_samples_legacy;
+                 CREATE TABLE bms_voltage_samples (
+                    device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+                    session_identifier TEXT NOT NULL CHECK (length(session_identifier) BETWEEN 1 AND 512),
+                    event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
+                    monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+                    wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+                    observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
+                    pack_index INTEGER CHECK (pack_index IS NULL OR pack_index BETWEEN 0 AND 65535),
+                    pack_observation_index INTEGER CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
+                    millivolts INTEGER NOT NULL,
+                    PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
+                 );
+                 CREATE INDEX bms_voltage_samples_history
+                    ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);
+                 PRAGMA user_version = 61;",
+            )
+            .unwrap();
+    }
+
+    fn seed_schema_62_submission_alias_fixture(
+        connection: &Connection,
+    ) -> (String, String, String) {
+        let digest = "a".repeat(64);
+        let source_artifact_id = "00000000-0000-4000-8000-000000000001";
+        let operation_id = "00000000-0000-4000-8000-000000000002";
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v62', 'pevcap_import', 'imported', 50, 55, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/managed.jsonl', 'ride-v62', 'ride_and_capture', 4, 1, 1, 55)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [&digest],
+            )
+            .unwrap();
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "sha256": digest,
+                "provenance": {"source_artifact_id": source_artifact_id}
+            }
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![source_artifact_id, operation_id, digest, status.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 62;")
+            .unwrap();
+
+        (
+            digest,
+            source_artifact_id.to_owned(),
+            operation_id.to_owned(),
+        )
+    }
+
+    #[test]
+    fn schema_62_upgrade_adds_submission_aliases_and_preserves_existing_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE capture_submission_source_aliases;
+                 DROP TABLE capture_submission_reservations;",
+            )
+            .unwrap();
+        let (digest, source_artifact_id, operation_id) =
+            seed_schema_62_submission_alias_fixture(&connection);
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (
+            version,
+            ride_count,
+            import_count,
+            chunk,
+            status_count,
+            reservation_count,
+            alias_count,
+        ): (i64, u64, u64, Vec<u8>, u64, u64, u64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT user_version FROM pragma_user_version),
+                    (SELECT COUNT(*) FROM rides WHERE id = 'ride-v62'),
+                    (SELECT COUNT(*) FROM pevcap_imports WHERE artifact_digest = ?1),
+                    (SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1),
+                    (SELECT COUNT(*) FROM capture_submissions WHERE operation_id = ?2),
+                    (SELECT COUNT(*) FROM capture_submission_reservations),
+                    (SELECT COUNT(*) FROM capture_submission_source_aliases
+                     WHERE artifact_digest = ?1 AND source_artifact_id = ?3)",
+                params![digest, operation_id, source_artifact_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(ride_count, 1);
+        assert_eq!(import_count, 1);
+        assert_eq!(chunk, [1, 2, 3, 4]);
+        assert_eq!(status_count, 1);
+        assert_eq!(reservation_count, 0);
+        assert_eq!(alias_count, 1);
+    }
+
+    #[test]
+    fn schema_63_upgrade_backfills_digest_aliases_without_changing_status_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch("DROP TABLE capture_submission_source_aliases;")
+            .unwrap();
+        let source_digest = "a".repeat(64);
+        let snapshot_digest = "b".repeat(64);
+        let source_artifact_id = "00000000-0000-4000-8000-000000000031";
+        let operation_id = "00000000-0000-4000-8000-000000000032";
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, NULL, NULL, 'capture_only', 4, 1, 0, 55)",
+                [&snapshot_digest],
+            )
+            .unwrap();
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "sha256": snapshot_digest,
+                "provenance": {
+                    "source_artifact_id": source_artifact_id,
+                    "source_sha256": source_digest
+                }
+            }
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    source_artifact_id,
+                    operation_id,
+                    snapshot_digest,
+                    status.to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 63;")
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (version, status_count, snapshot_alias_count, source_alias_count): (
+            i64,
+            u64,
+            u64,
+            u64,
+        ) = connection
+            .query_row(
+                "SELECT
+                        (SELECT user_version FROM pragma_user_version),
+                        (SELECT COUNT(*) FROM capture_submissions WHERE operation_id = ?1),
+                        (SELECT COUNT(*) FROM capture_submission_source_aliases
+                         WHERE artifact_digest = ?2 AND source_artifact_id = ?3),
+                        (SELECT COUNT(*) FROM capture_submission_source_aliases
+                         WHERE artifact_digest = ?4 AND source_artifact_id = ?3)",
+                params![
+                    operation_id,
+                    snapshot_digest,
+                    source_artifact_id,
+                    source_digest
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(status_count, 1);
+        assert_eq!(snapshot_alias_count, 1);
+        assert_eq!(source_alias_count, 1);
+    }
+
+    #[test]
+    fn schema_60_upgrade_waits_for_submission_schema_before_alias_backfill() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        let digest = "c".repeat(64);
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v60', 'pevcap_import', 'imported', 60, 65, 1, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports
+                    (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+                     record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/old/v60.jsonl', 'ride-v60', 'capture_only', 4, 1, 0, 65)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures
+                    (artifact_digest, receipt_digest, encoding, artifact_size, written_bytes, next_sequence)
+                 VALUES (?1, ?1, 'binary', 4, 4, 1)",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks (artifact_digest, sequence, payload)
+                 VALUES (?1, 0, X'01020304')",
+                [&digest],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE capture_submission_source_aliases;
+                 DROP TABLE capture_submission_reservations;
+                 DROP TABLE capture_submissions;
+                 PRAGMA user_version = 60;",
+            )
+            .unwrap();
+        assert!(!table_exists(&connection, "capture_submission_source_aliases").unwrap());
+        assert!(!table_exists(&connection, "capture_submissions").unwrap());
+
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+
+        let (version, ride_count, import_count, capture_bytes): (i64, u64, u64, Vec<u8>) =
+            connection
+                .query_row(
+                    "SELECT
+                        (SELECT user_version FROM pragma_user_version),
+                        (SELECT COUNT(*) FROM rides WHERE id = 'ride-v60'),
+                        (SELECT COUNT(*) FROM pevcap_imports WHERE artifact_digest = ?1),
+                        (SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1)",
+                    [&digest],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(ride_count, 1);
+        assert_eq!(import_count, 1);
+        assert_eq!(capture_bytes, [1, 2, 3, 4]);
+    }
+
+    type BmsMigrationRow = (
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        i64,
+    );
+
+    fn bms_rows(connection: &Connection) -> Vec<BmsMigrationRow> {
+        let mut statement = connection
+            .prepare(
+                "SELECT device_identity, session_identifier, event_sequence, monotonic_ms,
+                        wall_clock_ms, observation_index, pack_index, pack_observation_index,
+                        millivolts
+                 FROM bms_voltage_samples
+                 ORDER BY device_identity, session_identifier, event_sequence, observation_index",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn v61_bms_table_migrates_losslessly_through_compaction_and_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v61-bms.sqlite");
+        let expected = vec![
+            (
+                "device-a".to_owned(),
+                "session-a".to_owned(),
+                12,
+                345,
+                678,
+                4,
+                Some(2),
+                Some(9),
+                4_123,
+            ),
+            (
+                "device-b".to_owned(),
+                "session-b".to_owned(),
+                13,
+                346,
+                679,
+                5,
+                None,
+                None,
+                3_987,
+            ),
+        ];
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            create_v61_bms_table(&connection);
+            for row in &expected {
+                connection
+                    .execute(
+                        "INSERT INTO bms_voltage_samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8],
+                    )
+                    .unwrap();
+            }
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                61
+            );
+
+            migrate(&mut connection).unwrap();
+            verify_current_schema(&connection).unwrap();
+            assert_eq!(bms_rows(&connection), expected);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM bms_voltage_samples_legacy",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                2
+            );
+
+            assert_eq!(
+                super::super::bms_voltage::normalize_legacy_batch(&mut connection, None).unwrap(),
+                super::super::normalization::BatchState::Finished
+            );
+            assert_eq!(bms_rows(&connection), expected);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM bms_voltage_samples_legacy",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM bms_cell_samples", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+        }
+
+        let mut reopened = Connection::open(path).unwrap();
+        migrate(&mut reopened).unwrap();
+        verify_current_schema(&reopened).unwrap();
+        assert_eq!(bms_rows(&reopened), expected);
+    }
+
+    #[test]
+    fn v61_bms_migration_rolls_back_rename_when_compact_schema_creation_fails() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        create_v61_bms_table(&connection);
+        connection
+            .execute(
+                "INSERT INTO bms_voltage_samples VALUES ('device', 'session', 1, 2, 3, 4, 5, 6, 4100)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute_batch("CREATE TABLE bms_devices (collision INTEGER);")
+            .unwrap();
+
+        assert!(migrate(&mut connection).is_err());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            61
+        );
+        let kind: String = connection
+            .query_row(
+                "SELECT type FROM sqlite_schema WHERE name = 'bms_voltage_samples'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kind, "table");
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM bms_voltage_samples", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(!table_exists(&connection, "bms_voltage_samples_legacy").unwrap());
+    }
+
+    #[test]
+    fn legacy_archive_path_repair_requeues_remaining_archives_once() {
+        for remaining in [false, true] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            let digest = "a".repeat(64);
+            if remaining {
+                connection.execute(
+                    "INSERT INTO pevcap_imports VALUES (?1, '/old/container/ride.sqlite.pevcap-imports/archive.jsonl', NULL, 'capture_only', 4, 1, 0, 1)",
+                    [&digest],
+                ).unwrap();
+            }
+            connection.execute(
+                "UPDATE storage_normalization_progress SET semantic_complete = 1, artifact_digest = ?1, artifact_complete = 1, compaction_complete = 1",
+                [&digest],
+            ).unwrap();
+            connection.pragma_update(None, "user_version", 60).unwrap();
+            migrate(&mut connection).unwrap();
+            let state: (bool, Option<String>, bool, bool) = connection.query_row(
+                "SELECT semantic_complete, artifact_digest, artifact_complete, compaction_complete FROM storage_normalization_progress", [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).unwrap();
+            assert!(state.0, "completed semantic reconciliation is retained");
+            assert_eq!(state.1, (!remaining).then_some(digest));
+            assert_eq!(state.2, !remaining);
+            assert_eq!(state.3, !remaining);
+            connection
+                .execute(
+                    "UPDATE storage_normalization_progress SET artifact_complete = 1",
+                    [],
+                )
+                .unwrap();
+            migrate(&mut connection).unwrap();
+            let complete: bool = connection
+                .query_row(
+                    "SELECT artifact_complete FROM storage_normalization_progress",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                complete,
+                "opening the current schema does not keep restarting reconciliation"
+            );
+        }
+    }
+
+    #[test]
+    fn current_schema_persists_per_ride_inactivity_evidence() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+
+        let table_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'ride_inactivity_evidence')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(table_exists);
+    }
+
+    fn create_unconstrained_ride_inactivity_table(connection: &Connection) {
+        connection
+            .execute_batch(
+                "CREATE TABLE ride_inactivity_evidence (
+                    ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                    presence_order INTEGER,
+                    presence_observed_at_ms INTEGER,
+                    app_inactive_since_ms INTEGER,
+                    last_verified_device_seen_ms INTEGER
+                );",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn current_schema_verification_rejects_missing_or_malformed_ride_inactivity_table() {
+        let missing = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&missing).unwrap();
+        missing
+            .execute_batch("DROP TABLE ride_inactivity_evidence;")
+            .unwrap();
+        assert!(matches!(
+            verify_current_schema(&missing),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+
+        let wrong_columns = "CREATE TABLE ride_inactivity_evidence (
+            ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            other INTEGER
+        );";
+        let wrong_foreign_key = super::super::ride_inactivity::SCHEMA
+            .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
+            .replace("ON DELETE CASCADE", "ON DELETE RESTRICT");
+        for malformed_schema in [
+            "CREATE TABLE ride_inactivity_evidence (
+                ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                presence_order INTEGER,
+                presence_observed_at_ms INTEGER,
+                app_inactive_since_ms INTEGER,
+                last_verified_device_seen_ms INTEGER
+            );"
+            .to_owned(),
+            wrong_columns.to_owned(),
+            wrong_foreign_key,
+        ] {
+            let malformed = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&malformed).unwrap();
+            malformed
+                .execute_batch("DROP TABLE ride_inactivity_evidence;")
+                .unwrap();
+            malformed.execute_batch(&malformed_schema).unwrap();
+            assert!(matches!(
+                verify_current_schema(&malformed),
+                Err(StorageError::InvalidDatabaseIdentity)
+            ));
+        }
+    }
+
+    #[test]
+    fn v59_migration_adds_empty_inactivity_evidence_without_guessing_from_updated_at() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('ride-v59', 'live', 'interrupted', 100, 900, 0, 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute_batch("DROP TABLE ride_inactivity_evidence; PRAGMA user_version = 59;")
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let (version, updated_at, evidence_count): (i64, i64, u64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT user_version FROM pragma_user_version),
+                    updated_at_ms,
+                    (SELECT COUNT(*) FROM ride_inactivity_evidence WHERE ride_id = rides.id)
+                 FROM rides WHERE id = 'ride-v59'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(updated_at, 900);
+        assert_eq!(evidence_count, 0);
+    }
+
+    #[test]
+    fn inactivity_schema_migrations_reject_malformed_table_without_advancing_or_leaking_ddl() {
+        for version in [57, 58, 59] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            initialize_current_schema(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO rides
+                        (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                     VALUES ('ride-before-inactivity-migration', 'live', 'interrupted', 100, 900, 0, 0)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute_batch("DROP TABLE ride_inactivity_evidence;")
+                .unwrap();
+            create_unconstrained_ride_inactivity_table(&connection);
+            if version == 57 {
+                connection
+                    .execute_batch("DROP TABLE storage_normalization_progress;")
+                    .unwrap();
+            }
+            if version == 58 {
+                connection
+                    .execute_batch("DROP TABLE phone_drive_preferences;")
+                    .unwrap();
+            }
+            connection.execute_batch(&schema_pragmas(version)).unwrap();
+
+            assert!(matches!(
+                migrate(&mut connection),
+                Err(StorageError::InvalidDatabaseIdentity)
+            ));
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                version
+            );
+            if version == 57 {
+                assert!(!table_exists(&connection, "storage_normalization_progress").unwrap());
+            }
+            if version == 58 {
+                assert!(!table_exists(&connection, "phone_drive_preferences").unwrap());
+            }
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT updated_at_ms FROM rides
+                         WHERE id = 'ride-before-inactivity-migration'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                900
+            );
+        }
+    }
 
     fn v56_migration_fixture(with_conflicting_table: bool) -> Connection {
         let connection = Connection::open_in_memory().unwrap();
@@ -3019,7 +3853,6 @@ mod tests {
             .unwrap();
         connection
     }
-
     #[test]
     fn diagnostic_consent_migration_defaults_off_without_changing_existing_preferences() {
         for version in [45, 46, 47] {

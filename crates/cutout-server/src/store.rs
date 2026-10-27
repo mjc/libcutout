@@ -8,8 +8,7 @@ use rusqlite::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -36,9 +35,8 @@ pub(crate) use votes::clear_spot_votes;
 pub struct Store {
     connection: Arc<Mutex<Connection>>,
     work: Arc<Semaphore>,
-    pub(crate) capture_uploads: Arc<Semaphore>,
-    capture_actors: Arc<Mutex<HashSet<String>>>,
-    pub(crate) capture_staging: Arc<std::path::PathBuf>,
+    pub(crate) capture_staging: Arc<PathBuf>,
+    pub(crate) capture_objects: Arc<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,19 +81,17 @@ impl Store {
 
     fn open_database(path: &Path, mode: OpenMode) -> Result<Self, Error> {
         let mut connection = open_connection(path, mode)?;
-        prepare_schema(&mut connection, mode)?;
+        let canonical = path.canonicalize().map_err(|_| Error::Unavailable)?;
+        prepare_schema(&mut connection, mode, &canonical)?;
         configure_durability(&connection)?;
-        let mut staging = path
-            .canonicalize()
-            .map_err(|_| Error::Unavailable)?
-            .into_os_string();
-        staging.push(".capture-staging");
+        let staging = database_sibling(&canonical, ".capture-staging");
+        let objects = capture_submissions::objects_directory(&canonical);
+        capture_submissions::reconcile_capture_objects(&connection, &objects)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             work: Arc::new(Semaphore::new(32)),
-            capture_uploads: Arc::new(Semaphore::new(2)),
-            capture_actors: Arc::new(Mutex::new(HashSet::new())),
-            capture_staging: Arc::new(staging.into()),
+            capture_staging: Arc::new(staging),
+            capture_objects: Arc::new(objects),
         })
     }
 
@@ -124,7 +120,7 @@ impl Store {
             let version: u32 = connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(db_error)?;
-            if version != 6 {
+            if version != SCHEMA_VERSION {
                 return Err(Error::Unavailable);
             }
             connection
@@ -155,9 +151,22 @@ impl Store {
         .await
     }
 
-    pub(crate) async fn backup(&self, output: std::path::PathBuf) -> Result<(), Error> {
-        self.call(move |connection| backup::backup_database(connection, &output))
-            .await
+    pub(crate) async fn backup(&self, output: PathBuf) -> Result<(), Error> {
+        let objects = self.capture_objects.clone();
+        let snapshot = output.clone();
+        self.call(move |connection| backup::backup_database(connection, &snapshot))
+            .await?;
+        let copy_output = output.clone();
+        let copied = tokio::task::spawn_blocking(move || {
+            capture_submissions::copy_capture_objects(objects.as_ref(), &copy_output)
+        })
+        .await
+        .map_err(|_| Error::Unavailable)?;
+        if let Err(error) = copied {
+            let _ = std::fs::remove_file(&output);
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -297,6 +306,14 @@ pub(crate) fn next_change(connection: &Connection) -> Result<u64, Error> {
         .map_err(db_error)
 }
 
+const SCHEMA_VERSION: u32 = 7;
+
+fn database_sibling(database: &Path, suffix: &str) -> PathBuf {
+    let mut name = database.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
 fn open_connection(path: &Path, mode: OpenMode) -> Result<Connection, Error> {
     if path == Path::new(":memory:") || path.to_string_lossy().starts_with("file:") {
         return Err(Error::Invalid);
@@ -319,7 +336,11 @@ fn open_connection(path: &Path, mode: OpenMode) -> Result<Connection, Error> {
     Ok(connection)
 }
 
-fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Error> {
+fn prepare_schema(
+    connection: &mut Connection,
+    mode: OpenMode,
+    database: &Path,
+) -> Result<(), Error> {
     let application: u32 = connection
         .pragma_query_value(None, "application_id", |row| row.get(0))
         .map_err(db_error)?;
@@ -361,7 +382,11 @@ fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Err
         4 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
             migrate_alpha_signup_removal(connection)?;
         }
-        6 if application == 0x4353_5054 => return Ok(()),
+        6 if application == 0x4353_5054 && mode == OpenMode::Initialize => {
+            capture_submissions::migrate_capture_files(connection, database)?;
+            return Ok(());
+        }
+        SCHEMA_VERSION if application == 0x4353_5054 => return Ok(()),
         _ => return Err(Error::Unavailable),
     }
     if version == 1 {
@@ -377,6 +402,7 @@ fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Err
         ))
         .map_err(db_error)?;
     transaction.commit().map_err(db_error)?;
+    capture_submissions::migrate_capture_files(connection, database)?;
     Ok(())
 }
 

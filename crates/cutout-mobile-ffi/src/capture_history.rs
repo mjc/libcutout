@@ -2,13 +2,34 @@
 
 use crate::{
     CaptureJsonlExport, CaptureWriterFinish, CaptureWriterSlot, MobileCaptureArtifactIdDto,
-    MobileCaptureOriginDto, MobilePevcapCaptureBuilder, MobilePevcapEncodingDto,
-    MobilePevcapImportReceiptDto, MobileRideDatabaseError, MobileRideIdDto,
-    MobileVerifiedStringDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
-    map_ride_database_error, mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id,
-    persistence,
+    MobileCaptureOriginDto, MobileCaptureSubmissionSourceDto, MobileCaptureSubmissionStatusDto,
+    MobilePevcapCaptureBuilder, MobilePevcapEncodingDto, MobilePevcapImportReceiptDto,
+    MobileRideDatabaseError, MobileRideIdDto, MobileVerifiedStringDto,
+    MobileWallClockUnixMillisDto, RideDatabaseHandle, map_ride_database_error,
+    mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id, persistence,
 };
-use std::sync::{Arc, PoisonError};
+use std::{
+    path::Path,
+    sync::{Arc, PoisonError},
+};
+
+/// Bounded count and byte summary from managed capture-file deduplication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureFileDeduplicationDto {
+    pub scanned_files: u64,
+    pub removed_files: u64,
+    pub removed_bytes: u64,
+}
+
+impl From<persistence::CaptureFileDeduplication> for MobileCaptureFileDeduplicationDto {
+    fn from(result: persistence::CaptureFileDeduplication) -> Self {
+        Self {
+            scanned_files: result.scanned_files,
+            removed_files: result.removed_files,
+            removed_bytes: result.removed_bytes,
+        }
+    }
+}
 
 /// Rust-retained recording identity and device labels; not foreign completion authority.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -61,6 +82,35 @@ pub struct MobileStoredPevcapCaptureDto {
     /// Locations admitted to the derived ride, not all raw observations.
     pub location_count: u64,
     pub ride_id: Option<MobileRideIdDto>,
+    /// Canonical source alias and private Send state, distinct from the import receipt.
+    pub submission: MobileCaptureHistorySubmissionDto,
+}
+
+/// Receipt-backed private Send projection for one capture-history row.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureHistorySubmissionDto {
+    /// Typed Rust-supported locator for evidence, preparation and receipt lookup.
+    pub source: MobileCaptureSubmissionSourceDto,
+    /// Stable artifact identity to use for Rust-owned Send preparation and status lookup.
+    pub source_artifact_id: String,
+    /// Durable private Send operation, retained after local payload cleanup.
+    pub status: Option<MobileCaptureSubmissionStatusDto>,
+}
+
+impl From<persistence::CaptureSubmissionSource> for MobileCaptureSubmissionSourceDto {
+    fn from(source: persistence::CaptureSubmissionSource) -> Self {
+        match source {
+            persistence::CaptureSubmissionSource::LiveCapture(id) => {
+                Self::LiveCapture { id: id.to_string() }
+            }
+            persistence::CaptureSubmissionSource::RecordedArtifact(id) => {
+                Self::RecordedArtifact { id: id.to_string() }
+            }
+            persistence::CaptureSubmissionSource::PevcapDigest(digest) => Self::PevcapDigest {
+                sha256: digest.to_string(),
+            },
+        }
+    }
 }
 
 /// One Rust-bounded page of SQLite-backed captures.
@@ -72,6 +122,25 @@ pub struct MobilePevcapCapturePageDto {
 
 #[uniffi::export]
 impl RideDatabaseHandle {
+    /// Removes only Rust-proven duplicate managed capture files below the supplied app-owned directory.
+    /// Call off UI and callback threads. Native code supplies only the directory root; Rust validates files.
+    ///
+    /// # Errors
+    /// Returns an invalid-path or storage error without broadening the scan beyond managed files.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports require owned string arguments"
+    )]
+    pub fn deduplicate_managed_capture_files(
+        &self,
+        directory_path: String,
+    ) -> Result<MobileCaptureFileDeduplicationDto, MobileRideDatabaseError> {
+        self.inner
+            .deduplicate_managed_capture_files(Path::new(&directory_path))
+            .map(Into::into)
+            .map_err(map_ride_database_error)
+    }
+
     /// Retains the actual consumed-writer receipt, never a caller-supplied path or DTO.
     /// Call off native callback/UI threads; failures leave the saved file available.
     ///
@@ -160,6 +229,11 @@ impl RideDatabaseHandle {
                         record_count: capture.record_count,
                         location_count: capture.location_count,
                         ride_id: capture.ride_id.map(mobile_ride_id),
+                        submission: MobileCaptureHistorySubmissionDto {
+                            source: capture.submission.source.into(),
+                            source_artifact_id: capture.submission.source_artifact_id,
+                            status: capture.submission.status.map(Into::into),
+                        },
                     })
                     .collect(),
                 next_cursor: page.next_cursor.map(|cursor| MobilePevcapCaptureCursorDto {
@@ -201,6 +275,8 @@ pub struct MobileLiveCaptureHistoryEntryDto {
     pub event_count: u64,
     /// Uncompressed retained bytes excluding line delimiters.
     pub stored_bytes: u64,
+    /// Canonical source alias and durable private Send state, distinct from import receipt.
+    pub submission: MobileCaptureHistorySubmissionDto,
 }
 
 /// One bounded page of inactive database captures.
@@ -259,6 +335,11 @@ impl RideDatabaseHandle {
                     finished_at_milliseconds: capture.finished_at_ms,
                     event_count: capture.event_count,
                     stored_bytes: capture.stored_bytes,
+                    submission: MobileCaptureHistorySubmissionDto {
+                        source: capture.submission.source.into(),
+                        source_artifact_id: capture.submission.source_artifact_id,
+                        status: capture.submission.status.map(Into::into),
+                    },
                 })
                 .collect(),
             next_cursor: page
@@ -284,8 +365,34 @@ impl RideDatabaseHandle {
             persistence::LiveCaptureId::parse(live_capture_id).map_err(map_ride_database_error)?;
         let content_digest = self
             .inner
-            .export_live_capture(id, std::path::Path::new(&path))
+            .export_live_capture(id, Path::new(&path))
             .map_err(|_| MobileRideDatabaseError::StorageFailure)?;
+        Ok(MobileLiveCaptureExportDto {
+            path,
+            content_digest,
+        })
+    }
+
+    /// Exports a published writer artifact by its Rust-issued identity from canonical SQLite bytes.
+    /// The persistence owner refuses payloads whose receipt-confirmed removal is pending or complete.
+    ///
+    /// # Errors
+    /// Returns malformed artifact identity, unavailable or unpublished payload, or storage failure.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports require owned string arguments"
+    )]
+    pub fn export_recorded_capture(
+        &self,
+        artifact_id: String,
+        path: String,
+    ) -> Result<MobileLiveCaptureExportDto, MobileRideDatabaseError> {
+        let artifact_id =
+            persistence::CaptureArtifactId::parse(&artifact_id).map_err(map_ride_database_error)?;
+        let content_digest = self
+            .inner
+            .export_recorded_capture(artifact_id, Path::new(&path))
+            .map_err(map_ride_database_error)?;
         Ok(MobileLiveCaptureExportDto {
             path,
             content_digest,

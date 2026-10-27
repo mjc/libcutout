@@ -52,6 +52,46 @@ pub struct CutoutSessionState {
 }
 
 impl CutoutSessionState {
+    /// Admits a capture and its transport-creation observation in this session owner.
+    pub fn begin_capture(
+        &mut self,
+        origin: crate::CaptureOrigin,
+        ownership: crate::CaptureTransportOwnership,
+        connection_attempt: Option<crate::ConnectionAttemptToken>,
+    ) -> Option<crate::CaptureGeneration> {
+        if connection_attempt
+            .as_ref()
+            .is_some_and(|token| !self.connection.is_current(token))
+        {
+            return None;
+        }
+        let admitted_token = match ownership {
+            crate::CaptureTransportOwnership::Borrowed => None,
+            crate::CaptureTransportOwnership::CaptureOwned => {
+                if self.device_connection_intent != DeviceConnectionIntent::RecordOnly {
+                    return None;
+                }
+                let token = connection_attempt?;
+                Some(token)
+            }
+        };
+        self.capture
+            .begin_with_transport(origin, ownership, admitted_token)
+    }
+
+    /// Completes a flush and returns only the transport cleanup effect still owned here.
+    pub fn finish_capture_flush(
+        &mut self,
+        token: crate::CaptureFinishToken,
+        succeeded: bool,
+    ) -> crate::CaptureTransportRelease {
+        self.capture.finish_flush_with_transport(
+            token,
+            succeeded,
+            self.connection.snapshot().token.as_ref(),
+        )
+    }
+
     /// Whether unresolved identification should retry the selected connection.
     #[must_use]
     pub const fn should_retry_identification(&self) -> bool {

@@ -1,28 +1,20 @@
 //! Optional diagnostic recording preferences through the existing database owner.
 
 use crate::{
-    CutoutSessionStateHandle, MobileCaptureGenerationDto, MobileCaptureOriginDto,
-    MobileRideDatabaseError, map_ride_database_error,
+    CutoutSessionStateHandle, MobileCaptureGenerationDto, MobileRideDatabaseError,
+    map_ride_database_error,
 };
+
+/// Only an explicit user action may admit a diagnostic capture.
+pub(crate) const fn admits_capture_origin(origin: crate::MobileCaptureOriginDto) -> bool {
+    match origin {
+        crate::MobileCaptureOriginDto::Manual => true,
+        crate::MobileCaptureOriginDto::Automatic => false,
+    }
+}
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Admits a native capture attempt only when its recording purpose has consent.
-    /// Explicit manual Start supplies its own consent; automatic diagnostics require the saved choice.
-    pub fn begin_consented_capture(
-        &self,
-        origin: MobileCaptureOriginDto,
-    ) -> Option<MobileCaptureGenerationDto> {
-        if origin == MobileCaptureOriginDto::Automatic
-            && !self
-                .automatic_diagnostic_recording_enabled()
-                .unwrap_or(false)
-        {
-            return None;
-        }
-        self.begin_capture(origin)
-    }
-
     /// Reads durable consent. Missing storage cannot authorize automatic recording.
     /// Call off native UI and callback threads.
     ///
@@ -63,5 +55,46 @@ impl CutoutSessionStateHandle {
                 .automatic_capture_to_finish()
                 .map(Into::into)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn legacy_automatic_consent_does_not_authorize_capture_but_manual_does() {
+        let directory =
+            std::env::temp_dir().join(format!("cutout-capture-policy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database_path = directory.join("rides.sqlite");
+        let database =
+            crate::open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        database
+            .inner
+            .save_automatic_diagnostic_recording_enabled(true)
+            .unwrap();
+        let automatic = CutoutSessionStateHandle::with_database(std::sync::Arc::clone(&database));
+        assert!(
+            automatic
+                .begin_consented_capture(
+                    crate::MobileCaptureOriginDto::Automatic,
+                    crate::MobileCaptureTransportOwnershipDto::Borrowed,
+                    None,
+                )
+                .is_none()
+        );
+        assert!(
+            automatic
+                .begin_consented_capture(
+                    crate::MobileCaptureOriginDto::Manual,
+                    crate::MobileCaptureTransportOwnershipDto::Borrowed,
+                    None,
+                )
+                .is_some()
+        );
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -147,6 +147,22 @@ pub(super) fn publish(connection: &Connection, digest: &str) -> Result<(), Stora
     Ok(())
 }
 
+pub(super) fn publish_with_submission_alias(
+    connection: &mut Connection,
+    digest: &str,
+    source_artifact_id: crate::CaptureArtifactId,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    publish(&transaction, digest)?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO capture_submission_source_aliases
+            (artifact_digest, source_artifact_id) VALUES (?1, ?2)",
+        rusqlite::params![digest, source_artifact_id.to_string()],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 /// Removes unpublished bytes without touching any successfully published capture.
 pub(super) fn abort(connection: &Connection, digest: &str) -> Result<(), StorageError> {
     connection.execute(

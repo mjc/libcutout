@@ -49,6 +49,8 @@ internal class CaptureSendProgressView(context: Context) : LinearLayout(context)
 
     fun begin(operationId: String): MobileCaptureSubmissionProgressListener {
         val action = ++generation
+        var boundOperationId = operationId
+        var sawProgress = false
         var attemptId: ULong? = null
         var lastBytes = 0uL
         visibility = View.VISIBLE
@@ -61,7 +63,12 @@ internal class CaptureSendProgressView(context: Context) : LinearLayout(context)
             override fun onProgress(progress: MobileCaptureSubmissionProgressDto) {
                 val snapshot = progress.copy()
                 main.post {
-                    if (generation != action || snapshot.operationId != operationId) return@post
+                    if (generation != action) return@post
+                    if (!sawProgress) {
+                        boundOperationId = snapshot.operationId
+                        sawProgress = true
+                    }
+                    if (snapshot.operationId != boundOperationId) return@post
                     if (attemptId == null) attemptId = snapshot.attemptId
                     if (snapshot.attemptId != attemptId || snapshot.bytesSent < lastBytes) return@post
                     lastBytes = snapshot.bytesSent

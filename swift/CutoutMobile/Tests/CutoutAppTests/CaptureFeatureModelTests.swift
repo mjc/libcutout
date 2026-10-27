@@ -143,6 +143,18 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertNil(model.error)
     }
 
+    func testRecordedCapturePayloadUnavailableUsesCaptureFileMessage() async {
+        let model = CaptureExportModel(recordedCaptureExport: { _, _ in
+            throw MobileRideDatabaseError.CapturePayloadUnavailable
+        })
+
+        await model.export(
+            recordedArtifactID: "recorded-capture", fallbackSource: URL(fileURLWithPath: "/tmp/removed.pevcap"))
+
+        XCTAssertEqual(model.error, localizedAppText("captures.file_unavailable"))
+        XCTAssertNil(model.fileURL, "A removed original file must not become an export fallback")
+    }
+
     func testLabelAdmissionLossKeepsRecordingUsableAndAllowsRetry() {
         var requests = 0
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in
@@ -646,6 +658,7 @@ final class CaptureFeatureModelTests: XCTestCase {
                 finishEntered.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
                 return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
             })
         capture.deliverCaptureEvent(
             .started(
@@ -691,7 +704,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                 guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
                 enteredFinish.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
-                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                let accepted =
+                    sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -736,7 +751,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                     !flushOutcomes.isEmpty
                 else { return false }
                 let flushed = flushOutcomes.removeFirst()
-                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                let accepted =
+                    sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                    == .writerOnly
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -774,8 +791,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                     firstFinishEntered.fulfill()
                     let flushed = await withCheckedContinuation { releaseFirstFlush = $0 }
                     return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
+                        == .writerOnly
                 }
-                return sessionState.finishCaptureFlush(token: token, outcome: .flushed)
+                return sessionState.finishCaptureFlush(token: token, outcome: .flushed) == .writerOnly
             })
         capture.deliverCaptureEvent(
             .started(
@@ -927,7 +945,10 @@ final class CaptureLibraryModelTests: XCTestCase {
         MobileLiveCaptureHistoryEntryDto(
             liveCaptureId: id, interrupted: false, integrity: .complete, recording: nil,
             platformIdentifier: "wheel", startedAtMilliseconds: 100, finishedAtMilliseconds: 200,
-            eventCount: 1, storedBytes: 100
+            eventCount: 1, storedBytes: 100,
+            submission: MobileCaptureHistorySubmissionDto(
+                source: .liveCapture(id: id), sourceArtifactId: id, status: nil
+            )
         )
     }
 

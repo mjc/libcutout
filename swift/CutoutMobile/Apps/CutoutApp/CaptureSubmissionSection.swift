@@ -6,16 +6,43 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+func captureSubmissionEvidenceIsReviewable(loaded: Bool, working: Bool, dirty: Bool) -> Bool {
+    loaded && !working && !dirty
+}
+
+func captureSubmissionOriginLabel(_ origin: MobileCaptureSubmissionOriginDto) -> String {
+    switch origin {
+    case .automatic: localizedAppText("captures.automatic")
+    case .manual: localizedAppText("captures.manual")
+    case .unknown: localizedAppText("capture.send.origin_unknown")
+    }
+}
+
+func captureSubmissionIntegrityLabel(_ integrity: MobileCaptureIntegrityDto) -> String {
+    switch integrity {
+    case .complete: localizedAppText("capture.send.integrity_complete")
+    case .incomplete: localizedAppText("captures.incomplete")
+    case .unknown: localizedAppText("captures.integrity_unknown")
+    }
+}
+
 /// The same private Send presentation is embedded in both existing details.
 struct CaptureSubmissionSection: View {
     @State private var model: CaptureSubmissionModel
     @State private var evidence: CaptureEvidenceEditorModel
     @State private var showsSendConfirmation = false
-    @State private var showsDeleteConfirmation = false
+    let onLocalPayloadStateChange: (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void
+    let onStatusChange: (MobileCaptureSubmissionStatusDto?) -> Void
 
-    init(source: MobileCaptureSubmissionSourceDto) {
+    init(
+        source: MobileCaptureSubmissionSourceDto,
+        onLocalPayloadStateChange: @escaping (MobileCaptureSubmissionLocalPayloadStateDto?) -> Void = { _ in },
+        onStatusChange: @escaping (MobileCaptureSubmissionStatusDto?) -> Void = { _ in }
+    ) {
         _model = State(initialValue: CaptureSubmissionModel(source: source))
         _evidence = State(initialValue: CaptureEvidenceEditorModel(source: source))
+        self.onLocalPayloadStateChange = onLocalPayloadStateChange
+        self.onStatusChange = onStatusChange
     }
 
     var body: some View {
@@ -25,7 +52,18 @@ struct CaptureSubmissionSection: View {
         }
         .task {
             await model.refresh()
+            onLocalPayloadStateChange(model.status?.localPayloadState)
+            onStatusChange(model.status)
             await evidence.refresh()
+        }
+        .onChange(of: model.status?.localPayloadState) { _, state in
+            onLocalPayloadStateChange(state)
+        }
+        .onChange(of: model.status?.phase) { _, _ in
+            onStatusChange(model.status)
+        }
+        .onChange(of: model.status?.localPayloadState) { _, _ in
+            onStatusChange(model.status)
         }
     }
 
@@ -42,21 +80,11 @@ struct CaptureSubmissionSection: View {
                 .confirmationDialog(
                     "Send this capture privately?", isPresented: $showsSendConfirmation, titleVisibility: .visible
                 ) {
-                    Button("Send to CutOut maintainer") { Task { await model.send() } }
+                    Button("Send to CutOut maintainer") { Task { await sendConfirmed() } }
                         .accessibilityIdentifier("captures.send.confirm")
                     Button("Not now", role: .cancel) {}
                 } message: {
                     Text(confirmationText)
-                }
-                .confirmationDialog(
-                    "Delete the sent copy?", isPresented: $showsDeleteConfirmation, titleVisibility: .visible
-                ) {
-                    Button("Delete sent copy", role: .destructive) { Task { await model.delete() } }
-                    Button("Keep sent copy", role: .cancel) {}
-                } message: {
-                    Text(
-                        "Remove the private server copy. Your original recording stays on this device. Operator backups and copies already downloaded may remain."
-                    )
                 }
             if let status = model.status {
                 disclosure(status)
@@ -68,9 +96,14 @@ struct CaptureSubmissionSection: View {
                         if model.status?.phase == .prepared { showsSendConfirmation = true }
                     }
                 } label: {
-                    Label("Review private Send", systemImage: "paperplane")
+                    Label(localizedAppText("capture.submission.review"), systemImage: "paperplane")
                 }
-                .disabled(model.isWorking || !evidence.isLoaded || evidence.isWorking || evidence.isDirty)
+                .disabled(
+                    model.isWorking
+                        || !captureSubmissionEvidenceIsReviewable(
+                            loaded: evidence.isLoaded, working: evidence.isWorking, dirty: evidence.isDirty
+                        )
+                )
                 .accessibilityIdentifier("captures.send.review")
             }
             if model.isSending, let progress = model.progress {
@@ -89,13 +122,17 @@ struct CaptureSubmissionSection: View {
             Text("Private protocol support")
         } footer: {
             Text(
-                "Sending is optional. Your original recording stays on this device. Music and provider listening metadata are excluded. Raw Bluetooth bytes can contain identifiers that CutOut cannot recognize."
+                "Sending is optional. Music and provider listening metadata are excluded. Raw Bluetooth bytes can contain identifiers that CutOut cannot recognize."
             )
         }
     }
 
     @ViewBuilder
     private func disclosure(_ status: MobileCaptureSubmissionStatusDto) -> some View {
+        LabeledContent("Recording origin", value: captureSubmissionOriginLabel(status.origin))
+            .accessibilityIdentifier("captures.send.origin")
+        LabeledContent("Recording integrity", value: captureSubmissionIntegrityLabel(status.integrity))
+            .accessibilityIdentifier("captures.send.integrity")
         LabeledContent(
             "Snapshot size",
             value: ByteCountFormatter.string(fromByteCount: Int64(clamping: status.byteCount), countStyle: .file))
@@ -118,6 +155,13 @@ struct CaptureSubmissionSection: View {
                 Text(receipt.sha256).font(.footnote.monospaced()).textSelection(.enabled)
             }
         }
+        if status.localPayloadState == .removalPending {
+            Text("Local capture payload removal is in progress.")
+                .accessibilityIdentifier("captures.send.localRemovalPending")
+        } else if status.localPayloadState == .removed {
+            Text(localizedAppText("capture.history.local_deleted"))
+                .accessibilityIdentifier("captures.send.localPayloadRemoved")
+        }
     }
 
     @ViewBuilder
@@ -136,24 +180,25 @@ struct CaptureSubmissionSection: View {
         case .rejected:
             Text("The service rejected this snapshot. This Send cannot be retried.")
             cancelButton
-        case .sent:
-            if status.receipt != nil {
-                Label("Received privately", systemImage: "checkmark.circle")
-            }
-            Button("Delete sent copy", role: .destructive) { showsDeleteConfirmation = true }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("captures.send.delete")
+        case .sent, .deleting, .deleted:
+            sentOutcome(status)
         case .cancelling:
             Text("Cancellation is pending.")
             cancelButton
         case .cancelled:
             Label("Send cancelled", systemImage: "xmark.circle")
-        case .deleting:
-            Text("Deletion is pending. The sent copy has not been confirmed removed.")
-            Button("Retry deletion", role: .destructive) { showsDeleteConfirmation = true }
-                .disabled(model.isWorking)
-        case .deleted:
-            Label("Sent copy deleted", systemImage: "checkmark.circle")
+            sendButton("Send privately")
+        }
+    }
+
+    @ViewBuilder
+    private func sentOutcome(_ status: MobileCaptureSubmissionStatusDto) -> some View {
+        if status.localPayloadState == .removed {
+            Label(localizedAppText("capture.history.local_deleted"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(PevColors.green)
+        } else if status.receipt != nil {
+            Label(localizedAppText("capture.submission.received"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(PevColors.green)
         }
     }
 
@@ -163,8 +208,20 @@ struct CaptureSubmissionSection: View {
         } label: {
             Label(title, systemImage: "paperplane")
         }
-        .disabled(model.isWorking || model.isSending || evidence.isWorking || evidence.isDirty)
+        .disabled(
+            model.isWorking || model.isSending
+                || !captureSubmissionEvidenceIsReviewable(
+                    loaded: evidence.isLoaded, working: evidence.isWorking, dirty: evidence.isDirty
+                )
+        )
         .accessibilityIdentifier("captures.send")
+    }
+
+    private func sendConfirmed() async {
+        await model.send()
+        guard let status = model.status, status.phase == .sent, status.receipt != nil else { return }
+        onLocalPayloadStateChange(status.localPayloadState)
+        await RustPersistenceStore.deduplicateManagedCaptureFiles()
     }
 
     private var cancelButton: some View {
@@ -178,7 +235,7 @@ struct CaptureSubmissionSection: View {
         let categories = (["raw Bluetooth evidence", "event order and timing"] + includedCategories(status)).joined(
             separator: ", ")
         return
-            "Send \(categories) to the CutOut maintainer for protocol support. Music is excluded. Your original recording stays on this device."
+            "Send \(categories) to the CutOut maintainer for protocol support. Music is excluded. A matching receipt starts removal of the local capture payload."
     }
 
     private func includedCategories(_ status: MobileCaptureSubmissionStatusDto) -> [String] {
@@ -196,6 +253,8 @@ struct CaptureSubmissionSection: View {
 @MainActor
 @Observable
 final class CaptureEvidenceEditorModel {
+    typealias LoadEvidence = @MainActor (MobileCaptureSubmissionSourceDto) async throws -> MobileCaptureEvidenceDto
+
     let source: MobileCaptureSubmissionSourceDto
     var note = "" { didSet { if !isWorking { isDirty = true } } }
     private(set) var screenshots: [Data] = []
@@ -205,16 +264,19 @@ final class CaptureEvidenceEditorModel {
     private(set) var error: String?
     private(set) var noteLimit = 1024
     private(set) var screenshotLimit = 4
+    @ObservationIgnored private let loadEvidence: LoadEvidence
 
-    init(source: MobileCaptureSubmissionSourceDto) { self.source = source }
+    init(source: MobileCaptureSubmissionSourceDto, loadEvidence: LoadEvidence? = nil) {
+        self.source = source
+        self.loadEvidence = loadEvidence ?? Self.readEvidence
+    }
 
     func refresh() async {
         guard !isWorking, !isDirty else { return }
         isWorking = true
         defer { isWorking = false }
         do {
-            let client = try CaptureSubmissionClientHandle(database: await RustPersistenceStore.open())
-            let saved = try await client.evidence(source: source)
+            let saved = try await loadEvidence(source)
             note = saved.note
             screenshots = saved.screenshots
             noteLimit = Int(saved.noteLimitBytes)
@@ -272,6 +334,13 @@ final class CaptureEvidenceEditorModel {
             isDirty = true
             error = nil
         } catch { self.error = CaptureSubmissionModel.message(for: error) }
+    }
+
+    private static func readEvidence(_ source: MobileCaptureSubmissionSourceDto) async throws
+        -> MobileCaptureEvidenceDto
+    {
+        let database = try await RustPersistenceStore.open()
+        return try await CaptureSubmissionClientHandle(database: database).evidence(source: source)
     }
 }
 
@@ -356,7 +425,14 @@ private struct CaptureEvidenceSection: View {
                 .accessibilityIdentifier("captures.evidence.save")
             }
             if model.isWorking { ProgressView() }
-            if let error = model.error { Text(error).foregroundStyle(PevColors.warningText) }
+            if let error = model.error {
+                Text(error).foregroundStyle(PevColors.warningText)
+                if !model.isLoaded {
+                    Button(localizedAppText("capture.evidence.retry")) { Task { await model.refresh() } }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("captures.evidence.retry")
+                }
+            }
         } header: {
             Text("Recording notes")
         }

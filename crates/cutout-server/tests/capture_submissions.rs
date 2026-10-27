@@ -614,6 +614,13 @@ async fn private_capture_failed_storage_publishes_nothing_and_preserves_retry() 
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
+    let mut objects = database.canonicalize().expect("database").into_os_string();
+    objects.push(".capture-objects");
+    let object = std::path::PathBuf::from(objects).join(&operation);
+    assert!(
+        !object.exists(),
+        "failed publication must not leave a capture file"
+    );
     let count: u64 = connection
         .query_row("SELECT count(*) FROM capture_submissions", [], |row| {
             row.get(0)
@@ -630,6 +637,7 @@ async fn private_capture_failed_storage_publishes_nothing_and_preserves_retry() 
             .status(),
         StatusCode::CREATED
     );
+    assert_eq!(std::fs::read(object).expect("capture file"), capture());
 }
 
 #[tokio::test]
@@ -639,31 +647,9 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
     let database = directory.path().join("server.sqlite");
     let server = Server::start(&database).await;
     let owner = server.identity().await;
-    for _ in 0..2 {
-        expect_status(
-            server
-                .put(&Uuid::new_v4().to_string(), &owner, &capture(), "manual")
-                .await,
-            StatusCode::CREATED,
-        )
-        .await;
-    }
-    let inspector = rusqlite::Connection::open(&database).expect("inspector");
-    let owner_id: String = inspector
-        .query_row(
-            "SELECT id FROM contributors WHERE token_hash=?1",
-            [hex::encode(Sha256::digest(owner.as_bytes()))],
-            |row| row.get(0),
-        )
-        .expect("owner identity");
-    let principal = format!("capture-upload:{owner_id}");
-    let (previous_window, previous_attempts): (u64, u64) = inspector
-        .query_row(
-            "SELECT window_start_ms,count FROM quotas WHERE principal=?1 AND period_ms=3600000",
-            [&principal],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("two completed upload admissions");
+    let mut staging_name = database.as_os_str().to_owned();
+    staging_name.push(".capture-staging");
+    let staging = std::path::PathBuf::from(staging_name);
     let operation = Uuid::new_v4().to_string();
     let bytes = capture();
     let metadata = serde_json::to_string(&metadata(&bytes, "manual")).expect("metadata");
@@ -684,13 +670,17 @@ async fn private_capture_cancel_during_body_stream_blocks_finalize() {
         .write_all(&bytes[..half])
         .await
         .expect("partial body");
-    // The durable attempt budget establishes that the request reached authenticated admission.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            let (window,attempts):(u64,u64)=inspector.query_row(
-                "SELECT window_start_ms,count FROM quotas WHERE principal=?1 AND period_ms=3600000",
-                [&principal],|row|Ok((row.get(0)?,row.get(1)?))).expect("owner hourly budget");
-            if window != previous_window || attempts > previous_attempts {
+            let admitted = std::fs::read_dir(&staging).is_ok_and(|entries| {
+                entries.filter_map(Result::ok).any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("cutout-capture-")
+                })
+            });
+            if admitted {
                 break;
             }
             tokio::task::yield_now().await;

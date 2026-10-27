@@ -85,12 +85,12 @@ final class CaptureSubmissionModel {
             let generation = self.publicationGeneration
             let credential = try await self.credential()
             return try await self.sendOperation(operationID, credential) { [weak self] progress in
-                guard let self, self.isSending, generation == self.publicationGeneration,
-                    progress.operationId == operationID
-                else { return }
+                guard let self, self.isSending, generation == self.publicationGeneration else { return }
+                // A cancelled attempt is replaced with a new operation id before upload.
                 // Main-actor deliveries can be queued; never move the display backwards.
                 if let previous = self.progress {
-                    guard progress.attemptId == previous.attemptId,
+                    guard progress.operationId == previous.operationId,
+                        progress.attemptId == previous.attemptId,
                         progress.bytesSent >= previous.bytesSent,
                         previous.phase != .verifyingReceipt || progress.phase == .verifyingReceipt
                     else { return }
@@ -154,7 +154,7 @@ final class CaptureSubmissionModel {
     static func message(for error: Error) -> String {
         guard let error = error as? MobileCaptureSubmissionError else {
             if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
-                return "The account cannot authorize this transfer. A remote copy has not been confirmed removed."
+                return "The account cannot authorize this transfer."
             }
             return "The private transfer could not be completed. Your original recording is still on this device."
         }
@@ -167,7 +167,7 @@ final class CaptureSubmissionModel {
         case .NotReady: return "This recording is not ready for private Send."
         case .Unavailable: return "Private Send is unavailable. Try again later."
         case .Unauthorized:
-            return "The account cannot authorize this transfer. A remote copy has not been confirmed removed."
+            return "The account cannot authorize this transfer."
         case .RateLimited: return "Too many requests. Try again later."
         case .QuotaExceeded: return "Private capture storage is full. Try again later."
         case .InvalidCapture: return "The recording could not be validated for private Send."
@@ -181,19 +181,19 @@ final class CaptureSubmissionModel {
 
     var failureMessage: String? {
         switch status?.failure {
-        case .network: "The network request failed. Retry sends the same saved snapshot."
-        case .unauthorized: "The account cannot authorize this transfer."
-        case .forbidden: "This account cannot access the private transfer."
+        case .network: "The network failed. This capture is still on this phone."
+        case .unauthorized: "This account could not send the capture."
+        case .forbidden: "This account cannot send the capture."
         case .conflict:
-            "The server rejected conflicting submission information. Your original recording is still on this device."
-        case .rejected: "The service rejected this capture."
-        case .throttled: "Too many requests. Try again later."
-        case .unavailable: "Private Send is unavailable. Try again later."
-        case .tooLarge: "This capture exceeds the service's size limit."
-        case .invalidCapture: "The service could not validate this capture."
-        case .musicPresent: "This snapshot contains excluded music metadata and cannot be sent."
-        case .quotaExceeded: "Private capture storage is full. Try again later."
-        case .cancelled: "The transfer was cancelled."
+            "The server already has different information for this capture. It is still on this phone."
+        case .rejected: "The server rejected this capture. It is still on this phone."
+        case .throttled: "Waiting. The server asked to slow down."
+        case .unavailable: "The server is unavailable. This capture is still on this phone."
+        case .tooLarge: "This capture is too large to send."
+        case .invalidCapture: "This capture could not be read."
+        case .musicPresent: "This capture includes music and was not sent."
+        case .quotaExceeded: "The server has no room for more captures."
+        case .cancelled: "The send was cancelled."
         case nil: nil
         }
     }

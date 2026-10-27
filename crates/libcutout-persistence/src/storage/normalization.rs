@@ -9,11 +9,25 @@ use std::os::unix::fs::MetadataExt;
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 const SEMANTIC_BATCH_ROWS: usize = 64;
 const CAPTURE_CHUNK_BYTES: usize = 64 * 1024;
+
+#[cfg(test)]
+static TEST_COMPLETED_COMPACTIONS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) fn test_compaction_completed_for(database_path: &Path) -> bool {
+    let database_path =
+        fs::canonicalize(database_path).unwrap_or_else(|_| database_path.to_owned());
+    TEST_COMPLETED_COMPACTIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&database_path)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BatchState {
@@ -90,7 +104,7 @@ enum LegacyArtifactPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileFingerprint {
+pub(super) struct FileFingerprint {
     len: u64,
     #[cfg(not(unix))]
     modified: Option<std::time::SystemTime>,
@@ -109,7 +123,7 @@ struct FileFingerprint {
 }
 
 impl FileFingerprint {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
+    pub(super) fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
             len: metadata.len(),
             #[cfg(not(unix))]
@@ -127,6 +141,10 @@ impl FileFingerprint {
             #[cfg(unix)]
             ctime_nsec: metadata.ctime_nsec(),
         }
+    }
+
+    pub(super) const fn len(self) -> u64 {
+        self.len
     }
 }
 
@@ -340,6 +358,17 @@ where
          WHERE singleton = 1",
         [],
     )?;
+    #[cfg(test)]
+    {
+        let database_path =
+            fs::canonicalize(database_path).unwrap_or_else(|_| database_path.to_owned());
+        let mut completed = TEST_COMPLETED_COMPACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !completed.iter().any(|path| path == &database_path) {
+            completed.push(database_path);
+        }
+    }
     Ok(CompactionState::Complete)
 }
 
@@ -871,7 +900,7 @@ fn retire_verified_legacy_artifact(
     Ok(ArchiveState::Pending)
 }
 
-fn has_active_work(
+pub(super) fn has_active_work(
     connection: &Connection,
     own_backfill: Option<&str>,
 ) -> Result<bool, StorageError> {
@@ -892,13 +921,23 @@ fn expected_legacy_path(
     stored_path: &str,
 ) -> Option<(PathBuf, PevcapEncoding)> {
     let directory = legacy_import_directory(database_path);
+    let stored_path = Path::new(stored_path);
+    if !stored_path.is_absolute()
+        || stored_path
+            .components()
+            .any(|component| component == Component::CurDir || component == Component::ParentDir)
+        || stored_path.parent()?.file_name()? != directory.file_name()?
+    {
+        return None;
+    }
+
     for (extension, encoding) in [
         ("jsonl", PevcapEncoding::Jsonl),
         ("pevcap", PevcapEncoding::Binary),
     ] {
-        let expected = directory.join(format!("{digest}.{extension}"));
-        if Path::new(stored_path) == expected {
-            return Some((expected, encoding));
+        let filename = format!("{digest}.{extension}");
+        if stored_path.file_name()?.to_str()? == filename {
+            return Some((directory.join(filename), encoding));
         }
     }
     None
@@ -1018,7 +1057,7 @@ fn managed_file_still_matches(
     )
 }
 
-fn same_file_identity(expected: FileFingerprint, actual: FileFingerprint) -> bool {
+pub(super) fn same_file_identity(expected: FileFingerprint, actual: FileFingerprint) -> bool {
     #[cfg(unix)]
     {
         expected.dev == actual.dev
@@ -1171,7 +1210,8 @@ fn read_projection(
 mod tests {
     use super::{
         CompactionState, LegacyArtifactPhase, LegacyArtifactScan, compact_with_available_space,
-        compact_with_available_space_and_observer, reject_artifact,
+        compact_with_available_space_and_observer, expected_legacy_path, legacy_import_directory,
+        reject_artifact,
     };
     use rusqlite::{
         Connection,
@@ -1179,7 +1219,7 @@ mod tests {
     };
     use sha2::{Digest, Sha256};
     use std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -1187,7 +1227,130 @@ mod tests {
         time::Duration,
     };
 
-    fn pending_database(path: &std::path::Path) -> Connection {
+    #[test]
+    fn relocated_legacy_path_resolves_only_supported_managed_archive_identity() {
+        let database_path = Path::new("/current/container/ride.sqlite");
+        let digest = "a".repeat(64);
+        let current_archive =
+            legacy_import_directory(database_path).join(format!("{digest}.jsonl"));
+        let relocated = format!("/previous/container/ride.sqlite.pevcap-imports/{digest}.jsonl");
+
+        assert_eq!(
+            expected_legacy_path(database_path, &digest, &relocated),
+            Some((current_archive.clone(), cutout_core::PevcapEncoding::Jsonl)),
+        );
+        assert_eq!(
+            expected_legacy_path(
+                database_path,
+                &digest,
+                &format!("/previous/container/ride.sqlite.pevcap-imports/{digest}.pevcap"),
+            ),
+            Some((
+                legacy_import_directory(database_path).join(format!("{digest}.pevcap")),
+                cutout_core::PevcapEncoding::Binary,
+            )),
+        );
+
+        for rejected in [
+            format!(
+                "/previous/container/ride.sqlite.pevcap-imports/{}.jsonl",
+                "b".repeat(64)
+            ),
+            format!("/previous/container/another.sqlite.pevcap-imports/{digest}.jsonl"),
+            format!("/previous/container/ride.sqlite.pevcap-imports/{digest}.txt"),
+            format!(
+                "/previous/container/ride.sqlite.pevcap-imports/../ride.sqlite.pevcap-imports/{digest}.jsonl"
+            ),
+        ] {
+            assert_eq!(
+                expected_legacy_path(database_path, &digest, &rejected),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn relocated_archive_retires_local_duplicate_and_preserves_original_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original-container");
+        let relocated = directory.path().join("current-container");
+        std::fs::create_dir(&original).unwrap();
+        let original_database = original.join("ride.sqlite");
+        let bytes = b"original capture bytes, including unknown fields\n";
+        let digest = hex::encode(Sha256::digest(bytes));
+        let archive_directory = legacy_import_directory(&original_database);
+        std::fs::create_dir(&archive_directory).unwrap();
+        let original_archive = archive_directory.join(format!("{digest}.jsonl"));
+        std::fs::write(&original_archive, bytes).unwrap();
+        let mut connection = Connection::open(&original_database).unwrap();
+        super::super::configure_connection(&mut connection, &original_database).unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports VALUES (?1, ?2, NULL, 'capture_only', ?3, 1, 0, 1)",
+                rusqlite::params![digest, original_archive.to_string_lossy(), bytes.len()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_captures VALUES (?1, ?1, 'jsonl', ?2, ?2, 1)",
+                rusqlite::params![digest, bytes.len()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO pevcap_capture_chunks VALUES (?1, 0, ?2)",
+                rusqlite::params![digest, bytes.as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE storage_normalization_progress SET semantic_complete = 1",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        std::fs::rename(&original, &relocated).unwrap();
+        std::fs::create_dir_all(&archive_directory).unwrap();
+        std::fs::write(&original_archive, b"external file at the previous location").unwrap();
+        let database_path = relocated.join("ride.sqlite");
+        let local_archive = legacy_import_directory(&database_path).join(format!("{digest}.jsonl"));
+        let mut connection = Connection::open(&database_path).unwrap();
+        let mut scan = None;
+        for _ in 0..8 {
+            if super::normalize_legacy_artifact_batch(&mut connection, &database_path, &mut scan)
+                .unwrap()
+                == super::ArchiveState::Finished
+            {
+                break;
+            }
+        }
+        assert!(
+            !local_archive.exists(),
+            "the verified duplicate in the current container is retired"
+        );
+        let stored: Vec<u8> = connection
+            .query_row(
+                "SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, bytes);
+        let path: Option<String> = connection
+            .query_row(
+                "SELECT artifact_path FROM pevcap_imports WHERE artifact_digest = ?1",
+                [&digest],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(path.is_none());
+        assert_eq!(
+            std::fs::read(original_archive).unwrap(),
+            b"external file at the previous location"
+        );
+    }
+
+    fn pending_database(path: &Path) -> Connection {
         let mut connection = Connection::open(path).unwrap();
         super::super::configure_connection(&mut connection, path).unwrap();
         connection

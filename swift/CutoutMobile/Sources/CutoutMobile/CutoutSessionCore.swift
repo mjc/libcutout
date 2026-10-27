@@ -1023,13 +1023,28 @@ public final class CutoutSessionCore: NSObject {
         #if DEBUG
             if let testScript {
                 guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+                if testScript.startsLive {
+                    return onBleQueue {
+                        let snapshot = rustSessionState.connectionAttemptSnapshot()
+                        guard let token = snapshot.token,
+                            token.platformIdentifier == platformIdentifier,
+                            snapshot.transport == .connected,
+                            snapshot.readiness == .verified,
+                            rustSessionState.verifiedConnectionAttemptIsCurrent(token: token)
+                        else { return false }
+                        return startBorrowedManualCapture(
+                            token: token, note: note, annotations: annotations, evidence: "simulator_fixture"
+                        )
+                    }
+                }
                 return onBleQueue {
                     guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
                     isRecordOnly = true
                     guard
                         startCapture(
                             reason: note ?? "record-only", annotations: annotations,
-                            evidence: "simulator_fixture", origin: .manual
+                            evidence: "simulator_fixture", origin: .manual,
+                            transportOwnership: .borrowed
                         )
                     else {
                         isRecordOnly = false
@@ -1041,6 +1056,15 @@ public final class CutoutSessionCore: NSObject {
             }
         #endif
         return onBleQueue {
+            if let active = connectionAttempt, active.peripheral.state != .disconnected {
+                guard active.token.platformIdentifier == platformIdentifier,
+                    active.peripheral.state == .connected,
+                    rustSessionState.connectionAttemptIsCurrent(token: active.token)
+                else { return false }
+                return startBorrowedManualCapture(
+                    token: active.token, note: note, annotations: annotations, evidence: "hardware_tested"
+                )
+            }
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             guard
@@ -1051,6 +1075,34 @@ public final class CutoutSessionCore: NSObject {
             }
             return connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
         }
+    }
+
+    /// Starts a manual writer on the BLE owner without taking ownership of its live connection.
+    private func startBorrowedManualCapture(
+        token: ConnectionAttemptToken,
+        note: String?,
+        annotations: [String],
+        evidence: String
+    ) -> Bool {
+        guard rustSessionState.captureLifecycleSnapshot().canStart,
+            rustSessionState.connectionAttemptSnapshot().token == token
+        else { return false }
+        let captureAnnotations =
+            ["route=record_only"] + annotations
+            + (note.map { [pevcapAnnotation(key: "user_note", value: $0)] } ?? [])
+        guard
+            startCapture(
+                reason: note ?? "record-only",
+                annotations: captureAnnotations,
+                evidence: evidence,
+                origin: .manual,
+                transportOwnership: .borrowed,
+                connectionAttempt: token
+            )
+        else { return false }
+        _ = acceptCaptureWrite(recordCaptureLinkUp())
+        publishCaptureProgress()
+        return true
     }
 
     @discardableResult
@@ -1125,7 +1177,7 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    public func flushCapture() async -> Bool {
+    public nonisolated(nonsending) func flushCapture() async -> Bool {
         await flushCaptureReceipt().decision == .continue
     }
 
@@ -1134,7 +1186,7 @@ public final class CutoutSessionCore: NSObject {
         let decision: MobileCaptureWriteDecisionDto
     }
 
-    private func flushCaptureReceipt() async -> CaptureFlushReceipt {
+    private nonisolated(nonsending) func flushCaptureReceipt() async -> CaptureFlushReceipt {
         if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
             return flushCaptureOnBleQueue()
         }
@@ -1170,7 +1222,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     /// Rust admits the save; native code performs the flush and releases only its owned transport.
-    public func finishCapture() async -> Bool {
+    public nonisolated(nonsending) func finishCapture() async -> Bool {
         guard
             let token = onBleQueue({
                 guard let generation = captureGeneration,
@@ -1182,12 +1234,27 @@ public final class CutoutSessionCore: NSObject {
         else { return false }
         let receipt = await flushCaptureReceipt()
         return onBleQueue {
-            guard rustSessionState.finishCaptureFlush(token: token, outcome: receipt.outcome) else {
+            let disposition = rustSessionState.finishCaptureFlush(token: token, outcome: receipt.outcome)
+            switch disposition {
+            case .rejected:
                 publishCaptureProgress()
                 return false
+            case .writerOnly:
+                finishCaptureWriter()
+                #if DEBUG
+                    if testScript != nil, connectionSnapshot.token == nil {
+                        isRecordOnly = false
+                        publishConnectionSnapshot()
+                    }
+                #endif
+            case .releaseOwnedTransport(let ownedAttempt):
+                // Recheck at the native boundary so a replacement link is never closed.
+                guard connectionSnapshot.token == ownedAttempt else {
+                    finishCaptureWriter()
+                    return true
+                }
+                disconnectAndScanOnBleQueue()
             }
-            // Admission and disconnect share the BLE queue turn: a replacement cannot interleave.
-            disconnectAndScanOnBleQueue()
             return true
         }
     }
@@ -2263,13 +2330,16 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        guard
+        guard let ownedConnectionAttempt = connectionAttempt?.token,
             startCapture(
                 reason: "record-only",
                 annotations: ["route=record_only"] + annotations
                     + (note.map {
                         [pevcapAnnotation(key: "user_note", value: $0)]
-                    } ?? []), origin: .manual
+                    } ?? []),
+                origin: .manual,
+                transportOwnership: .captureOwned,
+                connectionAttempt: ownedConnectionAttempt
             )
         else {
             isRecordOnly = false
@@ -2305,7 +2375,6 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        _ = startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -2577,10 +2646,6 @@ public final class CutoutSessionCore: NSObject {
                     )
                 }
                 self.publishConnectionSnapshot()
-                _ = self.startCapture(
-                    reason: "protocol-detection",
-                    annotations: ["intent=previously_connected"]
-                )
                 reconnect()
                 self.admittedRetryTokenForPreparation = nil
             }
@@ -2971,9 +3036,17 @@ public final class CutoutSessionCore: NSObject {
         reason: String,
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested",
-        origin: MobileCaptureOriginDto = .automatic
+        origin: MobileCaptureOriginDto,
+        transportOwnership: MobileCaptureTransportOwnershipDto = .borrowed,
+        connectionAttempt: ConnectionAttemptToken? = nil
     ) -> Bool {
-        guard let identity = rustSessionState.beginConsentedCapture(origin: origin) else { return false }
+        guard
+            let identity = rustSessionState.beginConsentedCapture(
+                origin: origin,
+                transportOwnership: transportOwnership,
+                connectionAttempt: connectionAttempt
+            )
+        else { return false }
         let generation = CaptureGeneration(rawValue: identity.value)
         var directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         #if DEBUG
@@ -3338,7 +3411,6 @@ extension CutoutSessionCore {
 
     @discardableResult
     fileprivate func prepareRestoredRide() -> Bool {
-        _ = startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()

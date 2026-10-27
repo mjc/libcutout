@@ -17,6 +17,7 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
     #if DEBUG
         var finishWriterGate: (() -> Void)?
     #endif
+    private(set) var startCount = 0
     private(set) var finishCount = 0
     private(set) var publishFailureCount = 0
     private(set) var publishProgressCount = 0
@@ -35,6 +36,7 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
         origin _: MobileCaptureOriginDto,
         advertisedName _: String?
     ) -> Bool {
+        startCount += 1
         currentGeneration = generation
         hasWriter = true
         return true
@@ -552,42 +554,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         } catch MobileRideDatabaseError.StorageFailure {}
     }
 
-    func testDiagnosticWithdrawalFinishesOnlyAutomaticWriterAndPreservesRideAndConnection() async throws {
+    func testLegacyAutomaticPreferenceRejectsAutomaticStartAndPreservesManualWriterRideAndConnection() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)
         let previous = try preference.automaticDiagnosticRecordingEnabled()
         defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
-        for origin: MobileCaptureOriginDto in [.automatic, .manual] {
-            _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
-            let map = MobileRideMapState()
-            let ride = try map.startGpsOnly(atMs: 100)
-            let recorder = CaptureRecorderSpy()
-            let core = CutoutSessionCore(
-                clock: MonotonicClock(), rideMapState: map, database: database, captureRecorder: recorder)
-            let state = core.rideSessionStateHandle
-            let token = try XCTUnwrap(
-                state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
-            XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
-            let generation = try XCTUnwrap(state.beginConsentedCapture(origin: origin))
-            XCTAssertTrue(state.captureWriterStarted(generation: generation))
-            recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
-            let connection = core.connectionSnapshot
-            try await core.setAutomaticDiagnosticRecordingEnabled(false)
-            XCTAssertEqual(recorder.finishCount, origin == .automatic ? 1 : 0)
-            XCTAssertEqual(core.connectionSnapshot, connection)
-            XCTAssertEqual(map.currentSnapshot()?.rideID, ride.rideID)
-            XCTAssertEqual(map.currentSnapshot()?.state, .active)
-            XCTAssertFalse(try state.automaticDiagnosticRecordingEnabled())
-            if origin == .manual { core.finishCaptureForTesting() }
-        }
+        _ = try preference.setAutomaticDiagnosticRecordingEnabled(enabled: true)
+        let map = MobileRideMapState()
+        let ride = try map.startGpsOnly(atMs: 100)
+        let recorder = CaptureRecorderSpy()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(), rideMapState: map, database: database, captureRecorder: recorder)
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(
+            state.beginConnectionAttempt(platformIdentifier: "diagnostic-wheel", nowMs: 100).token)
+        XCTAssertEqual(state.connectionLinkEstablished(token: token).transport, .connected)
+        XCTAssertNil(
+            state.beginConsentedCapture(
+                origin: .automatic, transportOwnership: .borrowed, connectionAttempt: token
+            ),
+            "Legacy consent must not admit automatic diagnostic capture")
+        XCTAssertNil(state.captureLifecycleSnapshot().attempt)
+
+        let generation = try XCTUnwrap(
+            state.beginConsentedCapture(
+                origin: .manual, transportOwnership: .borrowed, connectionAttempt: token
+            ))
+        XCTAssertTrue(state.captureWriterStarted(generation: generation))
+        recorder.currentGeneration = CaptureGeneration(rawValue: generation.value)
+        let connection = core.connectionSnapshot
+        try await core.setAutomaticDiagnosticRecordingEnabled(false)
+        XCTAssertEqual(recorder.finishCount, 0, "Changing the legacy preference must not retire a manual writer")
+        XCTAssertEqual(core.connectionSnapshot, connection)
+        XCTAssertEqual(map.currentSnapshot()?.rideID, ride.rideID)
+        XCTAssertEqual(map.currentSnapshot()?.state, .active)
+        XCTAssertFalse(try state.automaticDiagnosticRecordingEnabled())
+        core.finishCaptureForTesting()
     }
 
     func testDiagnosticConsentAdmissionDefaultsOffAndKeepsExplicitManualCaptureAvailable() {
         let state = CutoutSessionStateHandle()
-        XCTAssertNil(state.beginConsentedCapture(origin: .automatic))
+        XCTAssertNil(
+            state.beginConsentedCapture(
+                origin: .automatic, transportOwnership: .borrowed, connectionAttempt: nil
+            ))
         XCTAssertNil(
             state.captureLifecycleSnapshot().attempt, "Declining diagnostics must not publish a writer failure")
-        XCTAssertNotNil(state.beginConsentedCapture(origin: .manual))
+        XCTAssertNotNil(
+            state.beginConsentedCapture(
+                origin: .manual, transportOwnership: .borrowed, connectionAttempt: nil
+            ))
     }
 
     func testRideMapPublishedSnapshotRejectsOlderRevisionButAcceptsNewRide() {
@@ -1054,7 +1070,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         await fulfillment(of: [completed], timeout: 5)
     }
 
-    func testCaptureStartupReservesPolicyAndActiveLabelClosureAtExactCapacity() async throws {
+    func testCaptureStartupRetainsManualMetadataAndClosesActiveLabel() async throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let preference = CutoutSessionStateHandle.withDatabase(database: database)
         let previous = try preference.automaticDiagnosticRecordingEnabled()
@@ -1062,9 +1078,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         defer { _ = try? preference.setAutomaticDiagnosticRecordingEnabled(enabled: previous) }
         let cases: [(MobileCaptureOriginDto, [String])] = [
             (.manual, (0..<4).map { "note=\($0)" }),
-            (.automatic, (0..<3).map { "note=\($0)" }),
             (.manual, ["note=0", "note=1", "capture_label=ride_start"]),
-            (.automatic, ["note=0", "capture_label=ride_start"]),
         ]
         for (origin, annotations) in cases {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1097,32 +1111,34 @@ final class CutoutSessionCoreTests: XCTestCase {
             if annotations.contains("capture_label=ride_start") {
                 XCTAssertTrue(retained.contains("capture_label=ride_stop"))
             }
-            XCTAssertEqual(retained.contains("capture_recording_policy=material_changes"), origin == .automatic)
+            XCTAssertFalse(retained.contains("capture_recording_policy=material_changes"))
+        }
+
+        let refusedAutomaticCases: [[String]] = [
+            (0..<3).map { "note=\($0)" },
+            ["note=0", "capture_label=ride_start"],
+        ]
+        for annotations in refusedAutomaticCases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let recorder = CutoutSessionCaptureRecorder(
+                clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+                wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+                database: try XCTUnwrap(MobileRideMapState.debugDatabase),
+                publish: { _ in },
+                onWriterCompletion: { _ in XCTFail("refused automatic startup must not finish a writer") }
+            )
+            XCTAssertFalse(
+                startRecorder(recorder, directory: directory, annotations: annotations, origin: .automatic),
+                "Legacy consent must not admit automatic diagnostic capture")
+            XCTAssertFalse(recorder.hasWriter)
+            XCTAssertNil(recorder.currentGeneration)
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
         }
     }
 
-    func testCaptureStartupRejectsActiveLabelClosureBeyondCapacity() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = CutoutSessionCaptureRecorder(
-            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
-            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
-            database: try XCTUnwrap(MobileRideMapState.debugDatabase),
-            publish: { _ in },
-            onWriterCompletion: { _ in XCTFail("rejected startup must not finish") }
-        )
-        XCTAssertFalse(
-            startRecorder(
-                recorder, directory: directory,
-                annotations: ["note=0", "note=1", "capture_label=ride_start"], origin: .automatic
-            ))
-        XCTAssertFalse(recorder.hasWriter)
-        XCTAssertNil(recorder.currentGeneration)
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
-    }
-
-    func testCaptureStartupRejectsRequestedAnnotationsThatCannotBeRetained() throws {
+    func testCaptureStartupRejectsOversizedManualRequestedAnnotations() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1140,10 +1156,10 @@ final class CutoutSessionCoreTests: XCTestCase {
                 platformIdentifier: "capture-test-\(UUID().uuidString)",
                 advertisedServices: [],
                 directory: directory,
-                reason: "annotation_overflow",
-                annotations: (0..<6).map { "note=\($0)" },
+                reason: "oversized_manual_annotations",
+                annotations: (0..<256).map { "note=\($0)" },
                 evidence: "simulator_fixture",
-                origin: .automatic,
+                origin: .manual,
                 advertisedName: nil
             )
         )
@@ -2163,6 +2179,105 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testManualCaptureOnLiveRideFinishesWriterWithoutReleasingConnection() async throws {
+        let live = expectation(description: "scripted session reaches live")
+        live.assertForOverFulfill = false
+        let rideStarted = expectation(description: "ride-map recording starts")
+        rideStarted.assertForOverFulfill = false
+        let captureStarted = expectation(description: "manual capture starts")
+        let captureFinished = expectation(description: "manual capture finishes")
+        let suiteName = "CutoutSessionCoreTests.borrowedCapture.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                protocolNotifications: [
+                    Data([
+                        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                        114, 104, 97, 115, 104, 0, 38, 208, 3,
+                    ])
+                ],
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState(),
+            selectedDeviceStore: selectedDeviceStore
+        )
+        var captureURL: URL?
+        var automaticCaptureStarts = 0
+        core.onPhaseChange = { presentation in
+            if presentation.phase == .live { live.fulfill() }
+        }
+        core.onRideMapSnapshotChange = { snapshot in
+            if snapshot.state == .active { rideStarted.fulfill() }
+        }
+        core.onCaptureEvent = { event in
+            switch event {
+            case .started(_, let fileURL):
+                automaticCaptureStarts += 1
+                captureURL = fileURL
+                captureStarted.fulfill()
+            case .finished:
+                captureFinished.fulfill()
+            default: break
+            }
+        }
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [live, rideStarted], timeout: 2)
+        XCTAssertEqual(automaticCaptureStarts, 0)
+
+        let connectionBefore = core.connectionSnapshot
+        let rideBefore = try XCTUnwrap(core.rideMapStateHandle?.currentSnapshot())
+        XCTAssertEqual(connectionBefore.readiness, .verified)
+        XCTAssertEqual(rideBefore.state, .active)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [captureStarted], timeout: 2)
+        let saved = await core.finishCapture()
+        XCTAssertTrue(saved)
+        await fulfillment(of: [captureFinished], timeout: 2)
+        defer { if let captureURL { try? FileManager.default.removeItem(at: captureURL) } }
+
+        let connectionAfter = core.connectionSnapshot
+        let rideAfter = try XCTUnwrap(core.rideMapStateHandle?.currentSnapshot())
+        XCTAssertEqual(connectionAfter.token, connectionBefore.token)
+        XCTAssertEqual(connectionAfter.transport, connectionBefore.transport)
+        XCTAssertEqual(connectionAfter.readiness, connectionBefore.readiness)
+        XCTAssertEqual(rideAfter.rideID, rideBefore.rideID)
+        XCTAssertEqual(rideAfter.state, .active)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+    }
+
+    func testStandaloneDebugCaptureFinishClearsRecordOnlyPresentationWithoutConnection() async throws {
+        let started = expectation(description: "standalone diagnostic writer starts")
+        let finished = expectation(description: "standalone diagnostic writer completes")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+            ))
+        core.onCaptureEvent = { event in
+            if case .started = event { started.fulfill() }
+            if case .finished = event { finished.fulfill() }
+        }
+
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+        XCTAssertNil(core.connectionSnapshot.token)
+
+        let saved = await core.finishCapture()
+        XCTAssertTrue(saved)
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertNil(core.connectionSnapshot.token)
+    }
+
+    @MainActor
     func testProductionLocationPathPublishesAcceptedRideMapPoint() throws {
         let live = expectation(description: "scripted session reaches live")
         let recording = expectation(description: "durable recording accepts locations")
@@ -2406,17 +2521,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         for (candidate, reply) in [(scriptedAeroCandidate, aeroFrame), (scriptedVescCandidate, vescReply)] {
             let scheduler = RecordingReconnectScheduler()
             let now = Mutex(MonotonicMilliseconds(1_000))
+            let capture = CaptureRecorderSpy()
             let core = CutoutSessionCore(
                 clock: MonotonicClock { now.withLock { $0 } },
                 testScript: CutoutSessionTestScript(
                     candidate: candidate, telemetry: nil, connectionDelayMilliseconds: 60_000
                 ),
                 reconnectScheduler: scheduler,
-                reconnectJitter: { 0 }
+                reconnectJitter: { 0 },
+                captureRecorder: capture
             )
             defer { core.disconnectAndScan() }
             core.start()
             XCTAssertTrue(core.pair(platformIdentifier: candidate.platformIdentifier))
+            XCTAssertEqual(capture.startCount, 0, "Manual capture must not start as part of normal connection")
             let state = core.rideSessionStateHandle
             let previous = try XCTUnwrap(core.connectionSnapshot.token)
             core.handleTransportTermination(
@@ -2424,6 +2542,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             )
             now.withLock { $0 = MonotonicMilliseconds(1_200) }
             scheduler.runAll()
+            XCTAssertEqual(capture.startCount, 0, "Reconnect must not start a diagnostic capture")
 
             let retry = try XCTUnwrap(core.connectionSnapshot.token)
             XCTAssertNotEqual(previous, retry)
