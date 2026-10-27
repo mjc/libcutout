@@ -402,7 +402,7 @@ struct CaptureSubmissionBatchSummary: Equatable, Sendable {
 struct CaptureSubmissionBatchAdapter {
     typealias ProgressUpdate = @MainActor @Sendable (CaptureSubmissionBatchProgress) -> Void
     typealias CandidateUpdate = @MainActor @Sendable (CaptureSubmissionBatchCandidate) -> Void
-    var review: @MainActor (CandidateUpdate) async throws -> [CaptureSubmissionBatchCandidate]
+    var review: @MainActor (@escaping CandidateUpdate) async throws -> [CaptureSubmissionBatchCandidate]
     var sendSelected: @MainActor ([String], @escaping ProgressUpdate) async throws -> CaptureSubmissionBatchSummary
     var requestCancel: @MainActor () -> Void
 
