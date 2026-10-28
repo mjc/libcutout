@@ -431,6 +431,24 @@ fn collect_live_history(
             if status.as_ref().is_some_and(valid_receipt) {
                 continue;
             }
+            if let Some(status) = status.as_ref()
+                && sha256_digest(&status.metadata.sha256)
+            {
+                let digest = status.metadata.sha256.clone();
+                let Some(covered) = wait_for_queue(notify.cancel, || {
+                    row_result(
+                        database
+                            .digest_has_valid_receipt(&digest)
+                            .map_err(Into::into),
+                    )
+                })?
+                else {
+                    return Ok(());
+                };
+                if covered.unwrap_or(false) {
+                    continue;
+                }
+            }
             let fingerprint = status_fingerprint(status.as_ref());
             let Some(evidence_read) = wait_for_queue(notify.cancel, || {
                 row_result(
@@ -1336,11 +1354,14 @@ fn submission_integrity(integrity: LiveCaptureIntegrity) -> CaptureSubmissionInt
 }
 
 fn valid_receipt(status: &CaptureSubmissionStatus) -> bool {
-    status.receipt.as_ref().is_some_and(|receipt| {
-        receipt
-            .validate_for(&status.operation_id, &status.metadata)
-            .is_ok()
-    })
+    super::status_has_valid_receipt(status)
+}
+
+fn sha256_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn map_preview_error(error: &CaptureSubmissionError) -> CaptureSubmissionBatchEligibility {
@@ -2403,6 +2424,171 @@ mod tests {
                 && candidate.transfer_sha256.is_none()
         }));
         database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_continues_when_one_import_has_two_source_identities() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let live_id = finished_capture(&database, directory.path(), 4);
+        let digest = import_one_capture(&database, &directory.path().join("import.jsonl"));
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&database_path).unwrap();
+        insert_second_owner(&connection, &digest, "33333333-3333-4333-8333-333333333333");
+        insert_second_owner(&connection, &digest, "34343434-3434-4434-8434-343434343434");
+        let bare = "d".repeat(64);
+        connection
+            .execute(
+                "INSERT INTO pevcap_imports (artifact_digest, artifact_path, outcome, artifact_size,
+                 record_count, location_count, imported_at_ms)
+                 VALUES (?1, '/not-opened', 'capture_only', 1, 0, 0, 1)",
+                [&bare],
+            )
+            .unwrap();
+        insert_second_owner(&connection, &bare, "44444444-4444-4444-8444-444444444444");
+        insert_second_owner(&connection, &bare, "55555555-5555-4555-8555-555555555555");
+        drop(connection);
+
+        let database = RideDatabase::open(&database_path).unwrap();
+        let plan = database
+            .review_capture_submission_batch(&[])
+            .expect("two identities on one import must not abort review");
+        let source_id = live_source_id(&plan, live_id);
+        let candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.source_artifact_id == source_id)
+            .expect("live capture remains in the review");
+        assert_eq!(
+            candidate.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert!(candidate.transfer_sha256.is_some());
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_omits_a_live_capture_already_sent_under_another_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let live_id = finished_capture(&database, directory.path(), 5);
+        let prepared = database
+            .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(live_id))
+            .unwrap();
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&database_path).unwrap();
+        let mut status: serde_json::Value = connection
+            .query_row(
+                "SELECT status_json FROM capture_submissions WHERE operation_id = ?1",
+                [&prepared.operation_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|json| serde_json::from_str(&json).unwrap())
+            .unwrap();
+        let second_source = "00000000-0000-4000-8000-0000000000f1";
+        let second_operation = "00000000-0000-4000-8000-0000000000f2";
+        status["operation_id"] = serde_json::json!(second_operation);
+        status["metadata"]["provenance"]["source_artifact_id"] = serde_json::json!(second_source);
+        status["phase"] = serde_json::json!("sent");
+        status["local_payload_state"] = serde_json::json!("removed");
+        status["receipt"] = serde_json::json!({
+            "operation_id": second_operation,
+            "sha256": prepared.metadata.sha256,
+            "bytes": prepared.metadata.bytes,
+            "received_at_milliseconds": 1_700_000_000_000_u64
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, evidence_json, status_json)
+                 SELECT ?1, ?2, snapshot_digest, evidence_json, ?3
+                 FROM capture_submissions WHERE operation_id = ?4",
+                rusqlite::params![
+                    second_source,
+                    second_operation,
+                    status.to_string(),
+                    prepared.operation_id
+                ],
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = RideDatabase::open(&database_path).unwrap();
+        let history = database
+            .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+            .unwrap();
+        let entry = history
+            .captures
+            .iter()
+            .find(|capture| capture.id == live_id)
+            .expect("the unsent session stays in the library");
+        let source_id = entry.submission.source_artifact_id.clone();
+        let plan = database
+            .review_capture_submission_batch(&[])
+            .expect("a receipt under another identity must not abort review");
+        assert!(
+            plan.candidates()
+                .iter()
+                .all(|candidate| candidate.source_artifact_id != source_id),
+            "bytes that already have a receipt must not be offered again"
+        );
+        assert!(plan.candidates().iter().all(|candidate| {
+            candidate.eligibility != CaptureSubmissionBatchEligibility::Eligible
+        }));
+        database.shutdown().unwrap();
+    }
+
+    fn insert_second_owner(connection: &Connection, digest: &str, source_artifact_id: &str) {
+        let operation_id = format!("66666666-6666-4666-8666-{}", &source_artifact_id[24..]);
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "evidence": null,
+                "sha256": digest,
+                "bytes": 1,
+                "encoding": "jsonl",
+                "origin": "unknown",
+                "integrity": "unknown",
+                "provenance": {
+                    "source_artifact_id": source_artifact_id,
+                    "live_capture_id": null,
+                    "source_sha256": digest,
+                    "transformation": "unmodified"
+                }
+            },
+            "categories": {
+                "device_identifiers": false,
+                "location": false,
+                "notes": false,
+                "annotations": false,
+                "settings_observations": false
+            },
+            "phase": "retryable",
+            "local_payload_state": "retained",
+            "account_id": null,
+            "receipt": null,
+            "failure": null,
+            "revision": 0
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![source_artifact_id, operation_id, digest, status.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO capture_submission_source_aliases
+                    (artifact_digest, source_artifact_id) VALUES (?1, ?2)",
+                rusqlite::params![digest, source_artifact_id],
+            )
+            .unwrap();
     }
 
     fn import_one_capture(database: &RideDatabase, source_path: &Path) -> String {

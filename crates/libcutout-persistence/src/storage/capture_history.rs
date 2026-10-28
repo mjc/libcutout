@@ -169,15 +169,6 @@ pub(super) fn list(
         let imported_at_milliseconds: u64 = row.get(3)?;
         let decoded = match read_capture(connection, row) {
             Ok(capture) => Some(capture),
-            Err(StorageError::InvalidStoredValue {
-                field: "ambiguous capture submission source identity",
-                ..
-            }) => {
-                return Err(StorageError::InvalidStoredValue {
-                    field: "ambiguous capture submission source identity",
-                    value: artifact_digest,
-                });
-            }
             Err(StorageError::InvalidStoredValue { .. }) => None,
             Err(error) => return Err(error),
         };
@@ -234,17 +225,7 @@ fn read_capture(
             value: artifact_digest.clone(),
         }
     })?;
-    let encoding: String = row.get(1)?;
-    let encoding = match encoding.as_str() {
-        "jsonl" => PevcapEncoding::Jsonl,
-        "binary" => PevcapEncoding::Binary,
-        _ => {
-            return Err(StorageError::InvalidStoredValue {
-                field: "capture encoding",
-                value: encoding,
-            });
-        }
-    };
+    let encoding_text = row.get::<_, Option<String>>(1)?;
     let ride_id = row
         .get::<_, Option<String>>(6)?
         .map(|value| {
@@ -257,41 +238,18 @@ fn read_capture(
         })
         .transpose()?;
     let status_json = row.get::<_, Option<String>>(7)?;
-    let status = status_json
+    let joined_status = status_json
         .as_deref()
         .map(super::capture_submission::decode_status)
         .transpose()?;
     let recording = super::recorded_capture::lookup(connection, &artifact_digest)?;
-    let alias =
-        super::capture_submission::lookup_submission_source_alias(connection, &artifact_digest)?;
-    let source_artifact_id = status
-        .as_ref()
-        .map(|status| status.metadata.provenance.source_artifact_id.clone())
-        .map_or_else(
-            || {
-                alias.map_or_else(
-                    || {
-                        recording.as_ref().map_or_else(
-                            || {
-                                super::capture_submission::legacy_capture_artifact_id(
-                                    &artifact_digest,
-                                )
-                                .map(|id| id.to_string())
-                                .map_err(|_| {
-                                    StorageError::InvalidStoredValue {
-                                        field: "capture source identity",
-                                        value: artifact_digest.clone(),
-                                    }
-                                })
-                            },
-                            |recording| Ok(recording.artifact_id.to_string()),
-                        )
-                    },
-                    |alias| Ok(alias.to_string()),
-                )
-            },
-            Ok,
-        )?;
+    let (status, source_artifact_id) = if let Some(status) = joined_status {
+        let source_artifact_id = status.metadata.provenance.source_artifact_id.clone();
+        (Some(status), source_artifact_id)
+    } else {
+        resolve_unjoined_owner(connection, &artifact_digest, recording.as_ref())?
+    };
+    let encoding = resolve_encoding(encoding_text.as_deref(), status.as_ref())?;
     let source = super::capture_submission::PevcapDigest::parse(&artifact_digest)
         .map(super::capture_submission::CaptureSubmissionSource::PevcapDigest)
         .map_err(|_| StorageError::InvalidStoredValue {
@@ -315,6 +273,166 @@ fn read_capture(
     })
 }
 
+/// One digest can belong to both the live capture id and the recording id.
+/// A receipt on either identity covers the bytes. Otherwise keep the identity
+/// live history already uses, so review does not list the capture twice.
+fn resolve_unjoined_owner(
+    connection: &Connection,
+    digest: &str,
+    recording: Option<&super::RecordedCapture>,
+) -> Result<
+    (
+        Option<super::capture_submission::CaptureSubmissionStatus>,
+        String,
+    ),
+    StorageError,
+> {
+    let mut owners = submission_owners(connection, digest)?;
+    if owners.is_empty() {
+        let source_artifact_id = recording
+            .map(|recording| recording.artifact_id.to_string())
+            .map_or_else(
+                || {
+                    super::capture_submission::legacy_capture_artifact_id(digest)
+                        .map(|id| id.to_string())
+                        .map_err(|_| StorageError::InvalidStoredValue {
+                            field: "capture source identity",
+                            value: digest.to_owned(),
+                        })
+                },
+                Ok,
+            )?;
+        return Ok((None, source_artifact_id));
+    }
+    owners.sort_by(|left, right| {
+        left.metadata
+            .provenance
+            .source_artifact_id
+            .cmp(&right.metadata.provenance.source_artifact_id)
+    });
+    if let Some(index) = owners
+        .iter()
+        .position(super::capture_submission::status_has_valid_receipt)
+    {
+        let status = owners.swap_remove(index);
+        let source_artifact_id = status.metadata.provenance.source_artifact_id.clone();
+        return Ok((Some(status), source_artifact_id));
+    }
+    let live_source_id = matching_live_source_id(connection, &owners)?;
+    if let Some(live_source_id) = live_source_id
+        && let Some(index) = owners
+            .iter()
+            .position(|status| status.metadata.provenance.source_artifact_id == live_source_id)
+    {
+        let status = owners.swap_remove(index);
+        let source_artifact_id = status.metadata.provenance.source_artifact_id.clone();
+        return Ok((Some(status), source_artifact_id));
+    }
+    if let Some(recording) = recording {
+        let recording_id = recording.artifact_id.to_string();
+        if let Some(index) = owners
+            .iter()
+            .position(|status| status.metadata.provenance.source_artifact_id == recording_id)
+        {
+            let status = owners.swap_remove(index);
+            let source_artifact_id = status.metadata.provenance.source_artifact_id.clone();
+            return Ok((Some(status), source_artifact_id));
+        }
+    }
+    let status = owners.remove(0);
+    let source_artifact_id = status.metadata.provenance.source_artifact_id.clone();
+    Ok((Some(status), source_artifact_id))
+}
+
+fn submission_owners(
+    connection: &Connection,
+    digest: &str,
+) -> Result<Vec<super::capture_submission::CaptureSubmissionStatus>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT status_json FROM capture_submissions
+         WHERE source_artifact_id IN (
+            SELECT source_artifact_id FROM capture_submission_source_aliases
+            WHERE artifact_digest = ?1
+            UNION
+            SELECT source_artifact_id FROM capture_submissions
+            WHERE coalesce(
+                json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+                json_extract(status_json, '$.metadata.sha256')
+            ) = ?1
+               OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?1
+         )",
+    )?;
+    let rows = statement.query_map([digest], |row| row.get::<_, String>(0))?;
+    let mut owners = Vec::new();
+    for row in rows {
+        let Ok(status) = super::capture_submission::decode_status(&row?) else {
+            continue;
+        };
+        owners.push(status);
+    }
+    Ok(owners)
+}
+
+fn matching_live_source_id(
+    connection: &Connection,
+    owners: &[super::capture_submission::CaptureSubmissionStatus],
+) -> Result<Option<String>, StorageError> {
+    let mut matches = Vec::new();
+    for owner in owners {
+        let id = &owner.metadata.provenance.source_artifact_id;
+        let mut statement = connection.prepare(
+            "SELECT capture_id,
+                    CASE WHEN json_valid(recording_context_json)
+                         THEN json_extract(recording_context_json, '$.artifact_id')
+                    END
+             FROM live_capture_sessions
+             WHERE capture_id = ?1
+                OR (json_valid(recording_context_json)
+                    AND json_extract(recording_context_json, '$.artifact_id') = ?1)",
+        )?;
+        let rows = statement.query_map([id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in rows {
+            let (capture_id, artifact_id) = row?;
+            let source_id = artifact_id
+                .filter(|value| !value.is_empty())
+                .unwrap_or(capture_id);
+            if owners
+                .iter()
+                .any(|owner| owner.metadata.provenance.source_artifact_id == source_id)
+            {
+                matches.push(source_id);
+            }
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    Ok(matches.into_iter().next())
+}
+
+fn resolve_encoding(
+    encoding: Option<&str>,
+    status: Option<&super::capture_submission::CaptureSubmissionStatus>,
+) -> Result<PevcapEncoding, StorageError> {
+    let from_status = status.map(|status| match status.metadata.encoding {
+        PevcapEncoding::Jsonl => "jsonl",
+        PevcapEncoding::Binary => "binary",
+    });
+    match encoding.or(from_status) {
+        Some("jsonl") => Ok(PevcapEncoding::Jsonl),
+        Some("binary") => Ok(PevcapEncoding::Binary),
+        Some(encoding) => Err(StorageError::InvalidStoredValue {
+            field: "capture encoding",
+            value: encoding.to_owned(),
+        }),
+        None => Err(StorageError::InvalidStoredValue {
+            field: "capture encoding",
+            value: "missing".to_owned(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +443,10 @@ mod tests {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .unwrap();
         super::super::migrations::create_current_schema(&connection).unwrap();
+        // create_current_schema does not create live sessions. Owner resolution reads that table.
+        connection
+            .execute_batch(super::super::live_capture::SCHEMA)
+            .unwrap();
         connection
     }
 
@@ -349,6 +471,63 @@ mod tests {
             .execute(
                 "INSERT INTO pevcap_capture_chunks VALUES (?1, 0, X'0a')",
                 [digest],
+            )
+            .unwrap();
+    }
+
+    fn insert_owner(
+        connection: &Connection,
+        digest: &str,
+        source_artifact_id: &str,
+        operation_id: &str,
+        sent: bool,
+    ) {
+        let receipt = if sent {
+            serde_json::json!({
+                "operation_id": operation_id,
+                "sha256": digest,
+                "bytes": 1,
+                "received_at_milliseconds": 1_700_000_000_000_u64
+            })
+        } else {
+            serde_json::Value::Null
+        };
+        let status = serde_json::json!({
+            "operation_id": operation_id,
+            "metadata": {
+                "evidence": null,
+                "sha256": digest,
+                "bytes": 1,
+                "encoding": "jsonl",
+                "origin": "unknown",
+                "integrity": "unknown",
+                "provenance": {
+                    "source_artifact_id": source_artifact_id,
+                    "live_capture_id": null,
+                    "source_sha256": digest,
+                    "transformation": "unmodified"
+                }
+            },
+            "categories": {
+                "device_identifiers": false,
+                "location": false,
+                "notes": false,
+                "annotations": false,
+                "settings_observations": false
+            },
+            "phase": if sent { "sent" } else { "retryable" },
+            "local_payload_state": if sent { "removed" } else { "retained" },
+            "account_id": null,
+            "receipt": receipt,
+            "failure": null,
+            "revision": 0
+        });
+        connection
+            .execute(
+                "INSERT INTO capture_submissions
+                    (source_artifact_id, operation_id, snapshot_digest, status_json)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![source_artifact_id, operation_id, digest, status.to_string()],
             )
             .unwrap();
     }
@@ -498,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_history_suppresses_multiple_actual_status_owners() {
+    fn capture_history_keeps_one_owner_when_a_digest_has_two_submissions() {
         let connection = connection();
         let digest = receipt(&connection, 'b', 10);
         stored(&connection, &digest, true);
@@ -552,13 +731,149 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(matches!(
-            list(&connection, None, QueryLimit::new(10).unwrap()),
-            Err(StorageError::InvalidStoredValue {
-                field: "ambiguous capture submission source identity",
-                ..
-            })
-        ));
+        let page = list(&connection, None, QueryLimit::new(10).unwrap()).unwrap();
+        assert!(page.unreadable.is_empty());
+        assert_eq!(page.captures.len(), 1);
+        assert_eq!(
+            page.captures[0].submission.source_artifact_id,
+            "00000000-0000-4000-8000-000000000081"
+        );
+    }
+
+    #[test]
+    fn capture_history_keeps_the_live_capture_id_when_neither_submission_was_sent() {
+        let connection = connection();
+        let digest = receipt(&connection, 'c', 11);
+        stored(&connection, &digest, true);
+        for (source_artifact_id, operation_id) in [
+            (
+                "00000000-0000-4000-8000-000000000083",
+                "00000000-0000-4000-8000-000000000093",
+            ),
+            (
+                "00000000-0000-4000-8000-000000000084",
+                "00000000-0000-4000-8000-000000000094",
+            ),
+        ] {
+            let status = serde_json::json!({
+                "operation_id": operation_id,
+                "metadata": {
+                    "evidence": null,
+                    "sha256": digest,
+                    "bytes": 1,
+                    "encoding": "jsonl",
+                    "origin": "unknown",
+                    "integrity": "unknown",
+                    "provenance": {
+                        "source_artifact_id": source_artifact_id,
+                        "live_capture_id": null,
+                        "source_sha256": digest,
+                        "transformation": "unmodified"
+                    }
+                },
+                "categories": {
+                    "device_identifiers": false,
+                    "location": false,
+                    "notes": false,
+                    "annotations": false,
+                    "settings_observations": false
+                },
+                "phase": "retryable",
+                "local_payload_state": "retained",
+                "account_id": null,
+                "receipt": null,
+                "failure": null,
+                "revision": 0
+            });
+            connection
+                .execute(
+                    "INSERT INTO capture_submissions
+                        (source_artifact_id, operation_id, snapshot_digest, status_json)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![source_artifact_id, operation_id, digest, status.to_string()],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions
+                    (capture_id, state, integrity, header_json, started_at_ms, finished_at_ms,
+                     next_sequence, stored_bytes)
+                 VALUES (?1, 'finished', 'complete', ?2, 1, 2, 1, 1)",
+                params!["00000000-0000-4000-8000-000000000084", vec![b'{', b'}']],
+            )
+            .unwrap();
+
+        let page = list(&connection, None, QueryLimit::new(10).unwrap()).unwrap();
+        assert!(page.unreadable.is_empty());
+        assert_eq!(page.captures.len(), 1);
+        assert_eq!(page.captures[0].encoding, PevcapEncoding::Jsonl);
+        assert_eq!(
+            page.captures[0].submission.source_artifact_id,
+            "00000000-0000-4000-8000-000000000084"
+        );
+    }
+
+    #[test]
+    fn capture_history_keeps_the_receipted_owner_when_a_digest_has_two_submissions() {
+        let connection = connection();
+        let digest = receipt(&connection, 'd', 12);
+        stored(&connection, &digest, true);
+        insert_owner(
+            &connection,
+            &digest,
+            "00000000-0000-4000-8000-000000000085",
+            "00000000-0000-4000-8000-000000000095",
+            false,
+        );
+        insert_owner(
+            &connection,
+            &digest,
+            "00000000-0000-4000-8000-000000000086",
+            "00000000-0000-4000-8000-000000000096",
+            true,
+        );
+
+        let page = list(&connection, None, QueryLimit::new(10).unwrap()).unwrap();
+        assert!(page.unreadable.is_empty());
+        assert_eq!(page.captures.len(), 1);
+        assert_eq!(
+            page.captures[0].submission.source_artifact_id,
+            "00000000-0000-4000-8000-000000000086"
+        );
+        assert!(
+            page.captures[0]
+                .submission
+                .status
+                .as_ref()
+                .unwrap()
+                .receipt
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn capture_history_skips_an_import_with_two_owners_and_no_payload() {
+        let connection = connection();
+        let digest = receipt(&connection, 'e', 13);
+        insert_owner(
+            &connection,
+            &digest,
+            "00000000-0000-4000-8000-000000000087",
+            "00000000-0000-4000-8000-000000000097",
+            false,
+        );
+        insert_owner(
+            &connection,
+            &digest,
+            "00000000-0000-4000-8000-000000000088",
+            "00000000-0000-4000-8000-000000000098",
+            false,
+        );
+
+        let page = list(&connection, None, QueryLimit::new(10).unwrap()).unwrap();
+        assert!(page.captures.is_empty());
+        assert!(page.unreadable.is_empty());
     }
 
     #[test]

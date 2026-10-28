@@ -554,6 +554,10 @@ pub(super) enum Command {
         size: u64,
         reply: Reply<bool>,
     },
+    DigestHasValidReceipt {
+        digest: String,
+        reply: Reply<bool>,
+    },
     ManagedFileSubmissionProtection {
         digest: String,
         size: u64,
@@ -602,6 +606,13 @@ impl RideDatabase {
                 size,
                 reply,
             })
+        })
+    }
+
+    pub(super) fn digest_has_valid_receipt(&self, digest: &str) -> Result<bool, StorageError> {
+        let digest = digest.to_owned();
+        self.request(|reply| {
+            super::Command::CaptureSubmission(Command::DigestHasValidReceipt { digest, reply })
         })
     }
 
@@ -1545,6 +1556,39 @@ pub(super) fn decode_status(json: &str) -> Result<CaptureSubmissionStatus, Stora
     Ok(status)
 }
 
+pub(super) fn status_has_valid_receipt(status: &CaptureSubmissionStatus) -> bool {
+    status.receipt.as_ref().is_some_and(|receipt| {
+        receipt
+            .validate_for(&status.operation_id, &status.metadata)
+            .is_ok()
+    })
+}
+
+pub(super) fn digest_has_valid_receipt(
+    connection: &Connection,
+    digest: &str,
+) -> Result<bool, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT status_json FROM capture_submissions
+         WHERE snapshot_digest = ?1
+            OR coalesce(
+                json_extract(status_json, '$.metadata.evidence.capture_sha256'),
+                json_extract(status_json, '$.metadata.sha256')
+            ) = ?1
+            OR json_extract(status_json, '$.metadata.provenance.source_sha256') = ?1",
+    )?;
+    let rows = statement.query_map([digest], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let Ok(status) = decode_status(&row?) else {
+            continue;
+        };
+        if status_has_valid_receipt(&status) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn lookup_status(
     connection: &Connection,
     artifact: Option<&str>,
@@ -2380,6 +2424,9 @@ pub(super) fn dispatch(connection: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(managed_file_removal_authorized(connection, &digest, size));
+        }
+        Command::DigestHasValidReceipt { digest, reply } => {
+            let _ = reply.send(digest_has_valid_receipt(connection, &digest));
         }
         Command::ManagedFileSubmissionProtection {
             digest,
