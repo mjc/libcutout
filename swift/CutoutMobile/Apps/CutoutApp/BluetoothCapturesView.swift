@@ -288,10 +288,7 @@ private struct CaptureSubmissionBatchReviewView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(PevColors.yellow)
                         .foregroundStyle(.black)
-                        .disabled(
-                            model.isReviewing || model.candidates.isEmpty || model.selectedCount == 0
-                                || model.error != nil || model.requiresFreshReview
-                        )
+                        .disabled(!model.canSend)
                         .accessibilityIdentifier("captures.batch.confirm")
                     }
                 }
@@ -314,7 +311,7 @@ private struct CaptureSubmissionBatchReviewView: View {
             }
             .task { if model.candidates.isEmpty { await model.review() } }
             .onDisappear { model.cancelReview() }
-            .interactiveDismissDisabled(model.isSending)
+            .interactiveDismissDisabled(model.isSending || model.isWaitingToSend)
         }
     }
 
@@ -646,6 +643,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
     private(set) var candidates: [CaptureSubmissionBatchCandidate] = []
     private(set) var selectedSourceArtifactIDs: Set<String> = []
     private(set) var isReviewing = false
+    private(set) var isWaitingToSend = false
     private(set) var isSending = false
     private(set) var didFinishSend = false
     private(set) var didRequestStop = false
@@ -657,6 +655,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
     private(set) var failedSourceArtifactIDs: [String] = []
     private var sendAttempt: UInt64 = 0
     private var userAdjustedSelection = false
+    private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private let adapter: CaptureSubmissionBatchAdapter
     @ObservationIgnored private let onTerminalUpdate: @MainActor () -> Void
 
@@ -677,6 +676,12 @@ final class CaptureSubmissionBatchModel: Identifiable {
     var eligibleCount: Int { candidates.filter(\.isEligible).count }
     var skippedCount: Int { candidates.filter { !$0.isEligible && !$0.isChecking }.count }
     var selectedCount: Int { selectedSourceArtifactIDs.count }
+    var canSend: Bool {
+        if isSending || isWaitingToSend || didFinishSend || error != nil || selectedCount == 0 {
+            return false
+        }
+        return isReviewing || !requiresFreshReview
+    }
     func review() async {
         await review(preselecting: nil)
     }
@@ -702,7 +707,14 @@ final class CaptureSubmissionBatchModel: Identifiable {
         itemProgress = [:]
         summary = nil
         didFinishSend = false
-        defer { isReviewing = false }
+        defer {
+            isReviewing = false
+            let waiters = reviewWaiters
+            reviewWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
         do {
             let reviewed = try await adapter.review { [weak self] candidate in
                 self?.upsertReviewed(candidate, preselecting: previousFailures)
@@ -774,8 +786,28 @@ final class CaptureSubmissionBatchModel: Identifiable {
         adapter.requestCancel()
     }
 
+    private func waitForReviewToEnd() async {
+        if !isReviewing { return }
+        await withCheckedContinuation { continuation in
+            reviewWaiters.append(continuation)
+        }
+    }
+
     private func send(_ sourceArtifactIDs: [String]) async {
-        guard !isSending, !didFinishSend, !requiresFreshReview, !sourceArtifactIDs.isEmpty else { return }
+        if isWaitingToSend { return }
+        var acceptedPartialReview = false
+        var ids = sourceArtifactIDs
+        if isReviewing {
+            acceptedPartialReview = true
+            isWaitingToSend = true
+            adapter.requestCancel()
+            await waitForReviewToEnd()
+            isWaitingToSend = false
+            let eligible = Set(candidates.filter(\.isEligible).map(\.sourceArtifactID))
+            ids = ids.filter { eligible.contains($0) }
+        }
+        guard !isSending, !didFinishSend, error == nil, !ids.isEmpty else { return }
+        guard acceptedPartialReview || !requiresFreshReview else { return }
         sendAttempt &+= 1
         let attempt = sendAttempt
         isSending = true
@@ -785,7 +817,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
         failedSourceArtifactIDs = []
         defer { if sendAttempt == attempt { isSending = false } }
         do {
-            let result = try await adapter.sendSelected(sourceArtifactIDs) { [weak self] event in
+            let result = try await adapter.sendSelected(ids) { [weak self] event in
                 guard let self, self.isSending, self.sendAttempt == attempt else { return }
                 self.progress = event
                 let isFailure = event.phase == .failed
@@ -807,7 +839,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
             guard sendAttempt == attempt else { return }
             self.error = error.localizedDescription
             didFinishSend = true
-            for sourceArtifactID in sourceArtifactIDs where !failedSourceArtifactIDs.contains(sourceArtifactID) {
+            for sourceArtifactID in ids where !failedSourceArtifactIDs.contains(sourceArtifactID) {
                 failedSourceArtifactIDs.append(sourceArtifactID)
             }
             onTerminalUpdate()

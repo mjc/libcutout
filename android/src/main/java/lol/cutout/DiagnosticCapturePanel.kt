@@ -456,6 +456,7 @@ internal class CaptureSubmissionBatchDialog(
     private var sendAttempt = 0L
     private var requiresFreshReview = false
     private var sendCompleted = false
+    private var pendingSendIds: List<String>? = null
     private var retrySelection: Set<String>? = null
     private var userAdjustedSelection = false
     private var reviewHeader: LinearLayout? = null
@@ -496,11 +497,13 @@ internal class CaptureSubmissionBatchDialog(
             .create()
         reviewDialog?.setOnShowListener {
             reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-                if (selected.isNotEmpty() && !isReviewing && !isSending && !sendCompleted && !requiresFreshReview && reviewError == null) confirm()
+                if (canSend()) confirm()
             }
             render(header)
         }
-        reviewDialog?.setOnDismissListener { operations().requestCancel() }
+        reviewDialog?.setOnDismissListener {
+            if (pendingSendIds == null) operations().requestCancel()
+        }
         reviewDialog?.show()
         beginReview()
     }
@@ -541,7 +544,13 @@ internal class CaptureSubmissionBatchDialog(
                     sendCompleted = false
                 }
             }.onFailure { reviewError = context.getString(R.string.capture_batch_review_failed) }
+            val queued = pendingSendIds
+            pendingSendIds = null
             renderCurrent()
+            if (queued != null && reviewError == null) {
+                val ready = queued.filter { id -> candidates.any { it.sourceArtifactId == id && it.eligible } }
+                if (ready.isNotEmpty()) send(ready, acceptedPartialReview = true)
+            }
         } }
     }
 
@@ -562,8 +571,15 @@ internal class CaptureSubmissionBatchDialog(
         renderCurrent()
     }
 
+    private fun canSend(): Boolean {
+        if (pendingSendIds != null || isSending || sendCompleted || reviewError != null || selected.isEmpty()) {
+            return false
+        }
+        return isReviewing || !requiresFreshReview
+    }
+
     private fun confirm() {
-        if (sendCompleted || requiresFreshReview || selected.isEmpty()) return
+        if (!canSend()) return
         val count = selected.size
         confirmationDialog = AlertDialog.Builder(context)
             .setTitle(R.string.capture_batch_confirm_title)
@@ -584,8 +600,15 @@ internal class CaptureSubmissionBatchDialog(
         confirmationDialog?.show()
     }
 
-    private fun send(ids: List<String>) {
-        if (ids.isEmpty() || isSending || sendCompleted || requiresFreshReview) return
+    private fun send(ids: List<String>, acceptedPartialReview: Boolean = false) {
+        if (isReviewing) {
+            pendingSendIds = ids
+            operations().requestCancel()
+            renderCurrent()
+            return
+        }
+        if (ids.isEmpty() || isSending || sendCompleted) return
+        if (!acceptedPartialReview && requiresFreshReview) return
         val attempt = ++sendAttempt
         isSending = true
         reviewError = null
@@ -643,7 +666,7 @@ internal class CaptureSubmissionBatchDialog(
         candidateAdapter?.notifyDataSetChanged()
         reviewDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = !isSending
         reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
-            isEnabled = !isSending && !isReviewing && !sendCompleted && !requiresFreshReview && reviewError == null && selected.isNotEmpty()
+            isEnabled = canSend()
             setText(if (selected.size == candidates.count { it.eligible }) R.string.capture_batch_send
             else R.string.capture_batch_send_selected)
         }

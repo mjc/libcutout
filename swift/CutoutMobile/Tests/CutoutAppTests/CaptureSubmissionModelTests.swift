@@ -296,6 +296,64 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertFalse(model.requiresFreshReview)
         XCTAssertEqual(model.selectedCount, 1)
         XCTAssertNil(model.error)
+        XCTAssertTrue(model.canSend)
+    }
+
+    @MainActor
+    func testSendStartsWithCapturesAlreadyEligibleWhileReviewIsStillCounting() async {
+        let ready = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "ready", sourceKind: "Live capture", displayName: "Ready",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let checking = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "later", sourceKind: "Live capture", displayName: "Later",
+            isEligible: false, isChecking: true, skipReason: "Checking", origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 80, sourceSHA256: nil, transferBytes: nil,
+            transferSHA256: nil, categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let release = AsyncStream<Void>.makeStream()
+        final class Gate {
+            var cancelled = false
+        }
+        let gate = Gate()
+        var sent: [String] = []
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { onCandidate in
+                    onCandidate(ready)
+                    for await _ in release.stream { break }
+                    return gate.cancelled ? [ready, checking] : [ready]
+                },
+                sendSelected: { ids, _ in
+                    sent = ids
+                    return CaptureSubmissionBatchSummary(
+                        sent: UInt64(ids.count), cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {
+                    gate.cancelled = true
+                    release.continuation.yield(())
+                    release.continuation.finish()
+                }
+            ))
+        let task = Task { await model.review() }
+        for _ in 0..<40 {
+            if model.canSend { break }
+            await Task.yield()
+        }
+        XCTAssertTrue(model.isReviewing)
+        XCTAssertTrue(model.canSend)
+        XCTAssertEqual(model.selectedCount, 1)
+        await model.sendSelected()
+        await task.value
+        XCTAssertEqual(sent, ["ready"])
+        XCTAssertTrue(model.requiresFreshReview)
+        XCTAssertFalse(model.canSend)
+        await model.sendSelected()
+        XCTAssertEqual(sent, ["ready"])
     }
 
     func testRetryUsesThePreparedRustOperationAndNeverPreparesAReplacement() async {

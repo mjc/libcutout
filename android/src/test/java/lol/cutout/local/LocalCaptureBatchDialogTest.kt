@@ -320,6 +320,70 @@ class LocalCaptureBatchDialogTest {
         }
     }
 
+    @Test
+    fun sendStartsForCapturesAlreadyEligibleWhileReviewIsStillCounting() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val ready = candidate("ready", eligible = true)
+        val checking = candidate("later", eligible = false).copy(checking = true, skipReason = "Checking")
+        var completeReview: ((Result<List<CaptureBatchCandidate>>) -> Unit)? = null
+        var cancels = 0
+        val sent = mutableListOf<List<String>>()
+        val operations = object : CaptureSubmissionBatchOperations {
+            override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
+                completed(Result.success(emptyList()))
+            }
+
+            override fun reviewIncremental(
+                onCandidate: (CaptureBatchCandidate) -> Unit,
+                completed: (Result<List<CaptureBatchCandidate>>) -> Unit,
+            ) {
+                onCandidate(ready)
+                completeReview = completed
+            }
+
+            override fun sendSelected(
+                sourceArtifactIds: List<String>,
+                progress: (CaptureBatchProgress) -> Unit,
+                completed: (Result<CaptureBatchSummary>) -> Unit,
+            ) {
+                sent += sourceArtifactIds
+                completed(Result.success(CaptureBatchSummary(
+                    sent = 1uL, cleaned = 0uL, failed = 0uL, skipped = 0uL, cancelled = 0uL,
+                    failedSourceArtifactIds = emptyList(), pendingCleanupSourceArtifactIds = emptyList(),
+                )))
+            }
+
+            override fun requestCancel() {
+                cancels += 1
+                completeReview?.invoke(Result.success(listOf(ready, checking)))
+            }
+        }
+        val dialog = CaptureSubmissionBatchDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            directories = emptyList(),
+            onFinished = {},
+            testOperations = operations,
+        )
+        try {
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled == true)
+            assertEquals(0, cancels)
+            dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(1, cancels)
+            assertEquals(listOf(listOf(ready.sourceArtifactId)), sent)
+        } finally {
+            dialog.confirmationDialog?.dismiss()
+            dialog.reviewDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
     private fun candidate(id: String, eligible: Boolean) = CaptureBatchCandidate(
         sourceArtifactId = id,
         sourceKind = "Live capture",

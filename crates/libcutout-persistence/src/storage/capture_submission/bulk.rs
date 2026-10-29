@@ -356,6 +356,9 @@ fn review(
         )?;
     }
 
+    // Stopping the scan leaves the captures already accepted sendable.
+    // Stop during a send sets this flag again.
+    cancel.store(false, Ordering::Release);
     inventory
         .candidates
         .sort_by(|left, right| left.source_artifact_id.cmp(&right.source_artifact_id));
@@ -2654,6 +2657,45 @@ mod tests {
             CaptureSubmissionBatchEligibility::Checking
         );
         assert!(plan.candidates()[0].transfer_sha256.is_none());
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn review_stopped_after_one_eligible_capture_can_still_send_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 11);
+        finished_capture(&database, directory.path(), 12);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
+        let plan = database
+            .review_capture_submission_batch_with_updates(&[], cancel, &|candidate| {
+                if candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible {
+                    stop.store(true, Ordering::Release);
+                }
+            })
+            .unwrap();
+        let selected = eligible_ids(&plan);
+        assert_eq!(selected.len(), 1);
+        assert!(
+            plan.candidates()
+                .iter()
+                .any(|candidate| candidate.eligibility
+                    == CaptureSubmissionBatchEligibility::Checking)
+        );
+        let transport = BatchTransport::default();
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            &selected,
+            ACCOUNT,
+            "token",
+            &transport,
+            Arc::new(|_| {}),
+        ))
+        .unwrap();
+        assert_eq!(result.sent, 1);
+        assert_eq!(result.cancelled, 0);
+        assert_eq!(transport.uploads.load(Ordering::Acquire), 1);
         database.shutdown().unwrap();
     }
 
