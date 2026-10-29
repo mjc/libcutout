@@ -7,6 +7,9 @@ use cutout_core::{
 };
 use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
+use sha2::{Digest, Sha256};
+use std::io::Write;
+use std::path::Path;
 use uuid::Uuid;
 
 pub(super) mod payload;
@@ -18,6 +21,14 @@ pub const LIVE_CAPTURE_HEADER_LIMIT_BYTES: usize = 65_536;
 pub const LIVE_CAPTURE_EVENT_LIMIT_BYTES: usize = 65_536;
 /// Maximum total header and event bytes retained for one live capture.
 pub const LIVE_CAPTURE_TOTAL_LIMIT_BYTES: u64 = cutout_core::MAX_CAPTURE_SUBMISSION_BYTES;
+
+/// Stored header and event lines written for one submission, without a PEVCAP decode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LiveSubmissionExport {
+    pub digest: String,
+    pub bytes: u64,
+    pub events: u64,
+}
 
 /// Rust-issued identity for one live capture, independent of ride and artifact identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -784,6 +795,22 @@ impl RideDatabase {
             id,
             after_sequence,
             limit,
+            reply,
+        })
+    }
+
+    /// Writes the stored capture lines to `path` in one pass and returns their digest.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, missing-capture, active-capture, or size error.
+    pub(super) fn write_live_submission_export(
+        &self,
+        id: LiveCaptureId,
+        path: &Path,
+    ) -> Result<LiveSubmissionExport, StorageError> {
+        self.request(|reply| Command::WriteLiveSubmissionExport {
+            id,
+            path: path.to_path_buf(),
             reply,
         })
     }
@@ -1631,6 +1658,87 @@ fn required_location_value(
     value.ok_or_else(|| StorageError::InvalidStoredValue {
         field,
         value: missing.to_owned(),
+    })
+}
+
+pub(super) fn write_submission_export(
+    connection: &Connection,
+    id: LiveCaptureId,
+    path: &Path,
+) -> Result<LiveSubmissionExport, StorageError> {
+    let header: Option<(String, Vec<u8>, u64)> = connection
+        .query_row(
+            "SELECT state, header_json, next_sequence
+             FROM live_capture_sessions WHERE capture_id = ?1",
+            [id.as_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((state, header_json, next_sequence)) = header else {
+        return Err(StorageError::NotFound);
+    };
+    if state == "active" || next_sequence == 0 {
+        return Err(StorageError::LiveCaptureNotActive);
+    }
+    let header =
+        std::str::from_utf8(&header_json).map_err(|_| StorageError::InvalidStoredValue {
+            field: "live capture header",
+            value: "not utf-8".to_owned(),
+        })?;
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut digest = Sha256::new();
+    let mut bytes = 0_u64;
+    fn push(
+        file: &mut impl Write,
+        digest: &mut Sha256,
+        bytes: &mut u64,
+        data: &[u8],
+    ) -> Result<(), StorageError> {
+        let next = bytes
+            .checked_add(u64::try_from(data.len()).unwrap_or(u64::MAX))
+            .ok_or(StorageError::LiveCaptureLimitExceeded)?;
+        if next > LIVE_CAPTURE_TOTAL_LIMIT_BYTES {
+            return Err(StorageError::LiveCaptureLimitExceeded);
+        }
+        file.write_all(data)?;
+        digest.update(data);
+        *bytes = next;
+        Ok(())
+    }
+    push(&mut file, &mut digest, &mut bytes, header.as_bytes())?;
+    push(&mut file, &mut digest, &mut bytes, b"\n")?;
+    let mut statement = connection.prepare(
+        "SELECT sequence, payload, payload_encoding, payload_original_bytes
+         FROM live_capture_events
+         WHERE capture_id = ?1
+         ORDER BY sequence",
+    )?;
+    let mut rows = statement.query([id.as_string()])?;
+    let mut expected = 0_u64;
+    while let Some(row) = rows.next()? {
+        let sequence: u64 = row.get(0)?;
+        if sequence != expected {
+            return Err(StorageError::PevcapCaptureIntegrity(
+                "live capture payload is incomplete".to_owned(),
+            ));
+        }
+        expected = expected
+            .checked_add(1)
+            .ok_or(StorageError::LiveCaptureLimitExceeded)?;
+        let payload = payload::decode(row.get(1)?, row.get(2)?, row.get(3)?)?;
+        push(&mut file, &mut digest, &mut bytes, &payload)?;
+        push(&mut file, &mut digest, &mut bytes, b"\n")?;
+    }
+    if expected != next_sequence {
+        return Err(StorageError::PevcapCaptureIntegrity(
+            "live capture payload is incomplete".to_owned(),
+        ));
+    }
+    file.flush()?;
+    Ok(LiveSubmissionExport {
+        digest: hex::encode(digest.finalize()),
+        bytes,
+        events: expected,
     })
 }
 

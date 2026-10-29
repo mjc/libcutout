@@ -421,9 +421,10 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
                 cutout_core::CaptureEvidenceError::InvalidScreenshot => Self::InvalidScreenshot,
             },
             Error::NotFound => Self::InvalidSource,
-            Error::NotFinished | Error::ProvenanceUnavailable | Error::InvalidState => {
-                Self::NotReady
-            }
+            Error::NotFinished
+            | Error::ProvenanceUnavailable
+            | Error::InvalidState
+            | Error::AlreadyReceipted => Self::NotReady,
             Error::InvalidCapture | Error::TooLarge => Self::InvalidCapture,
             Error::WrongAccount => Self::Unauthorized,
             Error::Storage(_) => Self::StorageFailure,
@@ -765,6 +766,8 @@ mod tests {
         status.metadata.integrity = CaptureSubmissionIntegrity::Incomplete {
             dropped_messages: 7,
         };
+        status.categories.device_identifiers = true;
+        status.categories.annotations = true;
         status.phase = persistence::CaptureSubmissionPhase::DeletionPending;
         status.failure = Some(persistence::CaptureSubmissionTransferError::Unavailable);
         let projected: MobileCaptureSubmissionStatusDto = status.into();

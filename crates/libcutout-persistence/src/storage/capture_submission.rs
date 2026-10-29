@@ -298,6 +298,10 @@ pub enum CaptureSubmissionError {
     /// Full-stream validation or original digest verification failed.
     #[error("capture submission bytes are invalid")]
     InvalidCapture,
+    /// The same bytes already have a durable send receipt under another identity.
+    /// The unsent copy stays on the device.
+    #[error("capture bytes already have a send receipt")]
+    AlreadyReceipted,
     /// The complete raw capture plus its selected evidence exceeds the existing transfer bound.
     #[error("capture submission exceeds the supported transfer size")]
     TooLarge,
@@ -504,6 +508,11 @@ struct SnapshotSource {
     integrity: CaptureSubmissionIntegrity,
     provenance: CaptureSubmissionProvenance,
     encoding: PevcapEncoding,
+    digest: String,
+    bytes: u64,
+    record_count: u64,
+    /// The bytes are already in the canonical capture store.
+    stored: bool,
 }
 
 pub(super) enum Action {
@@ -742,8 +751,8 @@ impl RideDatabase {
         })?
     }
 
-    /// Freezes and validates one nonempty inactive capture locally, without network effects.
-    /// The private original is preserved; the snapshot reuses the canonical PEVCAP store.
+    /// Writes one finished capture's stored lines and records a submission for them.
+    /// Event contents are not decoded. The service checks the uploaded body.
     /// Call off native callback and UI threads.
     /// # Errors
     /// Returns active/empty, unavailable provenance, malformed capture or storage failures.
@@ -770,12 +779,11 @@ impl RideDatabase {
             integrity,
             provenance,
             encoding,
+            digest,
+            bytes,
+            record_count,
+            stored,
         } = self.export_submission_source(record, &snapshot)?;
-        let summary = validate_capture_submission(
-            std::fs::File::open(&snapshot).map_err(StorageError::from)?,
-            encoding,
-        )
-        .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
         let evidence = self.capture_evidence(source)?;
         let evidence_json = if evidence.is_empty() {
             None
@@ -787,8 +795,8 @@ impl RideDatabase {
         };
         let mut metadata = CaptureSubmissionMetadata {
             evidence: None,
-            sha256: summary.sha256,
-            bytes: summary.bytes,
+            sha256: digest.clone(),
+            bytes,
             encoding,
             origin,
             integrity,
@@ -797,33 +805,37 @@ impl RideDatabase {
         metadata
             .validate()
             .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+        // Another identity already sent these bytes. Do not publish or upload them again,
+        // and do not remove the unsent copy.
+        if self.digest_has_valid_receipt(&digest)? {
+            return Err(CaptureSubmissionError::AlreadyReceipted);
+        }
         let source_artifact_id = CaptureArtifactId::parse(&metadata.provenance.source_artifact_id)
             .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
-        let preview = super::preflight_pevcap(
-            &snapshot,
-            encoding,
-            Some(crate::pevcap_limits::PevcapLimits::IMPORT),
-        )?;
-        if preview.artifact_digest() != metadata.sha256 || preview.artifact_size() != metadata.bytes
-        {
-            return Err(CaptureSubmissionError::InvalidCapture);
+        // A live capture's lines are not in the canonical store until this copy.
+        // An imported capture is already there. Neither path decodes events;
+        // the service validates the uploaded body.
+        if !stored {
+            self.publish_submission_snapshot(
+                &snapshot,
+                encoding,
+                &digest,
+                bytes,
+                record_count,
+                source_artifact_id,
+            )?;
         }
-        self.confirm_pevcap_publication(
-            &preview,
-            super::ride_write::wall_clock_now_milliseconds()?,
-            &CapturePublication::SubmissionSnapshot { source_artifact_id },
-        )?;
         append_evidence_to_submission_snapshot(
             &mut metadata,
             &snapshot,
             &evidence,
             evidence_json.as_deref(),
         )?;
-        let mut categories = summary.categories;
+        let mut categories = CaptureSubmissionCategories::default();
         categories.notes |= !evidence.note.is_empty();
         let reserved_source_sha256 = metadata.provenance.source_sha256.clone();
         let reservation = if let Some(source_sha256) = reserved_source_sha256.as_deref() {
-            self.find_legacy_capture_reservation(&source_artifact_id, source_sha256, summary.bytes)?
+            self.find_legacy_capture_reservation(&source_artifact_id, source_sha256, bytes)?
         } else {
             None
         };
@@ -1005,8 +1017,14 @@ impl RideDatabase {
                     .map_or(CaptureSubmissionOrigin::Unknown, |recording| {
                         recording.origin.into()
                     });
-                self.export_live_capture(entry.id, snapshot)
-                    .map_err(|_| CaptureSubmissionError::InvalidCapture)?;
+                let exported = self
+                    .write_live_submission_export(entry.id, snapshot)
+                    .map_err(|error| match error {
+                        StorageError::LiveCaptureLimitExceeded => CaptureSubmissionError::TooLarge,
+                        StorageError::LiveCaptureNotActive => CaptureSubmissionError::NotFinished,
+                        StorageError::NotFound => CaptureSubmissionError::NotFound,
+                        other => CaptureSubmissionError::Storage(other),
+                    })?;
                 Ok(SnapshotSource {
                     origin,
                     integrity,
@@ -1018,6 +1036,10 @@ impl RideDatabase {
                             CaptureSubmissionTransformation::DatabaseExportMusicExcluded,
                     },
                     encoding: PevcapEncoding::Jsonl,
+                    digest: exported.digest,
+                    bytes: exported.bytes,
+                    record_count: exported.events,
+                    stored: false,
                 })
             }
             SourceRecord::File(receipt) | SourceRecord::FileWithIdentity { receipt, .. } => {
@@ -1047,6 +1069,9 @@ impl RideDatabase {
                     PevcapEncoding::Jsonl
                 };
                 std::fs::copy(&original, snapshot).map_err(StorageError::from)?;
+                let bytes = std::fs::metadata(snapshot)
+                    .map_err(StorageError::from)?
+                    .len();
                 let transformation = CaptureSubmissionTransformation::Unmodified;
                 Ok(SnapshotSource {
                     origin,
@@ -1054,10 +1079,14 @@ impl RideDatabase {
                     provenance: CaptureSubmissionProvenance {
                         source_artifact_id: source_artifact_id.to_string(),
                         live_capture_id: None,
-                        source_sha256: Some(receipt.artifact_digest),
+                        source_sha256: Some(receipt.artifact_digest.clone()),
                         transformation,
                     },
                     encoding,
+                    digest: receipt.artifact_digest,
+                    bytes,
+                    record_count: receipt.record_count,
+                    stored: true,
                 })
             }
         }

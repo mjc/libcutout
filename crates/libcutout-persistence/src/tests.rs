@@ -6501,7 +6501,7 @@ fn capture_submission_gps_snapshot_recovers_lost_publication_response() {
 
     RideDatabase::fail_next_pevcap_finish_response_for_test();
     let prepared = database.prepare_capture_submission(source).unwrap();
-    assert!(prepared.categories.location);
+    assert!(!prepared.categories.location);
     assert_eq!(prepared.phase, crate::CaptureSubmissionPhase::Prepared);
     assert_eq!(
         database.prepare_capture_submission(source).unwrap(),

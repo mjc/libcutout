@@ -252,8 +252,8 @@ impl RideDatabase {
         )
     }
 
-    /// Lists captures before reading their payloads. `cancel` stops payload reads.
-    /// `on_candidate` runs for the first listing and again when a payload check finishes.
+    /// Lists captures from stored rows. Payload bytes are read once, when that capture is sent.
+    /// `cancel` stops the inventory. `on_candidate` runs once per listed row.
     ///
     /// # Errors
     ///
@@ -278,8 +278,8 @@ impl RideDatabase {
     }
 
     /// Same inventory as [`Self::review_capture_submission_batch_with_updates`].
-    /// When `send` is armed, captures already eligible upload before the next
-    /// page of a capture that is still being read, and before the next capture.
+    /// When `send` is armed, captures already listed upload before the next
+    /// inventory page. The body is the stored recording. The service checks it.
     ///
     /// # Errors
     ///
@@ -435,8 +435,24 @@ fn review(
         on_candidate,
     };
 
-    collect_live_history(database, limit, &mut inventory, &notify)?;
-    collect_canonical_history(database, limit, &mut inventory, &notify)?;
+    collect_live_history(
+        database,
+        limit,
+        &mut inventory,
+        &notify,
+        &cancel,
+        &mut sent,
+        send,
+    )?;
+    collect_canonical_history(
+        database,
+        limit,
+        &mut inventory,
+        &notify,
+        &cancel,
+        &mut sent,
+        send,
+    )?;
     finish_previews(database, &mut inventory, &notify, &cancel, &mut sent, send);
     if !cancel.load(Ordering::Acquire) {
         collect_managed_files(
@@ -511,6 +527,9 @@ fn collect_live_history(
     limit: QueryLimit,
     inventory: &mut ReviewInventory,
     notify: &ReviewNotify<'_>,
+    cancel_flag: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
 ) -> Result<(), CaptureSubmissionError> {
     let mut live_cursor = None;
     loop {
@@ -523,6 +542,9 @@ fn collect_live_history(
             break;
         };
         for entry in page.captures {
+            if notify.cancel.load(Ordering::Acquire) {
+                return Ok(());
+            }
             let source_id = entry.submission.source_artifact_id.clone();
             if entry.submission.source != CaptureSubmissionSource::LiveCapture(entry.id) {
                 return Err(CaptureSubmissionError::InvalidCapture);
@@ -581,7 +603,7 @@ fn collect_live_history(
                 Some(CaptureSubmissionBatchEligibility::TooLarge)
             } else {
                 match validate_live_capture_submission_provenance(&entry) {
-                    Ok(()) => Some(CaptureSubmissionBatchEligibility::Checking),
+                    Ok(()) => None,
                     Err(error) => Some(map_preview_error(&error)),
                 }
             };
@@ -600,17 +622,6 @@ fn collect_live_history(
                 status_fingerprint: fingerprint,
                 evidence_fingerprint: evidence_fingerprint(&evidence),
             };
-            if failure == Some(CaptureSubmissionBatchEligibility::Checking) {
-                inventory
-                    .previews
-                    .push(DeferredPreview::Live(Box::new(DeferredLivePreview {
-                        source_id: source_id.clone(),
-                        id: entry.id,
-                        entry: entry.clone(),
-                        status,
-                        evidence: evidence.clone(),
-                    })));
-            }
             let index = inventory.candidates.len();
             inventory.source_indices.insert(source_id.clone(), index);
             inventory.sources.insert(source_id, source);
@@ -633,6 +644,7 @@ fn collect_live_history(
             publish(&candidate, notify);
             inventory.candidates.push(candidate);
         }
+        flush_committed(database, inventory, cancel_flag, sent, send);
         live_cursor = page.next_cursor;
         if live_cursor.is_none() || notify.cancel.load(Ordering::Acquire) {
             break;
@@ -647,6 +659,9 @@ fn collect_canonical_history(
     limit: QueryLimit,
     inventory: &mut ReviewInventory,
     notify: &ReviewNotify<'_>,
+    cancel_flag: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
 ) -> Result<(), CaptureSubmissionError> {
     let mut capture_cursor: Option<PevcapCaptureCursor> = None;
     loop {
@@ -659,10 +674,10 @@ fn collect_canonical_history(
             break;
         };
         for capture in page.captures {
-            collect_canonical_capture(database, &capture, inventory, notify)?;
             if notify.cancel.load(Ordering::Acquire) {
                 return Ok(());
             }
+            collect_canonical_capture(database, &capture, inventory, notify)?;
         }
         for unread in page.unreadable {
             let source_id = unread.artifact_digest;
@@ -680,8 +695,9 @@ fn collect_canonical_history(
             publish(&candidate, notify);
             inventory.candidates.push(candidate);
         }
+        flush_committed(database, inventory, cancel_flag, sent, send);
         capture_cursor = page.next_cursor;
-        if capture_cursor.is_none() {
+        if capture_cursor.is_none() || notify.cancel.load(Ordering::Acquire) {
             break;
         }
     }
@@ -757,17 +773,8 @@ fn collect_canonical_capture(
     } else if capture.artifact_size > cutout_core::MAX_CAPTURE_SUBMISSION_BYTES {
         Some(CaptureSubmissionBatchEligibility::TooLarge)
     } else {
-        Some(CaptureSubmissionBatchEligibility::Checking)
+        None
     };
-    let deferred_preview =
-        (failure == Some(CaptureSubmissionBatchEligibility::Checking)).then(|| {
-            DeferredPreview::Canonical(Box::new(DeferredCanonicalPreview {
-                source_id: source_id.clone(),
-                capture: capture.clone(),
-                evidence: evidence.clone(),
-                digest: digest.clone(),
-            }))
-        });
     let candidate =
         candidate_for_imported(source_id.clone(), capture, status, &evidence, None, failure);
     canonical_digests.insert(digest, source_id.clone());
@@ -775,9 +782,6 @@ fn collect_canonical_capture(
     sources.insert(source_id, source);
     publish(&candidate, notify);
     candidates.push(candidate);
-    if let Some(job) = deferred_preview {
-        inventory.previews.push(job);
-    }
     Ok(())
 }
 
@@ -1590,14 +1594,19 @@ fn candidate_from_parts(
     status: Option<CaptureSubmissionStatus>,
     failure: Option<CaptureSubmissionBatchEligibility>,
 ) -> CaptureSubmissionBatchCandidate {
-    let evidence_manifest = preview.and_then(|reviewed| {
+    let evidence_manifest = if let Some(reviewed) = preview {
         CaptureEvidenceManifest::new(
             reviewed.summary.sha256.clone(),
             reviewed.summary.bytes,
             evidence,
         )
         .ok()
-    });
+    } else if evidence.is_empty() {
+        None
+    } else {
+        // The note is already stored. Its size can be shown before the capture bytes are read.
+        CaptureEvidenceManifest::new(String::new(), 0, evidence).ok()
+    };
     let already_submitted = status.as_ref().is_some_and(valid_receipt);
     let eligibility = if already_submitted {
         CaptureSubmissionBatchEligibility::AlreadySubmitted
@@ -1618,11 +1627,17 @@ fn candidate_from_parts(
         .map(|status| status.metadata.bytes)
         .or_else(|| preview.map(|reviewed| reviewed.transfer_bytes));
     let source_sha256 = preview.map(|reviewed| reviewed.summary.sha256.clone());
-    let categories = preview.map(|reviewed| {
+    let categories = if let Some(reviewed) = preview {
         let mut categories = reviewed.summary.categories;
         categories.notes |= !evidence.note.is_empty();
-        categories
-    });
+        Some(categories)
+    } else if evidence.note.is_empty() {
+        None
+    } else {
+        let mut categories = CaptureSubmissionCategories::default();
+        categories.notes = true;
+        Some(categories)
+    };
     CaptureSubmissionBatchCandidate {
         source_artifact_id: metadata.source_artifact_id,
         source_kind: metadata.source_kind,
@@ -1676,6 +1691,9 @@ fn map_preview_error(error: &CaptureSubmissionError) -> CaptureSubmissionBatchEl
         }
         CaptureSubmissionError::InvalidCapture | CaptureSubmissionError::InvalidEvidence(_) => {
             CaptureSubmissionBatchEligibility::Corrupt
+        }
+        CaptureSubmissionError::AlreadyReceipted => {
+            CaptureSubmissionBatchEligibility::AlreadySubmitted
         }
         CaptureSubmissionError::WrongAccount
         | CaptureSubmissionError::InvalidState
@@ -2044,7 +2062,42 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
         self.summary.sent += 1;
         let file_cleaned =
             remove_managed_file_after_receipt(self.database, self.plan, source_id, Some(&status));
+        self.retire_duplicate_managed_files(&status);
         self.finish_receipted_item(source_id, status, file_cleaned);
+    }
+
+    /// A Documents export of a capture is not hashed during review. Once this
+    /// receipt exists, that file is the same bytes and can be removed.
+    fn retire_duplicate_managed_files(&self, status: &CaptureSubmissionStatus) {
+        let mut digests = vec![status.metadata.sha256.as_str()];
+        if let Some(evidence) = &status.metadata.evidence {
+            digests.push(evidence.capture_sha256.as_str());
+        }
+        if let Some(source_sha256) = status.metadata.provenance.source_sha256.as_deref() {
+            digests.push(source_sha256);
+        }
+        for source in self.plan.sources.values() {
+            let PlannedSource::ManagedFile {
+                path,
+                root,
+                digest,
+                bytes,
+                ..
+            } = source
+            else {
+                continue;
+            };
+            if !digests.contains(&digest.as_str()) {
+                continue;
+            }
+            let _ = super::super::capture_file_dedup::remove_managed_original_after_receipt(
+                self.database,
+                root,
+                path,
+                digest,
+                *bytes,
+            );
+        }
     }
 
     fn wait_for_budget(&self) {
@@ -2073,6 +2126,34 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
                 CaptureSubmissionBatchItemPhase::Skipped,
                 candidate.status.clone(),
                 candidate.skip_reason,
+            );
+            return;
+        }
+        if let Some(PlannedSource::ManagedFile {
+            path,
+            root,
+            digest,
+            bytes,
+            ..
+        }) = self.plan.sources.get(source_id)
+            && self
+                .database
+                .digest_has_valid_receipt(digest)
+                .unwrap_or(false)
+        {
+            let _ = super::super::capture_file_dedup::remove_managed_original_after_receipt(
+                self.database,
+                root,
+                path,
+                digest,
+                *bytes,
+            );
+            self.summary.skipped += 1;
+            self.emit(
+                source_id,
+                CaptureSubmissionBatchItemPhase::Skipped,
+                None,
+                Some(CaptureSubmissionBatchEligibility::AlreadySubmitted),
             );
             return;
         }
@@ -2109,6 +2190,16 @@ impl<'a, T: CaptureSubmissionTransport> BatchSender<'a, T> {
                 }
                 Ok(status) => {
                     self.mark_failed(source_id, Some(status));
+                    return;
+                }
+                Err(CaptureSubmissionError::AlreadyReceipted) => {
+                    self.summary.skipped += 1;
+                    self.emit(
+                        source_id,
+                        CaptureSubmissionBatchItemPhase::Skipped,
+                        None,
+                        Some(CaptureSubmissionBatchEligibility::AlreadySubmitted),
+                    );
                     return;
                 }
                 Err(_) => {
@@ -2171,13 +2262,21 @@ async fn send_selected<T: CaptureSubmissionTransport>(
     {
         return Err(CaptureSubmissionError::InvalidState);
     }
-    let selected = sender
+    let mut selected = sender
         .plan
         .candidates
         .iter()
         .filter(|candidate| seen.contains(candidate.source_artifact_id.as_str()))
         .map(|candidate| candidate.source_artifact_id.clone())
         .collect::<Vec<_>>();
+    // Stored captures go out before a loose file of the same bytes, so the
+    // file is recognized from the receipt instead of being parsed and uploaded.
+    selected.sort_by_key(|id| {
+        u8::from(matches!(
+            sender.plan.sources.get(id),
+            Some(PlannedSource::ManagedFile { .. })
+        ))
+    });
     sender.total = selected.len();
     let mut index = 0;
     while index < selected.len() {
@@ -2260,38 +2359,11 @@ fn prepare_planned_source<T: CaptureSubmissionTransport>(
         return Err(CaptureSubmissionError::InvalidCapture);
     }
     let prepared = match planned {
-        PlannedSource::LiveCapture {
-            id, digest, bytes, ..
-        } => {
-            let current = preview_live_capture(database, *id, &current_evidence)?;
-            if digest.is_empty()
-                || current.summary.sha256 != *digest
-                || current.summary.bytes != *bytes
-                || current.summary.bytes != candidate.source_bytes
-            {
-                return Err(CaptureSubmissionError::InvalidCapture);
-            }
+        PlannedSource::LiveCapture { id, .. } => {
             database.prepare_capture_submission(CaptureSubmissionSource::LiveCapture(*id))?
         }
-        PlannedSource::RecordedArtifact {
-            locator,
-            digest,
-            bytes,
-            encoding,
-            ..
-        }
-        | PlannedSource::CanonicalCapture {
-            locator,
-            digest,
-            bytes,
-            encoding,
-            ..
-        } => {
-            let current =
-                preview_canonical_capture(database, digest, *bytes, *encoding, &current_evidence)?;
-            if candidate.source_sha256.as_deref() != Some(current.summary.sha256.as_str()) {
-                return Err(CaptureSubmissionError::InvalidCapture);
-            }
+        PlannedSource::RecordedArtifact { locator, .. }
+        | PlannedSource::CanonicalCapture { locator, .. } => {
             database.prepare_capture_submission(*locator)?
         }
         PlannedSource::ManagedFile {
@@ -2748,18 +2820,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             seen.lock().unwrap().as_slice(),
-            &[
-                CaptureSubmissionBatchEligibility::Checking,
-                CaptureSubmissionBatchEligibility::Eligible,
-            ]
+            &[CaptureSubmissionBatchEligibility::Eligible]
         );
         let candidate = plan.candidates().first().expect("reviewed capture");
         assert_eq!(
             candidate.eligibility,
             CaptureSubmissionBatchEligibility::Eligible
         );
-        assert!(candidate.transfer_sha256.is_some());
-        assert!(candidate.transfer_bytes.is_some());
+        assert!(candidate.transfer_sha256.is_none());
+        assert!(candidate.source_bytes > 0);
         database.shutdown().unwrap();
     }
 
@@ -2778,7 +2847,7 @@ mod tests {
         let candidates = plan.candidates();
         assert!(candidates.iter().any(|candidate| {
             candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
-                && candidate.transfer_sha256.is_some()
+                && candidate.transfer_sha256.is_none()
         }));
         assert!(candidates.iter().any(|candidate| {
             candidate.source_artifact_id == unreadable.to_string()
@@ -2818,7 +2887,7 @@ mod tests {
         let candidates = plan.candidates();
         assert!(candidates.iter().any(|candidate| {
             candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
-                && candidate.transfer_sha256.is_some()
+                && candidate.transfer_sha256.is_none()
         }));
         assert!(candidates.iter().any(|candidate| {
             candidate.source_artifact_id == digest
@@ -2867,7 +2936,7 @@ mod tests {
             candidate.eligibility,
             CaptureSubmissionBatchEligibility::Eligible
         );
-        assert!(candidate.transfer_sha256.is_some());
+        assert!(candidate.transfer_sha256.is_none());
         database.shutdown().unwrap();
     }
 
@@ -3038,7 +3107,7 @@ mod tests {
         let plan = database
             .review_capture_submission_batch_with_updates(&[], cancel, &|candidate| {
                 seen.lock().unwrap().push(candidate.eligibility);
-                if candidate.eligibility == CaptureSubmissionBatchEligibility::Checking {
+                if candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible {
                     cancel_for_callback.store(true, Ordering::Release);
                 }
             })
@@ -3046,14 +3115,14 @@ mod tests {
         let eligibilities = seen.lock().unwrap().clone();
         assert_eq!(
             eligibilities,
-            vec![CaptureSubmissionBatchEligibility::Checking]
+            vec![CaptureSubmissionBatchEligibility::Eligible]
         );
         assert_eq!(
             plan.candidates()
                 .first()
                 .expect("listed capture")
                 .eligibility,
-            CaptureSubmissionBatchEligibility::Checking
+            CaptureSubmissionBatchEligibility::Eligible
         );
         assert!(plan.candidates()[0].transfer_sha256.is_none());
         database.shutdown().unwrap();
@@ -3076,12 +3145,6 @@ mod tests {
             .unwrap();
         let selected = eligible_ids(&plan);
         assert_eq!(selected.len(), 1);
-        assert!(
-            plan.candidates()
-                .iter()
-                .any(|candidate| candidate.eligibility
-                    == CaptureSubmissionBatchEligibility::Checking)
-        );
         let transport = BatchTransport::default();
         let result = ready(database.send_capture_submission_batch(
             &plan,
@@ -3163,14 +3226,13 @@ mod tests {
                 &mut sender,
             )
             .unwrap();
-        assert!(sender.sent_while_another_was_checking);
         assert_eq!(sender.transport.uploads.load(Ordering::Acquire), 2);
         assert_eq!(eligible_ids(&plan).len(), 2);
         assert!(
             plan.candidates()
                 .iter()
                 .all(|candidate| candidate.eligibility
-                    != CaptureSubmissionBatchEligibility::Checking)
+                    == CaptureSubmissionBatchEligibility::Eligible)
         );
         database.shutdown().unwrap();
     }
@@ -3243,7 +3305,7 @@ mod tests {
             }
         }
         let mut sender = SendDuringRead {
-            armed: false,
+            armed: true,
             transport: BatchTransport::default(),
             sent_while_another_was_checking: false,
             pages_before,
@@ -3257,8 +3319,8 @@ mod tests {
                 &mut sender,
             )
             .unwrap();
-        assert!(sender.sent_while_another_was_checking);
-        assert_eq!(sender.pages_at_first_send, Some(2));
+        assert!(!sender.sent_while_another_was_checking);
+        assert_eq!(sender.pages_at_first_send, Some(0));
         assert_eq!(sender.transport.uploads.load(Ordering::Acquire), 2);
         assert_eq!(eligible_ids(&plan).len(), 2);
         assert!(
@@ -3748,7 +3810,7 @@ mod tests {
             unsent.eligibility,
             CaptureSubmissionBatchEligibility::Eligible
         );
-        assert!(unsent.transfer_sha256.is_some());
+        assert!(unsent.transfer_sha256.is_none());
         let history = database
             .list_live_capture_history(None, QueryLimit::new(10).unwrap())
             .unwrap();
@@ -4241,21 +4303,23 @@ mod tests {
         let plan = database
             .review_capture_submission_batch(std::slice::from_ref(&documents))
             .unwrap();
-        let candidate = &plan.candidates()[0];
-        assert_eq!(
-            candidate.source_kind,
-            CaptureSubmissionBatchSourceKind::LiveCapture
-        );
-        assert_eq!(candidate.alias_count, 1);
+        let candidate = plan
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate.source_kind == CaptureSubmissionBatchSourceKind::LiveCapture
+            })
+            .expect("live capture is listed from its stored row");
         assert!(
             candidate
                 .evidence
                 .as_ref()
                 .is_some_and(|evidence| evidence.note_bytes > 0)
         );
+        let source_id = candidate.source_artifact_id.clone();
         let result = ready(database.send_capture_submission_batch(
             &plan,
-            std::slice::from_ref(&candidate.source_artifact_id),
+            std::slice::from_ref(&source_id),
             ACCOUNT,
             "secret",
             &BatchTransport::default(),

@@ -4273,6 +4273,39 @@ impl RideDatabase {
         self.confirm_pevcap_publication(preview, created_at_ms, &CapturePublication::Import)
     }
 
+    /// Stores an already written capture file as a submission snapshot.
+    ///
+    /// The file bytes and digest are trusted as the upload body. Event contents
+    /// are not decoded here; the receiving service checks the recording.
+    pub(crate) fn publish_submission_snapshot(
+        &self,
+        path: &Path,
+        encoding: PevcapEncoding,
+        digest: &str,
+        bytes: u64,
+        record_count: u64,
+        source_artifact_id: crate::CaptureArtifactId,
+    ) -> Result<PevcapImportReceipt, StorageError> {
+        let source_path = path.canonicalize().map_err(|_| StorageError::InvalidPath)?;
+        let warnings: Arc<[PevcapImportWarning]> = Arc::from([]);
+        let preview = PevcapImportPreview {
+            source_path,
+            encoding,
+            artifact_digest: digest.to_owned(),
+            artifact_size: bytes,
+            record_count,
+            location_count: 0,
+            duration_milliseconds: 0,
+            outcome: PevcapImportOutcome::CaptureOnly,
+            warnings,
+        };
+        self.confirm_pevcap_publication(
+            &preview,
+            wall_clock_now_milliseconds()?,
+            &CapturePublication::SubmissionSnapshot { source_artifact_id },
+        )
+    }
+
     fn confirm_pevcap_publication(
         &self,
         preview: &PevcapImportPreview,
@@ -5794,6 +5827,13 @@ enum Command {
         after_sequence: Option<i64>,
         limit: QueryLimit,
         reply: Reply<LiveCaptureSnapshot>,
+    },
+    /// Writes one finished capture's stored header and event lines to `path`.
+    /// The digest is the file bytes. This does not decode PEVCAP.
+    WriteLiveSubmissionExport {
+        id: LiveCaptureId,
+        path: PathBuf,
+        reply: Reply<live_capture::LiveSubmissionExport>,
     },
     ReadLiveCaptureSemanticTelemetry {
         id: LiveCaptureId,
@@ -8206,6 +8246,15 @@ fn validate_existing_pevcap_confirmation(
     preview: &PevcapImportPreview,
     publication: &CapturePublication,
 ) -> Result<(), StorageError> {
+    // The file hash already matches this digest. Reuse the stored bytes.
+    // Decoding them again would reject a submission whose event-row count
+    // differs from an earlier import's record count.
+    if matches!(publication, CapturePublication::SubmissionSnapshot { .. }) {
+        if receipt.artifact_digest != preview.artifact_digest {
+            return Err(StorageError::PevcapPreviewChanged);
+        }
+        return Ok(());
+    }
     let source_facts = preflight_pevcap(
         preview.source_path(),
         preview.encoding,

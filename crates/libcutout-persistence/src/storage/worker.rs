@@ -372,6 +372,11 @@ impl DatabaseWorker<'_> {
                     limit,
                 ));
             }
+            Command::WriteLiveSubmissionExport { id, path, reply } => {
+                let _ = reply.send(super::live_capture::write_submission_export(
+                    connection, id, &path,
+                ));
+            }
             Command::ReadLiveCaptureSemanticTelemetry {
                 id,
                 sequence,

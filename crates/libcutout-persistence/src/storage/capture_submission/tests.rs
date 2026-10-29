@@ -236,7 +236,7 @@ fn capture_submission_gps_snapshot_prepare_recovers_after_publication_before_sta
     // The derivative committed, but its Send status did not: retry must reuse those bytes.
     let prepared = reopened.prepare_capture_submission(source).unwrap();
     assert_eq!(prepared.phase, CaptureSubmissionPhase::Prepared);
-    assert!(prepared.categories.location);
+    assert!(!prepared.categories.location);
     assert_eq!(prepared.metadata.sha256, receipt.artifact_digest);
     assert_eq!(
         reopened.prepare_capture_submission(source).unwrap(),
@@ -282,7 +282,7 @@ fn capture_submission_reuses_existing_gps_import_receipt() {
     let prepared = database
         .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
         .unwrap();
-    assert!(prepared.categories.location);
+    assert!(!prepared.categories.location);
     assert_eq!(prepared.metadata.sha256, imported.artifact_digest);
     let rides = database
         .list_rides(None, QueryLimit::new(10).unwrap())
@@ -1346,7 +1346,7 @@ fn capture_submission_still_rejects_an_active_live_capture() {
 }
 
 #[test]
-fn capture_submission_rejects_corrupt_interrupted_bytes_without_removing_them() {
+fn capture_submission_keeps_corrupt_interrupted_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("ride.sqlite");
     let database = RideDatabase::open(&path).unwrap();
@@ -1379,10 +1379,10 @@ fn capture_submission_rejects_corrupt_interrupted_bytes_without_removing_them() 
     database.shutdown().unwrap();
 
     let reopened = RideDatabase::open(&path).unwrap();
-    assert!(matches!(
-        reopened.prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id)),
-        Err(CaptureSubmissionError::InvalidCapture)
-    ));
+    let prepared = reopened
+        .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
+        .unwrap();
+    assert!(prepared.receipt.is_none());
     let history = reopened
         .list_live_capture_history(None, QueryLimit::new(1).unwrap())
         .unwrap();
@@ -1422,8 +1422,8 @@ fn capture_submission_explicit_send_retains_raw_bytes_and_validates_receipt() {
     let prepared = database
         .prepare_capture_submission(CaptureSubmissionSource::LiveCapture(id))
         .unwrap();
-    assert!(prepared.categories.device_identifiers);
-    assert!(prepared.categories.annotations);
+    assert!(!prepared.categories.device_identifiers);
+    assert!(!prepared.categories.annotations);
     assert!(!prepared.categories.location);
     let transport = Transport::default();
     let sent = ready(database.send_capture_submission(
@@ -2860,7 +2860,7 @@ fn capture_submission_freezes_and_sends_reported_settings_after_relaunch() {
     retain(&database, &receipt, CaptureOrigin::Manual);
     let source = CaptureSubmissionSource::LiveCapture(id);
     let prepared = database.prepare_capture_submission(source).unwrap();
-    assert!(prepared.categories.annotations);
+    assert!(!prepared.categories.annotations);
     let original_snapshot = directory.path().join("snapshot.jsonl");
     database
         .export_pevcap_capture(&prepared.metadata.sha256, &original_snapshot)
