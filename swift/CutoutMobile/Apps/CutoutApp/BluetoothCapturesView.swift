@@ -10,7 +10,7 @@ struct BluetoothCapturesView: View {
     @State private var isNewCapturePresented = false
     @State private var didStartCapture = false
     @State private var showsRecording = false
-    @State private var batchModel: CaptureSubmissionBatchModel?
+    @State private var showsBatchReview = false
 
     var body: some View {
         List {
@@ -49,15 +49,13 @@ struct BluetoothCapturesView: View {
 
             Section {
                 Button {
-                    batchModel = CaptureSubmissionBatchModel(
-                        adapter: CaptureSubmissionBatchAdapter.live,
-                        onTerminalUpdate: {
-                            Task {
-                                await RustPersistenceStore.deduplicateManagedCaptureFiles()
-                                await library.refresh()
-                            }
+                    _ = model.captureSubmissionBatchReview {
+                        Task {
+                            await RustPersistenceStore.deduplicateManagedCaptureFiles()
+                            await library.refresh()
                         }
-                    )
+                    }
+                    showsBatchReview = true
                 } label: {
                     Label(localizedAppText("capture.batch.review"), systemImage: "paperplane")
                 }
@@ -121,8 +119,10 @@ struct BluetoothCapturesView: View {
                 start: start
             )
         }
-        .sheet(item: $batchModel) { batchModel in
-            CaptureSubmissionBatchReviewView(model: batchModel)
+        .sheet(isPresented: $showsBatchReview) {
+            if let batchModel = model.captureSubmissionBatch {
+                CaptureSubmissionBatchReviewView(model: batchModel)
+            }
         }
         .navigationDestination(isPresented: $showsRecording) {
             CaptureRouteView(capture: model.capture)
@@ -265,8 +265,7 @@ private struct CaptureSubmissionBatchReviewView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(localizedAppText("common.cancel")) { dismiss() }
-                        .disabled(model.isSending)
+                    Button(localizedAppText("capture.batch.close")) { dismiss() }
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -296,7 +295,9 @@ private struct CaptureSubmissionBatchReviewView: View {
                 .background(.bar)
             }
             .confirmationDialog(
-                localizedAppText("capture.batch.confirm", model.selectedCount),
+                model.isReviewing && model.selectedCount > 0 && model.selectedCount == model.eligibleCount
+                    ? localizedAppText("capture.batch.confirm_all")
+                    : localizedAppText("capture.batch.confirm", model.selectedCount),
                 isPresented: $showsSendConfirmation,
                 titleVisibility: .visible
             ) {
@@ -305,13 +306,10 @@ private struct CaptureSubmissionBatchReviewView: View {
                         model.selectedCount == model.eligibleCount
                             ? "capture.batch.send_local" : "capture.batch.send_selected_local"), role: .destructive
                 ) {
-                    Task { await model.sendSelected() }
+                    model.beginSendSelected()
                 }
                 Button(localizedAppText("capture.batch.not_now"), role: .cancel) {}
             }
-            .task { if model.candidates.isEmpty { await model.review() } }
-            .onDisappear { model.cancelReview() }
-            .interactiveDismissDisabled(model.isSending || model.isWaitingToSend)
         }
     }
 
@@ -402,13 +400,32 @@ struct CaptureSubmissionBatchAdapter {
     var review: @MainActor (@escaping CandidateUpdate) async throws -> [CaptureSubmissionBatchCandidate]
     var sendSelected: @MainActor ([String], @escaping ProgressUpdate) async throws -> CaptureSubmissionBatchSummary
     var requestCancel: @MainActor () -> Void
+    var commitSendAll: @MainActor (@escaping ProgressUpdate) async throws -> Bool
+    var takeCommittedSummary: @MainActor () -> CaptureSubmissionBatchSummary?
+
+    init(
+        review: @escaping @MainActor (@escaping CandidateUpdate) async throws -> [CaptureSubmissionBatchCandidate],
+        sendSelected:
+            @escaping @MainActor ([String], @escaping ProgressUpdate) async throws -> CaptureSubmissionBatchSummary,
+        requestCancel: @escaping @MainActor () -> Void,
+        commitSendAll: @escaping @MainActor (@escaping ProgressUpdate) async throws -> Bool = { _ in false },
+        takeCommittedSummary: @escaping @MainActor () -> CaptureSubmissionBatchSummary? = { nil }
+    ) {
+        self.review = review
+        self.sendSelected = sendSelected
+        self.requestCancel = requestCancel
+        self.commitSendAll = commitSendAll
+        self.takeCommittedSummary = takeCommittedSummary
+    }
 
     static var live: CaptureSubmissionBatchAdapter {
         let state = CaptureSubmissionBatchFFIState()
         return CaptureSubmissionBatchAdapter(
             review: { onCandidate in try await state.review(onCandidate: onCandidate) },
             sendSelected: { ids, update in try await state.sendSelected(ids, update: update) },
-            requestCancel: { state.requestCancel() }
+            requestCancel: { state.requestCancel() },
+            commitSendAll: { update in try await state.commitSendAll(update: update) },
+            takeCommittedSummary: { state.takeCommittedSummary() }
         )
     }
 }
@@ -466,6 +483,24 @@ private final class CaptureSubmissionBatchFFIState {
     func requestCancel() {
         client?.cancelReview()
         plan?.requestCancel()
+    }
+
+    func commitSendAll(update: @escaping CaptureSubmissionBatchAdapter.ProgressUpdate) async throws -> Bool {
+        guard let client else { return false }
+        let credential = try await ChargingCommunitySync.shared.credentialForCaptureSubmission()
+        let listener = CaptureSubmissionBatchProgressListenerAdapter(update: update)
+        return client.commitSendAll(
+            accountId: credential.identityID, token: credential.token, listener: listener)
+    }
+
+    func takeCommittedSummary() -> CaptureSubmissionBatchSummary? {
+        guard let summary = client?.takeCommittedSendSummary() else { return nil }
+        return CaptureSubmissionBatchSummary(
+            sent: summary.sent, cleaned: summary.cleaned, failed: summary.failed,
+            skipped: summary.skipped, cancelled: summary.cancelled,
+            failedSourceArtifactIDs: summary.failedSourceArtifactIds,
+            pendingCleanupSourceArtifactIDs: summary.pendingCleanupSourceArtifactIds
+        )
     }
 
     nonisolated fileprivate static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto) throws
@@ -656,8 +691,9 @@ final class CaptureSubmissionBatchModel: Identifiable {
     private var sendAttempt: UInt64 = 0
     private var userAdjustedSelection = false
     private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
+    private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private let adapter: CaptureSubmissionBatchAdapter
-    @ObservationIgnored private let onTerminalUpdate: @MainActor () -> Void
+    @ObservationIgnored private var onTerminalUpdate: @MainActor () -> Void
 
     struct ItemProgress: Equatable, Sendable {
         let phase: CaptureSubmissionBatchProgress.Phase
@@ -682,6 +718,16 @@ final class CaptureSubmissionBatchModel: Identifiable {
         }
         return isReviewing || !requiresFreshReview
     }
+    func replaceTerminalUpdate(_ update: @escaping @MainActor () -> Void) {
+        onTerminalUpdate = update
+    }
+
+    /// Starts the check once. Closing the sheet does not cancel this task.
+    func ensureReviewStarted() {
+        guard reviewTask == nil else { return }
+        reviewTask = Task { await review() }
+    }
+
     func review() async {
         await review(preselecting: nil)
     }
@@ -779,6 +825,25 @@ final class CaptureSubmissionBatchModel: Identifiable {
         await send(Array(selectedSourceArtifactIDs))
     }
 
+    /// The sheet can close while this runs. The model keeps the send.
+    func beginSendSelected() {
+        let ids = Array(selectedSourceArtifactIDs)
+        Task { await self.send(ids) }
+    }
+
+    private func applySendProgress(_ event: CaptureSubmissionBatchProgress, attempt: UInt64) {
+        guard isSending, sendAttempt == attempt else { return }
+        progress = event
+        let isFailure = event.phase == .failed
+        itemProgress[event.sourceArtifactID] = ItemProgress(
+            phase: event.phase, message: event.message, isFailure: isFailure)
+        if isFailure, !failedSourceArtifactIDs.contains(event.sourceArtifactID) {
+            failedSourceArtifactIDs.append(event.sourceArtifactID)
+        } else if event.phase == .sent || event.phase == .cleaned {
+            failedSourceArtifactIDs.removeAll { $0 == event.sourceArtifactID }
+        }
+    }
+
     func requestStopAfterCurrent() {
         guard isSending, !didRequestStop else { return }
         didRequestStop = true
@@ -794,10 +859,51 @@ final class CaptureSubmissionBatchModel: Identifiable {
     }
 
     private func send(_ sourceArtifactIDs: [String]) async {
-        if isWaitingToSend { return }
+        if isWaitingToSend || isSending { return }
         var acceptedPartialReview = false
         var ids = sourceArtifactIDs
-        if isReviewing {
+        let eligibleNow = Set(candidates.filter(\.isEligible).map(\.sourceArtifactID))
+        let sendingAll = !ids.isEmpty && Set(ids) == eligibleNow
+        if isReviewing && sendingAll {
+            isSending = true
+            didRequestStop = false
+            error = nil
+            progress = nil
+            failedSourceArtifactIDs = []
+            let attempt = sendAttempt &+ 1
+            sendAttempt = attempt
+            do {
+                var accepted = false
+                for _ in 0..<5 {
+                    accepted = try await adapter.commitSendAll { [weak self] event in
+                        self?.applySendProgress(event, attempt: attempt)
+                    }
+                    if accepted || !isReviewing { break }
+                    await Task.yield()
+                }
+                if isReviewing { await waitForReviewToEnd() }
+                if accepted, let result = adapter.takeCommittedSummary(), sendAttempt == attempt {
+                    summary = result
+                    failedSourceArtifactIDs = result.failedSourceArtifactIDs
+                    requiresFreshReview = requiresFreshReview || result.cancelled > 0
+                    didFinishSend = true
+                    isSending = false
+                    onTerminalUpdate()
+                    return
+                }
+            } catch {
+                guard sendAttempt == attempt else { return }
+                self.error = error.localizedDescription
+                didFinishSend = true
+                isSending = false
+                onTerminalUpdate()
+                return
+            }
+            guard sendAttempt == attempt else { return }
+            isSending = false
+            ids = candidates.filter(\.isEligible).map(\.sourceArtifactID)
+            acceptedPartialReview = true
+        } else if isReviewing {
             acceptedPartialReview = true
             isWaitingToSend = true
             adapter.requestCancel()
@@ -818,16 +924,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
         defer { if sendAttempt == attempt { isSending = false } }
         do {
             let result = try await adapter.sendSelected(ids) { [weak self] event in
-                guard let self, self.isSending, self.sendAttempt == attempt else { return }
-                self.progress = event
-                let isFailure = event.phase == .failed
-                self.itemProgress[event.sourceArtifactID] = ItemProgress(
-                    phase: event.phase, message: event.message, isFailure: isFailure)
-                if isFailure, !self.failedSourceArtifactIDs.contains(event.sourceArtifactID) {
-                    self.failedSourceArtifactIDs.append(event.sourceArtifactID)
-                } else if event.phase == .sent || event.phase == .cleaned {
-                    self.failedSourceArtifactIDs.removeAll { $0 == event.sourceArtifactID }
-                }
+                self?.applySendProgress(event, attempt: attempt)
             }
             guard sendAttempt == attempt else { return }
             summary = result

@@ -321,13 +321,16 @@ class LocalCaptureBatchDialogTest {
     }
 
     @Test
-    fun sendStartsForCapturesAlreadyEligibleWhileReviewIsStillCounting() {
+    fun sendAllIncludesCapturesCheckedAfterTheButton() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
         val ready = candidate("ready", eligible = true)
         val checking = candidate("later", eligible = false).copy(checking = true, skipReason = "Checking")
+        val later = candidate("later", eligible = true)
         var completeReview: ((Result<List<CaptureBatchCandidate>>) -> Unit)? = null
+        var finishCommittedSend: (() -> Unit)? = null
         var cancels = 0
+        var commits = 0
         val sent = mutableListOf<List<String>>()
         val operations = object : CaptureSubmissionBatchOperations {
             override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
@@ -339,6 +342,7 @@ class LocalCaptureBatchDialogTest {
                 completed: (Result<List<CaptureBatchCandidate>>) -> Unit,
             ) {
                 onCandidate(ready)
+                onCandidate(checking)
                 completeReview = completed
             }
 
@@ -349,15 +353,25 @@ class LocalCaptureBatchDialogTest {
             ) {
                 sent += sourceArtifactIds
                 completed(Result.success(CaptureBatchSummary(
-                    sent = 1uL, cleaned = 0uL, failed = 0uL, skipped = 0uL, cancelled = 0uL,
+                    sent = sourceArtifactIds.size.toULong(), cleaned = 0uL, failed = 0uL, skipped = 0uL, cancelled = 0uL,
                     failedSourceArtifactIds = emptyList(), pendingCleanupSourceArtifactIds = emptyList(),
                 )))
             }
 
-            override fun requestCancel() {
-                cancels += 1
-                completeReview?.invoke(Result.success(listOf(ready, checking)))
+            override fun requestCancel() { cancels += 1 }
+
+            override fun commitSendAll(progress: (CaptureBatchProgress) -> Unit): Boolean {
+                commits += 1
+                finishCommittedSend = {
+                    completeReview?.invoke(Result.success(listOf(ready, later)))
+                }
+                return true
             }
+
+            override fun takeCommittedSummary(): CaptureBatchSummary = CaptureBatchSummary(
+                sent = 2uL, cleaned = 2uL, failed = 0uL, skipped = 0uL, cancelled = 0uL,
+                failedSourceArtifactIds = emptyList(), pendingCleanupSourceArtifactIds = emptyList(),
+            )
         }
         val dialog = CaptureSubmissionBatchDialog(
             context = activity,
@@ -370,15 +384,79 @@ class LocalCaptureBatchDialogTest {
             dialog.show()
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled == true)
-            assertEquals(0, cancels)
             dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
             shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(containsText(dialog.confirmationDialog, "including the ones still being checked"))
             dialog.confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
             shadowOf(Looper.getMainLooper()).idle()
-            assertEquals(1, cancels)
-            assertEquals(listOf(listOf(ready.sourceArtifactId)), sent)
+            assertEquals(1, commits)
+            assertEquals(0, cancels)
+            assertTrue(sent.isEmpty())
+            assertTrue(dialog.reviewDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled == true)
+            dialog.reviewDialog?.dismiss()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(0, cancels)
+            finishCommittedSend?.invoke()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(containsText(dialog.reviewDialog, "Finished: 2 sent"))
+            assertTrue(sent.isEmpty())
         } finally {
             dialog.confirmationDialog?.dismiss()
+            dialog.reviewDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
+    fun closingTheReviewKeepsCapturesAlreadySelected() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val ready = candidate("ready", eligible = true)
+        var cancels = 0
+        val operations = object : CaptureSubmissionBatchOperations {
+            override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
+                completed(Result.success(emptyList()))
+            }
+
+            override fun reviewIncremental(
+                onCandidate: (CaptureBatchCandidate) -> Unit,
+                completed: (Result<List<CaptureBatchCandidate>>) -> Unit,
+            ) {
+                onCandidate(ready)
+            }
+
+            override fun sendSelected(
+                sourceArtifactIds: List<String>,
+                progress: (CaptureBatchProgress) -> Unit,
+                completed: (Result<CaptureBatchSummary>) -> Unit,
+            ) = Unit
+
+            override fun requestCancel() { cancels += 1 }
+        }
+        val dialog = CaptureSubmissionBatchDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            directories = emptyList(),
+            onFinished = {},
+            testOperations = operations,
+        )
+        try {
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled == true)
+            assertTrue(containsText(dialog.reviewDialog, "1 selected"))
+            dialog.reviewDialog?.dismiss()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(0, cancels)
+            assertTrue(dialog.retainsReview)
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(0, cancels)
+            assertTrue(dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled == true)
+            assertTrue(containsText(dialog.reviewDialog, "1 selected"))
+        } finally {
             dialog.reviewDialog?.dismiss()
             host.pause().stop().destroy()
         }

@@ -7,7 +7,10 @@ use super::{
 use crate::{MobileCaptureIntegrityDto, persistence};
 use std::{
     path::PathBuf,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// Eligibility for one immutable Rust-reviewed source row.
@@ -279,22 +282,51 @@ impl CaptureSubmissionClientHandle {
         listener: Box<dyn MobileCaptureSubmissionBatchReviewListener>,
     ) -> Result<Arc<CaptureSubmissionBatchPlanHandle>, MobileCaptureSubmissionError> {
         self.review_cancel.store(false, Ordering::Release);
+        self.commitment.begin();
         let database = self.database.clone();
         let cancel = Arc::clone(&self.review_cancel);
+        let commitment = Arc::clone(&self.commitment);
+        let transport = Arc::clone(&self.transport);
+        let runtime = tokio::runtime::Handle::current();
         let directories = managed_capture_directories
             .into_iter()
             .map(PathBuf::from)
             .collect::<Vec<_>>();
         let plan = tokio::task::spawn_blocking(move || {
-            database.review_capture_submission_batch_with_updates(
+            let mut send = FfiCommittedSend {
+                commitment: Arc::clone(&commitment),
+                transport,
+                runtime,
+            };
+            let reviewed = database.review_capture_submission_batch_with_sender(
                 &directories,
                 cancel,
                 &|candidate| listener.on_candidate(candidate.clone().into()),
-            )
+                &mut send,
+            );
+            send.commitment.ensure_idle();
+            reviewed
         })
         .await
         .map_err(|_| MobileCaptureSubmissionError::StorageFailure)??;
         Ok(Arc::new(CaptureSubmissionBatchPlanHandle { inner: plan }))
+    }
+
+    /// Confirms Send all for the review already running on this client.
+    ///
+    /// Returns false when no review is running. The caller then sends the finished plan.
+    pub fn commit_send_all(
+        &self,
+        account_id: String,
+        token: String,
+        listener: Box<dyn MobileCaptureSubmissionBatchProgressListener>,
+    ) -> bool {
+        self.commitment
+            .commit(account_id, token, Arc::from(listener))
+    }
+
+    pub fn take_committed_send_summary(&self) -> Option<MobileCaptureSubmissionBatchSummaryDto> {
+        self.commitment.take_summary().map(Into::into)
     }
 
     /// Runs one Rust-owned serial batch after one explicit native confirmation.
@@ -318,11 +350,188 @@ impl CaptureSubmissionClientHandle {
                 &selected_source_artifact_ids,
                 &account_id,
                 &token,
-                &self.transport,
+                self.transport.as_ref(),
                 Arc::new(move |progress| listener.on_progress(progress.into())),
             )
             .await
             .map(Into::into)
             .map_err(Into::into)
+    }
+}
+
+type ProgressListener = Arc<dyn MobileCaptureSubmissionBatchProgressListener>;
+
+struct ReviewGate {
+    in_progress: bool,
+    armed: bool,
+    covered: bool,
+    arm_generation: u64,
+    account_id: String,
+    token: String,
+    listener: Option<ProgressListener>,
+    summary: persistence::CaptureSubmissionBatchSummary,
+    offset: usize,
+}
+
+pub(super) struct ReviewCommitment {
+    gate: Mutex<ReviewGate>,
+    armed: AtomicBool,
+}
+
+impl ReviewCommitment {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            armed: AtomicBool::new(false),
+            gate: Mutex::new(ReviewGate {
+                in_progress: false,
+                armed: false,
+                covered: false,
+                arm_generation: 0,
+                account_id: String::new(),
+                token: String::new(),
+                listener: None,
+                summary: persistence::CaptureSubmissionBatchSummary::default(),
+                offset: 0,
+            }),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ReviewGate> {
+        self.gate.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub(super) fn begin(&self) {
+        let mut gate = self.lock();
+        gate.in_progress = true;
+        gate.armed = false;
+        gate.covered = false;
+        gate.arm_generation = 0;
+        gate.account_id.clear();
+        gate.token.clear();
+        gate.listener = None;
+        gate.summary = persistence::CaptureSubmissionBatchSummary::default();
+        gate.offset = 0;
+        self.armed.store(false, Ordering::Release);
+    }
+
+    fn commit(&self, account_id: String, token: String, listener: ProgressListener) -> bool {
+        let mut gate = self.lock();
+        gate.account_id = account_id;
+        gate.token = token;
+        gate.listener = Some(listener);
+        gate.armed = true;
+        gate.arm_generation = 1;
+        self.armed.store(true, Ordering::Release);
+        gate.in_progress
+    }
+
+    fn take_summary(&self) -> Option<persistence::CaptureSubmissionBatchSummary> {
+        let mut gate = self.lock();
+        if !gate.covered {
+            return None;
+        }
+        gate.covered = false;
+        Some(gate.summary.clone())
+    }
+
+    fn ensure_idle(&self) {
+        self.lock().in_progress = false;
+    }
+}
+
+struct FfiCommittedSend {
+    commitment: Arc<ReviewCommitment>,
+    transport: Arc<super::http::HttpCaptureTransport>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl persistence::CommittedReviewSend for FfiCommittedSend {
+    fn armed(&self) -> bool {
+        self.commitment.armed.load(Ordering::Acquire)
+    }
+
+    fn arm_generation(&self) -> u64 {
+        self.commitment.lock().arm_generation
+    }
+
+    fn send(
+        &mut self,
+        database: &persistence::RideDatabase,
+        plan: &persistence::CaptureSubmissionBatchPlan,
+        source_ids: &[String],
+    ) -> persistence::CaptureSubmissionBatchSummary {
+        if source_ids.is_empty() {
+            return persistence::CaptureSubmissionBatchSummary::default();
+        }
+        let (account_id, token, listener, offset, base) = {
+            let gate = self.commitment.lock();
+            (
+                gate.account_id.clone(),
+                gate.token.clone(),
+                gate.listener.clone(),
+                gate.offset,
+                gate.summary.clone(),
+            )
+        };
+        let total = offset + source_ids.len();
+        let database = database.clone();
+        let plan = plan.clone();
+        let attempted = source_ids.to_vec();
+        let transport = Arc::clone(&self.transport);
+        let batch = self.runtime.block_on(async move {
+            database
+                .send_capture_submission_batch(
+                    &plan,
+                    &attempted,
+                    &account_id,
+                    &token,
+                    transport.as_ref(),
+                    Arc::new(move |mut progress| {
+                        progress.current = offset + progress.current;
+                        progress.total = total;
+                        progress.sent += base.sent;
+                        progress.cleaned += base.cleaned;
+                        progress.failed += base.failed;
+                        progress.skipped += base.skipped;
+                        progress.cancelled += base.cancelled;
+                        if let Some(listener) = &listener {
+                            listener.on_progress(progress.into());
+                        }
+                    }),
+                )
+                .await
+        });
+        let batch = match batch {
+            Ok(summary) => summary,
+            Err(_) => persistence::CaptureSubmissionBatchSummary {
+                failed: source_ids.len(),
+                failed_source_artifact_ids: source_ids.to_vec(),
+                ..persistence::CaptureSubmissionBatchSummary::default()
+            },
+        };
+        let mut gate = self.commitment.lock();
+        gate.offset += source_ids.len();
+        gate.summary.sent += batch.sent;
+        gate.summary.cleaned += batch.cleaned;
+        gate.summary.failed += batch.failed;
+        gate.summary.skipped += batch.skipped;
+        gate.summary.cancelled += batch.cancelled;
+        gate.summary
+            .failed_source_artifact_ids
+            .extend(batch.failed_source_artifact_ids.iter().cloned());
+        gate.summary
+            .pending_cleanup_source_artifact_ids
+            .extend(batch.pending_cleanup_source_artifact_ids.iter().cloned());
+        batch
+    }
+
+    fn complete(&mut self, flushed_generation: u64) -> bool {
+        let mut gate = self.commitment.lock();
+        if gate.armed && gate.arm_generation != flushed_generation {
+            return true;
+        }
+        gate.in_progress = false;
+        gate.covered = gate.armed;
+        false
     }
 }

@@ -46,6 +46,7 @@
     <string name="capture_platform_identity">Device identity</string>
     <string name="capture_batch_review">Review all private sends</string>
     <string name="capture_batch_title">Review private Send</string>
+    <string name="capture_batch_close">Close</string>
     <string name="capture_batch_send">Send all and delete</string>
     <string name="capture_batch_send_local">Send all and delete local copies</string>
     <string name="capture_batch_send_selected">Send selected and delete</string>
@@ -82,6 +83,7 @@
     <string name="capture_batch_evidence">Saved evidence: %1$d note bytes · %2$d screenshots</string>
     <string name="capture_batch_confirm_title">Send reviewed recordings?</string>
     <string name="capture_batch_confirm_message">Send %1$d reviewed recordings to the CutOut maintainer. A matching durable receipt starts removal of each local copy. Recordings without a receipt stay on this device; this does not delete server copies.</string>
+    <string name="capture_batch_confirm_all">Send every capture that can be sent, including the ones still being checked. A matching durable receipt starts removal of each local copy. Recordings without a receipt stay on this device; this does not delete server copies.</string>
     <string name="capture_batch_starting">Starting the reviewed batch…</string>
     <string name="capture_batch_bytes_progress">Sending %1$s of %2$s</string>
     <string name="capture_batch_preparing">Preparing this recording for private Send</string>

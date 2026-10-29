@@ -268,7 +268,37 @@ impl RideDatabase {
         cancel: Arc<AtomicBool>,
         on_candidate: &dyn Fn(&CaptureSubmissionBatchCandidate),
     ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
-        review(self, managed_capture_directories, cancel, on_candidate)
+        let mut send = NoCommittedSend;
+        self.review_capture_submission_batch_with_sender(
+            managed_capture_directories,
+            cancel,
+            on_candidate,
+            &mut send,
+        )
+    }
+
+    /// Same inventory as [`Self::review_capture_submission_batch_with_updates`].
+    /// When `send` is armed, each capture that becomes eligible is uploaded
+    /// before the scan reads the next one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a history page cannot be read. A send failure stays
+    /// on that capture and the scan continues.
+    pub fn review_capture_submission_batch_with_sender(
+        &self,
+        managed_capture_directories: &[PathBuf],
+        cancel: Arc<AtomicBool>,
+        on_candidate: &dyn Fn(&CaptureSubmissionBatchCandidate),
+        send: &mut dyn CommittedReviewSend,
+    ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
+        review(
+            self,
+            managed_capture_directories,
+            cancel,
+            on_candidate,
+            send,
+        )
     }
 
     /// Sends only reviewed candidate identities, in one shared serial owner.
@@ -331,14 +361,67 @@ struct ReviewNotify<'a> {
     on_candidate: &'a dyn Fn(&CaptureSubmissionBatchCandidate),
 }
 
+/// Uploads eligible captures while review is still reading the rest.
+///
+/// `armed` is false until the user confirms Send all. `complete` runs after the
+/// scan has no further rows and reports whether Send all arrived during the
+/// last flush.
+pub trait CommittedReviewSend {
+    /// True after the user confirms Send all.
+    fn armed(&self) -> bool;
+
+    /// Changes when Send all is confirmed, so the last flush can see that confirmation.
+    fn arm_generation(&self) -> u64;
+
+    /// Uploads these eligible captures and returns that batch's summary.
+    fn send(
+        &mut self,
+        database: &RideDatabase,
+        plan: &CaptureSubmissionBatchPlan,
+        source_ids: &[String],
+    ) -> CaptureSubmissionBatchSummary;
+
+    /// Marks the scan finished.
+    ///
+    /// Returns true when Send all arrived during the flush that just completed.
+    fn complete(&mut self, flushed_generation: u64) -> bool;
+}
+
+struct NoCommittedSend;
+
+impl CommittedReviewSend for NoCommittedSend {
+    fn armed(&self) -> bool {
+        false
+    }
+
+    fn arm_generation(&self) -> u64 {
+        0
+    }
+
+    fn send(
+        &mut self,
+        _database: &RideDatabase,
+        _plan: &CaptureSubmissionBatchPlan,
+        _source_ids: &[String],
+    ) -> CaptureSubmissionBatchSummary {
+        CaptureSubmissionBatchSummary::default()
+    }
+
+    fn complete(&mut self, _flushed_generation: u64) -> bool {
+        false
+    }
+}
+
 fn review(
     database: &RideDatabase,
     managed_capture_directories: &[PathBuf],
     cancel: Arc<AtomicBool>,
     on_candidate: &dyn Fn(&CaptureSubmissionBatchCandidate),
+    send: &mut dyn CommittedReviewSend,
 ) -> Result<CaptureSubmissionBatchPlan, CaptureSubmissionError> {
     let limit = QueryLimit::new(BATCH_HISTORY_PAGE_SIZE)?;
     let mut inventory = ReviewInventory::default();
+    let mut sent = HashSet::new();
     let notify = ReviewNotify {
         cancel: cancel.as_ref(),
         on_candidate,
@@ -346,7 +429,7 @@ fn review(
 
     collect_live_history(database, limit, &mut inventory, &notify)?;
     collect_canonical_history(database, limit, &mut inventory, &notify)?;
-    finish_previews(database, &mut inventory, &notify);
+    finish_previews(database, &mut inventory, &notify, &cancel, &mut sent, send);
     if !cancel.load(Ordering::Acquire) {
         collect_managed_files(
             database,
@@ -354,6 +437,15 @@ fn review(
             &mut inventory,
             &notify,
         )?;
+        flush_committed(database, &inventory, &cancel, &mut sent, send);
+    }
+    let mut generation = send.arm_generation();
+    loop {
+        flush_committed(database, &inventory, &cancel, &mut sent, send);
+        if !send.complete(generation) {
+            break;
+        }
+        generation = send.arm_generation();
     }
 
     // Stopping the scan leaves the captures already accepted sendable.
@@ -721,13 +813,63 @@ fn planned_source_with_evidence(
     }
 }
 
+fn snapshot_plan(
+    database: &RideDatabase,
+    inventory: &ReviewInventory,
+    cancel: &Arc<AtomicBool>,
+) -> CaptureSubmissionBatchPlan {
+    CaptureSubmissionBatchPlan {
+        candidates: Arc::new(inventory.candidates.clone()),
+        sources: Arc::new(inventory.sources.clone()),
+        managed_aliases: Arc::new(inventory.managed_aliases.clone()),
+        database_path: database.path.as_ref().clone(),
+        cancelled: Arc::clone(cancel),
+        running: Arc::new(AtomicBool::new(false)),
+    }
+}
+
+fn flush_committed(
+    database: &RideDatabase,
+    inventory: &ReviewInventory,
+    cancel: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
+) {
+    if !send.armed() || cancel.load(Ordering::Acquire) {
+        return;
+    }
+    let source_ids = inventory
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
+                && !sent.contains(&candidate.source_artifact_id)
+        })
+        .map(|candidate| candidate.source_artifact_id.clone())
+        .collect::<Vec<_>>();
+    if source_ids.is_empty() {
+        return;
+    }
+    let plan = snapshot_plan(database, inventory, cancel);
+    let _summary = send.send(database, &plan, &source_ids);
+    sent.extend(source_ids);
+}
+
 fn finish_previews(
     database: &RideDatabase,
     inventory: &mut ReviewInventory,
     notify: &ReviewNotify<'_>,
+    cancel: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
 ) {
     let jobs = std::mem::take(&mut inventory.previews);
     for job in jobs {
+        if notify.cancel.load(Ordering::Acquire) {
+            break;
+        }
+        // Captures already accepted start uploading before the next payload read.
+        flush_committed(database, inventory, cancel, sent, send);
         if notify.cancel.load(Ordering::Acquire) {
             break;
         }
@@ -782,6 +924,7 @@ fn finish_previews(
                 apply_imported_preview(inventory, notify, source_id, &capture, &evidence, preview);
             }
         }
+        flush_committed(database, inventory, cancel, sent, send);
     }
 }
 
@@ -2696,6 +2839,83 @@ mod tests {
         assert_eq!(result.sent, 1);
         assert_eq!(result.cancelled, 0);
         assert_eq!(transport.uploads.load(Ordering::Acquire), 1);
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn send_all_during_review_includes_captures_checked_later() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        finished_capture(&database, directory.path(), 21);
+        finished_capture(&database, directory.path(), 22);
+        let armed = Arc::new(AtomicBool::new(false));
+        let arm = Arc::clone(&armed);
+        struct SendAll {
+            armed: Arc<AtomicBool>,
+            transport: BatchTransport,
+            sent_while_another_was_checking: bool,
+        }
+        impl CommittedReviewSend for SendAll {
+            fn armed(&self) -> bool {
+                self.armed.load(Ordering::Acquire)
+            }
+
+            fn arm_generation(&self) -> u64 {
+                u64::from(self.armed())
+            }
+
+            fn send(
+                &mut self,
+                database: &RideDatabase,
+                plan: &CaptureSubmissionBatchPlan,
+                source_ids: &[String],
+            ) -> CaptureSubmissionBatchSummary {
+                if plan.candidates().iter().any(|candidate| {
+                    candidate.eligibility == CaptureSubmissionBatchEligibility::Checking
+                }) {
+                    self.sent_while_another_was_checking = true;
+                }
+                ready(database.send_capture_submission_batch(
+                    plan,
+                    source_ids,
+                    ACCOUNT,
+                    "token",
+                    &self.transport,
+                    Arc::new(|_| {}),
+                ))
+                .unwrap()
+            }
+
+            fn complete(&mut self, _flushed_generation: u64) -> bool {
+                false
+            }
+        }
+        let mut sender = SendAll {
+            armed: Arc::clone(&armed),
+            transport: BatchTransport::default(),
+            sent_while_another_was_checking: false,
+        };
+        let plan = database
+            .review_capture_submission_batch_with_sender(
+                &[],
+                Arc::new(AtomicBool::new(false)),
+                &|candidate| {
+                    if candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible {
+                        arm.store(true, Ordering::Release);
+                    }
+                },
+                &mut sender,
+            )
+            .unwrap();
+        assert!(sender.sent_while_another_was_checking);
+        assert_eq!(sender.transport.uploads.load(Ordering::Acquire), 2);
+        assert_eq!(eligible_ids(&plan).len(), 2);
+        assert!(
+            plan.candidates()
+                .iter()
+                .all(|candidate| candidate.eligibility
+                    != CaptureSubmissionBatchEligibility::Checking)
+        );
         database.shutdown().unwrap();
     }
 

@@ -300,7 +300,7 @@ final class CaptureSubmissionModelTests: XCTestCase {
     }
 
     @MainActor
-    func testSendStartsWithCapturesAlreadyEligibleWhileReviewIsStillCounting() async {
+    func testSendAllIncludesCapturesCheckedAfterTheButton() async {
         let ready = CaptureSubmissionBatchCandidate(
             sourceArtifactID: "ready", sourceKind: "Live capture", displayName: "Ready",
             isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
@@ -314,9 +314,17 @@ final class CaptureSubmissionModelTests: XCTestCase {
             integrity: "Unknown", sourceBytes: 80, sourceSHA256: nil, transferBytes: nil,
             transferSHA256: nil, categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
         )
+        let later = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "later", sourceKind: "Live capture", displayName: "Later",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 80, sourceSHA256: String(repeating: "c", count: 64),
+            transferBytes: 90, transferSHA256: String(repeating: "d", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
         let release = AsyncStream<Void>.makeStream()
         final class Gate {
-            var cancelled = false
+            var commits = 0
+            var cancels = 0
         }
         let gate = Gate()
         var sent: [String] = []
@@ -324,8 +332,10 @@ final class CaptureSubmissionModelTests: XCTestCase {
             adapter: CaptureSubmissionBatchAdapter(
                 review: { onCandidate in
                     onCandidate(ready)
+                    onCandidate(checking)
                     for await _ in release.stream { break }
-                    return gate.cancelled ? [ready, checking] : [ready]
+                    onCandidate(later)
+                    return [ready, later]
                 },
                 sendSelected: { ids, _ in
                     sent = ids
@@ -333,10 +343,17 @@ final class CaptureSubmissionModelTests: XCTestCase {
                         sent: UInt64(ids.count), cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
                         failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
                 },
-                requestCancel: {
-                    gate.cancelled = true
+                requestCancel: { gate.cancels += 1 },
+                commitSendAll: { _ in
+                    gate.commits += 1
                     release.continuation.yield(())
                     release.continuation.finish()
+                    return true
+                },
+                takeCommittedSummary: {
+                    CaptureSubmissionBatchSummary(
+                        sent: 2, cleaned: 2, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
                 }
             ))
         let task = Task { await model.review() }
@@ -349,11 +366,118 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertEqual(model.selectedCount, 1)
         await model.sendSelected()
         await task.value
-        XCTAssertEqual(sent, ["ready"])
-        XCTAssertTrue(model.requiresFreshReview)
-        XCTAssertFalse(model.canSend)
+        XCTAssertEqual(gate.commits, 1)
+        XCTAssertEqual(gate.cancels, 0)
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertEqual(model.summary?.sent, 2)
+        XCTAssertFalse(model.requiresFreshReview)
+        XCTAssertTrue(model.didFinishSend)
         await model.sendSelected()
-        XCTAssertEqual(sent, ["ready"])
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    @MainActor
+    func testNarrowedSelectionStopsTheScanAndSendsOnlyThatCapture() async {
+        let first = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "first", sourceKind: "Live capture", displayName: "First",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let second = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "second", sourceKind: "Live capture", displayName: "Second",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 80, sourceSHA256: String(repeating: "c", count: 64),
+            transferBytes: 90, transferSHA256: String(repeating: "d", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let release = AsyncStream<Void>.makeStream()
+        var cancels = 0
+        var commits = 0
+        var sent: [String] = []
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { onCandidate in
+                    onCandidate(first)
+                    onCandidate(second)
+                    for await _ in release.stream { break }
+                    return [first, second]
+                },
+                sendSelected: { ids, _ in
+                    sent = ids
+                    return CaptureSubmissionBatchSummary(
+                        sent: UInt64(ids.count), cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {
+                    cancels += 1
+                    release.continuation.yield(())
+                    release.continuation.finish()
+                },
+                commitSendAll: { _ in
+                    commits += 1
+                    return true
+                }
+            ))
+        let task = Task { await model.review() }
+        for _ in 0..<40 {
+            if model.selectedCount == 2 { break }
+            await Task.yield()
+        }
+        model.setSelected(false, candidate: second)
+        await model.sendSelected()
+        await task.value
+        XCTAssertEqual(commits, 0)
+        XCTAssertEqual(cancels, 1)
+        XCTAssertEqual(sent, ["first"])
+    }
+
+    @MainActor
+    func testClosingTheReviewKeepsTheCapturesAlreadySelected() async {
+        let ready = CaptureSubmissionBatchCandidate(
+            sourceArtifactID: "ready", sourceKind: "Live capture", displayName: "Ready",
+            isEligible: true, isChecking: false, skipReason: nil, origin: "Unknown",
+            integrity: "Unknown", sourceBytes: 120, sourceSHA256: String(repeating: "a", count: 64),
+            transferBytes: 240, transferSHA256: String(repeating: "b", count: 64),
+            categories: [], noteBytes: 0, screenshotCount: 0, receipt: nil
+        )
+        let release = AsyncStream<Void>.makeStream()
+        var cancelRequests = 0
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { onCandidate in
+                    onCandidate(ready)
+                    for await _ in release.stream { break }
+                    return [ready]
+                },
+                sendSelected: { _, _ in
+                    CaptureSubmissionBatchSummary(
+                        sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: { cancelRequests += 1 }
+            ))
+        model.ensureReviewStarted()
+        for _ in 0..<40 {
+            if model.canSend { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(cancelRequests, 0)
+        XCTAssertEqual(model.selectedCount, 1)
+        XCTAssertTrue(model.canSend)
+        XCTAssertTrue(model.isReviewing)
+        release.continuation.yield(())
+        release.continuation.finish()
+        for _ in 0..<40 {
+            if !model.isReviewing { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(cancelRequests, 0)
+        XCTAssertFalse(model.isReviewing)
+        XCTAssertEqual(model.selectedCount, 1)
+        XCTAssertTrue(model.canSend)
+        XCTAssertFalse(model.requiresFreshReview)
     }
 
     func testRetryUsesThePreparedRustOperationAndNeverPreparesAReplacement() async {

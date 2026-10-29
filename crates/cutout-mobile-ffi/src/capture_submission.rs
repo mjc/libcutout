@@ -436,8 +436,9 @@ impl From<persistence::CaptureSubmissionError> for MobileCaptureSubmissionError 
 #[derive(uniffi::Object)]
 pub struct CaptureSubmissionClientHandle {
     database: persistence::RideDatabase,
-    transport: HttpCaptureTransport,
+    transport: Arc<HttpCaptureTransport>,
     review_cancel: Arc<AtomicBool>,
+    commitment: Arc<ReviewCommitment>,
 }
 
 impl std::fmt::Debug for CaptureSubmissionClientHandle {
@@ -465,8 +466,9 @@ impl CaptureSubmissionClientHandle {
             .map_err(|_| MobileCaptureSubmissionError::Unavailable)?;
         Ok(Arc::new(Self {
             database: database.inner.clone(),
-            transport,
+            transport: Arc::new(transport),
             review_cancel: Arc::new(AtomicBool::new(false)),
+            commitment: ReviewCommitment::new(),
         }))
     }
 
@@ -553,7 +555,7 @@ impl CaptureSubmissionClientHandle {
         token: String,
     ) -> Result<MobileCaptureSubmissionStatusDto, MobileCaptureSubmissionError> {
         self.database
-            .send_capture_submission(&operation_id, &account_id, &token, &self.transport)
+            .send_capture_submission(&operation_id, &account_id, &token, self.transport.as_ref())
             .await
             .map(Into::into)
             .map_err(Into::into)
@@ -574,7 +576,7 @@ impl CaptureSubmissionClientHandle {
                 &operation_id,
                 &account_id,
                 &token,
-                &self.transport,
+                self.transport.as_ref(),
                 Arc::new(move |progress| listener.on_progress(progress.into())),
             )
             .await
@@ -599,7 +601,7 @@ impl CaptureSubmissionClientHandle {
             _ => return Err(MobileCaptureSubmissionError::Unauthorized),
         };
         self.database
-            .cancel_capture_submission(&operation_id, credential, &self.transport)
+            .cancel_capture_submission(&operation_id, credential, self.transport.as_ref())
             .await
             .map(Into::into)
             .map_err(Into::into)
@@ -615,7 +617,7 @@ impl CaptureSubmissionClientHandle {
         token: String,
     ) -> Result<MobileCaptureSubmissionStatusDto, MobileCaptureSubmissionError> {
         self.database
-            .delete_capture_submission(&operation_id, &account_id, &token, &self.transport)
+            .delete_capture_submission(&operation_id, &account_id, &token, self.transport.as_ref())
             .await
             .map(Into::into)
             .map_err(Into::into)
@@ -881,7 +883,8 @@ mod tests {
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
             review_cancel: Arc::new(AtomicBool::new(false)),
-            transport: HttpCaptureTransport::loopback("http://127.0.0.1:1/")?,
+            transport: Arc::new(HttpCaptureTransport::loopback("http://127.0.0.1:1/")?),
+            commitment: ReviewCommitment::new(),
         };
         let projected = client.status(source).await?.ok_or("status missing")?;
         assert_eq!(projected.phase, MobileCaptureSubmissionPhaseDto::Rejected);
@@ -915,7 +918,8 @@ mod tests {
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
             review_cancel: Arc::new(AtomicBool::new(false)),
-            transport: HttpCaptureTransport::loopback("http://127.0.0.1:1/")?,
+            transport: Arc::new(HttpCaptureTransport::loopback("http://127.0.0.1:1/")?),
+            commitment: ReviewCommitment::new(),
         };
         assert!(client.status(source.clone()).await?.is_none());
         let prepared = client.prepare(source.clone()).await?;
@@ -979,7 +983,8 @@ mod tests {
         let client = CaptureSubmissionClientHandle {
             database: database.inner.clone(),
             review_cancel: Arc::new(AtomicBool::new(false)),
-            transport: HttpCaptureTransport::loopback(&base_url)?,
+            transport: Arc::new(HttpCaptureTransport::loopback(&base_url)?),
+            commitment: ReviewCommitment::new(),
         };
         assert!(client.status(source.clone()).await?.is_none());
         let prepared = client.prepare(source.clone()).await?;
@@ -1168,7 +1173,8 @@ mod tests {
             let client = CaptureSubmissionClientHandle {
                 database: database.inner.clone(),
                 review_cancel: Arc::new(AtomicBool::new(false)),
-                transport: HttpCaptureTransport::loopback(&base_url)?,
+                transport: Arc::new(HttpCaptureTransport::loopback(&base_url)?),
+                commitment: ReviewCommitment::new(),
             };
             client
                 .save_evidence(

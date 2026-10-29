@@ -50,6 +50,7 @@ final class CutoutAppModel {
     private(set) var diagnosticSettingsBusy = false
     private(set) var diagnosticSettingsError = false
     let capture: CaptureFeatureModel
+    private(set) var captureSubmissionBatch: CaptureSubmissionBatchModel?
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
     var hasSavedDevice: Bool { device.hasSavedDevice }
     var settings: DeviceSettings? { device.settings }
@@ -62,6 +63,24 @@ final class CutoutAppModel {
     private(set) var cameraMediaReferences: [CameraMediaReference] = []
 
     var selectedRideTitle: String? { device.selectedRideTitle }
+
+    /// The private-send review survives leaving the sheet. A finished send starts a new one.
+    func captureSubmissionBatchReview(
+        onTerminalUpdate: @escaping @MainActor () -> Void
+    ) -> CaptureSubmissionBatchModel {
+        if let captureSubmissionBatch, !captureSubmissionBatch.didFinishSend {
+            captureSubmissionBatch.replaceTerminalUpdate(onTerminalUpdate)
+            captureSubmissionBatch.ensureReviewStarted()
+            return captureSubmissionBatch
+        }
+        let review = CaptureSubmissionBatchModel(
+            adapter: .live,
+            onTerminalUpdate: onTerminalUpdate
+        )
+        review.ensureReviewStarted()
+        captureSubmissionBatch = review
+        return review
+    }
 
     /// Supplies the active capture identity to the camera route without
     /// giving the view ownership of capture state.
