@@ -278,8 +278,8 @@ impl RideDatabase {
     }
 
     /// Same inventory as [`Self::review_capture_submission_batch_with_updates`].
-    /// When `send` is armed, each capture that becomes eligible is uploaded
-    /// before the scan reads the next one.
+    /// When `send` is armed, captures already eligible upload before the next
+    /// page of a capture that is still being read, and before the next capture.
     ///
     /// # Errors
     ///
@@ -369,6 +369,14 @@ struct ReviewNotify<'a> {
 pub trait CommittedReviewSend {
     /// True after the user confirms Send all.
     fn armed(&self) -> bool;
+
+    /// Polled between pages of the capture currently being read.
+    ///
+    /// Send all returns true so captures already accepted upload before that
+    /// read continues. The default follows [`Self::armed`].
+    fn yield_preview(&mut self) -> bool {
+        self.armed()
+    }
 
     /// Changes when Send all is confirmed, so the last flush can see that confirmation.
     fn arm_generation(&self) -> u64;
@@ -855,6 +863,36 @@ fn flush_committed(
     sent.extend(source_ids);
 }
 
+fn has_unsent_eligible(inventory: &ReviewInventory, sent: &HashSet<String>) -> bool {
+    inventory.candidates.iter().any(|candidate| {
+        candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
+            && !sent.contains(&candidate.source_artifact_id)
+    })
+}
+
+fn unsent_eligible_count(inventory: &ReviewInventory, sent: &HashSet<String>) -> usize {
+    inventory
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.eligibility == CaptureSubmissionBatchEligibility::Eligible
+                && !sent.contains(&candidate.source_artifact_id)
+        })
+        .count()
+}
+
+enum PreviewBody {
+    Ready(ReviewedPayload),
+    /// Send all became ready, or Stop was requested, before this payload read finished.
+    Paused,
+}
+
+enum PreviewControl {
+    Leave,
+    Retry { made_progress: bool },
+    Done,
+}
+
 fn finish_previews(
     database: &RideDatabase,
     inventory: &mut ReviewInventory,
@@ -864,67 +902,186 @@ fn finish_previews(
     send: &mut dyn CommittedReviewSend,
 ) {
     let jobs = std::mem::take(&mut inventory.previews);
-    for job in jobs {
-        if notify.cancel.load(Ordering::Acquire) {
-            break;
-        }
-        // Captures already accepted start uploading before the next payload read.
-        flush_committed(database, inventory, cancel, sent, send);
-        if notify.cancel.load(Ordering::Acquire) {
-            break;
-        }
-        match job {
-            DeferredPreview::Live(job) => {
-                let DeferredLivePreview {
-                    source_id,
-                    id,
-                    entry,
-                    status,
-                    evidence,
-                } = *job;
-                let preview = match wait_for_queue(notify.cancel, || {
-                    preview_live_capture(database, id, &evidence)
-                }) {
-                    Ok(None) => break,
-                    Ok(Some(summary)) => Ok(summary),
-                    Err(error) => Err(map_preview_error(&error)),
-                };
-                apply_live_preview(
-                    inventory, notify, source_id, &entry, status, &evidence, preview,
-                );
+    'jobs: for job in jobs {
+        let mut accept_pause = true;
+        loop {
+            if notify.cancel.load(Ordering::Acquire) {
+                break 'jobs;
             }
-            DeferredPreview::Canonical(job) => {
-                let DeferredCanonicalPreview {
-                    source_id,
-                    capture,
-                    evidence,
-                    digest,
-                } = *job;
-                let preview = match wait_for_queue(notify.cancel, || {
-                    preview_canonical_capture(
-                        database,
-                        &digest,
-                        capture.artifact_size,
-                        capture.encoding,
-                        &evidence,
-                    )
-                }) {
-                    Ok(None) => break,
-                    Ok(Some(summary)) => {
-                        if summary.summary.bytes != capture.artifact_size
-                            || summary.summary.sha256 != digest
-                        {
-                            Err(CaptureSubmissionBatchEligibility::Corrupt)
-                        } else {
-                            Ok(summary)
-                        }
+            // Captures already accepted start uploading before the next payload read.
+            flush_committed(database, inventory, cancel, sent, send);
+            if notify.cancel.load(Ordering::Acquire) {
+                break 'jobs;
+            }
+            let control = match &job {
+                DeferredPreview::Live(job) => preview_live_job(
+                    database,
+                    inventory,
+                    notify,
+                    cancel,
+                    sent,
+                    send,
+                    accept_pause,
+                    job,
+                ),
+                DeferredPreview::Canonical(job) => preview_canonical_job(
+                    database,
+                    inventory,
+                    notify,
+                    cancel,
+                    sent,
+                    send,
+                    accept_pause,
+                    job,
+                ),
+            };
+            match control {
+                PreviewControl::Leave => break 'jobs,
+                PreviewControl::Retry { made_progress } => {
+                    if !made_progress {
+                        accept_pause = false;
                     }
-                    Err(error) => Err(map_preview_error(&error)),
-                };
-                apply_imported_preview(inventory, notify, source_id, &capture, &evidence, preview);
+                    if notify.cancel.load(Ordering::Acquire) {
+                        break 'jobs;
+                    }
+                }
+                PreviewControl::Done => {
+                    flush_committed(database, inventory, cancel, sent, send);
+                    break;
+                }
             }
         }
-        flush_committed(database, inventory, cancel, sent, send);
+    }
+}
+
+fn pause_current_preview(
+    notify: &ReviewNotify<'_>,
+    inventory: &ReviewInventory,
+    sent: &HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
+    accept_pause: bool,
+) -> bool {
+    notify.cancel.load(Ordering::Acquire)
+        || (accept_pause && has_unsent_eligible(inventory, sent) && send.yield_preview())
+}
+
+fn note_paused_read(
+    database: &RideDatabase,
+    inventory: &ReviewInventory,
+    cancel: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
+) -> PreviewControl {
+    if cancel.load(Ordering::Acquire) {
+        return PreviewControl::Leave;
+    }
+    let before = unsent_eligible_count(inventory, sent);
+    flush_committed(database, inventory, cancel, sent, send);
+    if cancel.load(Ordering::Acquire) {
+        return PreviewControl::Leave;
+    }
+    PreviewControl::Retry {
+        made_progress: unsent_eligible_count(inventory, sent) < before,
+    }
+}
+
+fn preview_live_job(
+    database: &RideDatabase,
+    inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
+    cancel: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
+    accept_pause: bool,
+    job: &DeferredLivePreview,
+) -> PreviewControl {
+    let read = wait_for_queue(notify.cancel, || {
+        read_live_preview(database, job.id, &job.evidence, &mut || {
+            pause_current_preview(notify, inventory, sent, send, accept_pause)
+        })
+    });
+    match read {
+        Ok(None) => PreviewControl::Leave,
+        Ok(Some(PreviewBody::Paused)) => note_paused_read(database, inventory, cancel, sent, send),
+        Ok(Some(PreviewBody::Ready(summary))) => {
+            apply_live_preview(
+                inventory,
+                notify,
+                job.source_id.clone(),
+                &job.entry,
+                job.status.clone(),
+                &job.evidence,
+                Ok(summary),
+            );
+            PreviewControl::Done
+        }
+        Err(error) => {
+            apply_live_preview(
+                inventory,
+                notify,
+                job.source_id.clone(),
+                &job.entry,
+                job.status.clone(),
+                &job.evidence,
+                Err(map_preview_error(&error)),
+            );
+            PreviewControl::Done
+        }
+    }
+}
+
+fn preview_canonical_job(
+    database: &RideDatabase,
+    inventory: &mut ReviewInventory,
+    notify: &ReviewNotify<'_>,
+    cancel: &Arc<AtomicBool>,
+    sent: &mut HashSet<String>,
+    send: &mut dyn CommittedReviewSend,
+    accept_pause: bool,
+    job: &DeferredCanonicalPreview,
+) -> PreviewControl {
+    let read = wait_for_queue(notify.cancel, || {
+        read_canonical_preview(
+            database,
+            &job.digest,
+            job.capture.artifact_size,
+            job.capture.encoding,
+            &job.evidence,
+            &mut || pause_current_preview(notify, inventory, sent, send, accept_pause),
+        )
+    });
+    match read {
+        Ok(None) => PreviewControl::Leave,
+        Ok(Some(PreviewBody::Paused)) => note_paused_read(database, inventory, cancel, sent, send),
+        Ok(Some(PreviewBody::Ready(summary))) => {
+            let preview = if summary.summary.bytes != job.capture.artifact_size
+                || summary.summary.sha256 != job.digest
+            {
+                Err(CaptureSubmissionBatchEligibility::Corrupt)
+            } else {
+                Ok(summary)
+            };
+            apply_imported_preview(
+                inventory,
+                notify,
+                job.source_id.clone(),
+                &job.capture,
+                &job.evidence,
+                preview,
+            );
+            PreviewControl::Done
+        }
+        Err(error) => {
+            apply_imported_preview(
+                inventory,
+                notify,
+                job.source_id.clone(),
+                &job.capture,
+                &job.evidence,
+                Err(map_preview_error(&error)),
+            );
+            PreviewControl::Done
+        }
     }
 }
 
@@ -1524,6 +1681,54 @@ fn map_preview_error(error: &CaptureSubmissionError) -> CaptureSubmissionBatchEl
         | CaptureSubmissionError::InvalidState
         | CaptureSubmissionError::Storage(_) => CaptureSubmissionBatchEligibility::Unavailable,
     }
+}
+
+fn read_live_preview(
+    database: &RideDatabase,
+    id: LiveCaptureId,
+    evidence: &CaptureAttachments,
+    should_pause: &mut dyn FnMut() -> bool,
+) -> Result<PreviewBody, CaptureSubmissionError> {
+    let directory = tempfile::tempdir().map_err(super::StorageError::from)?;
+    let path = directory.path().join("review.jsonl");
+    let exported = database
+        .export_live_capture_pausing(id, &path, should_pause)
+        .map_err(|_| CaptureSubmissionError::NotFound)?;
+    let Some(_) = exported else {
+        return Ok(PreviewBody::Paused);
+    };
+    if should_pause() {
+        return Ok(PreviewBody::Paused);
+    }
+    Ok(PreviewBody::Ready(inspect_payload(
+        &path,
+        CoreEncoding::Jsonl,
+        evidence,
+    )?))
+}
+
+fn read_canonical_preview(
+    database: &RideDatabase,
+    digest: &str,
+    expected_bytes: u64,
+    encoding: PevcapEncoding,
+    evidence: &CaptureAttachments,
+    should_pause: &mut dyn FnMut() -> bool,
+) -> Result<PreviewBody, CaptureSubmissionError> {
+    let directory = tempfile::tempdir().map_err(super::StorageError::from)?;
+    let path = directory.path().join("review.pevcap");
+    let exported = database.export_pevcap_capture_pausing(digest, &path, should_pause)?;
+    let Some(_) = exported else {
+        return Ok(PreviewBody::Paused);
+    };
+    if should_pause() {
+        return Ok(PreviewBody::Paused);
+    }
+    let reviewed = inspect_payload(&path, encoding, evidence)?;
+    if reviewed.summary.bytes != expected_bytes || reviewed.summary.sha256 != digest {
+        return Err(CaptureSubmissionError::InvalidCapture);
+    }
+    Ok(PreviewBody::Ready(reviewed))
 }
 
 fn preview_live_capture(
@@ -2299,6 +2504,7 @@ impl BatchProgressEmitter {
 mod tests {
     use super::super::*;
     use super::*;
+    use crate::capture_writer::{LIVE_CAPTURE_EXPORT_PAGE_SIZE, LIVE_EXPORT_PAGES_READ};
     use crate::{CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish};
     use cutout_core::{
         CaptureOrigin, GattChannel, MonotonicTimestamp, PevcapRecord, WallClockUnixTimestamp,
@@ -2350,6 +2556,56 @@ mod tests {
             )),
             CaptureWriteOutcome::Accepted,
         );
+        let CaptureWriterFinish::DatabaseFinished {
+            live_capture_id,
+            receipt,
+            ..
+        } = writer.finish_without_export().unwrap()
+        else {
+            panic!("database completion required");
+        };
+        database
+            .retain_finished_database_capture(
+                &receipt,
+                CaptureOrigin::Manual,
+                None,
+                WallClockUnixTimestamp::new(1_700_000_001_000),
+            )
+            .unwrap();
+        live_capture_id
+    }
+
+    fn finished_capture_with_events(
+        database: &RideDatabase,
+        directory: &Path,
+        byte: u8,
+        events: u32,
+    ) -> LiveCaptureId {
+        let writer = CaptureWriter::start_with_database(
+            directory.join(format!("capture-{byte}-{events}.jsonl")),
+            WallClockUnixTimestamp::new(1_700_000_000_000 + u64::from(byte)),
+            "unknown-device",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+            database.clone(),
+        )
+        .unwrap();
+        for index in 0..events {
+            assert_eq!(
+                writer.try_send_record(PevcapRecord::inbound_notification(
+                    MonotonicTimestamp::new(u64::from(index) + 1),
+                    GattChannel::from_bytes([0x11; 16]),
+                    GattChannel::from_bytes([0x22; 16]),
+                    vec![byte],
+                )),
+                CaptureWriteOutcome::Accepted,
+            );
+        }
         let CaptureWriterFinish::DatabaseFinished {
             live_capture_id,
             receipt,
@@ -2908,6 +3164,101 @@ mod tests {
             )
             .unwrap();
         assert!(sender.sent_while_another_was_checking);
+        assert_eq!(sender.transport.uploads.load(Ordering::Acquire), 2);
+        assert_eq!(eligible_ids(&plan).len(), 2);
+        assert!(
+            plan.candidates()
+                .iter()
+                .all(|candidate| candidate.eligibility
+                    != CaptureSubmissionBatchEligibility::Checking)
+        );
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn send_all_during_a_payload_read_uploads_captures_already_eligible() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        // Older, so the history page reads it after the one-event capture.
+        finished_capture_with_events(
+            &database,
+            directory.path(),
+            10,
+            LIVE_CAPTURE_EXPORT_PAGE_SIZE + 1,
+        );
+        finished_capture(&database, directory.path(), 40);
+        let pages_before = LIVE_EXPORT_PAGES_READ.load(Ordering::Acquire);
+        struct SendDuringRead {
+            armed: bool,
+            transport: BatchTransport,
+            sent_while_another_was_checking: bool,
+            pages_before: usize,
+            pages_at_first_send: Option<usize>,
+        }
+        impl CommittedReviewSend for SendDuringRead {
+            fn armed(&self) -> bool {
+                self.armed
+            }
+
+            fn yield_preview(&mut self) -> bool {
+                self.armed = true;
+                true
+            }
+
+            fn arm_generation(&self) -> u64 {
+                u64::from(self.armed)
+            }
+
+            fn send(
+                &mut self,
+                database: &RideDatabase,
+                plan: &CaptureSubmissionBatchPlan,
+                source_ids: &[String],
+            ) -> CaptureSubmissionBatchSummary {
+                if self.pages_at_first_send.is_none() {
+                    self.pages_at_first_send = Some(
+                        LIVE_EXPORT_PAGES_READ
+                            .load(Ordering::Acquire)
+                            .saturating_sub(self.pages_before),
+                    );
+                }
+                if plan.candidates().iter().any(|candidate| {
+                    candidate.eligibility == CaptureSubmissionBatchEligibility::Checking
+                }) {
+                    self.sent_while_another_was_checking = true;
+                }
+                ready(database.send_capture_submission_batch(
+                    plan,
+                    source_ids,
+                    ACCOUNT,
+                    "token",
+                    &self.transport,
+                    Arc::new(|_| {}),
+                ))
+                .unwrap()
+            }
+
+            fn complete(&mut self, _flushed_generation: u64) -> bool {
+                false
+            }
+        }
+        let mut sender = SendDuringRead {
+            armed: false,
+            transport: BatchTransport::default(),
+            sent_while_another_was_checking: false,
+            pages_before,
+            pages_at_first_send: None,
+        };
+        let plan = database
+            .review_capture_submission_batch_with_sender(
+                &[],
+                Arc::new(AtomicBool::new(false)),
+                &|_| {},
+                &mut sender,
+            )
+            .unwrap();
+        assert!(sender.sent_while_another_was_checking);
+        assert_eq!(sender.pages_at_first_send, Some(2));
         assert_eq!(sender.transport.uploads.load(Ordering::Acquire), 2);
         assert_eq!(eligible_ids(&plan).len(), 2);
         assert!(

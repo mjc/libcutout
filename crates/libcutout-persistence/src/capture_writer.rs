@@ -63,7 +63,21 @@ pub enum CaptureRecordAdmission {
     StationaryTelemetry,
 }
 
-const LIVE_CAPTURE_EXPORT_PAGE_SIZE: u32 = 32;
+pub(crate) const LIVE_CAPTURE_EXPORT_PAGE_SIZE: u32 = 32;
+
+/// Pages read by live-capture export. Review tests use this to see that Send all
+/// uploads captures already accepted before a later page of the current capture.
+#[cfg(test)]
+pub(crate) static LIVE_EXPORT_PAGES_READ: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn note_export_page() {
+    LIVE_EXPORT_PAGES_READ.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(not(test))]
+fn note_export_page() {}
 
 /// Rust-generated identity of one capture artifact, independent of filenames and devices.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1737,6 +1751,18 @@ impl RideDatabase {
     /// # Errors
     /// Returns storage, active-capture, output or sync failures. Database contents are preserved.
     pub fn export_live_capture(&self, id: LiveCaptureId, path: &Path) -> Result<String, String> {
+        self.export_live_capture_pausing(id, path, &mut || false)?
+            .ok_or_else(|| "live capture export stopped before it finished".to_string())
+    }
+
+    /// Same export as [`Self::export_live_capture`]. `None` means `should_pause` asked
+    /// to stop before another page, and the partial file is removed.
+    pub(crate) fn export_live_capture_pausing(
+        &self,
+        id: LiveCaptureId,
+        path: &Path,
+        should_pause: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<String>, String> {
         if self
             .capture_submission(crate::storage::CaptureSubmissionSource::LiveCapture(id))
             .map_err(|error| error.to_string())?
@@ -1752,7 +1778,12 @@ impl RideDatabase {
             id,
             policy: CaptureRecordingPolicy::default(),
         };
-        export_database_capture(path, &capture, &CaptureWriterState::default())
+        export_database_capture_pausing(
+            path,
+            &capture,
+            &CaptureWriterState::default(),
+            should_pause,
+        )
     }
 }
 
@@ -1761,18 +1792,38 @@ fn export_database_capture(
     capture: &DatabaseCapture,
     state: &CaptureWriterState,
 ) -> Result<String, String> {
+    export_database_capture_pausing(path, capture, state, &mut || false)?
+        .ok_or_else(|| "live capture export stopped before it finished".to_string())
+}
+
+fn export_database_capture_pausing(
+    path: &Path,
+    capture: &DatabaseCapture,
+    state: &CaptureWriterState,
+    should_pause: &mut dyn FnMut() -> bool,
+) -> Result<Option<String>, String> {
     let limit =
         QueryLimit::new(LIVE_CAPTURE_EXPORT_PAGE_SIZE).map_err(|error| error.to_string())?;
     let first_page = capture
         .database
         .live_capture_page(capture.id, None, limit)
         .map_err(|error| format!("could not read finalized live capture: {error}"))?;
-    export_database_capture_from_pages(path, first_page, state, limit, |after_sequence, limit| {
-        capture
-            .database
-            .live_capture_page(capture.id, after_sequence, limit)
-            .map_err(|error| error.to_string())
-    })
+    note_export_page();
+    export_database_capture_from_pages(
+        path,
+        first_page,
+        state,
+        limit,
+        should_pause,
+        |after_sequence, limit| {
+            let page = capture
+                .database
+                .live_capture_page(capture.id, after_sequence, limit)
+                .map_err(|error| error.to_string())?;
+            note_export_page();
+            Ok(page)
+        },
+    )
 }
 
 fn export_database_capture_from_pages(
@@ -1780,11 +1831,12 @@ fn export_database_capture_from_pages(
     first_page: crate::storage::LiveCaptureSnapshot,
     state: &CaptureWriterState,
     limit: QueryLimit,
+    should_pause: &mut dyn FnMut() -> bool,
     mut read_page: impl FnMut(
         Option<u64>,
         QueryLimit,
     ) -> Result<crate::storage::LiveCaptureSnapshot, String>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
     if first_page.state == LiveCaptureState::Active {
         return Err("live capture must be inactive before export".into());
     }
@@ -1807,8 +1859,15 @@ fn export_database_capture_from_pages(
         loop {
             let snapshot = match page.take() {
                 Some(snapshot) => snapshot,
-                None => read_page(after_sequence, limit)
-                    .map_err(|error| format!("could not continue live capture export: {error}"))?,
+                None => {
+                    // Send all can upload captures already accepted before the next page.
+                    if should_pause() {
+                        return Ok(None);
+                    }
+                    read_page(after_sequence, limit).map_err(|error| {
+                        format!("could not continue live capture export: {error}")
+                    })?
+                }
             };
             if snapshot.next_sequence != expected_next_sequence {
                 return Err("live capture changed during export".into());
@@ -1841,6 +1900,9 @@ fn export_database_capture_from_pages(
         }
 
         output.flush().map_err(|error| error.to_string())?;
+        if should_pause() {
+            return Ok(None);
+        }
         let file = output
             .into_inner()
             .map_err(|error| error.into_error().to_string())?;
@@ -1850,18 +1912,24 @@ fn export_database_capture_from_pages(
             .map_err(|error| {
                 format!("stored capture is not valid current-format PEVCAP: {error}")
             })?;
+        let mut validated = 0_u32;
         while reader
             .next_event()
             .map_err(|error| format!("stored capture is not valid current-format PEVCAP: {error}"))?
             .is_some()
-        {}
+        {
+            validated = validated.saturating_add(1);
+            if validated.is_multiple_of(LIVE_CAPTURE_EXPORT_PAGE_SIZE) && should_pause() {
+                return Ok(None);
+            }
+        }
         drop(reader);
         let digest = hex::encode(digest.finalize());
         export.publish().map_err(|error| error.to_string())?;
         state
             .physical_bytes_written
             .fetch_add(bytes_written, Ordering::AcqRel);
-        Ok(digest)
+        Ok(Some(digest))
     }
 }
 
@@ -2263,6 +2331,7 @@ mod tests {
             export_test_page(id, header.clone(), 0, first),
             &CaptureWriterState::default(),
             limit,
+            &mut || false,
             |_, _| {
                 let mut page = export_test_page(id, header.clone(), 1, vec![]);
                 page.events.clear();
@@ -2288,6 +2357,7 @@ mod tests {
             first_page,
             &CaptureWriterState::default(),
             limit,
+            &mut || false,
             |_, _| {
                 assert!(!interrupted_path.exists());
                 Err("interrupted after the first page".into())
@@ -2303,6 +2373,7 @@ mod tests {
             first_page,
             &CaptureWriterState::default(),
             limit,
+            &mut || false,
             |_, _| {
                 assert!(!race_path.exists());
                 fs::write(&race_path, b"race winner").unwrap();

@@ -4449,6 +4449,18 @@ impl RideDatabase {
         })
     }
 
+    fn finished_pevcap_export(
+        result: Result<Option<String>, StorageError>,
+    ) -> Result<String, StorageError> {
+        match result {
+            Ok(Some(digest)) => Ok(digest),
+            Ok(None) => Err(StorageError::PevcapCaptureIntegrity(
+                "capture export stopped before completion".to_owned(),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Exports one published capture's exact original bytes from SQLite.
     ///
     /// The destination must not already exist. Reads remain bounded to one stored
@@ -4463,7 +4475,28 @@ impl RideDatabase {
         digest: &str,
         destination: &Path,
     ) -> Result<String, StorageError> {
-        self.export_pevcap_capture_with_chunk_hook_inner(digest, destination, |_| Ok(()))
+        Self::finished_pevcap_export(self.export_pevcap_capture_with_chunk_hook_inner(
+            digest,
+            destination,
+            |_| Ok(()),
+            &mut || false,
+        ))
+    }
+
+    /// Same export as [`Self::export_pevcap_capture`]. `None` means `should_pause`
+    /// asked to stop before another stored chunk, and the partial file is removed.
+    pub(crate) fn export_pevcap_capture_pausing(
+        &self,
+        digest: &str,
+        destination: &Path,
+        should_pause: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<String>, StorageError> {
+        self.export_pevcap_capture_with_chunk_hook_inner(
+            digest,
+            destination,
+            |_| Ok(()),
+            should_pause,
+        )
     }
 
     #[cfg(test)]
@@ -4473,7 +4506,12 @@ impl RideDatabase {
         destination: &Path,
         after_chunk: impl FnMut(u64) -> Result<(), StorageError>,
     ) -> Result<String, StorageError> {
-        self.export_pevcap_capture_with_chunk_hook_inner(digest, destination, after_chunk)
+        Self::finished_pevcap_export(self.export_pevcap_capture_with_chunk_hook_inner(
+            digest,
+            destination,
+            after_chunk,
+            &mut || false,
+        ))
     }
 
     fn export_pevcap_capture_with_chunk_hook_inner(
@@ -4481,7 +4519,8 @@ impl RideDatabase {
         digest: &str,
         destination: &Path,
         mut after_chunk: impl FnMut(u64) -> Result<(), StorageError>,
-    ) -> Result<String, StorageError> {
+        should_pause: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<String>, StorageError> {
         let mut expected_digest = [0_u8; 32];
         if digest.len() != 64
             || hex::decode_to_slice(digest, &mut expected_digest).is_err()
@@ -4494,10 +4533,17 @@ impl RideDatabase {
         let mut content_digest = Sha256::new();
         let mut byte_count = 0_u64;
         let mut sequence = 0_u64;
+        let mut read_chunk = false;
         loop {
+            // The first chunk still starts immediately. Later chunks yield so Send all
+            // can upload captures that are already eligible.
+            if read_chunk && should_pause() {
+                return Ok(None);
+            }
             let Some(chunk) = self.pevcap_capture_chunk(digest, sequence)? else {
                 break;
             };
+            read_chunk = true;
             byte_count = byte_count
                 .checked_add(u64::try_from(chunk.len()).map_err(|_| {
                     StorageError::PevcapCaptureIntegrity(
@@ -4526,7 +4572,7 @@ impl RideDatabase {
         }
 
         output.publish()?;
-        Ok(digest.to_owned())
+        Ok(Some(digest.to_owned()))
     }
 
     /// Lists published SQLite-backed captures in descending import-time/digest order.
