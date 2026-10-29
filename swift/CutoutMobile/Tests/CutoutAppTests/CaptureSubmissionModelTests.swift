@@ -37,6 +37,19 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertEqual(attempts, 2)
     }
 
+    private func reviewedCandidate(
+        id: String,
+        eligibility: MobileCaptureSubmissionBatchEligibilityDto,
+        skipReason: MobileCaptureSubmissionBatchEligibilityDto? = nil
+    ) -> MobileCaptureSubmissionBatchCandidateDto {
+        MobileCaptureSubmissionBatchCandidateDto(
+            sourceArtifactId: id, sourceKind: .liveCapture, displayName: "Ride",
+            eligibility: eligibility, sourceSha256: nil, sourceBytes: 120,
+            transferSha256: nil, transferBytes: nil, origin: .unknown, integrity: .unknown,
+            categories: nil, evidence: nil, status: nil, skipReason: skipReason, aliasCount: 0
+        )
+    }
+
     private func status(
         _ phase: MobileCaptureSubmissionPhaseDto,
         operationID: String = "fixed-operation",
@@ -242,6 +255,31 @@ final class CaptureSubmissionModelTests: XCTestCase {
         XCTAssertEqual(model.error, localizedAppText("capture.batch.review_error"))
         XCTAssertFalse(model.error?.localizedCaseInsensitiveContains("storagefailure") ?? false)
         XCTAssertTrue(model.requiresFreshReview)
+    }
+
+    func testEligibleCaptureWithoutATransferDigestStaysWithTheRestOfTheReview() async {
+        let reviewed = projectedCaptureSubmissionBatchCandidates([
+            reviewedCandidate(id: "live-1", eligibility: .eligible),
+            reviewedCandidate(id: "live-2", eligibility: .empty, skipReason: .empty),
+        ])
+        let model = CaptureSubmissionBatchModel(
+            adapter: CaptureSubmissionBatchAdapter(
+                review: { _ in reviewed },
+                sendSelected: { _, _ in
+                    CaptureSubmissionBatchSummary(
+                        sent: 0, cleaned: 0, failed: 0, skipped: 0, cancelled: 0,
+                        failedSourceArtifactIDs: [], pendingCleanupSourceArtifactIDs: [])
+                },
+                requestCancel: {}
+            ))
+        await model.review()
+        XCTAssertNil(model.error)
+        XCTAssertEqual(model.candidates.map(\.sourceArtifactID), ["live-1", "live-2"])
+        XCTAssertTrue(model.candidates[0].isEligible)
+        XCTAssertNil(model.candidates[0].transferSHA256)
+        XCTAssertNil(model.candidates[0].transferBytes)
+        XCTAssertEqual(model.selectedCount, 1)
+        XCTAssertFalse(model.requiresFreshReview)
     }
 
     @MainActor

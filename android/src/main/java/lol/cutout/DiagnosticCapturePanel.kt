@@ -15,6 +15,40 @@ import java.util.Date
 
 internal enum class CaptureHistorySendBadge { SENT, LOCAL_DELETED }
 
+internal fun projectReviewedCaptureCandidate(
+    context: Context,
+    value: MobileCaptureSubmissionBatchCandidateDto,
+    sourceKind: (MobileCaptureSubmissionBatchSourceKindDto) -> String,
+    eligibilityLabel: (MobileCaptureSubmissionBatchEligibilityDto) -> String,
+): CaptureBatchCandidate {
+    val categories = value.categories?.let { categories -> buildList {
+        if (categories.deviceIdentifiers) add(context.getString(R.string.capture_batch_category_identifiers))
+        if (categories.location) add(context.getString(R.string.capture_batch_category_location))
+        if (categories.notes) add(context.getString(R.string.capture_batch_category_notes))
+        if (categories.annotations) add(context.getString(R.string.capture_batch_category_annotations))
+        if (categories.settingsObservations) add(context.getString(R.string.capture_batch_category_settings))
+    } } ?: emptyList()
+    val eligibility = value.skipReason ?: value.eligibility
+    return CaptureBatchCandidate(
+        sourceArtifactId = value.sourceArtifactId,
+        sourceKind = sourceKind(value.sourceKind),
+        displayName = value.displayName.takeIf(String::isNotBlank),
+        eligible = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE,
+        skipReason = if (value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE) null else eligibilityLabel(eligibility),
+        origin = captureSubmissionOriginLabel(context, value.origin),
+        integrity = captureSubmissionIntegrityLabel(context, value.integrity),
+        sourceBytes = value.sourceBytes,
+        sourceSha256 = value.sourceSha256,
+        transferBytes = value.transferBytes,
+        transferSha256 = value.transferSha256,
+        categories = categories,
+        noteBytes = value.evidence?.noteBytes?.toULong() ?: 0uL,
+        screenshotCount = value.evidence?.screenshots ?: 0u,
+        receipt = value.status?.receipt?.operationId,
+        checking = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.CHECKING,
+    )
+}
+
 internal fun captureHistorySendBadge(status: MobileCaptureSubmissionStatusDto?): CaptureHistorySendBadge? {
     if (status?.receipt == null) return null
     return when (status.phase) {
@@ -878,8 +912,7 @@ private class RustCaptureSubmissionBatchOperations(
             this.client = client
             val listener = object : MobileCaptureSubmissionBatchReviewListener {
                 override fun onCandidate(candidate: MobileCaptureSubmissionBatchCandidateDto) {
-                    val projected = runCatching { projectCandidate(candidate) }.getOrNull() ?: return
-                    onCandidate(projected)
+                    onCandidate(projectCandidate(candidate))
                 }
             }
             val plan = client.reviewAll(
@@ -967,39 +1000,8 @@ private class RustCaptureSubmissionBatchOperations(
         plan?.requestCancel()
     }
 
-    private fun projectCandidate(value: MobileCaptureSubmissionBatchCandidateDto): CaptureBatchCandidate {
-        if (value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE &&
-            (value.transferBytes == null || value.transferSha256 == null)
-        ) {
-            throw IllegalStateException(context.getString(R.string.capture_batch_invalid_review))
-        }
-        val categories = value.categories?.let { categories -> buildList {
-            if (categories.deviceIdentifiers) add(context.getString(R.string.capture_batch_category_identifiers))
-            if (categories.location) add(context.getString(R.string.capture_batch_category_location))
-            if (categories.notes) add(context.getString(R.string.capture_batch_category_notes))
-            if (categories.annotations) add(context.getString(R.string.capture_batch_category_annotations))
-            if (categories.settingsObservations) add(context.getString(R.string.capture_batch_category_settings))
-        } } ?: emptyList()
-        val eligibility = value.skipReason ?: value.eligibility
-        return CaptureBatchCandidate(
-            sourceArtifactId = value.sourceArtifactId,
-            sourceKind = sourceKindLabel(value.sourceKind),
-            displayName = value.displayName.takeIf(String::isNotBlank),
-            eligible = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE,
-            skipReason = if (value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE) null else eligibilityLabel(eligibility),
-            origin = captureSubmissionOriginLabel(context, value.origin),
-            integrity = captureSubmissionIntegrityLabel(context, value.integrity),
-            sourceBytes = value.sourceBytes,
-            sourceSha256 = value.sourceSha256,
-            transferBytes = value.transferBytes,
-            transferSha256 = value.transferSha256,
-            categories = categories,
-            noteBytes = value.evidence?.noteBytes?.toULong() ?: 0uL,
-            screenshotCount = value.evidence?.screenshots ?: 0u,
-            receipt = value.status?.receipt?.operationId,
-            checking = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.CHECKING,
-        )
-    }
+    private fun projectCandidate(value: MobileCaptureSubmissionBatchCandidateDto): CaptureBatchCandidate =
+        projectReviewedCaptureCandidate(context, value, this::sourceKindLabel, this::eligibilityLabel)
 
     private fun projectProgress(value: MobileCaptureSubmissionBatchProgressDto): CaptureBatchProgress {
         val phase = when (value.phase) {

@@ -12,6 +12,12 @@ import lol.cutout.CaptureBatchSummary
 import lol.cutout.CaptureSubmissionBatchDialog
 import lol.cutout.CaptureSubmissionBatchOperations
 import lol.cutout.CutoutApplication
+import lol.cutout.projectReviewedCaptureCandidate
+import uniffi.cutout_mobile_ffi.MobileCaptureIntegrityDto
+import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchCandidateDto
+import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchEligibilityDto
+import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchSourceKindDto
+import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionOriginDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -461,6 +467,49 @@ class LocalCaptureBatchDialogTest {
             host.pause().stop().destroy()
         }
     }
+
+    @Test
+    fun eligibleCaptureWithoutATransferDigestStaysWithTheRestOfTheReview() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = host.get()
+        val reviewed = listOf(
+            reviewed("live-1", MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE, null),
+            reviewed(
+                "live-2",
+                MobileCaptureSubmissionBatchEligibilityDto.EMPTY,
+                MobileCaptureSubmissionBatchEligibilityDto.EMPTY,
+            ),
+        ).map {
+            projectReviewedCaptureCandidate(activity, it, { "Live capture" }, { "Empty" })
+        }
+        assertEquals(listOf("live-1", "live-2"), reviewed.map { it.sourceArtifactId })
+        assertTrue(reviewed[0].eligible)
+        assertEquals(null, reviewed[0].transferSha256)
+        assertEquals(null, reviewed[0].transferBytes)
+        assertEquals(false, reviewed[1].eligible)
+    }
+
+    private fun reviewed(
+        id: String,
+        eligibility: MobileCaptureSubmissionBatchEligibilityDto,
+        skipReason: MobileCaptureSubmissionBatchEligibilityDto?,
+    ) = MobileCaptureSubmissionBatchCandidateDto(
+        sourceArtifactId = id,
+        sourceKind = MobileCaptureSubmissionBatchSourceKindDto.LIVE_CAPTURE,
+        displayName = "Ride",
+        eligibility = eligibility,
+        sourceSha256 = null,
+        sourceBytes = 120uL,
+        transferSha256 = null,
+        transferBytes = null,
+        origin = MobileCaptureSubmissionOriginDto.UNKNOWN,
+        integrity = MobileCaptureIntegrityDto.Unknown,
+        categories = null,
+        evidence = null,
+        status = null,
+        skipReason = skipReason,
+        aliasCount = 0uL,
+    )
 
     private fun candidate(id: String, eligible: Boolean) = CaptureBatchCandidate(
         sourceArtifactId = id,

@@ -453,7 +453,7 @@ private final class CaptureSubmissionBatchFFIState {
         return try await withTaskCancellationHandler {
             let plan = try await client.reviewAll(managedCaptureDirectories: roots, listener: listener)
             self.plan = plan
-            return try plan.candidates().map(Self.project)
+            return projectedCaptureSubmissionBatchCandidates(plan.candidates())
         } onCancel: {
             client.cancelReview()
         }
@@ -502,17 +502,18 @@ private final class CaptureSubmissionBatchFFIState {
             pendingCleanupSourceArtifactIDs: summary.pendingCleanupSourceArtifactIds
         )
     }
+}
 
-    nonisolated fileprivate static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto) throws
+func projectedCaptureSubmissionBatchCandidates(
+    _ candidates: [MobileCaptureSubmissionBatchCandidateDto]
+) -> [CaptureSubmissionBatchCandidate] {
+    candidates.map(CaptureSubmissionBatchFFIState.project)
+}
+
+extension CaptureSubmissionBatchFFIState {
+    nonisolated fileprivate static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto)
         -> CaptureSubmissionBatchCandidate
     {
-        if candidate.eligibility == .eligible,
-            candidate.transferBytes == nil || candidate.transferSha256 == nil
-        {
-            throw CocoaError(
-                .fileReadCorruptFile,
-                userInfo: [NSLocalizedDescriptionKey: localizedAppText("capture.batch.invalid_review")])
-        }
         let categories: [String] =
             candidate.categories.map { value in
                 var included: [String] = []
@@ -594,7 +595,7 @@ private final class CaptureSubmissionBatchReviewListenerAdapter: MobileCaptureSu
     init(update: @escaping CaptureSubmissionBatchAdapter.CandidateUpdate) { self.update = update }
 
     func onCandidate(candidate: MobileCaptureSubmissionBatchCandidateDto) {
-        guard let projected = try? CaptureSubmissionBatchFFIState.project(candidate) else { return }
+        let projected = CaptureSubmissionBatchFFIState.project(candidate)
         let update = self.update
         Task { @MainActor in update(projected) }
     }
