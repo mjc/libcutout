@@ -239,9 +239,10 @@ fn observation_for_connection(
 ) -> Option<ride_maps::ChargingStopObservation> {
     let state = ride.inner.lock().unwrap_or_else(PoisonError::into_inner);
     state.require_ready().ok()?;
-    if state.recorder.associated_vehicle() != Some(platform_identifier)
-        || state.last_connection_transition_generation != Some(generation)
-        || state.last_connection_transition_ride_id != state.ride_id
+    let recording = state.recording.snapshot();
+    if recording.associated_vehicle.as_deref() != Some(platform_identifier)
+        || recording.last_connection_transition_generation != Some(generation)
+        || recording.last_connection_transition_ride_id != recording.ride_id
     {
         return None;
     }
@@ -261,6 +262,7 @@ fn observation_for_ride(
     context: MobileChargingStopContextDto,
 ) -> Option<ride_maps::ChargingStopObservation> {
     state.require_ready().ok()?;
+    let recording = state.recording.snapshot();
     let location = context.location.and_then(|sample| {
         ride_maps::ChargingLocationFix::new(
             sample.latitude_degrees,
@@ -272,8 +274,8 @@ fn observation_for_ride(
         )
     });
     Some(ride_maps::ChargingStopObservation {
-        ride_id: Uuid::from_slice(&state.ride_id.as_ref()?.bytes).ok()?,
-        lifecycle: state.recorder.state()?,
+        ride_id: Uuid::from_slice(&crate::mobile_ride_id(recording.ride_id?).bytes).ok()?,
+        lifecycle: recording.lifecycle?,
         evidence,
         now: ride_maps::MonotonicMilliseconds::new(context.now_ms),
         location,

@@ -801,11 +801,9 @@ mod tests {
                 > initial.revision
         );
         assert!(!handle.verified_connection_attempt_is_current(token));
+        let recording = ride_map.inner.lock().unwrap().recording.snapshot();
         assert_eq!(
-            ride_map
-                .inner
-                .lock()
-                .unwrap()
+            recording
                 .last_connected_vehicle
                 .as_ref()
                 .map(cutout_ride_maps::VehicleIdentity::as_str),

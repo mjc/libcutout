@@ -1,8 +1,10 @@
 use super::MobileChargingError;
 use super::sync::ChargingHttpClient;
-use reqwest::Method;
-use serde::{Deserialize, Serialize};
-use std::{future::Future, sync::Arc};
+use cutout_application::charging::{
+    reports::{ChargingContentReport, ReportSubmitError},
+    sync_runtime::ChargingSyncService,
+};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// A confirmed private moderation report, separate from public pin votes.
@@ -15,7 +17,7 @@ pub struct MobileChargingReportReceiptDto {
 /// One immutable report operation. Explicit retries reuse its identifier and text.
 #[derive(uniffi::Object)]
 pub struct MobileChargingContentReport {
-    policy: cutout_application::charging::reports::ChargingContentReport,
+    policy: ChargingContentReport,
 }
 
 impl std::fmt::Debug for MobileChargingContentReport {
@@ -24,30 +26,6 @@ impl std::fmt::Debug for MobileChargingContentReport {
             .debug_struct("MobileChargingContentReport")
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Serialize)]
-struct ReportRequest<'a> {
-    operation_id: Uuid,
-    reason: &'static str,
-    message: Option<&'a str>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReportReceipt {
-    operation_id: Uuid,
-    id: Uuid,
-    applied_revision: u64,
-    revision: u64,
-    status: ReportStatus,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ReportStatus {
-    Open,
-    Resolved,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -64,18 +42,14 @@ impl MobileChargingContentReport {
         let spot_id =
             Uuid::parse_str(&spot_id).map_err(|_| MobileChargingError::InvalidIdentifier)?;
         let operation_id = Uuid::new_v4();
-        let policy = cutout_application::charging::reports::ChargingContentReport::new(
-            spot_id,
-            operation_id,
-            &message,
-        )
-        .map_err(|_| MobileChargingError::InvalidMetadata)?;
+        let policy = ChargingContentReport::new(spot_id, operation_id, &message)
+            .map_err(|_| MobileChargingError::InvalidMetadata)?;
         Ok(Arc::new(Self { policy }))
     }
 
     /// Submits this report to the fixed HTTPS service and returns only a validated receipt.
     /// # Errors
-    /// Returns authentication, rejection, throttling or transport errors without claiming success.
+    /// Returns authentication, service, or invalid-receipt errors without claiming success.
     pub async fn submit(
         &self,
         token: String,
@@ -91,98 +65,29 @@ impl MobileChargingContentReport {
         client: &ChargingHttpClient,
         token: &str,
     ) -> Result<MobileChargingReportReceiptDto, MobileChargingError> {
-        let transport = MobileReportTransport { client };
-        let receipt = cutout_application::charging::reports::submit_charging_report(
-            &self.policy,
-            token,
-            &transport,
-        )
-        .await
-        .map_err(|error| map_report_error(&error))?;
-        Ok(MobileChargingReportReceiptDto {
-            report_id: receipt.report_id.to_string(),
-        })
-    }
-}
-
-struct MobileReportTransport<'a> {
-    client: &'a ChargingHttpClient,
-}
-
-impl cutout_application::charging::reports::ChargingReportTransport for MobileReportTransport<'_> {
-    fn submit<'a>(
-        &'a self,
-        token: &'a str,
-        command: cutout_application::charging::reports::ChargingReportCommand,
-    ) -> std::pin::Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        cutout_application::charging::reports::ChargingReportReceipt,
-                        cutout_application::charging::reports::ReportRemoteError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let body = serde_json::to_vec(&ReportRequest {
-                operation_id: command.operation_id,
-                reason: command.reason,
-                message: command.message.as_deref(),
+        ChargingSyncService::submit_report(&client.inner, &self.policy, token)
+            .await
+            .map(|receipt| MobileChargingReportReceiptDto {
+                report_id: receipt.report_id.to_string(),
             })
-            .map_err(|_| cutout_application::charging::reports::ReportRemoteError::Network)?;
-            let response: ReportReceipt = self
-                .client
-                .request(
-                    Method::POST,
-                    &format!("v1/charging-spots/{}/reports", command.spot_id),
-                    Some(token),
-                    Some(body),
-                )
-                .await
-                .map_err(|error| match error {
-                    MobileChargingError::Unauthorized => {
-                        cutout_application::charging::reports::ReportRemoteError::Unauthorized
-                    }
-                    MobileChargingError::Conflict => {
-                        cutout_application::charging::reports::ReportRemoteError::Conflict
-                    }
-                    MobileChargingError::Rejected => {
-                        cutout_application::charging::reports::ReportRemoteError::Rejected
-                    }
-                    MobileChargingError::Throttled => {
-                        cutout_application::charging::reports::ReportRemoteError::Throttled
-                    }
-                    _ => cutout_application::charging::reports::ReportRemoteError::Network,
-                })?;
-            let _ = response.status;
-            Ok(
-                cutout_application::charging::reports::ChargingReportReceipt {
-                    operation_id: response.operation_id,
-                    report_id: response.id,
-                    applied_revision: response.applied_revision,
-                    revision: response.revision,
-                },
-            )
-        })
+            .map_err(MobileChargingError::from)
     }
 }
 
-fn map_report_error(
-    error: &cutout_application::charging::reports::ReportSubmitError,
-) -> MobileChargingError {
-    use cutout_application::charging::reports::{
-        ReportRemoteError as Remote, ReportSubmitError as Error,
-    };
-    match error {
-        Error::Unauthorized | Error::Remote(Remote::Unauthorized) => {
-            MobileChargingError::Unauthorized
+impl From<ReportSubmitError> for MobileChargingError {
+    fn from(error: ReportSubmitError) -> Self {
+        use cutout_application::charging::reports::{
+            ReportRemoteError as Remote, ReportSubmitError as Error,
+        };
+        match error {
+            Error::Unauthorized | Error::Remote(Remote::Unauthorized) => {
+                MobileChargingError::Unauthorized
+            }
+            Error::InvalidReceipt | Error::Remote(Remote::Network) => MobileChargingError::Network,
+            Error::Remote(Remote::Conflict) => MobileChargingError::Conflict,
+            Error::Remote(Remote::Rejected) => MobileChargingError::Rejected,
+            Error::Remote(Remote::Throttled) => MobileChargingError::Throttled,
         }
-        Error::InvalidReceipt | Error::Remote(Remote::Network) => MobileChargingError::Network,
-        Error::Remote(Remote::Conflict) => MobileChargingError::Conflict,
-        Error::Remote(Remote::Rejected) => MobileChargingError::Rejected,
-        Error::Remote(Remote::Throttled) => MobileChargingError::Throttled,
     }
 }
 

@@ -1,9 +1,10 @@
 //! Persisted RGB-accessory state and conversion boundary.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use cutout_application::lighting::accessory::AccessoryRecord;
+use std::sync::Arc;
 
 use cutout_core::{
-    LightingBrightness, LightingPowerState, RgbColor, RgbLightingAccessoryRecord,
+    LightingBrightness, LightingPowerState, RgbColor,
     RgbLightingConfirmationState as CoreRgbLightingConfirmationState,
     RgbLightingConnectionState as CoreRgbLightingConnectionState,
     RgbLightingPartialState as CoreRgbLightingPartialState, RgbLightingPreset,
@@ -260,16 +261,12 @@ impl From<RgbLightingPreset> for MobileRgbLightingPresetDto {
 /// Rust-owned versioned persistence record for one standalone RGB accessory.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileRgbLightingAccessoryRecord {
-    inner: Mutex<RgbLightingAccessoryRecord>,
+    pub(super) inner: Arc<AccessoryRecord>,
 }
 
 impl MobileRgbLightingAccessoryRecord {
-    pub(super) fn restore_request(&self) -> Option<MobileMelkLightingRestoreStateDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .restore_request()
-            .map(Into::into)
+    pub(super) fn from_application(inner: Arc<AccessoryRecord>) -> Self {
+        Self { inner }
     }
 }
 
@@ -288,13 +285,9 @@ impl MobileRgbLightingAccessoryRecord {
         profile_version: u16,
     ) -> Result<Arc<Self>, MobileRgbLightingRecordError> {
         Ok(Arc::new(Self {
-            inner: Mutex::new(
-                RgbLightingAccessoryRecord::new(
-                    platform_identifier,
-                    profile.into(),
-                    profile_version,
-                )
-                .map_err(MobileRgbLightingRecordError::from)?,
+            inner: Arc::new(
+                AccessoryRecord::new(platform_identifier, profile.into(), profile_version)
+                    .map_err(MobileRgbLightingRecordError::from)?,
             ),
         }))
     }
@@ -308,9 +301,8 @@ impl MobileRgbLightingAccessoryRecord {
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
     pub fn decode(bytes: Vec<u8>) -> Result<Arc<Self>, MobileRgbLightingRecordError> {
         Ok(Arc::new(Self {
-            inner: Mutex::new(
-                RgbLightingAccessoryRecord::decode(&bytes)
-                    .map_err(MobileRgbLightingRecordError::from)?,
+            inner: Arc::new(
+                AccessoryRecord::decode(&bytes).map_err(MobileRgbLightingRecordError::from)?,
             ),
         }))
     }
@@ -322,48 +314,36 @@ impl MobileRgbLightingAccessoryRecord {
     /// Returns [`MobileRgbLightingRecordError::InvalidEncoding`] when Rust cannot serialize the
     /// record.
     pub fn encode(&self) -> Result<Vec<u8>, MobileRgbLightingRecordError> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .encode()
-            .map_err(Into::into)
+        self.inner.encode().map_err(Into::into)
     }
 
     /// Returns the platform-scoped identity, canonicalizing Bluetooth UUIDs and preserving other
     /// opaque platform identifiers exactly.
+    #[must_use]
     pub fn platform_identifier(&self) -> String {
-        let record = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let identifier = record.platform_identifier();
-        match Uuid::parse_str(identifier) {
+        let identifier = self.inner.platform_identifier();
+        match Uuid::parse_str(&identifier) {
             Ok(uuid) => uuid.hyphenated().to_string().to_uppercase(),
-            Err(_) => identifier.to_owned(),
+            Err(_) => identifier,
         }
     }
 
     /// Returns the verified profile kind.
+    #[must_use]
     pub fn profile(&self) -> MobileRgbLightingProfileKindDto {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .profile()
-            .into()
+        self.inner.profile().into()
     }
 
     /// Returns the verified profile schema version.
+    #[must_use]
     pub fn profile_version(&self) -> u16 {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .profile_version()
+        self.inner.profile_version()
     }
 
     /// Returns the optional user alias.
+    #[must_use]
     pub fn alias(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .alias()
-            .map(str::to_owned)
+        self.inner.alias()
     }
 
     /// Sets or clears the user alias.
@@ -372,20 +352,13 @@ impl MobileRgbLightingAccessoryRecord {
     ///
     /// Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized alias.
     pub fn set_alias(&self, alias: Option<String>) -> Result<(), MobileRgbLightingRecordError> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_alias(alias)
-            .map_err(Into::into)
+        self.inner.set_alias(alias).map_err(Into::into)
     }
 
     /// Returns the optional installed-vehicle association.
+    #[must_use]
     pub fn vehicle_identifier(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .vehicle_identifier()
-            .map(str::to_owned)
+        self.inner.vehicle_identifier()
     }
 
     /// Sets or clears the installed-vehicle association.
@@ -398,19 +371,13 @@ impl MobileRgbLightingAccessoryRecord {
         identifier: Option<String>,
     ) -> Result<(), MobileRgbLightingRecordError> {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
             .set_vehicle_identifier(identifier)
             .map_err(Into::into)
     }
 
     /// Returns the last requested solid-lighting state.
     pub fn requested_state(&self) -> Option<MobileMelkLightingRestoreStateDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .requested_state()
-            .map(Into::into)
+        self.inner.requested_state().map(Into::into)
     }
 
     /// Records the last typed state requested by the user.
@@ -423,20 +390,13 @@ impl MobileRgbLightingAccessoryRecord {
         state: Option<MobileMelkLightingRestoreStateDto>,
     ) -> Result<(), MobileRgbLightingRecordError> {
         let state = state.map(TryInto::try_into).transpose()?;
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_requested_state(state);
+        self.inner.set_requested_state(state);
         Ok(())
     }
 
     /// Returns the last independently confirmed state.
     pub fn confirmed_state(&self) -> Option<MobileMelkLightingRestoreStateDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .confirmed_state()
-            .map(Into::into)
+        self.inner.confirmed_state().map(Into::into)
     }
 
     /// Records the last independently confirmed state.
@@ -449,10 +409,7 @@ impl MobileRgbLightingAccessoryRecord {
         state: Option<MobileMelkLightingRestoreStateDto>,
     ) -> Result<(), MobileRgbLightingRecordError> {
         let state = state.map(TryInto::try_into).transpose()?;
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_confirmed_state(state);
+        self.inner.set_confirmed_state(state);
         Ok(())
     }
 
@@ -470,90 +427,55 @@ impl MobileRgbLightingAccessoryRecord {
         field: MobileRgbLightingPartialStateDto,
     ) -> Result<bool, MobileRgbLightingRecordError> {
         let state = state.try_into()?;
-        Ok(self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .confirm_partial_state(state, field.into()))
+        Ok(self.inner.confirm_partial_state(state, field.into()))
     }
 
     /// Returns the latest command-confirmation evidence.
+    #[must_use]
     pub fn confirmation(&self) -> MobileRgbLightingConfirmationStateDto {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .confirmation()
-            .into()
+        self.inner.confirmation().into()
     }
 
     /// Records command-confirmation evidence.
     pub fn set_confirmation(&self, state: MobileRgbLightingConfirmationStateDto) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_confirmation(state.into());
+        self.inner.set_confirmation(state.into());
     }
 
     /// Returns the latest persisted schedule-command confirmation.
     pub fn last_schedule_confirmation(&self) -> Option<MobileRgbLightingConfirmationStateDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .last_schedule_confirmation()
-            .map(Into::into)
+        self.inner.last_schedule_confirmation().map(Into::into)
     }
 
     /// Records schedule-command confirmation without affecting lighting restore eligibility.
     pub fn set_last_schedule_confirmation(&self, state: MobileRgbLightingConfirmationStateDto) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_last_schedule_confirmation(state.into());
+        self.inner.set_last_schedule_confirmation(state.into());
     }
 
     /// Returns the persisted transport status.
+    #[must_use]
     pub fn connection(&self) -> MobileRgbLightingConnectionStateDto {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .connection()
-            .into()
+        self.inner.connection().into()
     }
 
     /// Records transport status without treating it as output truth.
     pub fn set_connection(&self, state: MobileRgbLightingConnectionStateDto) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_connection(state.into());
+        self.inner.set_connection(state.into());
     }
 
     /// Returns whether explicit same-profile restore is enabled.
+    #[must_use]
     pub fn restore_enabled(&self) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .restore_enabled()
+        self.inner.restore_enabled()
     }
 
     /// Sets the explicit restore preference.
     pub fn set_restore_enabled(&self, enabled: bool) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .set_restore_enabled(enabled);
+        self.inner.set_restore_enabled(enabled);
     }
 
     /// Returns all named presets in insertion order.
     pub fn presets(&self) -> Vec<MobileRgbLightingPresetDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .presets()
-            .iter()
-            .cloned()
-            .map(Into::into)
-            .collect()
+        self.inner.presets().into_iter().map(Into::into).collect()
     }
 
     /// Adds one named solid-lighting preset.
@@ -568,11 +490,7 @@ impl MobileRgbLightingAccessoryRecord {
     ) -> Result<(), MobileRgbLightingRecordError> {
         let preset = RgbLightingPreset::new(name, requested.try_into()?)
             .map_err(MobileRgbLightingRecordError::from)?;
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .add_preset(preset)
-            .map_err(Into::into)
+        self.inner.add_preset(preset).map_err(Into::into)
     }
 
     /// Removes a named app scene and reports whether it existed.
@@ -580,11 +498,9 @@ impl MobileRgbLightingAccessoryRecord {
         clippy::needless_pass_by_value,
         reason = "String is the stable UniFFI ABI for this exported method"
     )]
+    #[must_use]
     pub fn remove_preset(&self, name: String) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove_preset(&name)
+        self.inner.remove_preset(&name)
     }
 
     /// Replaces a named app scene and reports whether it existed.
@@ -599,10 +515,6 @@ impl MobileRgbLightingAccessoryRecord {
     ) -> Result<bool, MobileRgbLightingRecordError> {
         let preset = RgbLightingPreset::new(name, requested.try_into()?)
             .map_err(MobileRgbLightingRecordError::from)?;
-        Ok(self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .replace_preset(preset))
+        Ok(self.inner.replace_preset(preset))
     }
 }

@@ -192,7 +192,7 @@ fn phone_location_speed(sample: PhoneLocationSample) -> Option<SpeedReadingDto> 
     })
 }
 
-fn round_f64_to_i32(value: f64) -> i32 {
+pub(crate) fn round_f64_to_i32(value: f64) -> i32 {
     if value.is_nan() {
         return 0;
     }

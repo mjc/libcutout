@@ -1,10 +1,13 @@
 use super::MobileChargingError;
 use super::sync::ChargingHttpClient;
-use crate::{RideDatabaseHandle, persistence};
+use crate::RideDatabaseHandle;
+#[cfg(test)]
+use crate::persistence;
+use cutout_application::charging::{
+    account::AccountDeletionError, sync_runtime::ChargingSyncService,
+};
+#[cfg(test)]
 use reqwest::Method;
-use serde::Deserialize;
-use std::time::Duration;
-use std::{future::Future, pin::Pin};
 
 /// Confirmed service deletion, returned only after the local queue fence is settled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
@@ -13,32 +16,13 @@ pub struct MobileCommunityAccountDeletionReceiptDto {
     pub completed_at_milliseconds: u64,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DeletionStatus {
-    Completed,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DeletionReceipt {
-    status: DeletionStatus,
-    completed_at_ms: u64,
-}
-
 async fn delete_account(
     client: &ChargingHttpClient,
-    local: persistence::RideDatabase,
-    lock: &tokio::sync::Mutex<()>,
+    service: &ChargingSyncService,
     token: &str,
 ) -> Result<MobileCommunityAccountDeletionReceiptDto, MobileChargingError> {
-    let port = MobileAccountDeletionPort {
-        client,
-        local,
-        lock,
-        guard: std::sync::Mutex::new(None),
-    };
-    cutout_application::charging::account::delete_community_account(&port, token)
+    service
+        .delete_community_account(&client.inner, token)
         .await
         .map(
             |completed_at_milliseconds| MobileCommunityAccountDeletionReceiptDto {
@@ -48,118 +32,7 @@ async fn delete_account(
         .map_err(map_deletion_error)
 }
 
-struct MobileAccountDeletionPort<'a> {
-    client: &'a ChargingHttpClient,
-    local: persistence::RideDatabase,
-    lock: &'a tokio::sync::Mutex<()>,
-    guard: std::sync::Mutex<Option<tokio::sync::MutexGuard<'a, ()>>>,
-}
-
-impl cutout_application::charging::account::AccountDeletionPort for MobileAccountDeletionPort<'_> {
-    fn begin_deletion(
-        &self,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        persistence::CommunityAccountState,
-                        cutout_application::charging::account::AccountStorageError,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        let local = self.local.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || local.begin_community_account_deletion())
-                .await
-                .map_err(|_| {
-                    cutout_application::charging::account::AccountStorageError::WorkerStopped
-                })?
-                .map_err(cutout_application::charging::account::AccountStorageError::Storage)
-        })
-    }
-
-    fn delete_remote_exclusive<'a>(
-        &'a self,
-        token: &'a str,
-        timeout: Duration,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<u64, cutout_application::charging::account::AccountRemoteError>,
-                > + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let guard = tokio::time::timeout(timeout, self.lock.lock())
-                .await
-                .map_err(|_| cutout_application::charging::account::AccountRemoteError::Network)?;
-            *self
-                .guard
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(guard);
-            let receipt: DeletionReceipt = self
-                .client
-                .request(Method::DELETE, "v1/identities/current", Some(token), None)
-                .await
-                .map_err(|error| match error {
-                    MobileChargingError::Unauthorized => {
-                        cutout_application::charging::account::AccountRemoteError::Unauthorized
-                    }
-                    MobileChargingError::Conflict => {
-                        cutout_application::charging::account::AccountRemoteError::Conflict
-                    }
-                    MobileChargingError::Rejected => {
-                        cutout_application::charging::account::AccountRemoteError::Rejected
-                    }
-                    MobileChargingError::Throttled => {
-                        cutout_application::charging::account::AccountRemoteError::Throttled
-                    }
-                    _ => cutout_application::charging::account::AccountRemoteError::Network,
-                })?;
-            match receipt.status {
-                DeletionStatus::Completed => {}
-            }
-            Ok(receipt.completed_at_ms)
-        })
-    }
-
-    fn complete_deletion(
-        &self,
-        completed_at_ms: u64,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        persistence::CommunityAccountState,
-                        cutout_application::charging::account::AccountStorageError,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        let local = self.local.clone();
-        Box::pin(async move {
-            let result = tokio::task::spawn_blocking(move || {
-                local.complete_community_account_deletion(completed_at_ms)
-            })
-            .await
-            .map_err(|_| cutout_application::charging::account::AccountStorageError::WorkerStopped)?
-            .map_err(cutout_application::charging::account::AccountStorageError::Storage);
-            self.guard
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            result
-        })
-    }
-}
-
-fn map_deletion_error(
-    error: cutout_application::charging::account::AccountDeletionError,
-) -> MobileChargingError {
+fn map_deletion_error(error: AccountDeletionError) -> MobileChargingError {
     use cutout_application::charging::account::{
         AccountDeletionError as Error, AccountRemoteError as Remote, AccountStorageError as Storage,
     };
@@ -182,19 +55,13 @@ fn map_deletion_error(
 impl RideDatabaseHandle {
     /// Deletes the current service account without deleting local rides or public contributions.
     /// # Errors
-    /// Leaves the durable fence pending on network, authentication or storage failure. Keep the
+    /// Leaves the durable fence pending on network, authentication, or storage failure. Keep the
     /// native credential until this returns a confirmed receipt so a lost response can be retried.
     pub async fn delete_community_account(
         &self,
         token: String,
     ) -> Result<MobileCommunityAccountDeletionReceiptDto, MobileChargingError> {
-        delete_account(
-            &ChargingHttpClient::production()?,
-            self.inner.clone(),
-            &self.charging_sync_lock,
-            &token,
-        )
-        .await
+        delete_account(&ChargingHttpClient::production()?, &self.charging, &token).await
     }
 
     /// Exercises the same operation against a local development service, never an arbitrary host.
@@ -207,8 +74,7 @@ impl RideDatabaseHandle {
     ) -> Result<MobileCommunityAccountDeletionReceiptDto, MobileChargingError> {
         delete_account(
             &ChargingHttpClient::loopback(&base_url)?,
-            self.inner.clone(),
-            &self.charging_sync_lock,
+            &self.charging,
             &token,
         )
         .await
@@ -319,9 +185,9 @@ mod tests {
             "Local unsubmitted draft",
             crate::ride_maps::ChargingCost::Free,
         )?)?;
-        let lock = tokio::sync::Mutex::new(());
+        let service = ChargingSyncService::new(local.clone());
         assert_eq!(
-            delete_account(&transport, local.clone(), &lock, token).await,
+            delete_account(&transport, &service, token).await,
             Err(MobileChargingError::Network)
         );
         assert_eq!(
@@ -330,7 +196,7 @@ mod tests {
         );
         assert!(local.next_charging_operation().is_err());
         assert!(local.find_ride(ride)?.is_some());
-        let completed = delete_account(&transport, local.clone(), &lock, token).await?;
+        let completed = delete_account(&transport, &service, token).await?;
         assert!(completed.completed_at_milliseconds > 0);
         assert_eq!(local.charging_outbox_count()?, 0);
         assert!(local.charging_spot(point.point_id)?.is_some());
@@ -373,7 +239,12 @@ mod tests {
             }
         );
         assert_eq!(
-            delete_account(&transport, reopened.clone(), &lock, token).await?,
+            delete_account(
+                &transport,
+                &ChargingSyncService::new(reopened.clone()),
+                token,
+            )
+            .await?,
             completed
         );
         assert!(reopened.find_ride(ride)?.is_some());
@@ -394,11 +265,10 @@ mod tests {
             delete(|| async { StatusCode::SERVICE_UNAVAILABLE }),
         ))
         .await?;
-        let lock = tokio::sync::Mutex::new(());
+        let service = ChargingSyncService::new(local.clone());
         let result = delete_account(
             &ChargingHttpClient::loopback(&origin)?,
-            local.clone(),
-            &lock,
+            &service,
             &"c".repeat(64),
         )
         .await;

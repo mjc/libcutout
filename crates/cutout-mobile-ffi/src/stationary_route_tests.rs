@@ -279,12 +279,15 @@ fn durable_parked_before_first_gps_blocks_drive_home_after_owner_restart() {
     let snapshot = location(&restored, 10_000, 40.01);
     assert_eq!(snapshot.summary.point_count, 0);
     assert!(snapshot.summary.distance_meters.abs() < f64::EPSILON);
-    let ride_id = restored.inner.lock().unwrap().ride_id.clone().unwrap();
-    let stored = database
+    let ride_id = restored
         .inner
-        .find_ride(parse_mobile_ride_id(&ride_id).unwrap())
+        .lock()
         .unwrap()
+        .recording
+        .snapshot()
+        .ride_id
         .unwrap();
+    let stored = database.inner.find_ride(ride_id).unwrap().unwrap();
     assert!(stored.motion_observation().unwrap().parked);
     assert!(stored.stationary_location_observation().is_some());
 }
@@ -401,12 +404,15 @@ fn repeated_parked_frames_keep_transition_time_and_lifecycle_checkpoints_succeed
     core.resume_at(1_600).unwrap();
     assert_eq!(location(&core, 1_700, 40.0).summary.point_count, 0);
     core.stop_at(1_800).unwrap();
-    let ride_id = core.inner.lock().unwrap().ride_id.clone().unwrap();
-    let stored = database
+    let ride_id = core
         .inner
-        .find_ride(parse_mobile_ride_id(&ride_id).unwrap())
+        .lock()
         .unwrap()
+        .recording
+        .snapshot()
+        .ride_id
         .unwrap();
+    let stored = database.inner.find_ride(ride_id).unwrap().unwrap();
     assert_eq!(
         stored.motion_observation(),
         Some(persistence::RideMotionObservation {

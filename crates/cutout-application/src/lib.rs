@@ -14,6 +14,7 @@
 pub mod alarms;
 pub mod camera;
 pub mod capture;
+pub mod capture_submission;
 pub mod capture_writer;
 pub mod charging;
 pub mod database;
@@ -21,4 +22,5 @@ pub mod lighting;
 pub mod location;
 pub mod music;
 pub mod ride_activity;
+pub mod ride_recording;
 pub mod session;

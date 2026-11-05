@@ -2506,6 +2506,7 @@ mod tests {
         let root = env::temp_dir().join(format!("cutout-dev-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         for directory in [
+            "crates/cutout-application/src",
             "crates/cutout-core/src",
             "crates/cutout-mobile-ffi/src",
             "crates/cutout-protocols/src",
@@ -2519,6 +2520,7 @@ mod tests {
             "Cargo.lock",
             "Cargo.toml",
             "rust-toolchain.toml",
+            "crates/cutout-application/Cargo.toml",
             "crates/cutout-core/Cargo.toml",
             "crates/cutout-mobile-ffi/Cargo.toml",
             "crates/cutout-protocols/Cargo.toml",
@@ -2531,6 +2533,7 @@ mod tests {
         }
 
         for file in [
+            "crates/cutout-application/src/lib.rs",
             "crates/cutout-core/src/lib.rs",
             "crates/cutout-ride-maps/src/lib.rs",
             "crates/libcutout-persistence/src/lib.rs",

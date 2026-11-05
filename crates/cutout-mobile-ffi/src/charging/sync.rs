@@ -1,72 +1,46 @@
-use super::sync_policy::result_for_error;
 use super::{
     MobileChargingBlockReasonDto, MobileChargingError, MobileChargingIdentityDto,
     MobileChargingInputDto, MobileChargingPendingActionDto, MobileChargingResolutionDto,
     MobileChargingSyncConflictDto, MobileChargingSyncOutcome, MobileChargingSyncResult,
     MobileChargingSyncSummaryDto, MobileChargingWriteReceiptDto,
-    conversion::{input, input_dto, receipt_dto, storage_error},
+    conversion::{input, input_dto, receipt_dto, revision, storage_error},
 };
-use crate::{RideDatabaseHandle, persistence, ride_maps};
-use reqwest::{Client, Method, StatusCode, Url, header};
+#[cfg(test)]
+use crate::ride_maps;
+use crate::{RideDatabaseHandle, persistence};
+#[cfg(test)]
+use cutout_application::charging::transport::MAX_RESPONSE_BYTES;
+use cutout_application::charging::{
+    sync::{SyncError, SyncOutcome, SyncResult, SyncSummary},
+    sync_runtime::{ChargingPersistenceError, ChargingSyncService, SyncRuntimeError},
+    transport::{ChargingHttpClient as ApplicationChargingHttpClient, ChargingTransportError},
+};
+#[cfg(test)]
+use reqwest::{Method, StatusCode};
+#[cfg(test)]
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::net::IpAddr;
+#[cfg(test)]
 use std::time::Duration;
 use uuid::Uuid;
 
-const SYNC_TIMEOUT: Duration = Duration::from_secs(20);
-const DIRECTORY_URL: &str = "https://rides.cutout.lol/";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_REQUEST_BODY_BYTES: usize = 32 * 1024;
-const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
-const CHANGE_PAGE_SIZE: u32 = 10;
-const MAX_UPLOADS_PER_SYNC: u32 = 8;
-
 pub(super) struct ChargingHttpClient {
-    client: Client,
-    base_url: Url,
+    pub(super) inner: ApplicationChargingHttpClient,
 }
 
 impl ChargingHttpClient {
     pub(super) fn production() -> Result<Self, MobileChargingError> {
-        Self::build(DIRECTORY_URL)
-    }
-
-    fn build(base_url: &str) -> Result<Self, MobileChargingError> {
-        let base_url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
-        let mut builder = cutout_core::http::client_builder()
-            .map_err(|_| MobileChargingError::Network)?
-            .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none());
-        if base_url.scheme() == "http" {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build().map_err(|_| MobileChargingError::Network)?;
-        Ok(Self { client, base_url })
+        ApplicationChargingHttpClient::production()
+            .map(|inner| Self { inner })
+            .map_err(map_transport_error)
     }
 
     pub(super) fn loopback(base_url: &str) -> Result<Self, MobileChargingError> {
-        let url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
-        let loopback = url.scheme() == "http"
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none()
-            && url.path() == "/"
-            && url
-                .host_str()
-                .and_then(|host| {
-                    host.trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .parse::<IpAddr>()
-                        .ok()
-                })
-                .is_some_and(|address| address.is_loopback());
-        if !loopback {
-            return Err(MobileChargingError::Network);
-        }
-        Self::build(base_url)
+        ApplicationChargingHttpClient::loopback(base_url)
+            .map(|inner| Self { inner })
+            .map_err(map_transport_error)
     }
 
+    #[cfg(test)]
     pub(super) async fn request<T: DeserializeOwned>(
         &self,
         method: Method,
@@ -74,74 +48,84 @@ impl ChargingHttpClient {
         token: Option<&str>,
         body: Option<Vec<u8>>,
     ) -> Result<T, MobileChargingError> {
-        let url = self
-            .base_url
-            .join(path)
-            .map_err(|_| MobileChargingError::Network)?;
-        let mut request = self.client.request(method, url);
-        if let Some(token) = token {
-            request = request.bearer_auth(token);
-        }
-        if let Some(body) = body {
-            if body.len() > MAX_REQUEST_BODY_BYTES {
-                return Err(MobileChargingError::Network);
-            }
-            request = request
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(body);
-        }
-        let mut response = request
-            .send()
+        self.inner
+            .request(method, path, token, body)
             .await
-            .map_err(|_| MobileChargingError::Network)?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(status_error(status));
-        }
-        let mut bytes = Vec::new();
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-        {
-            return Err(MobileChargingError::Network);
-        }
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| MobileChargingError::Network)?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-                return Err(MobileChargingError::Network);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| MobileChargingError::Network)
+            .map_err(map_transport_error)
     }
 }
 
+fn map_transport_error(error: ChargingTransportError) -> MobileChargingError {
+    match error {
+        ChargingTransportError::Network => MobileChargingError::Network,
+        ChargingTransportError::Unauthorized => MobileChargingError::Unauthorized,
+        ChargingTransportError::Conflict => MobileChargingError::Conflict,
+        ChargingTransportError::Rejected => MobileChargingError::Rejected,
+        ChargingTransportError::Throttled => MobileChargingError::Throttled,
+    }
+}
+
+#[cfg(test)]
 fn status_error(status: StatusCode) -> MobileChargingError {
-    match status.as_u16() {
-        401 => MobileChargingError::Unauthorized,
-        409 => MobileChargingError::Conflict,
-        422 | 403 | 404 => MobileChargingError::Rejected,
-        429 => MobileChargingError::Throttled,
-        _ => MobileChargingError::Network,
+    map_transport_error(ChargingTransportError::from_status(status))
+}
+
+impl From<SyncRuntimeError> for MobileChargingError {
+    fn from(error: SyncRuntimeError) -> Self {
+        let SyncRuntimeError::Sync(error) = error;
+        match error {
+            SyncError::Unauthorized => MobileChargingError::Unauthorized,
+            SyncError::Conflict => MobileChargingError::Conflict,
+            SyncError::Rejected => MobileChargingError::Rejected,
+            SyncError::Throttled => MobileChargingError::Throttled,
+            SyncError::Network => MobileChargingError::Network,
+            SyncError::Unavailable => MobileChargingError::Unavailable,
+            SyncError::StorageFailure => MobileChargingError::StorageFailure,
+        }
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IdentityResponse {
-    id: String,
-    token: String,
+fn map_persistence_error(error: ChargingPersistenceError) -> MobileChargingError {
+    match error {
+        ChargingPersistenceError::WorkerStopped => MobileChargingError::StorageFailure,
+        ChargingPersistenceError::Storage(error) => storage_error(error),
+    }
 }
 
+fn sync_summary_dto(summary: SyncSummary) -> MobileChargingSyncSummaryDto {
+    let outcome = match summary.outcome {
+        SyncOutcome::MoreWork => MobileChargingSyncOutcome::MoreWork,
+        SyncOutcome::Finished { result } => MobileChargingSyncOutcome::Finished {
+            result: match result {
+                SyncResult::Synced => MobileChargingSyncResult::Synced,
+                SyncResult::Pending => MobileChargingSyncResult::Pending,
+                SyncResult::Conflict => MobileChargingSyncResult::Conflict,
+                SyncResult::Rejected => MobileChargingSyncResult::Rejected,
+                SyncResult::AuthenticationRequired => {
+                    MobileChargingSyncResult::AuthenticationRequired
+                }
+                SyncResult::Throttled => MobileChargingSyncResult::Throttled,
+                SyncResult::Offline => MobileChargingSyncResult::Offline,
+                SyncResult::StorageUnavailable => MobileChargingSyncResult::StorageUnavailable,
+            },
+        },
+    };
+    MobileChargingSyncSummaryDto {
+        pending_count: summary.pending_count,
+        downloaded: summary.downloaded,
+        uploaded: summary.uploaded,
+        outcome,
+    }
+}
+
+#[cfg(test)]
 #[derive(Deserialize)]
 struct CountsResponse {
     up: u64,
     down: u64,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ServerStatus {
@@ -151,6 +135,7 @@ enum ServerStatus {
     Removed,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct SpotInputResponse {
     coordinate: CoordinateResponse,
@@ -165,12 +150,14 @@ struct SpotInputResponse {
     supplies: Vec<ride_maps::ChargingSupply>,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct CoordinateResponse {
     latitude_e7: i32,
     longitude_e7: i32,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct PublicSpotResponse {
     id: String,
@@ -184,6 +171,7 @@ struct PublicSpotResponse {
     votes: CountsResponse,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct SpotStateResponse {
     id: String,
@@ -194,51 +182,21 @@ struct SpotStateResponse {
     duplicate_of: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct ChangesPageResponse {
     items: Vec<SpotStateResponse>,
     next_cursor: u64,
-    has_more: bool,
 }
 
-#[derive(Deserialize)]
-struct MutationReceiptResponse {
-    operation_id: String,
-    applied_revision: u64,
-    state: SpotStateResponse,
-}
-
-#[derive(Deserialize)]
-struct VoteStateResponse {
-    revision: u64,
-    vote: Option<ride_maps::ChargingVote>,
-    votes: CountsResponse,
-    spot_status: ServerStatus,
-    change_sequence: u64,
-}
-
-#[derive(Deserialize)]
-struct VoteReceiptResponse {
-    operation_id: String,
-    applied_revision: u64,
-    revision: u64,
-    vote: Option<ride_maps::ChargingVote>,
-    votes: CountsResponse,
-    #[allow(
-        dead_code,
-        reason = "vote receipts have no body; persistence preserves local spot status"
-    )]
-    #[serde(rename = "spot_status")]
-    _spot_status: ServerStatus,
-    change_sequence: u64,
-}
-
+#[cfg(test)]
 #[derive(Serialize)]
 struct RevisionRequest {
     operation_id: Uuid,
     expected_revision: u64,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct VoteRequest {
     operation_id: Uuid,
@@ -246,10 +204,12 @@ struct VoteRequest {
     vote: Option<ride_maps::ChargingVote>,
 }
 
+#[cfg(test)]
 fn json_body<T: Serialize>(value: &T) -> Result<Vec<u8>, MobileChargingError> {
     serde_json::to_vec(value).map_err(|_| MobileChargingError::StorageFailure)
 }
 
+#[cfg(test)]
 fn server_status(value: ServerStatus) -> persistence::ChargingStatus {
     match value {
         ServerStatus::Published => persistence::ChargingStatus::Published,
@@ -259,6 +219,7 @@ fn server_status(value: ServerStatus) -> persistence::ChargingStatus {
     }
 }
 
+#[cfg(test)]
 fn server_input(
     value: SpotInputResponse,
 ) -> Result<ride_maps::NewChargingSpot, MobileChargingError> {
@@ -283,6 +244,7 @@ fn server_input(
         .map_err(|_| MobileChargingError::Network)
 }
 
+#[cfg(test)]
 fn public_spot(
     value: PublicSpotResponse,
 ) -> Result<
@@ -315,6 +277,7 @@ fn public_spot(
     Ok((id, entry))
 }
 
+#[cfg(test)]
 fn state_entry(
     value: SpotStateResponse,
 ) -> Result<persistence::ChargingDirectoryEntry, MobileChargingError> {
@@ -403,45 +366,22 @@ fn blocked_operation_dto(
     }
 }
 
-pub(super) async fn database<T, F>(
-    database: persistence::RideDatabase,
-    action: F,
-) -> Result<T, MobileChargingError>
-where
-    T: Send + 'static,
-    F: FnOnce(persistence::RideDatabase) -> Result<T, persistence::StorageError> + Send + 'static,
-{
-    let result = tokio::task::spawn_blocking(move || action(database))
-        .await
-        .map_err(|_| MobileChargingError::StorageFailure)?;
-    result.map_err(storage_error)
-}
-
 async fn register(
     client: &ChargingHttpClient,
 ) -> Result<MobileChargingIdentityDto, MobileChargingError> {
-    let response: IdentityResponse = client
-        .request(Method::POST, "v1/identities", None, Some(Vec::new()))
-        .await?;
-    let id = Uuid::parse_str(&response.id).map_err(|_| MobileChargingError::Network)?;
-    if response.token.len() != 64
-        || !response
-            .token
-            .bytes()
-            .all(|value| value.is_ascii_hexdigit())
-    {
-        return Err(MobileChargingError::Network);
-    }
+    let (id, token) = ChargingSyncService::register(&client.inner)
+        .await
+        .map_err(MobileChargingError::from)?;
     Ok(MobileChargingIdentityDto {
         identity_id: id.to_string(),
-        token: response.token,
+        token,
     })
 }
 
 /// Registers one contributor identity. Persist the returned token securely before contribution.
 ///
 /// # Errors
-/// Returns a typed network or server error when registration fails.
+/// Returns the native charging error corresponding to the application registration failure.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn mobile_register_charging_identity()
 -> Result<MobileChargingIdentityDto, MobileChargingError> {
@@ -459,240 +399,30 @@ pub async fn mobile_register_charging_identity_at_loopback(
     register(&ChargingHttpClient::loopback(&base_url)?).await
 }
 
+// These compatibility entrypoints keep the FFI HTTP contract tests exercising the real app service.
+#[cfg(test)]
 async fn download_page(
     client: &ChargingHttpClient,
     database_handle: &persistence::RideDatabase,
     token: Option<&str>,
 ) -> Result<(u32, bool), MobileChargingError> {
-    let cursor = database(database_handle.clone(), |database| {
-        database.charging_changes_cursor()
-    })
-    .await?;
-    let path = format!(
-        "v1/charging-spots/changes?after={}&limit={CHANGE_PAGE_SIZE}",
-        cursor.get()
-    );
-    let page: ChangesPageResponse = client.request(Method::GET, &path, token, None).await?;
-    let next_cursor = persistence::ChargingChangeCursor::new(page.next_cursor)
-        .map_err(|_| MobileChargingError::Network)?;
-    if next_cursor < cursor || page.items.len() > CHANGE_PAGE_SIZE as usize {
-        return Err(MobileChargingError::Network);
-    }
-    let has_more = page.has_more;
-    let mut entries = Vec::with_capacity(page.items.len());
-    for item in page.items {
-        let mut entry = state_entry(item)?;
-        if entry.status == persistence::ChargingStatus::Published
-            && let Some(token) = token
-        {
-            let path = format!("v1/charging-spots/{}/vote", entry.id.as_uuid());
-            let vote: VoteStateResponse = client
-                .request(Method::GET, &path, Some(token), None)
-                .await?;
-            if server_status(vote.spot_status) != persistence::ChargingStatus::Published
-                || vote.change_sequence != entry.change_sequence.get()
-            {
-                return Err(MobileChargingError::Network);
-            }
-            entry.vote = vote.vote;
-            entry.vote_revision = persistence::ChargingRevision::new(vote.revision)
-                .map_err(|_| MobileChargingError::Network)?;
-            entry.votes_up = vote.votes.up;
-            entry.votes_down = vote.votes.down;
-        }
-        entries.push(entry);
-    }
-    if token.is_none() {
-        let pending = database(database_handle.clone(), |database| {
-            database.charging_outbox_count()
-        })
-        .await?;
-        if pending > 0 {
-            return Ok((0, true));
-        }
-    }
-    let result = database(database_handle.clone(), move |database| {
-        database
-            .apply_charging_changes_page(entries, next_cursor)
-            .map(|result| result.applied_entries)
-    })
-    .await?;
-    Ok((result, has_more))
+    ChargingSyncService::new(database_handle.clone())
+        .download_page(&client.inner, token)
+        .await
+        .map_err(MobileChargingError::from)
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "keeps one frozen operation upload and receipt validation atomic"
-)]
+#[cfg(test)]
 async fn upload_operation(
     client: &ChargingHttpClient,
     database_handle: &persistence::RideDatabase,
     token: &str,
     operation: persistence::ChargingOperation,
 ) -> Result<(), MobileChargingError> {
-    use persistence::{ChargingAction, ChargingTarget};
-    let operation_id = operation.id.uuid();
-    let body_and_path = match (&operation.action, &operation.target) {
-        (ChargingAction::Create(input), ChargingTarget::Create) => {
-            let body = json_body(&serde_json::json!({
-                "operation_id": operation_id,
-                "spot": input.community_submission(),
-            }))?;
-            (Method::POST, "v1/charging-spots".to_owned(), body)
-        }
-        (
-            ChargingAction::Edit(input),
-            ChargingTarget::Existing {
-                id,
-                expected_revision,
-            },
-        ) => {
-            let body = json_body(&serde_json::json!({
-                "operation_id": operation_id,
-                "expected_revision": expected_revision.get(),
-                "spot": input.community_submission(),
-            }))?;
-            (
-                Method::PUT,
-                format!("v1/charging-spots/{}", id.as_uuid()),
-                body,
-            )
-        }
-        (
-            ChargingAction::Withdraw,
-            ChargingTarget::Existing {
-                id,
-                expected_revision,
-            },
-        ) => {
-            let body = json_body(&RevisionRequest {
-                operation_id,
-                expected_revision: expected_revision.get(),
-            })?;
-            (
-                Method::DELETE,
-                format!("v1/charging-spots/{}", id.as_uuid()),
-                body,
-            )
-        }
-        (
-            ChargingAction::Verify,
-            ChargingTarget::Existing {
-                id,
-                expected_revision,
-            },
-        ) => {
-            let body = json_body(&RevisionRequest {
-                operation_id,
-                expected_revision: expected_revision.get(),
-            })?;
-            (
-                Method::POST,
-                format!("v1/charging-spots/{}/verification", id.as_uuid()),
-                body,
-            )
-        }
-        (
-            ChargingAction::Vote(vote),
-            ChargingTarget::Existing {
-                id,
-                expected_revision,
-            },
-        ) => {
-            let body = json_body(&VoteRequest {
-                operation_id,
-                expected_revision: expected_revision.get(),
-                vote: *vote,
-            })?;
-            (
-                Method::PUT,
-                format!("v1/charging-spots/{}/vote", id.as_uuid()),
-                body,
-            )
-        }
-        _ => return Err(MobileChargingError::StorageFailure),
-    };
-
-    let is_vote = match &operation.action {
-        ChargingAction::Vote(_) => true,
-        ChargingAction::Create(_)
-        | ChargingAction::Edit(_)
-        | ChargingAction::Withdraw
-        | ChargingAction::Verify => false,
-    };
-    let point_id = operation.point_id;
-    if is_vote {
-        let receipt: VoteReceiptResponse = client
-            .request(
-                body_and_path.0,
-                &body_and_path.1,
-                Some(token),
-                Some(body_and_path.2),
-            )
-            .await?;
-        if receipt.operation_id != operation_id.to_string() {
-            return Err(MobileChargingError::Network);
-        }
-        if receipt.revision < receipt.applied_revision {
-            return Err(MobileChargingError::Network);
-        }
-        database(database_handle.clone(), move |database| {
-            database
-                .acknowledge_charging_vote_operation(
-                    persistence::ChargingOperationId::from_uuid(operation_id),
-                    persistence::ChargingVoteReceipt {
-                        applied_revision: persistence::ChargingRevision::new(
-                            receipt.applied_revision,
-                        )?,
-                        vote_revision: persistence::ChargingRevision::new(receipt.revision)?,
-                        vote: receipt.vote,
-                        votes_up: receipt.votes.up,
-                        votes_down: receipt.votes.down,
-                        change_sequence: persistence::ChargingChangeCursor::new(
-                            receipt.change_sequence,
-                        )?,
-                    },
-                )
-                .map(|_| ())
-        })
-        .await?;
-    } else {
-        let receipt: MutationReceiptResponse = client
-            .request(
-                body_and_path.0,
-                &body_and_path.1,
-                Some(token),
-                Some(body_and_path.2),
-            )
-            .await?;
-        if receipt.operation_id != operation_id.to_string() {
-            return Err(MobileChargingError::Network);
-        }
-        let current_revision = receipt.state.revision;
-        let mut entry = state_entry(receipt.state)?;
-        if current_revision < receipt.applied_revision {
-            return Err(MobileChargingError::Network);
-        }
-        let current = database(database_handle.clone(), move |database| {
-            database.charging_spot(point_id)
-        })
-        .await?
-        .ok_or(MobileChargingError::StorageFailure)?;
-        // Public mutation receipts do not contain the contributor's vote.
-        entry.vote = current.vote;
-        entry.vote_revision = current.vote_revision;
-        database(database_handle.clone(), move |database| {
-            database
-                .acknowledge_charging_operation(
-                    persistence::ChargingOperationId::from_uuid(operation_id),
-                    persistence::ChargingRevision::new(receipt.applied_revision)?,
-                    entry,
-                )
-                .map(|_| ())
-        })
-        .await?;
-    }
-    Ok(())
+    ChargingSyncService::new(database_handle.clone())
+        .upload_operation(&client.inner, token, operation)
+        .await
+        .map_err(MobileChargingError::from)
 }
 
 #[cfg(test)]
@@ -701,63 +431,28 @@ async fn synchronize(
     database_handle: persistence::RideDatabase,
     token: String,
 ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    synchronize_once(client, database_handle, token).await
+    ChargingSyncService::new(database_handle)
+        .synchronize(&client.inner, &token)
+        .await
+        .map(sync_summary_dto)
+        .map_err(MobileChargingError::from)
 }
 
 #[cfg(test)]
-async fn synchronize_once(
-    client: &ChargingHttpClient,
-    database_handle: persistence::RideDatabase,
-    token: String,
-) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    synchronize_once_with_timeout(client, database_handle, token, SYNC_TIMEOUT).await
-}
-
 async fn synchronize_once_with_timeout(
     client: &ChargingHttpClient,
     database_handle: persistence::RideDatabase,
     token: String,
     timeout: Duration,
 ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    let mut progress = None;
-    let result = tokio::time::timeout(timeout, async {
-        let pending_count = database(database_handle.clone(), |database| {
-            database.charging_outbox_count()
-        })
-        .await?;
-        let progress = progress.insert(MobileChargingSyncProgress {
-            pending_count,
-            downloaded: 0,
-            uploaded: 0,
-        });
-        let mut outcome =
-            match synchronize_once_pass(client, &database_handle, &token, progress).await {
-                Ok(outcome) => outcome,
-                Err(error) => finished(result_for_error(error)),
-            };
-        match database(database_handle, |database| database.charging_outbox_count()).await {
-            Ok(pending_count) => progress.pending_count = pending_count,
-            Err(error) if !is_terminal_block(outcome) => {
-                outcome = finished(result_for_error(error));
-            }
-            Err(_) => {}
-        }
-        Ok::<_, MobileChargingError>(outcome)
-    })
-    .await;
-    match result {
-        Ok(Ok(outcome)) => sync_summary(progress, outcome),
-        Ok(Err(error)) => Err(error),
-        Err(_) => sync_summary(progress, finished(MobileChargingSyncResult::Offline)),
-    }
+    ChargingSyncService::new(database_handle)
+        .synchronize_with_timeout(&client.inner, &token, timeout)
+        .await
+        .map(sync_summary_dto)
+        .map_err(MobileChargingError::from)
 }
 
-struct MobileChargingSyncProgress {
-    pending_count: u32,
-    downloaded: u32,
-    uploaded: u32,
-}
-
+#[cfg(test)]
 fn sync_summary(
     progress: Option<MobileChargingSyncProgress>,
     outcome: MobileChargingSyncOutcome,
@@ -773,157 +468,15 @@ fn sync_summary(
     })
 }
 
-async fn synchronize_once_pass(
-    client: &ChargingHttpClient,
-    database_handle: &persistence::RideDatabase,
-    token: &str,
-    progress: &mut MobileChargingSyncProgress,
-) -> Result<MobileChargingSyncOutcome, MobileChargingError> {
-    if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
-        return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
-    }
-    let account = database(database_handle.clone(), |database| {
-        database.community_account_state()
-    })
-    .await?;
-    if account != persistence::CommunityAccountState::Active {
-        return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
-    }
-    let blocked_outcome =
-        upload_pending_operations(client, database_handle, token, progress).await?;
-    let more_changes = reconcile_directory(client, database_handle, token, progress).await?;
-    Ok(make_sync_outcome(
-        blocked_outcome,
-        more_changes,
-        progress.pending_count,
-    ))
-}
-
-async fn upload_pending_operations(
-    client: &ChargingHttpClient,
-    database_handle: &persistence::RideDatabase,
-    token: &str,
-    progress: &mut MobileChargingSyncProgress,
-) -> Result<Option<MobileChargingSyncResult>, MobileChargingError> {
-    let mut blocked_outcome = None;
-    for _ in 0..MAX_UPLOADS_PER_SYNC {
-        let operation = database(database_handle.clone(), |database| {
-            database.next_charging_operation()
-        })
-        .await?;
-        let Some(operation) = operation else { break };
-        match upload_operation(client, database_handle, token, operation.clone()).await {
-            Ok(()) => {
-                progress.uploaded = progress.uploaded.saturating_add(1);
-                progress.pending_count = progress.pending_count.saturating_sub(1);
-            }
-            Err(error) => {
-                if let Some(kind) = block_kind(error) {
-                    block_rejected_operation(
-                        client,
-                        database_handle,
-                        token,
-                        operation,
-                        kind,
-                        progress,
-                    )
-                    .await?;
-                    if blocked_outcome.is_none() {
-                        blocked_outcome = Some(result_for_error(error));
-                    }
-                } else {
-                    return Err(error);
-                }
-            }
-        }
-    }
-    Ok(blocked_outcome)
-}
-
-async fn reconcile_directory(
-    client: &ChargingHttpClient,
-    database_handle: &persistence::RideDatabase,
-    token: &str,
-    progress: &mut MobileChargingSyncProgress,
-) -> Result<bool, MobileChargingError> {
-    let (count, more_changes) = download_page(client, database_handle, Some(token)).await?;
-    progress.downloaded = progress.downloaded.saturating_add(count);
-    progress.pending_count = database(database_handle.clone(), |database| {
-        database.charging_outbox_count()
-    })
-    .await?;
-    Ok(more_changes)
-}
-
-fn make_sync_outcome(
-    blocked: Option<MobileChargingSyncResult>,
-    more_changes: bool,
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct MobileChargingSyncProgress {
     pending_count: u32,
-) -> MobileChargingSyncOutcome {
-    match blocked {
-        Some(result) => finished(result),
-        None if more_changes || pending_count > 0 => MobileChargingSyncOutcome::MoreWork,
-        None => finished(MobileChargingSyncResult::Synced),
-    }
+    downloaded: u32,
+    uploaded: u32,
 }
 
-fn is_terminal_block(outcome: MobileChargingSyncOutcome) -> bool {
-    match outcome {
-        MobileChargingSyncOutcome::MoreWork => false,
-        MobileChargingSyncOutcome::Finished { result } => {
-            result == MobileChargingSyncResult::Conflict
-                || result == MobileChargingSyncResult::Rejected
-        }
-    }
-}
-
-fn block_kind(error: MobileChargingError) -> Option<persistence::ChargingOperationBlockKind> {
-    match error {
-        MobileChargingError::Conflict => Some(persistence::ChargingOperationBlockKind::Conflict),
-        MobileChargingError::Rejected => Some(persistence::ChargingOperationBlockKind::Invalid),
-        _ => None,
-    }
-}
-
-async fn block_rejected_operation(
-    client: &ChargingHttpClient,
-    database_handle: &persistence::RideDatabase,
-    token: &str,
-    operation: persistence::ChargingOperation,
-    kind: persistence::ChargingOperationBlockKind,
-    progress: &mut MobileChargingSyncProgress,
-) -> Result<(), MobileChargingError> {
-    let already_blocked = if kind == persistence::ChargingOperationBlockKind::Conflict {
-        let mut more_changes = true;
-        for _ in 0..5 {
-            if !more_changes {
-                break;
-            }
-            let (count, remaining) = download_page(client, database_handle, Some(token)).await?;
-            progress.downloaded = progress.downloaded.saturating_add(count);
-            more_changes = remaining;
-        }
-        let operation_id = operation.id;
-        database(database_handle.clone(), move |database| {
-            database.list_blocked_charging_operations().map(|blocked| {
-                blocked
-                    .iter()
-                    .any(|value| value.operation.id == operation_id)
-            })
-        })
-        .await?
-    } else {
-        false
-    };
-    if !already_blocked {
-        database(database_handle.clone(), move |database| {
-            database.block_charging_operation(operation.id, kind)
-        })
-        .await?;
-    }
-    Ok(())
-}
-
+#[cfg(test)]
 fn finished(result: MobileChargingSyncResult) -> MobileChargingSyncOutcome {
     MobileChargingSyncOutcome::Finished { result }
 }
@@ -933,45 +486,11 @@ async fn refresh_directory(
     client: &ChargingHttpClient,
     database_handle: persistence::RideDatabase,
 ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    tokio::time::timeout(
-        SYNC_TIMEOUT,
-        refresh_directory_once(client, database_handle),
-    )
-    .await
-    .map_err(|_| MobileChargingError::Network)?
-}
-
-async fn refresh_directory_once(
-    client: &ChargingHttpClient,
-    database_handle: persistence::RideDatabase,
-) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    let pending_count = database(database_handle.clone(), |database| {
-        database.charging_outbox_count()
-    })
-    .await?;
-    if pending_count > 0 {
-        return Ok(MobileChargingSyncSummaryDto {
-            pending_count,
-            downloaded: 0,
-            uploaded: 0,
-            outcome: finished(MobileChargingSyncResult::Pending),
-        });
-    }
-    let (downloaded, more_changes) = download_page(client, &database_handle, None).await?;
-    let pending_count =
-        database(database_handle, |database| database.charging_outbox_count()).await?;
-    Ok(MobileChargingSyncSummaryDto {
-        pending_count,
-        downloaded,
-        uploaded: 0,
-        outcome: if more_changes {
-            MobileChargingSyncOutcome::MoreWork
-        } else if pending_count > 0 {
-            finished(MobileChargingSyncResult::Pending)
-        } else {
-            finished(MobileChargingSyncResult::Synced)
-        },
-    })
+    ChargingSyncService::new(database_handle)
+        .refresh(&client.inner)
+        .await
+        .map(sync_summary_dto)
+        .map_err(MobileChargingError::from)
 }
 
 impl RideDatabaseHandle {
@@ -980,29 +499,22 @@ impl RideDatabaseHandle {
         client: &ChargingHttpClient,
         token: String,
     ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-        let started = tokio::time::Instant::now();
-        let _guard = tokio::time::timeout(SYNC_TIMEOUT, self.charging_sync_lock.lock())
+        self.charging
+            .synchronize(&client.inner, &token)
             .await
-            .map_err(|_| MobileChargingError::Network)?;
-        synchronize_once_with_timeout(
-            client,
-            self.inner.clone(),
-            token,
-            SYNC_TIMEOUT.saturating_sub(started.elapsed()),
-        )
-        .await
+            .map(sync_summary_dto)
+            .map_err(MobileChargingError::from)
     }
 
     async fn refresh_charging_directory_with_client(
         &self,
         client: &ChargingHttpClient,
     ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-        tokio::time::timeout(SYNC_TIMEOUT, async {
-            let _guard = self.charging_sync_lock.lock().await;
-            refresh_directory_once(client, self.inner.clone()).await
-        })
-        .await
-        .map_err(|_| MobileChargingError::Network)?
+        self.charging
+            .refresh(&client.inner)
+            .await
+            .map(sync_summary_dto)
+            .map_err(MobileChargingError::from)
     }
 }
 
@@ -1011,12 +523,11 @@ impl RideDatabaseHandle {
 impl RideDatabaseHandle {
     /// Synchronizes bounded directory changes and retryable local submissions.
     ///
-    /// Progress and service failures are returned as a typed summary outcome. A storage setup,
-    /// database read, or lock timeout can still return an error before a progress record exists.
+    /// Progress and service failures are returned as a typed summary outcome. A storage read or
+    /// lock timeout can still return an error before a progress record exists.
     ///
     /// # Errors
-    /// Returns an error when the database is unavailable, the sync lock times out, or request
-    /// setup fails before the progress summary can be constructed.
+    /// Returns a typed charging error when setup fails before progress exists.
     pub async fn synchronize_charging_spots(
         &self,
         token: String,
@@ -1067,21 +578,23 @@ impl RideDatabaseHandle {
     /// Lists local drafts blocked by a server conflict or validation rejection.
     ///
     /// # Errors
-    /// Returns a storage error if the local database cannot be read.
+    /// Returns a typed storage error if the local database cannot be read.
     pub async fn list_blocked_charging_operations(
         &self,
     ) -> Result<Vec<MobileChargingSyncConflictDto>, MobileChargingError> {
-        let blocked = database(self.inner.clone(), |database| {
-            database.list_blocked_charging_operations()
-        })
-        .await?;
+        let blocked = self
+            .charging
+            .blocked_operations()
+            .await
+            .map_err(map_persistence_error)?;
         Ok(blocked.iter().map(blocked_operation_dto).collect())
     }
 
     /// Resolves a previously reviewed blocked contribution using its current local revision.
     ///
     /// # Errors
-    /// Returns a conflict error for a stale review or a typed storage error.
+    /// Returns `InvalidIdentifier` for a malformed operation id, `Conflict` for an invalid or stale
+    /// revision, or a typed storage error for a persistence failure.
     pub async fn resolve_charging_operation(
         &self,
         operation_id: String,
@@ -1090,8 +603,7 @@ impl RideDatabaseHandle {
     ) -> Result<(), MobileChargingError> {
         let id =
             Uuid::parse_str(&operation_id).map_err(|_| MobileChargingError::InvalidIdentifier)?;
-        let expected = persistence::ChargingRevision::new(expected_local_revision)
-            .map_err(|_| MobileChargingError::Conflict)?;
+        let expected = revision(expected_local_revision)?;
         let resolution = match resolution {
             MobileChargingResolutionDto::Retry => persistence::ChargingOperationResolution::Retry,
             MobileChargingResolutionDto::RebaseKeepingLocal => {
@@ -1101,20 +613,20 @@ impl RideDatabaseHandle {
                 persistence::ChargingOperationResolution::AcceptServer
             }
         };
-        database(self.inner.clone(), move |database| {
-            database.resolve_charging_operation(
+        self.charging
+            .resolve_operation(
                 persistence::ChargingOperationId::from_uuid(id),
                 expected,
                 resolution,
             )
-        })
-        .await
+            .await
+            .map_err(map_persistence_error)
     }
 
     /// Replaces a rejected draft and queues it with a fresh durable operation identity.
     ///
     /// # Errors
-    /// Returns a conflict, validation, or storage error.
+    /// Returns identifier, validation, conflict, or typed storage errors.
     pub async fn replace_blocked_charging_operation(
         &self,
         operation_id: String,
@@ -1123,31 +635,31 @@ impl RideDatabaseHandle {
     ) -> Result<MobileChargingWriteReceiptDto, MobileChargingError> {
         let id =
             Uuid::parse_str(&operation_id).map_err(|_| MobileChargingError::InvalidIdentifier)?;
-        let expected = persistence::ChargingRevision::new(expected_local_revision)
-            .map_err(|_| MobileChargingError::Conflict)?;
+        let expected = revision(expected_local_revision)?;
         let fields = input(fields)?;
-        let receipt = database(self.inner.clone(), move |database| {
-            database.replace_blocked_charging_operation(
+        let receipt = self
+            .charging
+            .replace_blocked_operation(
                 persistence::ChargingOperationId::from_uuid(id),
                 expected,
                 fields,
             )
-        })
-        .await?;
+            .await
+            .map_err(map_persistence_error)?;
         Ok(receipt_dto(receipt))
     }
 
     /// Returns the time of the last successfully committed public directory page.
     ///
     /// # Errors
-    /// Returns a storage error if the local database cannot be read.
+    /// Returns a typed storage error if the local database cannot be read.
     pub async fn charging_directory_last_updated_ms(
         &self,
     ) -> Result<Option<u64>, MobileChargingError> {
-        database(self.inner.clone(), |database| {
-            database.charging_directory_last_updated_ms()
-        })
-        .await
+        self.charging
+            .last_updated_ms()
+            .await
+            .map_err(map_persistence_error)
     }
 }
 
@@ -1194,8 +706,8 @@ mod tests {
         let inner = persistence::RideDatabase::open(path)?;
         Ok(RideDatabaseHandle {
             application: cutout_application::database::RideDatabaseApplication::new(inner.clone()),
-            inner,
-            charging_sync_lock: tokio::sync::Mutex::new(()),
+            inner: inner.clone(),
+            charging: ChargingSyncService::new(inner.clone()),
         })
     }
 
@@ -2141,7 +1653,7 @@ mod tests {
             operation_id: Uuid::new_v4(),
             expected_revision: 1,
         })?;
-        let _: MutationReceiptResponse = client
+        let _: serde_json::Value = client
             .request(
                 Method::POST,
                 &format!("v1/charging-spots/{}/verification", remote_id.as_uuid()),
@@ -2361,7 +1873,7 @@ mod tests {
             operation_id: Uuid::new_v4(),
             expected_revision: 1,
         })?;
-        let _: MutationReceiptResponse = client
+        let _: serde_json::Value = client
             .request(
                 Method::POST,
                 &format!("v1/charging-spots/{remote_id}/verification"),
@@ -2443,7 +1955,7 @@ mod tests {
             expected_revision: 1,
             vote: Some(ride_maps::ChargingVote::Down),
         };
-        let _: VoteReceiptResponse = client
+        let _: serde_json::Value = client
             .request(
                 Method::PUT,
                 &format!("v1/charging-spots/{}/vote", remote_id.as_uuid()),

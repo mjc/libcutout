@@ -8,7 +8,7 @@ use cutout_music::MusicHistoryTransition;
 use crate::{
     MobileMusicHistoryTransition, MobileMusicTimelineOutcomeDto,
     MobileMusicTimelineRecordResultDto, MobileRideMapCore, MobileRideMapCoreErrorDto,
-    MobileRideMapRecordingTokenDto, ride_maps,
+    MobileRideMapRecordingTokenDto,
 };
 
 /// Admission precedes any native asynchronous operation.
@@ -293,8 +293,8 @@ impl MobileMusicObservationLease {
 }
 
 impl MusicObservationStopFence {
-    pub(crate) fn wait_result(&self) -> Result<(), MobileRideMapCoreErrorDto> {
-        self.inner.wait_result().map_err(map_admission_error)
+    pub(crate) fn into_application_fence(self) -> application::StopFence {
+        self.inner
     }
 }
 
@@ -364,16 +364,11 @@ impl MobileRideMapCore {
     ) -> Result<Option<MobileMusicHistoryTerminalFailure>, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let current = state.ride_id.as_ref().map(crate::mobile_ride_id_string);
-        let closed = match state.recorder.state() {
-            Some(
-                ride_maps::RideLifecycleState::Stopped
-                | ride_maps::RideLifecycleState::Saved
-                | ride_maps::RideLifecycleState::Discarded,
-            ) => true,
-            _ => false,
-        };
-        lifecycle.retire_closed_history(&lease, current.as_deref(), closed)
+        let terminal = state.recording.music_history_terminal_context();
+        let current = terminal
+            .ride_id
+            .map(|ride| crate::mobile_ride_id_string(&crate::mobile_ride_id(ride)));
+        lifecycle.retire_closed_history(&lease, current.as_deref(), terminal.closed)
     }
 
     /// Resolves callback ownership off the native main executor before classification.
@@ -492,25 +487,26 @@ fn resolve_music_context(
     expected_ride_id: &str,
     observed_at_ms: u64,
 ) -> Result<MobileMusicObservationContext, MobileRideMapCoreErrorDto> {
+    use cutout_application::ride_recording::music::RideMusicContext;
     state.require_ready()?;
-    if state
-        .ride_id
-        .as_ref()
-        .is_none_or(|ride| crate::mobile_ride_id_string(ride) != expected_ride_id)
-    {
+    let parsed = uuid::Uuid::parse_str(expected_ride_id)
+        .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
+    if parsed.to_string() != expected_ride_id {
         return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
     }
-    let Some(recording) = state
-        .recorder
-        .state()
-        .and_then(|lifecycle| state.snapshot(lifecycle.into()).recording_token)
-    else {
-        return Ok(MobileMusicObservationContext::RideNotOpen);
-    };
-    let observed =
-        ride_maps::MonotonicMilliseconds::new(state.logical_monotonic_milliseconds(observed_at_ms));
-    if !state.recorder.accepts_recording_observation_at(observed) {
-        return Ok(MobileMusicObservationContext::OutOfOrder);
+    let ride_id = crate::persistence::RideId::from_uuid(parsed);
+    match state
+        .recording
+        .resolve_music_context(ride_id, observed_at_ms)
+        .map_err(crate::map_ride_recording_error)?
+    {
+        RideMusicContext::RideNotOpen => Ok(MobileMusicObservationContext::RideNotOpen),
+        RideMusicContext::OutOfOrder => Ok(MobileMusicObservationContext::OutOfOrder),
+        RideMusicContext::Ready(token) => Ok(MobileMusicObservationContext::Ready {
+            recording: MobileRideMapRecordingTokenDto {
+                ride_id: crate::mobile_ride_id_string(&crate::mobile_ride_id(token.ride_id)),
+                generation: token.generation,
+            },
+        }),
     }
-    Ok(MobileMusicObservationContext::Ready { recording })
 }

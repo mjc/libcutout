@@ -58,7 +58,6 @@ pub use capture_start::*;
 mod diagnostic_consent;
 
 use std::{
-    collections::VecDeque,
     convert::TryFrom,
     net::Ipv4Addr,
     path::{Path, PathBuf},
@@ -71,8 +70,7 @@ use std::{
 
 use persistence::{
     CaptureJsonlExport, CaptureWriteOutcome, CaptureWriterFinish, CaptureWriterStatus,
-    LiveCaptureIntegrity, SavedCaptureArtifact, VerifiedConnectionLifecycleMutation,
-    VerifiedConnectionRideMetadata, VerifiedConnectionRideTarget,
+    LiveCaptureIntegrity, SavedCaptureArtifact,
 };
 #[cfg(test)]
 use persistence::{CaptureMetadata, CaptureWriter};
@@ -93,11 +91,11 @@ use cutout_core::{
     CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
     CameraPreviewState as CoreCameraPreviewState, CameraPreviewToken as CoreCameraPreviewToken,
     CameraSessionToken as CoreCameraSessionToken, CameraSourceKind as CoreCameraSourceKind,
-    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
-    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
-    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
-    ControlRefusalReasonDto, DeviceConnectionIntent as CoreDeviceConnectionIntent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    Capacity, ChargeEstimateError, ChargeEstimateResetReason, ChargeEstimateState,
+    ChargeEstimateUnavailableReason, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
+    ChargeProfileIdentity, ChargeTimeEstimate, ControlRefusalReasonDto,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -126,13 +124,12 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionEventDto,
     SessionInputDto, SessionOutputDto, SettingValueSource as CoreSettingValueSource,
-    SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto,
-    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity,
-    ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource,
-    ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto,
-    VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate,
-    VoltageSagEstimator, VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
-    calibrate_location_source_offset_ms,
+    SpeedReadingDto, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagModel,
+    WallClockUnixTimestamp, WriteMode, calibrate_location_source_offset_ms,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -7995,6 +7992,7 @@ fn mobile_ride_id(id: persistence::RideId) -> MobileRideIdDto {
     }
 }
 
+#[cfg(test)]
 fn mobile_ride_id_from_uuid(id: Uuid) -> MobileRideIdDto {
     MobileRideIdDto {
         bytes: id.into_bytes().to_vec(),
@@ -8444,7 +8442,7 @@ fn core_music_event(
 pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
     application: cutout_application::database::RideDatabaseApplication,
-    charging_sync_lock: tokio::sync::Mutex<()>,
+    charging: cutout_application::charging::sync_runtime::ChargingSyncService,
 }
 
 /// Durable status of the latest Rust-owned marker persistence intent.
@@ -8555,8 +8553,10 @@ pub fn open_ride_database(
                 application: cutout_application::database::RideDatabaseApplication::new(
                     inner.clone(),
                 ),
+                charging: cutout_application::charging::sync_runtime::ChargingSyncService::new(
+                    inner.clone(),
+                ),
                 inner,
-                charging_sync_lock: tokio::sync::Mutex::new(()),
             })
         })
         .map_err(map_ride_database_error)
@@ -9930,130 +9930,10 @@ impl RideDatabaseHandle {
     }
 }
 
-impl RideDatabaseHandle {
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "owned UniFFI boundary value is converted once"
-    )]
-    fn transition_at(
-        &self,
-        id: MobileRideIdDto,
-        event: MobileRideEventDto,
-        monotonic_at_milliseconds: u64,
-        last_telemetry_at_ms: Option<u64>,
-    ) -> Result<persistence::CommittedRideMovingTimeCheckpoint, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
-        self.inner
-            .transition_at_with_telemetry_and_checkpoint(
-                id,
-                event.into(),
-                monotonic_at_milliseconds,
-                last_telemetry_at_ms,
-            )
-            .map_err(map_ride_database_error)
-    }
-
-    fn create_started_live_ride(
-        &self,
-        created_at_milliseconds: u64,
-        monotonic_created_at_milliseconds: u64,
-        candidate_vehicle: Option<&str>,
-    ) -> Result<persistence::CommittedRideMovingTimeCheckpoint, MobileRideDatabaseError> {
-        self.inner
-            .create_started_live_ride_with_checkpoint(
-                created_at_milliseconds,
-                monotonic_created_at_milliseconds,
-                candidate_vehicle,
-            )
-            .map_err(map_ride_database_error)
-    }
-
-    fn settle_recovered_ride(
-        &self,
-        id: &MobileRideIdDto,
-        discard_empty: bool,
-        occurred_at_milliseconds: u64,
-        monotonic_at_milliseconds: u64,
-        replacement_candidate_vehicle: Option<&str>,
-    ) -> Result<Option<persistence::CommittedRideMovingTimeCheckpoint>, MobileRideDatabaseError>
-    {
-        let id = parse_mobile_ride_id(id)?;
-        self.inner
-            .settle_recovered_ride_with_checkpoint(
-                id,
-                discard_empty,
-                occurred_at_milliseconds,
-                monotonic_at_milliseconds,
-                replacement_candidate_vehicle,
-            )
-            .map_err(map_ride_database_error)
-    }
-}
-
 #[derive(Clone, Copy)]
 enum LocationWriteSubmission {
     Nonblocking,
     WaitForCapacity,
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the location command keeps route, telemetry, and moving-time evidence correlated"
-)]
-fn queue_location(
-    database: &RideDatabaseHandle,
-    id: &MobileRideIdDto,
-    location: MobileRideLocationDto,
-    segment_id: ride_maps::RideMapSegmentId,
-    start_reason: ride_maps::RideSegmentStartReason,
-    telemetry_state: MobileRideMapCoreTelemetryStateDto,
-    submission: LocationWriteSubmission,
-    moving_time_observation: Option<ride_maps::MovingTimeObservation>,
-    latest_vehicle_moving_time_observation: Option<ride_maps::MovingTimeObservation>,
-) -> Result<persistence::PendingLocationWrite, MobileRideDatabaseError> {
-    let id = parse_mobile_ride_id(id)?;
-    let location = mobile_ride_location(location)?;
-    let telemetry_state = map_ride_telemetry_state(telemetry_state)
-        .map_err(|_| MobileRideDatabaseError::StorageFailure)?;
-    let write = match (submission, moving_time_observation) {
-        (LocationWriteSubmission::Nonblocking, Some(observation)) => {
-            database.inner.queue_location_with_moving_time(
-                id,
-                location,
-                segment_id,
-                start_reason,
-                telemetry_state,
-                observation,
-                latest_vehicle_moving_time_observation,
-            )
-        }
-        (LocationWriteSubmission::WaitForCapacity, Some(observation)) => database
-            .inner
-            .queue_location_with_moving_time_waiting_for_capacity(
-                id,
-                location,
-                segment_id,
-                start_reason,
-                telemetry_state,
-                observation,
-                latest_vehicle_moving_time_observation,
-            ),
-        (LocationWriteSubmission::Nonblocking, None) => {
-            database
-                .inner
-                .queue_location(id, location, segment_id, start_reason, telemetry_state)
-        }
-        (LocationWriteSubmission::WaitForCapacity, None) => {
-            database.inner.queue_location_waiting_for_capacity(
-                id,
-                location,
-                segment_id,
-                start_reason,
-                telemetry_state,
-            )
-        }
-    };
-    write.map_err(map_ride_database_error)
 }
 
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
@@ -10066,8 +9946,8 @@ pub struct MobileRideMapCore {
 
 #[derive(Debug)]
 enum MobileRideMapAdmissionState {
-    Pending(PendingVerifiedMapAdmission),
-    Completed(Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>),
+    Pending(Box<PendingVerifiedMapAdmission>),
+    Completed(Box<Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>>),
 }
 
 /// Pollable completion for one verified connection admission.
@@ -10099,31 +9979,23 @@ enum PendingMobileRideCommand {
 #[derive(Debug)]
 struct PendingMobileRideMusicStop {
     command_id: u64,
-    expected: MobileRideMapCommandTokenDto,
     at_ms: u64,
-    music: MusicObservationStopFence,
+    operation: cutout_application::ride_recording::PreparedRideStop,
 }
 
 #[derive(Debug)]
 struct PendingMobileRideStart {
     command_id: u64,
     at_ms: u64,
-    candidate_vehicle: Option<String>,
-    music_history_policy: CoreMusicHistoryPolicy,
-    storage: Option<persistence::PendingLiveRideCreation>,
-    committed_ride_checkpoint: Option<persistence::CommittedRideMovingTimeCheckpoint>,
+    operation: cutout_application::ride_recording::PreparedRideStart,
 }
 
 #[derive(Debug)]
 struct PendingMobileRideLifecycle {
     command_id: u64,
     event: MobileRideEventDto,
-    ride_id: MobileRideIdDto,
-    epoch_offset_ms: u64,
-    logical_at_ms: u64,
-    transition: ride_maps::ValidatedRideTransition,
-    storage: Option<persistence::PendingRideLifecycleTransition>,
-    last_telemetry_at_ms: Option<u64>,
+    at_ms: u64,
+    operation: cutout_application::ride_recording::PreparedRideTransition,
 }
 
 /// Pollable receipt for one independently owned ride lifecycle settlement.
@@ -10172,7 +10044,7 @@ enum MobileRideMapMusicHistoryCommandState {
 
 #[derive(Debug)]
 enum MobileRideMapMusicWriteCommandState {
-    Pending(persistence::PendingMusicHistoryWrite),
+    Pending(cutout_application::ride_recording::music::PendingRideMusicWrite),
     Completed(Result<(), MobileRideMapCoreErrorDto>),
 }
 
@@ -10195,10 +10067,6 @@ pub struct MobileRideMapMusicHistoryCommand {
 #[must_use = "poll the music-history write until it returns a terminal result"]
 #[derive(Debug, uniffi::Object)]
 pub struct MobileRideMapMusicWriteCommand {
-    core: Arc<MobileRideMapCore>,
-    ride_id: MobileRideIdDto,
-    previous_policy: Option<CoreMusicHistoryPolicy>,
-    deletes_history: bool,
     state: Mutex<MobileRideMapMusicWriteCommandState>,
 }
 
@@ -10209,7 +10077,7 @@ impl MobileRideMapConnectionAdmission {
     ) -> Arc<Self> {
         Arc::new(Self {
             core,
-            state: Mutex::new(MobileRideMapAdmissionState::Pending(pending)),
+            state: Mutex::new(MobileRideMapAdmissionState::Pending(Box::new(pending))),
         })
     }
 }
@@ -10284,59 +10152,50 @@ impl PendingMobileRideCommand {
         core: &MobileRideMapCore,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         match self {
+            Self::Start(pending) => {
+                let recording = Arc::clone(
+                    &core
+                        .inner
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .recording,
+                );
+                let command_id = pending.command_id;
+                let at_ms = pending.at_ms;
+                let result = recording.finish_start(pending.operation);
+                core.complete_start_gps_only_command(command_id, at_ms, result)
+            }
+            Self::Transition(pending) => {
+                let recording = Arc::clone(
+                    &core
+                        .inner
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .recording,
+                );
+                let result = recording.finish_transition(pending.operation);
+                core.complete_lifecycle_command(
+                    pending.command_id,
+                    pending.event,
+                    pending.at_ms,
+                    result,
+                )
+            }
             Self::StopAfterMusic(pending) => {
-                let prefix = pending.music.wait_result();
-                let transition = {
-                    let mut state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
-                    if state.pending_music_stop_command_id != Some(pending.command_id) {
-                        return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
-                    }
-                    state.pending_music_stop_command_id = None;
-                    prefix?;
-                    state.prepare_lifecycle_transition(
-                        MobileRideEventDto::Stop,
-                        &pending.expected,
-                        pending.at_ms,
-                        pending.command_id,
-                    )?
-                };
-                // Retain the later-observation gate through durable Stop settlement.
-                Self::Transition(transition).settle(core)
-            }
-            Self::Start(mut pending) => {
-                let storage_result = pending.storage.take().map_or(Ok(None), |storage| {
-                    storage.wait_committed_result().map(Some)
-                });
-                let known_result = match storage_result {
-                    Ok(committed_ride_checkpoint) => {
-                        pending.committed_ride_checkpoint = committed_ride_checkpoint;
-                        Ok(())
-                    }
-                    Err(persistence::StorageError::ResponseDropped) => {
-                        return core.fail_lifecycle_settlement(
-                            pending.command_id,
-                            map_storage_core_error(persistence::StorageError::ResponseDropped),
-                        );
-                    }
-                    Err(error) => Err(map_storage_core_error(error)),
-                };
-                core.complete_start_gps_only_command(&pending, known_result)
-            }
-            Self::Transition(mut pending) => {
-                let storage_result = pending.storage.take().map_or(Ok(None), |storage| {
-                    storage.wait_committed_result().map(Some)
-                });
-                let known_result = match storage_result {
-                    Ok(committed_ride_checkpoint) => Ok(committed_ride_checkpoint),
-                    Err(persistence::StorageError::ResponseDropped) => {
-                        return core.fail_lifecycle_settlement(
-                            pending.command_id,
-                            map_storage_core_error(persistence::StorageError::ResponseDropped),
-                        );
-                    }
-                    Err(error) => Err(map_storage_core_error(error)),
-                };
-                core.complete_lifecycle_command(&pending, known_result)
+                let recording = Arc::clone(
+                    &core
+                        .inner
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .recording,
+                );
+                let result = recording.finish_stop_after_music(pending.operation);
+                core.complete_lifecycle_command(
+                    pending.command_id,
+                    MobileRideEventDto::Stop,
+                    pending.at_ms,
+                    result,
+                )
             }
         }
     }
@@ -10406,18 +10265,10 @@ impl MobileRideMapMusicHistoryCommand {
 
 impl MobileRideMapMusicWriteCommand {
     fn pending(
-        core: Arc<MobileRideMapCore>,
-        ride_id: MobileRideIdDto,
-        previous_policy: Option<CoreMusicHistoryPolicy>,
-        deletes_history: bool,
-        storage: persistence::PendingMusicHistoryWrite,
+        operation: cutout_application::ride_recording::music::PendingRideMusicWrite,
     ) -> Arc<Self> {
         Arc::new(Self {
-            core,
-            ride_id,
-            previous_policy,
-            deletes_history,
-            state: Mutex::new(MobileRideMapMusicWriteCommandState::Pending(storage)),
+            state: Mutex::new(MobileRideMapMusicWriteCommandState::Pending(operation)),
         })
     }
 }
@@ -10553,26 +10404,6 @@ impl MobileRideMapMusicWriteCommand {
                 None => return Ok(MobileRideMapMusicWritePollDto::Pending),
             },
         };
-        let mut core = self
-            .core
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if self.deletes_history
-            && core
-                .ride_id
-                .as_ref()
-                .is_some_and(|current| current == &self.ride_id)
-        {
-            match &result {
-                Ok(()) => core.reset_music_history_policy(),
-                Err(_) => {
-                    if let Some(policy) = self.previous_policy {
-                        core.apply_music_history_policy(policy);
-                    }
-                }
-            }
-        }
         *state = MobileRideMapMusicWriteCommandState::Completed(result.clone());
         result.map(|()| MobileRideMapMusicWritePollDto::Completed)
     }
@@ -10661,41 +10492,51 @@ impl MobileRideMapConnectionAdmission {
         wait_verified_connection_admission_test_gate();
 
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let storage_result = match &mut *state {
+        let admission_result = match &mut *state {
             MobileRideMapAdmissionState::Completed(result) => {
                 return result
+                    .as_ref()
                     .clone()
                     .map(|snapshot| MobileRideMapAdmissionPollDto::Completed { snapshot });
             }
             MobileRideMapAdmissionState::Pending(pending) => {
-                match pending.pending_storage.as_mut() {
-                    Some(storage) => match storage.try_result() {
-                        Some(Ok(outcome)) => Ok(Some(outcome)),
-                        Some(Err(error)) => Err(error),
-                        None => return Ok(MobileRideMapAdmissionPollDto::Pending),
-                    },
-                    None => Ok(None),
+                if let Some(result) = pending.immediate_result.take() {
+                    result
+                } else {
+                    match pending.completion.as_ref().map(std::sync::mpsc::Receiver::try_recv) {
+                        Some(Ok(result)) => result,
+                        Some(Err(std::sync::mpsc::TryRecvError::Empty)) => {
+                            return Ok(MobileRideMapAdmissionPollDto::Pending);
+                        }
+                        Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) | None => {
+                            Err(cutout_application::ride_recording::VerifiedConnectionAdmissionError::Storage(
+                                persistence::StorageError::ResponseDropped,
+                            ))
+                        }
+                    }
                 }
             }
         };
         let MobileRideMapAdmissionState::Pending(pending) = std::mem::replace(
             &mut *state,
-            MobileRideMapAdmissionState::Completed(Err(
+            MobileRideMapAdmissionState::Completed(Box::new(Err(
                 MobileRideMapCoreErrorDto::AdmissionPending,
-            )),
+            ))),
         ) else {
             unreachable!("pending admission state was checked above");
         };
         let result = self
             .core
-            .complete_verified_connection_admission(pending, storage_result);
-        *state = MobileRideMapAdmissionState::Completed(result.clone());
+            .complete_verified_connection_admission(&pending, admission_result);
+        *state = MobileRideMapAdmissionState::Completed(Box::new(result.clone()));
         result.map(|snapshot| MobileRideMapAdmissionPollDto::Completed { snapshot })
     }
 }
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
 const MAX_LOCATION_BATCH_SIZE: usize = 256;
+const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
+const EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 
 fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
     SystemTime::now()
@@ -10706,36 +10547,6 @@ fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
         .map_err(|error: std::num::TryFromIntError| {
             MobileRideMapCoreErrorDto::Storage(error.to_string())
         })
-}
-
-impl RideDatabaseHandle {
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the metadata transaction carries correlated vehicle and motion observations"
-    )]
-    fn update_ride_map_metadata_with_motion(
-        &self,
-        id: &MobileRideIdDto,
-        candidate_vehicle: Option<&str>,
-        associated_vehicle: Option<&str>,
-        associated_at_milliseconds: Option<u64>,
-        last_telemetry_at_milliseconds: Option<u64>,
-        motion: Option<persistence::RideMotionObservation>,
-        moving_time_observation: Option<ride_maps::MovingTimeObservation>,
-    ) -> Result<persistence::MovingTimeCheckpoint, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(id)?;
-        self.inner
-            .update_ride_map_metadata_with_moving_time(
-                id,
-                candidate_vehicle,
-                associated_vehicle,
-                associated_at_milliseconds,
-                last_telemetry_at_milliseconds,
-                motion,
-                moving_time_observation,
-            )
-            .map_err(map_ride_database_error)
-    }
 }
 
 fn location_admission_decision(
@@ -10760,46 +10571,6 @@ fn location_admission_decision(
     }
 }
 
-fn location_observation_advances_speed(
-    decision: &MobileRideMapCoreDecisionDto,
-    repeated_observation: bool,
-) -> bool {
-    match (decision, repeated_observation) {
-        (
-            MobileRideMapCoreDecisionDto::Accepted { .. }
-            | MobileRideMapCoreDecisionDto::Pending { .. }
-            | MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::Parked,
-            },
-            _,
-        )
-        | (
-            MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-            }
-            | MobileRideMapCoreDecisionDto::StorageError { .. },
-            true,
-        ) => true,
-        (
-            MobileRideMapCoreDecisionDto::Rejected { .. }
-            | MobileRideMapCoreDecisionDto::Ignored { .. }
-            | MobileRideMapCoreDecisionDto::StorageError { .. },
-            _,
-        ) => false,
-    }
-}
-
-fn phone_moving_time_speed_millimetres_per_second(
-    speed_meters_per_second: Option<f64>,
-) -> Option<i32> {
-    let speed = speed_meters_per_second.filter(|speed| speed.is_finite() && *speed >= 0.0)?;
-    let millimetres_per_second = speed * 1_000.0;
-    if !millimetres_per_second.is_finite() || millimetres_per_second > f64::from(i32::MAX) {
-        return None;
-    }
-    Some(round_f64_to_i32(millimetres_per_second))
-}
-
 fn observe_telemetry_locked(
     state: &mut MobileRideMapCoreInner,
     at_ms: u64,
@@ -10807,139 +10578,37 @@ fn observe_telemetry_locked(
     verified_vehicle: Option<(&str, u64)>,
 ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
     state.require_ready()?;
-    let at_ms = state.logical_monotonic_milliseconds(at_ms);
-    let mut staged = state.admission_recorder.clone();
-    let mut durable_staged = state.recorder.clone();
-    let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-    let accepted = match observation {
-        ride_maps::TelemetryObservation::Observed
-        | ride_maps::TelemetryObservation::AlreadyObserved => true,
-        _ => false,
-    };
-    let mut staged_speed = state.speed;
-    let mut motion_changed = false;
-    let mut moving_time_observation = None;
-    let mut latest_verified_vehicle_moving_time = None;
-    let active_for_moving_time =
-        state.admission_recorder.state() == Some(ride_maps::RideLifecycleState::Active);
-    if accepted && let Some(speed) = speed_observation {
-        let source_at = state.logical_monotonic_milliseconds(speed.observed_at_ms);
-        if source_at >= state.speed_generation_started_at_ms && source_at <= at_ms {
-            staged_speed.observe_vehicle(
-                Some(speed.millimetres_per_second),
-                source_at,
-                state.generation,
-            );
-            motion_changed = staged_speed.observe_verified_motion(
-                speed.millimetres_per_second,
-                source_at,
-                at_ms,
-            );
-            if active_for_moving_time
-                && at_ms.saturating_sub(source_at) <= ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
-                && let Some((platform_identifier, connection_generation)) = verified_vehicle
-                && state.recorder.associated_vehicle() == Some(platform_identifier)
-                && state.last_connection_transition_generation == Some(connection_generation)
-                && state.last_connection_transition_ride_id == state.ride_id
-                && let Some(ride_id) = state.ride_id.clone()
-            {
-                let observation = ride_maps::MovingTimeObservation {
-                    source: ride_maps::MovingTimeSource::Vehicle,
-                    speed_millimetres_per_second: Some(speed.millimetres_per_second),
-                    source_at: ride_maps::MonotonicMilliseconds::new(source_at),
-                    receipt_at: ride_maps::MonotonicMilliseconds::new(at_ms),
-                };
-                let is_newer_than_cache = state
-                    .latest_verified_vehicle_moving_time
-                    .as_ref()
-                    .is_none_or(|latest| latest.observation.source_at.as_u64() < source_at);
-                let is_newer_than_checkpoint = state.moving_time_checkpoint.is_none_or(|current| {
-                    current
-                        .continuation()
-                        .state_parts()
-                        .latest_vehicle_source_milliseconds
-                        .is_none_or(|committed| committed < source_at)
-                });
-                if is_newer_than_cache || is_newer_than_checkpoint {
-                    moving_time_observation = Some(observation);
-                    latest_verified_vehicle_moving_time = Some(LatestVerifiedVehicleMovingTime {
-                        ride_id,
-                        ride_generation: state.generation,
-                        connection_generation,
-                        platform_identifier: platform_identifier.to_owned(),
-                        observation,
-                    });
-                }
-            }
+    let recording = &state.recording;
+    let offset_ms = recording.snapshot().monotonic_epoch_offset_ms;
+    let at_ms = at_ms.saturating_add(offset_ms);
+    let speed =
+        speed_observation.map(
+            |speed| cutout_application::ride_recording::RideVehicleSpeedSample {
+                millimetres_per_second: speed.millimetres_per_second,
+                source_at_ms: speed.observed_at_ms.saturating_add(offset_ms),
+            },
+        );
+    let verified_vehicle = verified_vehicle.map(|(platform_identifier, connection_generation)| {
+        cutout_application::ride_recording::VerifiedRideVehicle {
+            platform_identifier: platform_identifier.to_owned(),
+            connection_generation,
         }
-    }
-    if observation == ride_maps::TelemetryObservation::Observed || motion_changed {
-        let _ = durable_staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-        if (state.persisted_telemetry_receipt.as_ref().map(|(id, _)| id) != state.ride_id.as_ref()
-            || motion_changed)
-            && let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone())
-        {
-            let checkpoint = database
-                .update_ride_map_metadata_with_motion(
-                    &id,
-                    staged.candidate_vehicle(),
-                    staged.associated_vehicle(),
-                    staged
-                        .associated_at_milliseconds()
-                        .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    staged
-                        .last_telemetry_at_milliseconds()
-                        .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    staged_speed.latest_motion(),
-                    moving_time_observation,
-                )
-                .map_err(map_core_error)?;
-            state.publish_moving_time_checkpoint(&id, checkpoint);
-            state.persisted_telemetry_receipt = Some((id, at_ms));
-        }
-        state.revision = state.revision.saturating_add(1);
-    }
-    state.recorder = durable_staged;
-    state.admission_recorder = staged;
-    state.speed = staged_speed;
-    if let Some(latest) = latest_verified_vehicle_moving_time {
-        state.latest_verified_vehicle_moving_time = Some(latest);
-    }
-    Ok(observation.into())
+    });
+    recording
+        .observe_telemetry(at_ms, speed, verified_vehicle.as_ref())
+        .map(|result| result.observation.into())
+        .map_err(map_ride_recording_error)
 }
 
 #[derive(Debug)]
 struct MobileRideMapCoreInner {
     location_callback_capacity: Arc<LocationCallbackCapacity>,
     published_location_acquisition: Option<MobileRideMapSnapshotLocationAcquisitionDto>,
+    recording: Arc<cutout_application::ride_recording::RideRecordingApplication>,
     database: Option<Arc<RideDatabaseHandle>>,
-    ride_id: Option<MobileRideIdDto>,
+    /// Revision for FFI-owned location-acquisition state, independent of ride recording.
     revision: u64,
-    generation: u64,
-    speed_generation_started_at_ms: u64,
     location_acquisition_state: persistence::LocationAcquisitionState,
-    speed: persistence::RecordingSpeedState,
-    recorder: ride_maps::RideMapRecorder,
-    admission_recorder: ride_maps::RideMapRecorder,
-    /// Durable receipt checkpoint, separate from the live clocks in both recorders.
-    persisted_telemetry_receipt: Option<(MobileRideIdDto, u64)>,
-    /// Latest moving-time state returned by a committed storage transaction.
-    moving_time_checkpoint: Option<persistence::MovingTimeCheckpoint>,
-    /// Fresh verified wheel evidence waiting to share a later accepted GPS transaction.
-    latest_verified_vehicle_moving_time: Option<LatestVerifiedVehicleMovingTime>,
-    music_history_policy: CoreMusicHistoryPolicy,
-    music_restore_failed: bool,
-    pending_location_writes: VecDeque<PendingMapLocationWrite>,
-    settled_location_outcomes: VecDeque<MobileRideMapCoreOutcomeDto>,
-    next_location_write_id: u64,
-    recoverable_updated_at_milliseconds: Option<u64>,
-    /// Last verified vehicle retained as the candidate for a later GPS-only start.
-    last_connected_vehicle: Option<ride_maps::VehicleIdentity>,
-    last_connection_transition_generation: Option<u64>,
-    last_connection_transition_ride_id: Option<MobileRideIdDto>,
-    last_connection_association_generation: Option<u64>,
-    last_connection_association_ride_id: Option<MobileRideIdDto>,
-    monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
     restoration_state: MobileRideMapRestorationState,
     next_connection_admission_id: u64,
@@ -10959,34 +10628,23 @@ enum MobileRideMapRestorationState {
 }
 
 #[derive(Debug)]
-struct PendingMapLocationWrite {
-    request_id: u64,
-    ride_id: MobileRideIdDto,
-    admitted_sample: ride_maps::AdmittedLocationSample,
-    point: MobileRideMapCorePointDto,
-    write: persistence::PendingLocationWrite,
-}
-
-#[derive(Clone, Debug)]
-struct LatestVerifiedVehicleMovingTime {
-    ride_id: MobileRideIdDto,
-    ride_generation: u64,
-    connection_generation: u64,
-    platform_identifier: String,
-    observation: ride_maps::MovingTimeObservation,
-}
-
-#[derive(Debug)]
 struct PendingVerifiedMapAdmission {
-    admission_id: u64,
-    pending_storage: Option<persistence::PendingVerifiedConnectionAdmission>,
-    immediate_snapshot: Option<MobileRideMapCoreSnapshotDto>,
-    is_immediate_noop: bool,
-    selected_mutations: Vec<VerifiedConnectionLifecycleMutation>,
-    platform_identifier: String,
-    connection_generation: u64,
+    admission_id: Option<u64>,
+    completion: Option<
+        std::sync::mpsc::Receiver<
+            Result<
+                Option<cutout_application::ride_recording::RideRecordingSnapshot>,
+                cutout_application::ride_recording::VerifiedConnectionAdmissionError,
+            >,
+        >,
+    >,
+    immediate_result: Option<
+        Result<
+            Option<cutout_application::ride_recording::RideRecordingSnapshot>,
+            cutout_application::ride_recording::VerifiedConnectionAdmissionError,
+        >,
+    >,
     at_ms: u64,
-    logical_at_ms: u64,
 }
 
 #[cfg(test)]
@@ -11027,228 +10685,6 @@ fn wait_ride_map_restore_test_gate() {
         let _ = entered.send(());
         let _ = release.recv();
     }
-}
-
-#[derive(Debug)]
-struct VerifiedConnectionAdmissionPreview {
-    recorder: ride_maps::RideMapRecorder,
-    admission_recorder: ride_maps::RideMapRecorder,
-    ride_id: Option<MobileRideIdDto>,
-    monotonic_epoch_offset_milliseconds: u64,
-    recoverable_updated_at_milliseconds: Option<u64>,
-    created_ride: bool,
-    metadata: Option<VerifiedConnectionRideMetadata>,
-}
-
-impl VerifiedConnectionAdmissionPreview {
-    fn from_state(state: &MobileRideMapCoreInner) -> Self {
-        Self {
-            recorder: state.recorder.clone(),
-            admission_recorder: state.admission_recorder.clone(),
-            ride_id: state.ride_id.clone(),
-            monotonic_epoch_offset_milliseconds: state.monotonic_epoch_offset_milliseconds,
-            recoverable_updated_at_milliseconds: state.recoverable_updated_at_milliseconds,
-            created_ride: false,
-            metadata: None,
-        }
-    }
-
-    fn transition(
-        &mut self,
-        event: MobileRideEventDto,
-        at_ms: u64,
-        occurred_at_ms: u64,
-        mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let ride_id = self
-            .ride_id
-            .clone()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        let current = self
-            .recorder
-            .state()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        let transition = current
-            .transition(event.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        let epoch_offset = if event == MobileRideEventDto::Resume
-            && (match current {
-                ride_maps::RideLifecycleState::Interrupted
-                | ride_maps::RideLifecycleState::Paused => true,
-                _ => false,
-            }) {
-            self.recorder
-                .recording_timing()
-                .last_monotonic_milliseconds()
-                .as_u64()
-                .saturating_sub(at_ms)
-        } else {
-            self.monotonic_epoch_offset_milliseconds
-        };
-        let logical_at_ms = at_ms.saturating_add(epoch_offset);
-        self.recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.admission_recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.monotonic_epoch_offset_milliseconds = epoch_offset;
-        if event == MobileRideEventDto::Resume {
-            self.recoverable_updated_at_milliseconds = None;
-        }
-        mutations.push(VerifiedConnectionLifecycleMutation::Transition {
-            ride_id: parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
-            event: event.into(),
-            occurred_at_ms,
-            monotonic_at_ms: Some(logical_at_ms),
-        });
-        Ok(())
-    }
-
-    fn start_live(
-        &mut self,
-        at_ms: u64,
-        created_at_ms: u64,
-        candidate_vehicle: Option<&str>,
-        music_history_policy: CoreMusicHistoryPolicy,
-        mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let candidate_identity = candidate_vehicle.and_then(ride_maps::VehicleIdentity::new);
-        self.recorder
-            .start(
-                ride_maps::MonotonicMilliseconds::new(at_ms),
-                candidate_identity,
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
-        self.admission_recorder = self.recorder.clone();
-        self.ride_id = None;
-        self.created_ride = true;
-        self.monotonic_epoch_offset_milliseconds = 0;
-        self.recoverable_updated_at_milliseconds = None;
-        mutations.push(VerifiedConnectionLifecycleMutation::StartLive {
-            created_at_ms,
-            monotonic_created_at_ms: at_ms,
-            candidate_vehicle: candidate_vehicle.map(str::to_owned),
-            music_history_policy,
-        });
-        Ok(())
-    }
-
-    fn associate_vehicle(
-        &mut self,
-        identity: &ride_maps::VehicleIdentity,
-        at_ms: u64,
-    ) -> Result<ride_maps::VehicleAssociation, MobileRideMapCoreErrorDto> {
-        let association = self
-            .admission_recorder
-            .observe_vehicle(identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        if association == ride_maps::VehicleAssociation::Associated {
-            let _ = self
-                .recorder
-                .observe_vehicle(identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        }
-        let target = if self.created_ride {
-            Some(VerifiedConnectionRideTarget::Created)
-        } else {
-            self.ride_id
-                .as_ref()
-                .map(parse_mobile_ride_id)
-                .transpose()
-                .map_err(map_core_error)?
-                .map(VerifiedConnectionRideTarget::Existing)
-        };
-        if let Some(target) = target {
-            self.metadata = Some(VerifiedConnectionRideMetadata {
-                target,
-                candidate_vehicle: self
-                    .admission_recorder
-                    .candidate_vehicle()
-                    .map(str::to_owned),
-                associated_vehicle: self
-                    .admission_recorder
-                    .associated_vehicle()
-                    .map(str::to_owned),
-                associated_at_ms: self
-                    .admission_recorder
-                    .associated_at_milliseconds()
-                    .map(ride_maps::MonotonicMilliseconds::as_u64),
-                last_telemetry_at_ms: self
-                    .admission_recorder
-                    .last_telemetry_at_milliseconds()
-                    .map(ride_maps::MonotonicMilliseconds::as_u64),
-                moving_time_source_boundary_at_ms: match association {
-                    ride_maps::VehicleAssociation::Associated
-                    | ride_maps::VehicleAssociation::AlreadyAssociated => Some(at_ms),
-                    _ => None,
-                },
-            });
-        }
-        Ok(association)
-    }
-}
-
-fn plan_verified_connection_auto_recording(
-    preview: &mut VerifiedConnectionAdmissionPreview,
-    identity: &str,
-    at_ms: u64,
-    occurred_at_ms: u64,
-    music_history_policy: CoreMusicHistoryPolicy,
-    autostart_enabled: bool,
-    mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    let current_vehicle = preview
-        .recorder
-        .associated_vehicle()
-        .or_else(|| preview.recorder.candidate_vehicle());
-    let current_ride_belongs_to_another_vehicle = preview
-        .recorder
-        .state()
-        .is_some_and(ride_maps::RideLifecycleState::is_recording)
-        && current_vehicle.is_some_and(|vehicle| vehicle != identity);
-    if current_ride_belongs_to_another_vehicle && autostart_enabled {
-        preview.transition(MobileRideEventDto::Stop, at_ms, occurred_at_ms, mutations)?;
-        preview.transition(MobileRideEventDto::Save, at_ms, occurred_at_ms, mutations)?;
-    }
-
-    if preview.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
-        let matches_vehicle = preview.recorder.associated_vehicle() == Some(identity)
-            || (preview.recorder.associated_vehicle().is_none()
-                && preview.recorder.candidate_vehicle() == Some(identity));
-        let recovery_decision = preview
-            .recoverable_updated_at_milliseconds
-            .map(|updated_at| {
-                ride_maps::ride_recovery_decision(
-                    ride_maps::RideRecoveryKind::InvoluntaryInterruption,
-                    ride_maps::WallClockUnixMilliseconds::new(occurred_at_ms),
-                    ride_maps::WallClockUnixMilliseconds::new(updated_at),
-                )
-            });
-        if matches_vehicle && recovery_decision == Some(ride_maps::RideRecoveryDecision::Resume) {
-            preview.transition(MobileRideEventDto::Resume, at_ms, occurred_at_ms, mutations)?;
-        }
-    }
-
-    if autostart_enabled
-        && preview
-            .recorder
-            .state()
-            .is_none_or(ride_maps::RideLifecycleState::allows_auto_recording_replacement)
-    {
-        preview.start_live(
-            at_ms,
-            occurred_at_ms,
-            Some(identity),
-            music_history_policy,
-            mutations,
-        )?;
-    }
-    Ok(())
 }
 
 impl MobileRideMapCore {
@@ -11298,107 +10734,83 @@ impl MobileRideMapCore {
     ) -> Result<PendingVerifiedMapAdmission, MobileRideMapCoreErrorDto> {
         let identity = ride_maps::VehicleIdentity::new(platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
+        let admission_id = {
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            // Existing verified packets remain admissible while Stop waits behind the music
+            // fence. The application owner returns an idempotent no-op for the already-current
+            // connection generation, but still rejects a different generation while the stop
+            // command owns its single-operation fence.
+            state.require_ready()?;
+            let admission_id = state.next_connection_admission_id;
+            let following_admission_id = admission_id.checked_add(1).ok_or_else(|| {
+                MobileRideMapCoreErrorDto::Storage(
+                    "verified connection admission identifiers are exhausted".to_owned(),
+                )
+            })?;
+            state.next_connection_admission_id = following_admission_id;
+            state.pending_connection_admission_id = Some(admission_id);
+            admission_id
+        };
 
-        if state.last_connection_transition_generation == Some(connection_generation)
-            && state.last_connection_transition_ride_id == state.ride_id
-        {
-            let snapshot = state
-                .recorder
-                .state()
-                .map(|lifecycle| state.snapshot(lifecycle.into()));
+        let recording = Arc::clone(
+            &self
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .recording,
+        );
+        let prepared = match recording.begin_verified_connection_admission(
+            identity.as_str(),
+            at_ms,
+            connection_generation,
+            music_history_policy,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.clear_pending_connection_admission(admission_id);
+                return Err(map_verified_connection_admission_error(error));
+            }
+        };
+
+        if prepared.is_immediate_noop() {
+            self.clear_pending_connection_admission(admission_id);
+            let immediate_result = recording.finish_verified_connection_admission(prepared);
+            let immediate_at_ms = immediate_result
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map(|snapshot| {
+                    snapshot
+                        .last_monotonic_ms
+                        .saturating_sub(snapshot.monotonic_epoch_offset_ms)
+                })
+                .unwrap_or(at_ms);
             return Ok(PendingVerifiedMapAdmission {
-                admission_id: 0,
-                pending_storage: None,
-                immediate_snapshot: snapshot,
-                is_immediate_noop: true,
-                selected_mutations: Vec::new(),
-                platform_identifier: identity.as_str().to_owned(),
-                connection_generation,
-                at_ms,
-                logical_at_ms: state.logical_monotonic_milliseconds(at_ms),
+                admission_id: None,
+                completion: None,
+                immediate_result: Some(immediate_result),
+                at_ms: immediate_at_ms,
             });
         }
 
-        state.require_lifecycle_ready()?;
-        let next_admission_id = state.next_connection_admission_id;
-        let following_admission_id = next_admission_id.checked_add(1).ok_or_else(|| {
-            MobileRideMapCoreErrorDto::Storage(
-                "verified connection admission identifiers are exhausted".to_owned(),
-            )
-        })?;
-        let logical_at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let connection_generation_consumed =
-            state.last_connection_transition_generation == Some(connection_generation);
-        let mut selected_preview = VerifiedConnectionAdmissionPreview::from_state(&state);
-        let mut unselected_preview = VerifiedConnectionAdmissionPreview::from_state(&state);
-        let mut selected_mutations = Vec::new();
-        let updated_at_ms = if state.database.is_some() {
-            wall_clock_milliseconds()?
-        } else {
-            0
-        };
-
-        let should_auto_record = state.database.is_some()
-            && !connection_generation_consumed
-            && state.automatic_policy_for_vehicle(identity.as_str())?
-                == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume;
-        let autostart_enabled = should_auto_record && state.ride_autostart_enabled()?;
-        if should_auto_record {
-            plan_verified_connection_auto_recording(
-                &mut selected_preview,
-                identity.as_str(),
-                at_ms,
-                updated_at_ms,
-                music_history_policy,
-                autostart_enabled,
-                &mut selected_mutations,
-            )?;
+        let (completion_sender, completion_receiver) = std::sync::mpsc::channel();
+        let worker_recording = Arc::clone(&recording);
+        if let Err(error) = std::thread::Builder::new()
+            .name("cutout-verified-connection".to_owned())
+            .spawn(move || {
+                let result = worker_recording.finish_verified_connection_admission(prepared);
+                let _ = completion_sender.send(result);
+            })
+        {
+            self.clear_pending_connection_admission(admission_id);
+            return Err(MobileRideMapCoreErrorDto::Storage(error.to_string()));
         }
 
-        let should_associate = |preview: &VerifiedConnectionAdmissionPreview| {
-            preview
-                .recorder
-                .state()
-                .is_some_and(ride_maps::RideLifecycleState::is_recording)
-        };
-        if should_associate(&selected_preview) {
-            selected_preview.associate_vehicle(&identity, logical_at_ms)?;
-        }
-        if should_associate(&unselected_preview) {
-            unselected_preview.associate_vehicle(&identity, logical_at_ms)?;
-        }
-
-        let pending_storage = if let Some(database) = state.database.as_ref() {
-            Some(
-                database
-                    .inner
-                    .queue_verified_connection_admission(
-                        identity.as_str(),
-                        updated_at_ms,
-                        selected_mutations.clone(),
-                        selected_preview.metadata.clone(),
-                        unselected_preview.metadata.clone(),
-                    )
-                    .map_err(map_storage_core_error)?,
-            )
-        } else {
-            None
-        };
-
-        state.next_connection_admission_id = following_admission_id;
-        state.pending_connection_admission_id = Some(next_admission_id);
         Ok(PendingVerifiedMapAdmission {
-            admission_id: next_admission_id,
-            pending_storage,
-            immediate_snapshot: None,
-            is_immediate_noop: false,
-            selected_mutations,
-            platform_identifier: identity.as_str().to_owned(),
-            connection_generation,
+            admission_id: Some(admission_id),
+            completion: Some(completion_receiver),
+            immediate_result: None,
             at_ms,
-            logical_at_ms,
         })
     }
 
@@ -11406,142 +10818,81 @@ impl MobileRideMapCore {
         &self,
         mut pending: PendingVerifiedMapAdmission,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let storage_result = match pending.pending_storage.take() {
-            Some(pending_storage) => pending_storage.wait_result().map(Some),
-            None => Ok(None),
+        let result = match pending.immediate_result.take() {
+            Some(result) => result,
+            None => pending
+                .completion
+                .take()
+                .ok_or_else(|| {
+                    MobileRideMapCoreErrorDto::Storage(
+                        "verified connection admission has no completion worker".to_owned(),
+                    )
+                })?
+                .recv()
+                .unwrap_or_else(|_| {
+                    Err(cutout_application::ride_recording::VerifiedConnectionAdmissionError::Storage(
+                        persistence::StorageError::ResponseDropped,
+                    ))
+                }),
         };
-        self.complete_verified_connection_admission(pending, storage_result)
+        self.complete_verified_connection_admission(&pending, result)
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the completion atomically reconciles one verified admission with its committed checkpoint"
-    )]
     fn complete_verified_connection_admission(
         &self,
-        pending: PendingVerifiedMapAdmission,
-        storage_result: Result<
-            Option<persistence::VerifiedConnectionAdmissionOutcome>,
-            persistence::StorageError,
+        pending: &PendingVerifiedMapAdmission,
+        result: Result<
+            Option<cutout_application::ride_recording::RideRecordingSnapshot>,
+            cutout_application::ride_recording::VerifiedConnectionAdmissionError,
         >,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        if pending.is_immediate_noop {
-            return Ok(pending.immediate_snapshot);
+        if let Some(admission_id) = pending.admission_id {
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.pending_connection_admission_id != Some(admission_id) {
+                return Err(MobileRideMapCoreErrorDto::StaleConnection);
+            }
+            state.pending_connection_admission_id = None;
         }
-        let outcome = match storage_result {
-            Ok(outcome) => outcome,
+
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
             Err(error) => {
-                let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-                if state.pending_connection_admission_id == Some(pending.admission_id) {
-                    state.pending_connection_admission_id = None;
+                let error = map_verified_connection_admission_error(error);
+                if self.recording_requires_restore() {
+                    self.mark_restoration_failed(error.clone());
                 }
-                return Err(map_storage_core_error(error));
+                return Err(error);
             }
         };
-        let selected_device_matches = outcome
-            .as_ref()
-            .is_some_and(|outcome| outcome.selected_device_matches);
-        let created_ride_id = outcome.as_ref().and_then(|outcome| outcome.created_ride_id);
-        let committed_ride_checkpoint =
-            outcome.and_then(|outcome| outcome.committed_ride_checkpoint);
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.pending_connection_admission_id != Some(pending.admission_id) {
-            return Err(MobileRideMapCoreErrorDto::StaleConnection);
-        }
-        let previous_connection_transition_generation = state.last_connection_transition_generation;
-        let previous_connection_transition_ride_id =
-            state.last_connection_transition_ride_id.clone();
-
-        state.last_connected_vehicle =
-            ride_maps::VehicleIdentity::new(&pending.platform_identifier);
-
-        if selected_device_matches {
-            for mutation in &pending.selected_mutations {
-                match mutation {
-                    VerifiedConnectionLifecycleMutation::Transition { event, .. } => {
-                        state.apply_connection_transition_in_memory(
-                            (*event).into(),
-                            pending.at_ms,
-                        )?;
-                    }
-                    VerifiedConnectionLifecycleMutation::StartLive {
-                        monotonic_created_at_ms,
-                        candidate_vehicle,
-                        music_history_policy,
-                        ..
-                    } => {
-                        let created_ride_id =
-                            created_ride_id.ok_or(MobileRideMapCoreErrorDto::InvalidTransition)?;
-                        let committed_ride_checkpoint = committed_ride_checkpoint
-                            .filter(|committed| committed.ride_id() == created_ride_id)
-                            .ok_or(MobileRideMapCoreErrorDto::InvalidTransition)?;
-                        state.start_gps_only_at_with_checkpoint(
-                            *monotonic_created_at_ms,
-                            candidate_vehicle.as_deref(),
-                            Some(committed_ride_checkpoint),
-                        )?;
-                        state.apply_music_history_policy(*music_history_policy);
-                    }
-                }
-            }
-            state.last_connection_transition_generation = Some(pending.connection_generation);
-            let MobileRideMapCoreInner {
-                last_connection_transition_ride_id,
-                ride_id,
-                ..
-            } = &mut *state;
-            last_connection_transition_ride_id.clone_from(ride_id);
-        }
-
-        if selected_device_matches && let Some(committed) = committed_ride_checkpoint {
-            let ride_id = mobile_ride_id(committed.ride_id());
-            if state.ride_id.as_ref() == Some(&ride_id) {
-                if state.recorder.state() != Some(committed.lifecycle()) {
-                    return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-                }
-                state.publish_moving_time_checkpoint(&ride_id, committed.checkpoint());
-            }
-        }
-
-        let Some(lifecycle) = state.recorder.state() else {
-            state.pending_connection_admission_id = None;
+        let Some(snapshot) = snapshot else {
             return Ok(None);
         };
-        if !lifecycle.is_recording() {
-            state.pending_connection_admission_id = None;
-            return Ok(Some(state.snapshot(lifecycle.into())));
-        }
-        let identity = ride_maps::VehicleIdentity::new(&pending.platform_identifier)
-            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let at_ms = pending.logical_at_ms;
-        let mut staged = state.admission_recorder.clone();
-        let mut durable_staged = state.recorder.clone();
-        let association =
-            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        if association == ride_maps::VehicleAssociation::Associated {
-            let _ = durable_staged
-                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-            state.revision = state.revision.saturating_add(1);
-        }
-        state.recorder = durable_staged;
-        state.admission_recorder = staged;
-        let confirmed = match association {
-            ride_maps::VehicleAssociation::Associated
-            | ride_maps::VehicleAssociation::AlreadyAssociated => true,
-            _ => false,
-        };
-        if confirmed {
-            let ride_id = state.ride_id.clone();
-            if previous_connection_transition_generation != Some(pending.connection_generation)
-                || previous_connection_transition_ride_id != ride_id
-            {
-                state.latest_verified_vehicle_moving_time = None;
-            }
-            state.last_connection_transition_generation = Some(pending.connection_generation);
-            state.last_connection_transition_ride_id = ride_id;
-        }
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(state.project_recording_snapshot(&snapshot, pending.at_ms))
+    }
+
+    fn recording_requires_restore(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .recording
+            .requires_restore()
+    }
+
+    fn mark_restoration_failed(&self, error: MobileRideMapCoreErrorDto) {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.initialization_error = Some(error);
+        state.restoration_state = MobileRideMapRestorationState::Failed;
         state.pending_connection_admission_id = None;
-        Ok(Some(state.snapshot(lifecycle.into())))
+        state.pending_lifecycle_command_id = None;
+        state.pending_music_stop_command_id = None;
+    }
+
+    fn clear_pending_connection_admission(&self, admission_id: u64) {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_connection_admission_id == Some(admission_id) {
+            state.pending_connection_admission_id = None;
+        }
     }
 
     #[cfg(test)]
@@ -11561,151 +10912,174 @@ impl MobileRideMapCore {
         platform_identifier: &str,
         at_ms: u64,
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
-        let mut staged = state.admission_recorder.clone();
-        let mut durable_staged = state.recorder.clone();
+        let recording = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_ready()?;
+            Arc::clone(&state.recording)
+        };
         let Some(identity) = ride_maps::VehicleIdentity::new(platform_identifier) else {
             return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
         };
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let association =
-            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        if association == ride_maps::VehicleAssociation::Associated {
-            let _ = durable_staged
-                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-            if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
-                database
-                    .update_ride_map_metadata(
-                        id,
-                        staged.candidate_vehicle().map(str::to_owned),
-                        Some(platform_identifier.to_owned()),
-                        staged
-                            .associated_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                        staged
-                            .last_telemetry_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    )
-                    .map_err(map_core_error)?;
+        let before = recording.snapshot();
+        let connection_generation = before
+            .last_connection_transition_generation
+            .unwrap_or_default()
+            .saturating_add(1);
+        let operation = recording
+            .begin_verified_connection_admission(
+                identity.as_str(),
+                at_ms,
+                connection_generation,
+                CoreMusicHistoryPolicy::Disabled,
+            )
+            .map_err(map_verified_connection_admission_error)?;
+        let after = recording
+            .finish_verified_connection_admission(operation)
+            .map_err(map_verified_connection_admission_error)?;
+        let Some(after) = after else {
+            return Ok(ride_maps::VehicleAssociation::RideNotOpen.into());
+        };
+        let association = if after.associated_vehicle.as_deref() == Some(identity.as_str()) {
+            if before.associated_vehicle.as_deref() == Some(identity.as_str()) {
+                ride_maps::VehicleAssociation::AlreadyAssociated
+            } else {
+                ride_maps::VehicleAssociation::Associated
             }
-            state.revision = state.revision.saturating_add(1);
-        }
-        state.recorder = durable_staged;
-        state.admission_recorder = staged;
+        } else if before.associated_vehicle.is_some() {
+            ride_maps::VehicleAssociation::IdentityMismatch
+        } else if before.candidate_vehicle.is_none() {
+            ride_maps::VehicleAssociation::CandidateMissing
+        } else if after.last_event_at_ms < before.last_event_at_ms {
+            ride_maps::VehicleAssociation::TimestampOutOfOrder
+        } else {
+            ride_maps::VehicleAssociation::IdentityMismatch
+        };
         Ok(association.into())
     }
 }
 
 impl MobileRideMapCoreInner {
-    fn publish_moving_time_checkpoint(
-        &mut self,
-        ride_id: &MobileRideIdDto,
-        checkpoint: persistence::MovingTimeCheckpoint,
-    ) {
-        if self.ride_id.as_ref() != Some(ride_id)
-            || self
-                .moving_time_checkpoint
-                .is_some_and(|current| current.revision() >= checkpoint.revision())
-        {
-            return;
-        }
-        self.moving_time_checkpoint = Some(checkpoint);
-    }
-
-    fn verified_vehicle_observation_for_receipt(
+    fn project_recording_snapshot(
         &self,
-        receipt_at: u64,
-    ) -> Option<ride_maps::MovingTimeObservation> {
-        let latest = self.latest_verified_vehicle_moving_time.as_ref()?;
-        let ride_id = self.ride_id.as_ref()?;
-        if &latest.ride_id != ride_id
-            || latest.ride_generation != self.generation
-            || self.last_connection_transition_generation != Some(latest.connection_generation)
-            || self.last_connection_transition_ride_id.as_ref() != Some(ride_id)
-            || self
-                .last_connected_vehicle
-                .as_ref()
-                .map(ride_maps::VehicleIdentity::as_str)
-                != Some(latest.platform_identifier.as_str())
-            || self.recorder.associated_vehicle() != Some(latest.platform_identifier.as_str())
-        {
+        initial_recording: &cutout_application::ride_recording::RideRecordingSnapshot,
+        at_ms: u64,
+    ) -> Option<MobileRideMapCoreSnapshotDto> {
+        let expected_ride_id = initial_recording.ride_id;
+        let at_ms = at_ms.saturating_add(initial_recording.monotonic_epoch_offset_ms);
+        let recording = self.recording.snapshot_at(at_ms);
+        if recording.ride_id != expected_ride_id {
             return None;
         }
-        let source_at = latest.observation.source_at.as_u64();
-        if source_at > receipt_at
-            || receipt_at.saturating_sub(source_at) > ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
-        {
-            return None;
-        }
-        // Do not replay a wheel event already represented by the committed checkpoint. A
-        // repeated source can still be queued while an earlier GPS transaction is pending;
-        // persistence treats that identical replay idempotently.
-        if self.moving_time_checkpoint.is_some_and(|checkpoint| {
-            checkpoint
-                .continuation()
-                .state_parts()
-                .latest_vehicle_source_milliseconds
-                .is_some_and(|committed| committed >= source_at)
-        }) {
-            return None;
-        }
-        let mut observation = latest.observation;
-        observation.receipt_at = ride_maps::MonotonicMilliseconds::new(receipt_at);
-        Some(observation)
+        self.project_recording_projection(recording, at_ms)
     }
 
-    fn moving_time_at(&self, as_of: u64) -> MobileRideMovingTimeDto {
-        self.moving_time_checkpoint
-            .map_or(MobileRideMovingTimeDto::Unavailable, |checkpoint| {
-                moving_time_summary_dto(
-                    checkpoint.projected_at(ride_maps::MonotonicMilliseconds::new(as_of)),
-                )
-            })
-    }
-
-    fn elapsed_time_at(&self, as_of: u64) -> MobileRideElapsedTimeDto {
-        self.moving_time_checkpoint
-            .map_or(MobileRideElapsedTimeDto::Unavailable, |checkpoint| {
-                elapsed_time_summary_dto(
-                    checkpoint.elapsed_time_at(ride_maps::MonotonicMilliseconds::new(as_of)),
-                )
-            })
+    fn project_recording_projection(
+        &self,
+        recording: cutout_application::ride_recording::RideRecordingSnapshot,
+        at_ms: u64,
+    ) -> Option<MobileRideMapCoreSnapshotDto> {
+        let lifecycle = recording.lifecycle?;
+        let ride_id = match recording.ride_id {
+            Some(ride_id) => mobile_ride_id_string(&mobile_ride_id(ride_id)),
+            None if lifecycle == ride_maps::RideLifecycleState::Discarded => String::new(),
+            None => return None,
+        };
+        let state: MobileRideLifecycleStateDto = lifecycle.into();
+        let acquisition: MobileRideMapLocationAcquisitionDto = self
+            .location_acquisition_state
+            .acquisition(recording.revision, Some(lifecycle))
+            .into();
+        let checkpoint = recording.checkpoint;
+        let moving_time = checkpoint.map_or(MobileRideMovingTimeDto::Unavailable, |checkpoint| {
+            moving_time_summary_dto(
+                checkpoint.projected_at(ride_maps::MonotonicMilliseconds::new(at_ms)),
+            )
+        });
+        let elapsed_time = checkpoint.map_or(MobileRideElapsedTimeDto::Unavailable, |checkpoint| {
+            elapsed_time_summary_dto(
+                checkpoint.elapsed_time_at(ride_maps::MonotonicMilliseconds::new(at_ms)),
+            )
+        });
+        let recording_token = (lifecycle == ride_maps::RideLifecycleState::Active)
+            .then_some(recording.command_token)
+            .flatten()
+            .map(|token| MobileRideMapRecordingTokenDto {
+                ride_id: mobile_ride_id_string(&mobile_ride_id(token.ride_id)),
+                generation: token.generation,
+            });
+        let command_token = recording
+            .command_token
+            .map(|token| MobileRideMapCommandTokenDto {
+                ride_id: mobile_ride_id_string(&mobile_ride_id(token.ride_id)),
+                generation: token.generation,
+            });
+        let has_live_activity = match lifecycle {
+            ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused => true,
+            ride_maps::RideLifecycleState::Interrupted
+            | ride_maps::RideLifecycleState::Stopped
+            | ride_maps::RideLifecycleState::Saved
+            | ride_maps::RideLifecycleState::Discarded
+            | ride_maps::RideLifecycleState::Draft
+            | ride_maps::RideLifecycleState::Imported => false,
+        };
+        let live_activity_statistics =
+            has_live_activity.then_some(MobileRideMapLiveActivityStatisticsDto {
+                duration_milliseconds: recording.duration_milliseconds,
+                distance_millimetres: recording.distance_millimetres,
+            });
+        Some(MobileRideMapCoreSnapshotDto {
+            ride_id,
+            revision: recording.revision,
+            recording_token,
+            command_token,
+            location_acquisition: acquisition.into(),
+            state,
+            allowed_actions: lifecycle
+                .recording_actions()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            telemetry_state: recording.telemetry_state.into(),
+            summary: MobileRideMapCoreSummaryDto {
+                point_count: recording.route_point_count,
+                distance_meters: millimetres_to_meters(recording.distance_millimetres),
+                duration_milliseconds: recording.duration_milliseconds,
+                moving_time,
+                elapsed_time,
+            },
+            live_activity_statistics,
+            live_speed: recording.speed.map(Into::into).unwrap_or_default(),
+            segment_count: recording.segment_count,
+            associated_vehicle: recording.associated_vehicle,
+            recorded_bounds_available: lifecycle.has_recorded_bounds(),
+        })
     }
 
     fn poll_location_write_outcomes(
         &mut self,
         at_milliseconds: u64,
     ) -> Vec<MobileRideMapCoreOutcomeDto> {
-        let current_ride_id = self.ride_id.clone();
-        let mut completed = Vec::new();
-        let mut remaining = VecDeque::with_capacity(self.pending_location_writes.len());
-        while let Some(mut pending) = self.pending_location_writes.pop_front() {
-            let Some(result) = pending.write.try_result() else {
-                remaining.push_back(pending);
-                // A later reply may become ready while this pass is polling. Preserve the
-                // worker's FIFO order rather than committing it ahead of this predecessor.
-                remaining.append(&mut self.pending_location_writes);
-                break;
-            };
-            if current_ride_id.as_ref() != Some(&pending.ride_id) {
-                continue;
-            }
-            let decision = match result {
+        let write_outcomes = self.recording.poll_location_writes();
+        self.project_location_write_outcomes(write_outcomes, at_milliseconds)
+    }
+
+    fn project_location_write_outcomes(
+        &self,
+        write_outcomes: Vec<cutout_application::ride_recording::RideLocationWriteOutcome>,
+        at_milliseconds: u64,
+    ) -> Vec<MobileRideMapCoreOutcomeDto> {
+        let mut outcomes = Vec::new();
+        for outcome in write_outcomes {
+            let decision = match outcome.result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
-                    self.publish_moving_time_checkpoint(
-                        &pending.ride_id,
-                        result.moving_time_checkpoint(),
-                    );
-                    if self
-                        .recorder
-                        .record_admitted_sample(pending.admitted_sample)
-                    {
-                        self.revision = self.revision.saturating_add(1);
-                        let mut point = pending.point;
-                        if let Some(sequence) = result.sequence() {
-                            point.sequence = sequence;
-                        }
+                    if outcome.projection_applied {
+                        let point = Self::point_from_location(
+                            mobile_ride_location_dto(outcome.point.sample()),
+                            result.sequence().unwrap_or(outcome.sequence),
+                            outcome.point.segment_id(),
+                            outcome.point.segment_start_reason(),
+                            outcome.point.telemetry_state(),
+                        );
                         MobileRideMapCoreDecisionDto::Accepted { point }
                     } else {
                         MobileRideMapCoreDecisionDto::StorageError {
@@ -11714,63 +11088,32 @@ impl MobileRideMapCoreInner {
                         }
                     }
                 }
-                Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
-                    MobileRideMapCoreDecisionDto::Ignored {
-                        reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-                    }
-                }
-                Ok(result) if result.admission() == ride_maps::LocationAdmission::OutOfOrder => {
-                    MobileRideMapCoreDecisionDto::Rejected {
-                        reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
-                    }
-                }
-                Ok(result)
-                    if result.admission() == ride_maps::LocationAdmission::AccuracyTooLow =>
-                {
-                    MobileRideMapCoreDecisionDto::Rejected {
-                        reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
-                    }
-                }
-                Ok(result)
-                    if result.admission() == ride_maps::LocationAdmission::UnrealisticJump =>
-                {
-                    MobileRideMapCoreDecisionDto::Rejected {
-                        reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
-                    }
-                }
-                Ok(_) => MobileRideMapCoreDecisionDto::StorageError {
-                    message: "unknown location admission result".to_owned(),
-                },
+                Ok(result) => location_admission_decision(result.admission()),
                 Err(error) => MobileRideMapCoreDecisionDto::StorageError {
                     message: error.to_string(),
                 },
             };
-            let Some(lifecycle) = self.recorder.state() else {
+            let logical_at_ms = if self.recording.snapshot().ride_id == Some(outcome.ride_id) {
+                at_milliseconds.saturating_add(outcome.snapshot.monotonic_epoch_offset_ms)
+            } else {
+                outcome.snapshot.last_event_at_ms
+            };
+            let Some(snapshot) = self.project_recording_projection(outcome.snapshot, logical_at_ms)
+            else {
                 continue;
             };
-            let snapshot = self.snapshot_at_logical(lifecycle.into(), at_milliseconds);
-            completed.push(MobileRideMapCoreOutcomeDto {
-                request_id: Some(pending.request_id),
-                ride_id: mobile_ride_id_string(&pending.ride_id),
+            outcomes.push(MobileRideMapCoreOutcomeDto {
+                request_id: Some(outcome.request_id),
+                ride_id: mobile_ride_id_string(&mobile_ride_id(outcome.ride_id)),
                 decision,
                 snapshot,
             });
         }
-        self.pending_location_writes = remaining;
-        // Rebuild the admission projection from the durable projection plus only writes that are
-        // still pending. This removes a pending point after a durable rejection.
-        let mut rebuilt = self.recorder.clone();
-        for pending in &self.pending_location_writes {
-            rebuilt.record_admitted_sample(pending.admitted_sample);
-        }
-        self.admission_recorder = rebuilt;
-        completed
+        outcomes
     }
 
     fn snapshot_for_outcome(&self, at_milliseconds: u64) -> Option<MobileRideMapCoreSnapshotDto> {
-        self.recorder
-            .state()
-            .map(|lifecycle| self.snapshot_at(lifecycle.into(), at_milliseconds))
+        self.project_recording_snapshot(&self.recording.snapshot(), at_milliseconds)
     }
 
     fn ingest_location_batch(
@@ -11784,10 +11127,13 @@ impl MobileRideMapCoreInner {
         let Some(recording) = recording else {
             return Ok(Vec::new());
         };
-        if self.ride_id.as_ref().map(mobile_ride_id_string)
+        let current = self.recording.snapshot();
+        if current
+            .ride_id
+            .map(|ride_id| mobile_ride_id_string(&mobile_ride_id(ride_id)))
             != Some(recording.ride_id.as_str().to_owned())
-            || self.generation != recording.generation
-            || self.recorder.state() != Some(ride_maps::RideLifecycleState::Active)
+            || current.generation != recording.generation
+            || current.lifecycle != Some(ride_maps::RideLifecycleState::Active)
         {
             return Ok(Vec::new());
         }
@@ -11807,45 +11153,16 @@ impl MobileRideMapCoreInner {
             let Some(monotonic_ms) = receipt_monotonic_ms.checked_sub(elapsed_ms) else {
                 continue;
             };
-            let logical_source_at = self.logical_monotonic_milliseconds(monotonic_ms);
-            let logical_receipt_at = self.logical_monotonic_milliseconds(receipt_monotonic_ms);
-            let speed_millimetres_per_second = logical_receipt_at
-                .checked_sub(logical_source_at)
-                .filter(|age| *age <= ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS)
-                .and_then(|_| {
-                    phone_moving_time_speed_millimetres_per_second(sample.speed_meters_per_second)
-                });
-            let moving_time_observation = ride_maps::MovingTimeObservation {
-                source: ride_maps::MovingTimeSource::PhoneGps,
-                speed_millimetres_per_second,
-                source_at: ride_maps::MonotonicMilliseconds::new(logical_source_at),
-                receipt_at: ride_maps::MonotonicMilliseconds::new(logical_receipt_at),
-            };
-            let repeated_observation = if self.pending_location_writes.is_empty() {
-                let candidate = MobileRideLocationDto {
-                    latitude_degrees: sample.latitude_degrees,
-                    longitude_degrees: sample.longitude_degrees,
-                    monotonic_milliseconds: self.logical_monotonic_milliseconds(monotonic_ms),
-                    wall_clock_unix_milliseconds: sample.wall_clock_unix_ms,
-                    horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
-                        horizontal_accuracy_meters,
-                    )?),
-                    source: MobileRideSourceDto::Live,
-                };
-                match self
-                    .recorder
-                    .classify_sample(mobile_ride_location(candidate).map_err(map_core_error)?)
-                {
-                    ride_maps::LocationRecordingDecision::ObserveClockOnly(observation) => {
-                        Some(observation)
-                    }
-                    ride_maps::LocationRecordingDecision::Record(_)
-                    | ride_maps::LocationRecordingDecision::Rejected(_) => None,
-                }
-            } else {
-                None
-            };
-            let (decision, request_id) = self.ingest_location(
+            let logical_source_at = monotonic_ms.saturating_add(current.monotonic_epoch_offset_ms);
+            let logical_receipt_at =
+                receipt_monotonic_ms.saturating_add(current.monotonic_epoch_offset_ms);
+            let moving_time_observation =
+                cutout_application::ride_recording::phone_moving_time_observation(
+                    sample.speed_meters_per_second,
+                    logical_source_at,
+                    logical_receipt_at,
+                );
+            let (decision, request_id, location_admitted) = self.ingest_location(
                 monotonic_ms,
                 sample.wall_clock_unix_ms,
                 sample.latitude_degrees,
@@ -11854,13 +11171,11 @@ impl MobileRideMapCoreInner {
                 submission,
                 Some(moving_time_observation),
             )?;
-            let location_admitted =
-                location_observation_advances_speed(&decision, repeated_observation.is_some());
             if location_admitted {
-                self.speed.observe_phone_gps(
+                self.recording.observe_phone_gps_speed(
                     sample.speed_meters_per_second,
-                    self.logical_monotonic_milliseconds(monotonic_ms),
-                    self.generation,
+                    logical_source_at,
+                    current.generation,
                 );
             }
             let Some(snapshot) = self.snapshot_for_outcome(receipt_monotonic_ms) else {
@@ -11876,221 +11191,6 @@ impl MobileRideMapCoreInner {
         Ok(outcomes)
     }
 
-    fn admit_location_sample(
-        &mut self,
-        sample: ride_maps::LocationSample,
-    ) -> Result<ride_maps::AdmittedLocationSample, MobileRideMapCoreDecisionDto> {
-        if self.recorder.associated_vehicle().is_some()
-            && self
-                .speed
-                .motion_history_retired_at(sample.monotonic_milliseconds().as_u64())
-        {
-            return Err(MobileRideMapCoreDecisionDto::Rejected {
-                reason: MobileRideMapDecisionReasonDto::MotionHistoryRetired,
-            });
-        }
-        if self.recorder.associated_vehicle().is_some()
-            && let Some(at) = self
-                .speed
-                .motion_at(sample.monotonic_milliseconds().as_u64())
-                .and_then(|motion| motion.last_stationary_at_milliseconds)
-        {
-            self.recorder
-                .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
-            self.admission_recorder
-                .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
-        }
-        if self.recorder.associated_vehicle().is_some()
-            && self
-                .speed
-                .parked_at(sample.monotonic_milliseconds().as_u64())
-        {
-            self.observe_stationary_location(sample)?;
-            return Err(MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::Parked,
-            });
-        }
-        // A pending material point cannot establish the suppression baseline. On worker
-        // rejection, the same changed values must still be eligible for a durable retry.
-        let admission = if self.pending_location_writes.is_empty() {
-            match self.recorder.classify_sample(sample) {
-                ride_maps::LocationRecordingDecision::Record(admitted) => Ok(admitted),
-                ride_maps::LocationRecordingDecision::Rejected(reason) => Err(reason),
-                ride_maps::LocationRecordingDecision::ObserveClockOnly(observation) => {
-                    if let Some(database) = self.database.as_ref() {
-                        let Some(id) = self.ride_id.as_ref() else {
-                            return Err(MobileRideMapCoreDecisionDto::StorageError {
-                                message: "location observation has no ride identifier".to_owned(),
-                            });
-                        };
-                        let ride_id = parse_mobile_ride_id(id).map_err(|error| {
-                            MobileRideMapCoreDecisionDto::StorageError {
-                                message: error.to_string(),
-                            }
-                        })?;
-                        let Some(expected_point_sequence) =
-                            self.recorder.point_count().checked_sub(1)
-                        else {
-                            return Err(MobileRideMapCoreDecisionDto::StorageError {
-                                message: "location observation has no durable route point"
-                                    .to_owned(),
-                            });
-                        };
-                        match database.inner.checkpoint_location_observation(
-                            persistence::RideLocationObservationCheckpoint {
-                                ride_id,
-                                expected_point_sequence,
-                                observation: sample,
-                            },
-                        ) {
-                            Ok(persistence::RideLocationObservationCheckpointOutcome::Applied
-                            | persistence::RideLocationObservationCheckpointOutcome::AlreadyObserved) => {},
-                            Ok(persistence::RideLocationObservationCheckpointOutcome::PointChanged) => {
-                                return Err(MobileRideMapCoreDecisionDto::StorageError {
-                                    message: "location observation no longer matches the durable route point".to_owned(),
-                                });
-                            }
-                            Err(error) => return Err(MobileRideMapCoreDecisionDto::StorageError {
-                                message: error.to_string(),
-                            }),
-                        }
-                    }
-                    if !self.recorder.observe_clock_only(observation) {
-                        return Err(MobileRideMapCoreDecisionDto::StorageError {
-                            message:
-                                "location observation capability no longer matches the recorder"
-                                    .to_owned(),
-                        });
-                    }
-                    self.admission_recorder = self.recorder.clone();
-                    self.revision = self.revision.saturating_add(1);
-                    return Err(MobileRideMapCoreDecisionDto::Ignored {
-                        reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-                    });
-                }
-            }
-        } else {
-            self.admission_recorder.admit_sample(sample)
-        };
-        admission.map_err(location_admission_decision)
-    }
-
-    fn observe_stationary_location(
-        &mut self,
-        sample: ride_maps::LocationSample,
-    ) -> Result<(), MobileRideMapCoreDecisionDto> {
-        // A parked observation is not a route write, but it still follows all earlier
-        // admitted material writes. Rebuilding from their outcomes keeps the checkpoint's
-        // point-count fence and the provider ordering baseline exact.
-        if !self.pending_location_writes.is_empty() {
-            let outcomes = self.checkpoint_location_outcomes().map_err(|error| {
-                MobileRideMapCoreDecisionDto::StorageError {
-                    message: error.to_string(),
-                }
-            })?;
-            self.settled_location_outcomes.extend(outcomes);
-        }
-        let observation = self
-            .recorder
-            .admit_stationary_sample(sample)
-            .map_err(location_admission_decision)?;
-        if let Some(database) = self.database.as_ref() {
-            let id = self.ride_id.as_ref().ok_or_else(|| {
-                MobileRideMapCoreDecisionDto::StorageError {
-                    message: "stationary observation has no ride identifier".to_owned(),
-                }
-            })?;
-            let ride_id = parse_mobile_ride_id(id).map_err(|error| {
-                MobileRideMapCoreDecisionDto::StorageError {
-                    message: error.to_string(),
-                }
-            })?;
-            match database.inner.checkpoint_stationary_location_observation(
-                persistence::RideStationaryLocationCheckpoint {
-                    ride_id,
-                    expected_point_count: self.recorder.point_count(),
-                    observation: sample,
-                },
-            ) {
-                Ok(
-                    persistence::RideLocationObservationCheckpointOutcome::Applied
-                    | persistence::RideLocationObservationCheckpointOutcome::AlreadyObserved,
-                ) => {}
-                Ok(persistence::RideLocationObservationCheckpointOutcome::PointChanged) => {
-                    return Err(MobileRideMapCoreDecisionDto::StorageError {
-                        message: "stationary observation no longer matches the durable ride"
-                            .to_owned(),
-                    });
-                }
-                Err(error) => {
-                    return Err(MobileRideMapCoreDecisionDto::StorageError {
-                        message: error.to_string(),
-                    });
-                }
-            }
-        }
-        if !self.recorder.observe_stationary(observation) {
-            return Err(MobileRideMapCoreDecisionDto::StorageError {
-                message: "stationary observation capability no longer matches the recorder"
-                    .to_owned(),
-            });
-        }
-        self.admission_recorder = self.recorder.clone();
-        self.revision = self.revision.saturating_add(1);
-        Ok(())
-    }
-
-    fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
-        self.music_history_policy = policy;
-    }
-
-    fn reset_music_history_policy(&mut self) {
-        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
-    }
-
-    fn transition_state(
-        &mut self,
-        event: MobileRideEventDto,
-        at_milliseconds: u64,
-    ) -> Result<(MobileRideIdDto, ride_maps::ValidatedRideTransition), MobileRideMapCoreErrorDto>
-    {
-        let Some(id) = self.ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let Some(current) = self.recorder.state() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let transition = current
-            .transition(event.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        if let Some(database) = self.database.as_ref() {
-            let committed = database
-                .transition_at(
-                    id.clone(),
-                    event,
-                    at_milliseconds,
-                    self.pending_telemetry_receipt(),
-                )
-                .map_err(map_core_error)?;
-            let committed_id = mobile_ride_id(committed.ride_id());
-            if committed_id != id || committed.lifecycle() != transition.next() {
-                return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-            }
-            if transition.next() == ride_maps::RideLifecycleState::Discarded {
-                // Discard removes the row from normal reads after committing its terminal
-                // lifecycle transition, so there is no visible checkpoint to refresh.
-                self.moving_time_checkpoint = None;
-            } else {
-                self.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
-            }
-            if let Some(at) = self.pending_telemetry_receipt() {
-                self.persisted_telemetry_receipt = Some((id.clone(), at));
-            }
-        }
-        self.latest_verified_vehicle_moving_time = None;
-        Ok((id, transition))
-    }
-
     #[allow(
         clippy::too_many_arguments,
         reason = "one accepted location carries its route and moving-time inputs together"
@@ -12104,19 +11204,21 @@ impl MobileRideMapCoreInner {
         horizontal_accuracy_meters: f64,
         submission: LocationWriteSubmission,
         moving_time_observation: Option<ride_maps::MovingTimeObservation>,
-    ) -> Result<(MobileRideMapCoreDecisionDto, Option<u64>), MobileRideMapCoreErrorDto> {
-        let monotonic_ms = self.logical_monotonic_milliseconds(monotonic_ms);
-        let Some(id) = self.ride_id.clone() else {
+    ) -> Result<(MobileRideMapCoreDecisionDto, Option<u64>, bool), MobileRideMapCoreErrorDto> {
+        let recording = self.recording.snapshot();
+        if recording.ride_id.is_none() {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if self.admission_recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+        }
+        if recording.lifecycle != Some(ride_maps::RideLifecycleState::Active) {
             return Ok((
                 MobileRideMapCoreDecisionDto::Ignored {
                     reason: MobileRideMapDecisionReasonDto::RideNotRecording,
                 },
                 None,
+                false,
             ));
         }
+        let monotonic_ms = monotonic_ms.saturating_add(recording.monotonic_epoch_offset_ms);
         let location = MobileRideLocationDto {
             latitude_degrees,
             longitude_degrees,
@@ -12131,110 +11233,50 @@ impl MobileRideMapCoreInner {
             return Err(MobileRideMapCoreErrorDto::InvalidLocation);
         }
         let sample = mobile_ride_location(location).map_err(map_core_error)?;
-        let admitted_sample = match self.admit_location_sample(sample) {
-            Ok(admitted_sample) => admitted_sample,
-            Err(decision) => return Ok((decision, None)),
+        let admission = match submission {
+            LocationWriteSubmission::Nonblocking => self
+                .recording
+                .admit_location_with_moving_time_outcome(sample, moving_time_observation),
+            LocationWriteSubmission::WaitForCapacity => self
+                .recording
+                .admit_location_waiting_for_capacity_outcome(sample, moving_time_observation),
         };
-        let telemetry_state =
-            self.admission_recorder
-                .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(
-                    location.monotonic_milliseconds,
-                ));
-        let sequence = self.admission_recorder.point_count();
-        let (segment_id, _, start_reason) = self.admission_recorder.next_sample_metadata(sample);
-        let point = Self::point_from_location(
-            location,
-            sequence,
-            segment_id,
-            start_reason,
-            telemetry_state,
-        );
-        if let Some(database) = self.database.as_ref() {
-            if self
-                .pending_location_writes
-                .len()
-                .saturating_add(self.settled_location_outcomes.len())
-                >= MAX_PENDING_LOCATION_WRITES
-            {
+        let admission = match admission {
+            Ok(admission) => admission,
+            Err(failure) => {
+                let location_admitted = failure.disposition
+                    == cutout_application::ride_recording::RideLocationAdmissionFailureDisposition::ClockOnlyObservation;
                 return Ok((
                     MobileRideMapCoreDecisionDto::StorageError {
-                        message: "ride location outcome queue is full".to_owned(),
+                        message: failure.error.to_string(),
                     },
                     None,
+                    location_admitted,
                 ));
             }
-            let request_id = self.next_location_write_id;
-            let next_request_id = request_id.checked_add(1).ok_or_else(|| {
-                MobileRideMapCoreErrorDto::Storage(
-                    "location request identifiers are exhausted".to_owned(),
-                )
-            })?;
-            let write = queue_location(
-                database,
-                &id,
-                location,
-                segment_id,
-                start_reason,
-                telemetry_state.into(),
-                submission,
-                moving_time_observation,
-                moving_time_observation.and_then(|observation| {
-                    self.verified_vehicle_observation_for_receipt(observation.receipt_at.as_u64())
-                }),
-            )
-            .map_err(map_core_error)?;
-            self.admission_recorder
-                .record_admitted_sample(admitted_sample);
-            self.pending_location_writes
-                .push_back(PendingMapLocationWrite {
-                    request_id,
-                    ride_id: id,
-                    admitted_sample,
-                    point,
-                    write,
-                });
-            self.next_location_write_id = next_request_id;
-            return Ok((
-                MobileRideMapCoreDecisionDto::Pending { point },
-                Some(request_id),
-            ));
-        }
-        self.admission_recorder
-            .record_admitted_sample(admitted_sample);
-        self.recorder = self.admission_recorder.clone();
-        self.revision = self.revision.saturating_add(1);
-        Ok((MobileRideMapCoreDecisionDto::Accepted { point }, None))
+        };
+        let location_admitted = admission.advances_phone_speed();
+        let (decision, request_id) = map_ride_location_admission(admission);
+        Ok((decision, request_id, location_admitted))
     }
 
     fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
         let needs_restoration = database.is_some();
+        let recording = Arc::new(database.as_ref().map_or_else(
+            cutout_application::ride_recording::RideRecordingApplication::in_memory,
+            |database| {
+                cutout_application::ride_recording::RideRecordingApplication::new(
+                    database.inner.clone(),
+                )
+            },
+        ));
         Self {
             location_callback_capacity: Arc::default(),
             published_location_acquisition: None,
+            recording,
             database,
-            ride_id: None,
             revision: 0,
-            generation: 0,
-            speed_generation_started_at_ms: 0,
             location_acquisition_state: persistence::LocationAcquisitionState::default(),
-            speed: persistence::RecordingSpeedState::default(),
-            recorder: ride_maps::RideMapRecorder::new(),
-            admission_recorder: ride_maps::RideMapRecorder::new(),
-            persisted_telemetry_receipt: None,
-            moving_time_checkpoint: None,
-            latest_verified_vehicle_moving_time: None,
-            music_history_policy: CoreMusicHistoryPolicy::Disabled,
-            music_restore_failed: false,
-            pending_location_writes: VecDeque::new(),
-            settled_location_outcomes: VecDeque::new(),
-            next_location_write_id: 1,
-            recoverable_updated_at_milliseconds: None,
-            last_connected_vehicle: None,
-            last_connection_transition_generation: None,
-            last_connection_transition_ride_id: None,
-            last_connection_association_generation: None,
-            last_connection_association_ride_id: None,
-            monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
             restoration_state: if needs_restoration {
                 MobileRideMapRestorationState::Pending
@@ -12251,265 +11293,12 @@ impl MobileRideMapCoreInner {
         }
     }
 
-    fn restored_route_samples(
-        route_points: &[persistence::RoutePoint],
-    ) -> Vec<ride_maps::RideMapPoint> {
-        route_points
-            .iter()
-            .map(|point| {
-                ride_maps::RideMapPoint::new_with_start_reason(
-                    point.sample(),
-                    ride_maps::RideMapSegmentId::new(point.segment_id()),
-                    point.telemetry_state(),
-                    point.start_reason(),
-                )
-            })
-            .collect()
-    }
-
-    fn restore_active_ride(
-        &mut self,
-        at_ms: u64,
-        apply_automatic_recovery: bool,
-        restore_snapshot: &persistence::RideRestoreSnapshot,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let Some(database) = self.database.clone() else {
-            return Ok(());
-        };
-        self.last_connected_vehicle = restore_snapshot
-            .last_connected_device()
-            .and_then(ride_maps::VehicleIdentity::new);
-        let Some(stored_ride) = restore_snapshot.ride() else {
-            return Ok(());
-        };
-        let ride = mobile_ride_record_dto(stored_ride);
-        // Keep the recorder's live tail bounded but complete. Swift can publish a separate
-        // cancellable durable projection for the whole ride, while Rust must retain enough of
-        // the route to preserve the live recorder and its canonical timing/segment metadata
-        // when the first new location arrives after relaunch.
-        let samples = Self::restored_route_samples(restore_snapshot.route_points());
-        let last_restored_monotonic = samples
-            .last()
-            .map(|sample| sample.sample().monotonic_milliseconds().as_u64());
-        let restored_start_milliseconds = ride
-            .monotonic_created_at_milliseconds
-            .or_else(|| {
-                last_restored_monotonic.map(|last| last.saturating_sub(ride.duration_milliseconds))
-            })
-            .unwrap_or(0);
-        let timing_last = ride
-            .monotonic_last_event_milliseconds
-            .or(last_restored_monotonic)
-            .unwrap_or(restored_start_milliseconds);
-        let timing = ride_maps::RideRecordingTiming::new(
-            ride_maps::MonotonicMilliseconds::new(timing_last),
-            ride.paused_at_milliseconds
-                .map(ride_maps::MonotonicMilliseconds::new),
-            ride_maps::RideDurationMilliseconds::new(ride.paused_duration_milliseconds),
-            ride_maps::RideDurationMilliseconds::new(ride.completed_duration_milliseconds),
-        );
-        let explicit_pause = ride.paused_at_milliseconds.is_some();
-        let persisted_state = map_ride_lifecycle_state(ride.state);
-        let restored_state = match persisted_state {
-            ride_maps::RideLifecycleState::Active => ride_maps::RideLifecycleState::Active,
-            ride_maps::RideLifecycleState::Paused => ride_maps::RideLifecycleState::Paused,
-            ride_maps::RideLifecycleState::Interrupted
-                if apply_automatic_recovery && explicit_pause =>
-            {
-                ride_maps::RideLifecycleState::Paused
-            }
-            ride_maps::RideLifecycleState::Interrupted => {
-                ride_maps::RideLifecycleState::Interrupted
-            }
-            _ => return Err(MobileRideMapCoreErrorDto::NoActiveRide),
-        };
-        self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary_and_timing(
-            restored_state,
-            ride_maps::MonotonicMilliseconds::new(restored_start_milliseconds),
-            ride_maps::RideMapMetadata {
-                candidate_vehicle: ride
-                    .candidate_vehicle
-                    .as_deref()
-                    .and_then(ride_maps::VehicleIdentity::new),
-                associated_vehicle: ride
-                    .associated_vehicle
-                    .as_deref()
-                    .and_then(ride_maps::VehicleIdentity::new),
-                associated_at_milliseconds: ride
-                    .associated_at_milliseconds
-                    .map(ride_maps::MonotonicMilliseconds::new),
-                // Historical receipts do not prove a live connection after process restoration.
-                last_telemetry_at_milliseconds: None,
-                // The display projection still owns complete-route camera fitting and gap
-                // metadata; this recorder tail is only the bounded live admission state.
-                background_gap_count: ride_maps::BackgroundGapCount::default(),
-            },
-            samples,
-            ride_maps::RideSummary::from_stored(
-                ride_maps::RidePointCount::new(ride.summary.point_count),
-                ride.summary.distance_millimetres,
-            ),
-            timing,
-        );
-        self.restore_location_observation(stored_ride);
-        self.ride_id = Some(ride.id.clone());
-        self.moving_time_checkpoint = Some(stored_ride.moving_time_checkpoint());
-        self.latest_verified_vehicle_moving_time = None;
-        self.persisted_telemetry_receipt = ride
-            .last_telemetry_at_milliseconds
-            .map(|at| (ride.id.clone(), at));
-        self.recoverable_updated_at_milliseconds = Some(ride.updated_at_milliseconds);
-        self.admission_recorder = self.recorder.clone();
-        if let Some(policy) = restore_snapshot.music_history_policy() {
-            self.music_history_policy = policy;
-        }
-        if !restore_snapshot.music_history_available() {
-            // Music metadata is optional: retain the recovered ride and report history as unavailable.
-            self.music_restore_failed = true;
-        }
-
-        if apply_automatic_recovery {
-            self.apply_automatic_recovery(
-                &database,
-                stored_ride,
-                at_ms,
-                persisted_state,
-                timing_last,
-                explicit_pause,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn restore_location_observation(&mut self, stored_ride: &persistence::RideRecord) {
-        if let Some(motion) = stored_ride.motion_observation() {
-            self.speed.restore_motion(motion);
-            if let Some(at) = motion.last_stationary_at_milliseconds {
-                self.recorder
-                    .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
-            }
-        }
-        if let Some(sample) = stored_ride.stationary_location_observation() {
-            self.recorder.restore_stationary_observation(sample);
-            return;
-        }
-        if let (Some(at), Some(wall_clock)) = (
-            stored_ride.last_location_observed_monotonic_milliseconds(),
-            stored_ride.last_location_observed_wall_clock_milliseconds(),
-        ) {
-            self.recorder.restore_location_observation(
-                ride_maps::MonotonicMilliseconds::new(at),
-                ride_maps::WallClockUnixMilliseconds::new(wall_clock),
-            );
-        }
-    }
-
-    fn apply_automatic_recovery(
-        &mut self,
-        database: &RideDatabaseHandle,
-        ride: &persistence::RideRecord,
-        at_ms: u64,
-        persisted_state: ride_maps::RideLifecycleState,
-        timing_last: u64,
-        explicit_pause: bool,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        if persisted_state == ride_maps::RideLifecycleState::Active {
-            let last_evidence = timing_last
-                .max(ride.associated_at_milliseconds().unwrap_or(0))
-                .max(ride.last_telemetry_at_milliseconds().unwrap_or(0));
-            self.monotonic_epoch_offset_milliseconds = last_evidence.saturating_sub(at_ms);
-            self.recoverable_updated_at_milliseconds = None;
-            return Ok(());
-        }
-        let now = wall_clock_milliseconds()?;
-        let recovery_kind = if explicit_pause {
-            ride_maps::RideRecoveryKind::ExplicitPause
-        } else {
-            ride_maps::RideRecoveryKind::InvoluntaryInterruption
-        };
-        match ride_maps::ride_recovery_decision(
-            recovery_kind,
-            ride_maps::WallClockUnixMilliseconds::new(now),
-            ride_maps::WallClockUnixMilliseconds::new(ride.updated_at_milliseconds()),
-        ) {
-            ride_maps::RideRecoveryDecision::Resume => {
-                // Vehicle rides resume through verified connection admission. Remembered identity
-                // alone must not make a disconnected recording active after process restoration.
-                if ride.candidate_vehicle().is_none() && ride.associated_vehicle().is_none() {
-                    self.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
-                    self.recoverable_updated_at_milliseconds = None;
-                }
-                return Ok(());
-            }
-            ride_maps::RideRecoveryDecision::KeepPaused => return Ok(()),
-            ride_maps::RideRecoveryDecision::Finalize => {}
-        }
-        let discard_empty = ride.summary().point_count().as_u64() == 0
-            && ride.last_telemetry_at_milliseconds().is_none();
-        let committed_ride_checkpoint = database
-            .settle_recovered_ride(&mobile_ride_id(ride.id()), discard_empty, now, at_ms, None)
-            .map_err(map_core_error)?;
-        self.recoverable_updated_at_milliseconds = None;
-        if discard_empty {
-            self.reset_after_recovery_settlement();
-        } else {
-            if let Some(committed) = committed_ride_checkpoint {
-                let committed_id = mobile_ride_id(committed.ride_id());
-                self.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
-            }
-            let recorded_duration = (!explicit_pause)
-                .then(|| ride.last_recorded_point_duration_milliseconds())
-                .flatten();
-            self.apply_local_recovery_transition(explicit_pause, recorded_duration)?;
-        }
-        Ok(())
-    }
-
-    fn reset_after_recovery_settlement(&mut self) {
-        self.recorder = ride_maps::RideMapRecorder::new();
-        self.admission_recorder = self.recorder.clone();
-        self.ride_id = None;
-        self.pending_location_writes.clear();
-        self.reset_music_history_policy();
-        self.music_restore_failed = false;
-    }
-
-    fn apply_local_recovery_transition(
-        &mut self,
-        explicit_pause: bool,
-        recorded_duration: Option<ride_maps::RideDurationMilliseconds>,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let mut staged = [self.recorder.clone(), self.admission_recorder.clone()];
-        for recorder in &mut staged {
-            if let Some(recorded_duration) = recorded_duration {
-                recorder
-                    .save_interrupted_at_recorded_duration(recorded_duration)
-                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-            } else {
-                if explicit_pause {
-                    let stop = recorder
-                        .validate_transition(MobileRideEventDto::Stop.into())
-                        .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-                    recorder
-                        .apply_transition(stop)
-                        .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-                }
-                let save = recorder
-                    .validate_transition(MobileRideEventDto::Save.into())
-                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-                recorder
-                    .apply_transition(save)
-                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-            }
-        }
-        [self.recorder, self.admission_recorder] = staged;
-        self.revision = self.revision.saturating_add(1);
-        self.generation = self.generation.saturating_add(1);
-        self.latest_verified_vehicle_moving_time = None;
-        Ok(())
-    }
-
     fn restoration_error(&self) -> Option<MobileRideMapCoreErrorDto> {
+        if self.recording.requires_restore() {
+            return Some(map_ride_recording_error(
+                cutout_application::ride_recording::RideRecordingError::RecoveryRequired,
+            ));
+        }
         match self.restoration_state {
             MobileRideMapRestorationState::Ready => None,
             MobileRideMapRestorationState::Pending => Some(MobileRideMapCoreErrorDto::Storage(
@@ -12554,306 +11343,12 @@ impl MobileRideMapCoreInner {
         }
     }
 
-    fn summary(&self) -> MobileRideMapCoreSummaryDto {
-        let summary = self.recorder.summary();
-        let at = self
-            .recorder
-            .recording_timing()
-            .last_monotonic_milliseconds()
-            .as_u64();
-        MobileRideMapCoreSummaryDto {
-            point_count: summary.point_count().as_u64(),
-            distance_meters: millimetres_to_meters(summary.distance_millimetres()),
-            duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
-            moving_time: self.moving_time_at(at),
-            elapsed_time: self.elapsed_time_at(at),
-        }
-    }
-
     fn location_acquisition(&self) -> MobileRideMapLocationAcquisitionDto {
+        let recording = self.recording.snapshot();
         self.location_acquisition_state
-            .acquisition(self.revision, self.recorder.state())
+            .acquisition(self.revision, recording.lifecycle)
             .into()
     }
-
-    fn live_speed(
-        &self,
-        lifecycle: MobileRideLifecycleStateDto,
-        at_milliseconds: u64,
-    ) -> Option<MobileRideMapSpeedDto> {
-        self.speed
-            .selected_at(
-                map_ride_lifecycle_state(lifecycle),
-                self.generation,
-                at_milliseconds,
-            )
-            .map(Into::into)
-    }
-
-    fn snapshot(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSnapshotDto {
-        MobileRideMapCoreSnapshotDto {
-            ride_id: self
-                .ride_id
-                .as_ref()
-                .map_or_else(String::new, mobile_ride_id_string),
-            revision: self.revision,
-            recording_token: (state == MobileRideLifecycleStateDto::Active).then(|| {
-                MobileRideMapRecordingTokenDto {
-                    ride_id: self
-                        .ride_id
-                        .as_ref()
-                        .map_or_else(String::new, mobile_ride_id_string),
-                    generation: self.generation,
-                }
-            }),
-            command_token: self
-                .ride_id
-                .as_ref()
-                .map(|ride_id| MobileRideMapCommandTokenDto {
-                    ride_id: mobile_ride_id_string(ride_id),
-                    generation: self.generation,
-                }),
-            location_acquisition: self.location_acquisition().into(),
-            state,
-            allowed_actions: map_ride_lifecycle_state(state)
-                .recording_actions()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            telemetry_state: self
-                .recorder
-                .telemetry_state_at(
-                    self.recorder
-                        .recording_timing()
-                        .last_monotonic_milliseconds(),
-                )
-                .into(),
-            summary: self.summary(),
-            live_activity_statistics: match state {
-                MobileRideLifecycleStateDto::Active | MobileRideLifecycleStateDto::Paused => {
-                    Some(MobileRideMapLiveActivityStatisticsDto {
-                        duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
-                        distance_millimetres: self.recorder.summary().distance_millimetres(),
-                    })
-                }
-                _ => None,
-            },
-            live_speed: self
-                .live_speed(
-                    state,
-                    self.recorder
-                        .recording_timing()
-                        .last_monotonic_milliseconds()
-                        .as_u64(),
-                )
-                .unwrap_or_default(),
-            segment_count: self.recorder.segment_count().as_u64(),
-            associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
-            recorded_bounds_available: map_ride_lifecycle_state(state).has_recorded_bounds(),
-        }
-    }
-
-    fn snapshot_at(
-        &self,
-        state: MobileRideLifecycleStateDto,
-        at_milliseconds: u64,
-    ) -> MobileRideMapCoreSnapshotDto {
-        let at_milliseconds = self.logical_monotonic_milliseconds(at_milliseconds);
-        self.snapshot_at_logical(state, at_milliseconds)
-    }
-
-    fn snapshot_at_logical(
-        &self,
-        state: MobileRideLifecycleStateDto,
-        at_milliseconds: u64,
-    ) -> MobileRideMapCoreSnapshotDto {
-        let mut snapshot = self.snapshot(state);
-        snapshot.telemetry_state = self
-            .recorder
-            .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
-            .into();
-        snapshot.summary.duration_milliseconds = self
-            .recorder
-            .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
-            .as_u64();
-        snapshot.summary.moving_time = self.moving_time_at(at_milliseconds);
-        snapshot.summary.elapsed_time = self.elapsed_time_at(at_milliseconds);
-        if let Some(statistics) = &mut snapshot.live_activity_statistics {
-            statistics.duration_milliseconds = snapshot.summary.duration_milliseconds;
-        }
-        snapshot.live_speed = self.live_speed(state, at_milliseconds).unwrap_or_default();
-        snapshot
-    }
-
-    fn start_gps_only(
-        &mut self,
-        at_ms: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let candidate_vehicle = self
-            .last_connected_vehicle
-            .as_ref()
-            .map(|identity| identity.as_str().to_owned());
-        self.start_gps_only_at(at_ms, candidate_vehicle.as_deref())
-    }
-
-    fn start_gps_only_at(
-        &mut self,
-        at_ms: u64,
-        candidate_vehicle: Option<&str>,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.start_gps_only_at_with_checkpoint(at_ms, candidate_vehicle, None)
-    }
-
-    fn start_gps_only_at_with_checkpoint(
-        &mut self,
-        at_ms: u64,
-        candidate_vehicle: Option<&str>,
-        committed_ride_checkpoint: Option<persistence::CommittedRideMovingTimeCheckpoint>,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        if self.recorder.state().is_some_and(|current| {
-            !(match current {
-                ride_maps::RideLifecycleState::Stopped
-                | ride_maps::RideLifecycleState::Interrupted
-                | ride_maps::RideLifecycleState::Saved
-                | ride_maps::RideLifecycleState::Discarded => true,
-                _ => false,
-            })
-        }) {
-            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
-        }
-        self.monotonic_epoch_offset_milliseconds = 0;
-        let mut staged_recorder = self.recorder.clone();
-        staged_recorder
-            .start(
-                ride_maps::MonotonicMilliseconds::new(at_ms),
-                candidate_vehicle.and_then(ride_maps::VehicleIdentity::new),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
-        let committed_ride_checkpoint = match committed_ride_checkpoint {
-            Some(committed) => Some(committed),
-            None => match self.database.as_ref() {
-                Some(database) => Some(
-                    database
-                        .create_started_live_ride(
-                            wall_clock_milliseconds()?,
-                            at_ms,
-                            candidate_vehicle,
-                        )
-                        .map_err(map_core_error)?,
-                ),
-                None => None,
-            },
-        };
-        if committed_ride_checkpoint
-            .is_some_and(|committed| committed.lifecycle() != ride_maps::RideLifecycleState::Active)
-        {
-            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-        }
-        let id = committed_ride_checkpoint.map_or_else(
-            || mobile_ride_id_from_uuid(Uuid::new_v4()),
-            |committed| mobile_ride_id(committed.ride_id()),
-        );
-        self.recorder = staged_recorder.clone();
-        self.admission_recorder = staged_recorder;
-        self.ride_id = Some(id);
-        self.moving_time_checkpoint = committed_ride_checkpoint
-            .map(persistence::CommittedRideMovingTimeCheckpoint::checkpoint);
-        self.latest_verified_vehicle_moving_time = None;
-        self.persisted_telemetry_receipt = None;
-        self.revision = self.revision.saturating_add(1);
-        self.generation = self.generation.saturating_add(1);
-        self.latest_verified_vehicle_moving_time = None;
-        self.speed = persistence::RecordingSpeedState::default();
-        self.speed_generation_started_at_ms = at_ms;
-        self.reset_music_history_policy();
-        self.music_restore_failed = false;
-        self.pending_location_writes.clear();
-        self.recoverable_updated_at_milliseconds = None;
-        Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
-    }
-}
-
-fn remember_last_connected_vehicle(
-    state: &mut MobileRideMapCoreInner,
-    identity: &ride_maps::VehicleIdentity,
-    platform_identifier: &str,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    if let Some(database) = state.database.as_ref() {
-        database
-            .inner
-            .remember_last_connected_device(platform_identifier, wall_clock_milliseconds()?)
-            .map_err(map_storage_core_error)?;
-    }
-    state.last_connected_vehicle = Some(identity.clone());
-    Ok(())
-}
-
-fn apply_connection_recording_policy(
-    state: &mut MobileRideMapCoreInner,
-    platform_identifier: &str,
-    at_ms: u64,
-    automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    if automatic_policy != MobileRideMapAutomaticRecordingPolicyDto::StartAndResume {
-        return Ok(());
-    }
-    let current_vehicle = state
-        .recorder
-        .associated_vehicle()
-        .or_else(|| state.recorder.candidate_vehicle());
-    let current_ride_belongs_to_another_vehicle = state
-        .recorder
-        .state()
-        .is_some_and(ride_maps::RideLifecycleState::is_recording)
-        && current_vehicle.is_some_and(|vehicle| vehicle != platform_identifier);
-    let autostart_enabled = state.ride_autostart_enabled()?;
-    if current_ride_belongs_to_another_vehicle && autostart_enabled {
-        state.transition_inner_at(MobileRideEventDto::Stop, at_ms)?;
-        state.transition_inner_at(MobileRideEventDto::Save, at_ms)?;
-    }
-    if state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
-        let now = wall_clock_milliseconds()?;
-        let matches_vehicle = state.recorder.associated_vehicle() == Some(platform_identifier)
-            || (state.recorder.associated_vehicle().is_none()
-                && state.recorder.candidate_vehicle() == Some(platform_identifier));
-        let recovery_decision = state.recoverable_updated_at_milliseconds.map(|updated_at| {
-            ride_maps::ride_recovery_decision(
-                ride_maps::RideRecoveryKind::InvoluntaryInterruption,
-                ride_maps::WallClockUnixMilliseconds::new(now),
-                ride_maps::WallClockUnixMilliseconds::new(updated_at),
-            )
-        });
-        if matches_vehicle && recovery_decision == Some(ride_maps::RideRecoveryDecision::Resume) {
-            state.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
-            state.recoverable_updated_at_milliseconds = None;
-        }
-    }
-    if autostart_enabled
-        && state
-            .recorder
-            .state()
-            .is_none_or(ride_maps::RideLifecycleState::allows_auto_recording_replacement)
-    {
-        state.start_gps_only(at_ms)?;
-    }
-    Ok(())
-}
-
-fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
-    match state {
-        MobileRideLifecycleStateDto::Draft => ride_maps::RideLifecycleState::Draft,
-        MobileRideLifecycleStateDto::Active => ride_maps::RideLifecycleState::Active,
-        MobileRideLifecycleStateDto::Paused => ride_maps::RideLifecycleState::Paused,
-        MobileRideLifecycleStateDto::Stopped => ride_maps::RideLifecycleState::Stopped,
-        MobileRideLifecycleStateDto::Interrupted => ride_maps::RideLifecycleState::Interrupted,
-        MobileRideLifecycleStateDto::Discarded => ride_maps::RideLifecycleState::Discarded,
-        MobileRideLifecycleStateDto::Saved => ride_maps::RideLifecycleState::Saved,
-        MobileRideLifecycleStateDto::Imported => ride_maps::RideLifecycleState::Imported,
-    }
-}
-
-fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
-    state.is_some_and(ride_maps::RideLifecycleState::is_recording)
 }
 
 fn map_ride_telemetry_state(
@@ -12915,26 +11410,25 @@ impl MobileRideMapCore {
     fn checkpoint_for_location_callback(
         &self,
     ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let metadata_error = state.flush_telemetry_receipt().err();
+        let telemetry_error = state.recording.checkpoint_telemetry_receipt().err();
         let mut outcomes = state.checkpoint_location_outcomes()?;
-        if let Some(error) = metadata_error {
-            let at_ms = state
-                .recorder
-                .recording_timing()
-                .last_monotonic_milliseconds()
-                .as_u64();
-            if let Some(lifecycle) = state.recorder.state() {
-                let snapshot = state.snapshot_at_logical(lifecycle.into(), at_ms);
-                outcomes.push(MobileRideMapCoreOutcomeDto {
-                    request_id: None,
-                    ride_id: snapshot.ride_id.clone(),
-                    decision: MobileRideMapCoreDecisionDto::StorageError {
-                        message: error.to_string(),
-                    },
-                    snapshot,
-                });
+        if let Some(error) = telemetry_error {
+            let recording = state.recording.snapshot();
+            if recording.lifecycle.is_some() {
+                let at_ms = recording
+                    .last_monotonic_ms
+                    .saturating_sub(recording.monotonic_epoch_offset_ms);
+                if let Some(snapshot) = state.project_recording_snapshot(&recording, at_ms) {
+                    let message = map_ride_recording_error(error).to_string();
+                    outcomes.push(MobileRideMapCoreOutcomeDto {
+                        request_id: None,
+                        ride_id: snapshot.ride_id.clone(),
+                        decision: MobileRideMapCoreDecisionDto::StorageError { message },
+                        snapshot,
+                    });
+                }
             }
         }
         Ok(outcomes)
@@ -12943,7 +11437,7 @@ impl MobileRideMapCore {
     fn checkpoint_locations(
         &self,
     ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         state.checkpoint_location_outcomes()
     }
@@ -12952,33 +11446,43 @@ impl MobileRideMapCore {
         self: &Arc<Self>,
         at_ms: u64,
     ) -> Result<Arc<MobileRideMapRestoreCommand>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.restoration_state == MobileRideMapRestorationState::Ready {
-            let snapshot = state
-                .recorder
-                .state()
-                .map(|lifecycle| state.snapshot_at(lifecycle.into(), at_ms));
-            return Ok(MobileRideMapRestoreCommand::completed(
-                Arc::clone(self),
-                Ok(snapshot),
-            ));
-        }
-        if state.pending_music_stop_command_id.is_some() {
-            return Err(MobileRideMapCoreErrorDto::AdmissionPending);
-        }
-        if state.pending_restore_command_id.is_some() {
-            return Err(MobileRideMapCoreErrorDto::AdmissionPending);
-        }
-        let command_id = state.next_restore_command_id;
-        state.next_restore_command_id = command_id.checked_add(1).ok_or_else(|| {
-            MobileRideMapCoreErrorDto::Storage("restore command IDs exhausted".to_owned())
-        })?;
-        state.pending_restore_command_id = Some(command_id);
-        state.initialization_error = None;
-        let database = state.database.clone();
-        drop(state);
+        let (recording, database, command_id) = {
+            let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.restoration_state == MobileRideMapRestorationState::Ready {
+                let snapshot = state.recording.snapshot_at(at_ms);
+                return Ok(MobileRideMapRestoreCommand::completed(
+                    Arc::clone(self),
+                    Ok(state.project_recording_snapshot(&snapshot, at_ms)),
+                ));
+            }
+            if state.pending_music_stop_command_id.is_some()
+                || state.pending_restore_command_id.is_some()
+            {
+                return Err(MobileRideMapCoreErrorDto::AdmissionPending);
+            }
+            let command_id = state.next_restore_command_id;
+            state.next_restore_command_id = command_id.checked_add(1).ok_or_else(|| {
+                MobileRideMapCoreErrorDto::Storage("restore command IDs exhausted".to_owned())
+            })?;
+            state.pending_restore_command_id = Some(command_id);
+            state.initialization_error = None;
+            (
+                Arc::clone(&state.recording),
+                state.database.clone(),
+                command_id,
+            )
+        };
 
+        let prepared = match recording.begin_restore() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let error = map_ride_recording_error(error);
+                let _ = self.fail_restore(command_id, error.clone());
+                return Err(error);
+            }
+        };
         let (sender, response) = std::sync::mpsc::channel();
+        let worker_recording = Arc::clone(&recording);
         let worker_database = database.clone();
         let worker_core = Arc::clone(self);
         let spawn = std::thread::Builder::new()
@@ -12987,42 +11491,18 @@ impl MobileRideMapCore {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     #[cfg(test)]
                     wait_ride_map_restore_test_gate();
-                    let mut restored = MobileRideMapCoreInner::new(worker_database.clone());
-                    let restore_result = match worker_database {
-                        Some(database) => database
-                            .inner
-                            .queue_restore_snapshot()
-                            .and_then(persistence::PendingRideRestoreSnapshot::wait_result)
-                            .map_err(map_storage_core_error)
-                            .and_then(|snapshot| {
-                                restored.restore_active_ride(at_ms, true, &snapshot)
-                            }),
-                        None => Ok(()),
-                    };
-                    let result = match restore_result {
-                        Ok(()) => {
-                            restored.restoration_state = MobileRideMapRestorationState::Ready;
-                            Ok(restored
-                                .recorder
-                                .state()
-                                .map(|lifecycle| restored.snapshot_at(lifecycle.into(), at_ms)))
-                        }
-                        Err(error) => {
-                            restored.initialization_error = Some(error.clone());
-                            restored.restoration_state = MobileRideMapRestorationState::Failed;
-                            Err(error)
-                        }
-                    };
-                    worker_core.complete_restore(command_id, restored, result)
+                    let policy = ride_recovery_policy(worker_database.as_ref(), at_ms, true)?;
+                    worker_recording
+                        .finish_restore_with_policy(prepared, &policy)
+                        .map(|recovery| recovery.snapshot)
+                        .map_err(map_ride_recording_error)
                 }))
                 .unwrap_or_else(|_| {
-                    worker_core.fail_restore(
-                        command_id,
-                        MobileRideMapCoreErrorDto::Storage(
-                            "ride-map restore worker panicked before settlement".to_owned(),
-                        ),
-                    )
+                    Err(MobileRideMapCoreErrorDto::Storage(
+                        "ride-map restore worker panicked before settlement".to_owned(),
+                    ))
                 });
+                let result = worker_core.complete_restore(command_id, at_ms, result);
                 let _ = sender.send(result);
             });
         if let Err(error) = spawn {
@@ -13040,48 +11520,29 @@ impl MobileRideMapCore {
     fn complete_restore(
         &self,
         command_id: u64,
-        mut restored: MobileRideMapCoreInner,
-        result: Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>,
+        at_ms: u64,
+        result: Result<
+            cutout_application::ride_recording::RideRecordingSnapshot,
+            MobileRideMapCoreErrorDto,
+        >,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.pending_restore_command_id != Some(command_id) {
             return Err(MobileRideMapCoreErrorDto::StaleConnection);
         }
-        // Native evidence can arrive while the durable projection is loading. Preserve
-        // its generation fences instead of replacing it with the worker's defaults.
-        restored.location_callback_capacity = Arc::clone(&state.location_callback_capacity);
-        restored.published_location_acquisition = state.published_location_acquisition;
-        restored.location_acquisition_state = state.location_acquisition_state;
-        restored.revision = restored.revision.saturating_add(state.revision);
-        let Some(generation) = restored.generation.max(state.generation).checked_add(1) else {
-            let error = MobileRideMapCoreErrorDto::Storage(
-                "ride recording generations exhausted".to_owned(),
-            );
-            state.pending_restore_command_id = None;
-            state.initialization_error = Some(error.clone());
-            state.restoration_state = MobileRideMapRestorationState::Failed;
-            return Err(error);
-        };
-        restored.generation = generation;
-        restored.next_restore_command_id = state.next_restore_command_id;
-        restored.next_lifecycle_command_id = state.next_lifecycle_command_id;
-        restored.next_connection_admission_id = state.next_connection_admission_id;
-        restored.next_location_write_id = state.next_location_write_id;
-        restored.pending_restore_command_id = None;
-        *state = restored;
-        result.map(|snapshot| {
-            snapshot.map(|mut snapshot| {
-                snapshot.revision = state.revision;
-                snapshot.location_acquisition = state.location_acquisition().into();
-                if let Some(token) = snapshot.recording_token.as_mut() {
-                    token.generation = state.generation;
-                }
-                if let Some(token) = snapshot.command_token.as_mut() {
-                    token.generation = state.generation;
-                }
-                snapshot
-            })
-        })
+        state.pending_restore_command_id = None;
+        match result {
+            Ok(snapshot) => {
+                state.initialization_error = None;
+                state.restoration_state = MobileRideMapRestorationState::Ready;
+                Ok(state.project_recording_snapshot(&snapshot, at_ms))
+            }
+            Err(error) => {
+                state.initialization_error = Some(error.clone());
+                state.restoration_state = MobileRideMapRestorationState::Failed;
+                Err(error)
+            }
+        }
     }
 
     fn fail_restore(
@@ -13101,18 +11562,25 @@ impl MobileRideMapCore {
     fn begin_lifecycle_command_inner(
         self: &Arc<Self>,
         event: MobileRideEventDto,
-        expected: MobileRideMapCommandTokenDto,
+        expected: &MobileRideMapCommandTokenDto,
         at_ms: u64,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_lifecycle_ready()?;
-        state.validate_lifecycle_command(event, &expected)?;
         let command_id = state.next_lifecycle_command_id;
         let next_command_id = command_id.checked_add(1).ok_or_else(|| {
             MobileRideMapCoreErrorDto::Storage("lifecycle command IDs exhausted".to_owned())
         })?;
         let (command, admission) =
             MobileRideMapLifecycleCommand::prepare(Arc::clone(self), command_id)?;
+        let recording = Arc::clone(&state.recording);
+        let token = cutout_application::ride_recording::RideRecordingToken {
+            ride_id: Uuid::parse_str(&expected.ride_id)
+                .map(persistence::RideId::from_uuid)
+                .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?,
+            generation: expected.generation,
+        };
+        let last_telemetry_at_ms = recording.pending_telemetry_receipt();
         let pending = if event == MobileRideEventDto::Stop {
             if let Some(queue) = &*self
                 .music_observations
@@ -13120,24 +11588,44 @@ impl MobileRideMapCore {
                 .unwrap_or_else(PoisonError::into_inner)
             {
                 let music = queue.begin_stop()?;
+                let operation = recording
+                    .begin_stop_after_music(
+                        token,
+                        at_ms,
+                        last_telemetry_at_ms,
+                        music.into_application_fence(),
+                    )
+                    .map_err(map_ride_recording_error)?;
                 state.pending_music_stop_command_id = Some(command_id);
                 PendingMobileRideCommand::StopAfterMusic(PendingMobileRideMusicStop {
                     command_id,
-                    expected,
                     at_ms,
-                    music,
+                    operation,
                 })
             } else {
-                PendingMobileRideCommand::Transition(
-                    state.prepare_lifecycle_transition(event, &expected, at_ms, command_id)?,
-                )
+                let operation = recording
+                    .begin_transition(token, event.into(), at_ms, last_telemetry_at_ms)
+                    .map_err(map_ride_recording_error)?;
+                PendingMobileRideCommand::Transition(PendingMobileRideLifecycle {
+                    command_id,
+                    event,
+                    at_ms,
+                    operation,
+                })
             }
         } else {
-            PendingMobileRideCommand::Transition(
-                state.prepare_lifecycle_transition(event, &expected, at_ms, command_id)?,
-            )
+            let operation = recording
+                .begin_transition(token, event.into(), at_ms, last_telemetry_at_ms)
+                .map_err(map_ride_recording_error)?;
+            PendingMobileRideCommand::Transition(PendingMobileRideLifecycle {
+                command_id,
+                event,
+                at_ms,
+                operation,
+            })
         };
         state.next_lifecycle_command_id = next_command_id;
+        state.pending_lifecycle_command_id = Some(command_id);
         if admission.send(pending).is_err() {
             drop(state);
             return self
@@ -13159,54 +11647,30 @@ impl MobileRideMapCore {
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_lifecycle_ready()?;
-        let can_start_ride = match state.recorder.state() {
-            None
-            | Some(
-                ride_maps::RideLifecycleState::Stopped
-                | ride_maps::RideLifecycleState::Interrupted
-                | ride_maps::RideLifecycleState::Saved
-                | ride_maps::RideLifecycleState::Discarded,
-            ) => true,
-            Some(_) => false,
-        };
-        if !can_start_ride {
-            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
-        }
         let command_id = state.next_lifecycle_command_id;
         let next_command_id = command_id.checked_add(1).ok_or_else(|| {
             MobileRideMapCoreErrorDto::Storage("lifecycle command IDs exhausted".to_owned())
         })?;
         let (command, admission) =
             MobileRideMapLifecycleCommand::prepare(Arc::clone(self), command_id)?;
-        let candidate_vehicle = state
-            .last_connected_vehicle
-            .as_ref()
-            .map(|identity| identity.as_str().to_owned());
-        let storage = state
-            .database
-            .as_ref()
-            .map(|database| {
-                database
-                    .inner
-                    .queue_create_started_live_ride_with_music_policy(
-                        wall_clock_milliseconds()?,
-                        at_ms,
-                        candidate_vehicle.as_deref(),
-                        Some(music_history_policy),
-                    )
-                    .map_err(map_storage_core_error)
-            })
-            .transpose()?;
+        let recording = Arc::clone(&state.recording);
+        let candidate_vehicle = recording.snapshot().last_connected_vehicle;
+        let created_at_unix_ms = wall_clock_milliseconds()?;
+        let operation = recording
+            .begin_start(
+                at_ms,
+                created_at_unix_ms,
+                candidate_vehicle,
+                Some(music_history_policy),
+            )
+            .map_err(map_start_recording_error)?;
         state.next_lifecycle_command_id = next_command_id;
         state.pending_lifecycle_command_id = Some(command_id);
         if admission
             .send(PendingMobileRideCommand::Start(PendingMobileRideStart {
                 command_id,
                 at_ms,
-                candidate_vehicle,
-                music_history_policy,
-                storage,
-                committed_ride_checkpoint: None,
+                operation,
             }))
             .is_err()
         {
@@ -13244,120 +11708,77 @@ impl MobileRideMapCore {
 
     fn complete_start_gps_only_command(
         &self,
-        pending: &PendingMobileRideStart,
-        storage_result: Result<(), MobileRideMapCoreErrorDto>,
+        command_id: u64,
+        at_ms: u64,
+        result: Result<
+            cutout_application::ride_recording::RideRecordingSnapshot,
+            cutout_application::ride_recording::RideRecordingError,
+        >,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let unknown = is_unknown_recording_storage_outcome(&error);
+                let mapped = map_start_recording_error(error);
+                if unknown || self.recording_requires_restore() {
+                    return self.fail_lifecycle_settlement(command_id, mapped);
+                }
+                let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if state.pending_lifecycle_command_id == Some(command_id) {
+                    state.pending_lifecycle_command_id = None;
+                }
+                return Err(mapped);
+            }
+        };
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.pending_lifecycle_command_id != Some(pending.command_id) {
+        if state.pending_lifecycle_command_id != Some(command_id) {
             return Err(MobileRideMapCoreErrorDto::StaleConnection);
         }
-        if let Err(error) = storage_result {
-            state.pending_lifecycle_command_id = None;
-            return Err(error);
-        }
-        let result = state.start_gps_only_at_with_checkpoint(
-            pending.at_ms,
-            pending.candidate_vehicle.as_deref(),
-            pending.committed_ride_checkpoint,
-        );
-        match result {
-            Ok(snapshot) => {
-                state.apply_music_history_policy(pending.music_history_policy);
-                state.pending_lifecycle_command_id = None;
-                Ok(snapshot)
-            }
-            Err(error) => {
-                drop(state);
-                self.fail_lifecycle_settlement(pending.command_id, error)
-            }
-        }
+        state.pending_lifecycle_command_id = None;
+        state
+            .project_recording_snapshot(&snapshot, at_ms)
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 
     fn complete_lifecycle_command(
         &self,
-        pending: &PendingMobileRideLifecycle,
-        storage_result: Result<
-            Option<persistence::CommittedRideMovingTimeCheckpoint>,
-            MobileRideMapCoreErrorDto,
+        command_id: u64,
+        _event: MobileRideEventDto,
+        at_ms: u64,
+        result: Result<
+            cutout_application::ride_recording::RideRecordingSnapshot,
+            cutout_application::ride_recording::RideRecordingError,
         >,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.pending_lifecycle_command_id != Some(pending.command_id)
-            || state.ride_id.as_ref() != Some(&pending.ride_id)
-        {
-            return Err(MobileRideMapCoreErrorDto::StaleConnection);
-        }
-        let committed_ride_checkpoint = match storage_result {
-            Ok(checkpoint) => checkpoint,
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
             Err(error) => {
-                state.pending_lifecycle_command_id = None;
-                return Err(error);
+                let unknown = is_unknown_recording_storage_outcome(&error);
+                let mapped = map_ride_recording_error(error);
+                if unknown || self.recording_requires_restore() {
+                    return self.fail_lifecycle_settlement(command_id, mapped);
+                }
+                let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if state.pending_lifecycle_command_id == Some(command_id) {
+                    state.pending_lifecycle_command_id = None;
+                }
+                if state.pending_music_stop_command_id == Some(command_id) {
+                    state.pending_music_stop_command_id = None;
+                }
+                return Err(mapped);
             }
         };
-        if let Some(at) = pending.last_telemetry_at_ms {
-            state.persisted_telemetry_receipt = Some((pending.ride_id.clone(), at));
-        }
-        if let Some(committed) = committed_ride_checkpoint {
-            let committed_id = mobile_ride_id(committed.ride_id());
-            if committed_id != pending.ride_id || committed.lifecycle() != pending.transition.next()
-            {
-                state.pending_lifecycle_command_id = None;
-                return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-            }
-        }
-        if pending.transition.next() == ride_maps::RideLifecycleState::Discarded {
-            state.moving_time_checkpoint = None;
-        } else if let Some(committed) = committed_ride_checkpoint {
-            let committed_id = mobile_ride_id(committed.ride_id());
-            state.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
-        }
-        state.latest_verified_vehicle_moving_time = None;
-        let outcomes = state.poll_location_write_outcomes(pending.logical_at_ms);
-        state.settled_location_outcomes.extend(outcomes);
-        let projection_result = state
-            .recorder
-            .apply_transition_at(
-                pending.transition,
-                ride_maps::MonotonicMilliseconds::new(pending.logical_at_ms),
-            )
-            .and_then(|()| {
-                state.admission_recorder.apply_transition_at(
-                    pending.transition,
-                    ride_maps::MonotonicMilliseconds::new(pending.logical_at_ms),
-                )
-            });
-        if projection_result.is_err() {
-            drop(state);
-            return self.fail_lifecycle_settlement(
-                pending.command_id,
-                MobileRideMapCoreErrorDto::InvalidTransition,
-            );
-        }
-        state.monotonic_epoch_offset_milliseconds = pending.epoch_offset_ms;
-        if pending.event == MobileRideEventDto::Resume {
-            state.recoverable_updated_at_milliseconds = None;
-        }
-        state.revision = state.revision.saturating_add(1);
-        state.generation = state.generation.saturating_add(1);
-        if pending.event == MobileRideEventDto::Resume {
-            state.speed_generation_started_at_ms = pending.logical_at_ms;
-        }
-        let snapshot =
-            state.snapshot_at_logical(pending.transition.next().into(), pending.logical_at_ms);
-        match pending.event {
-            MobileRideEventDto::Save => state.admission_recorder = state.recorder.clone(),
-            MobileRideEventDto::Discard => {
-                state.pending_location_writes.clear();
-                state.admission_recorder = state.recorder.clone();
-                state.ride_id = None;
-                state.recoverable_updated_at_milliseconds = None;
-                state.reset_music_history_policy();
-                state.music_restore_failed = false;
-            }
-            _ => {}
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_lifecycle_command_id != Some(command_id) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
         }
         state.pending_lifecycle_command_id = None;
-        Ok(snapshot)
+        if state.pending_music_stop_command_id == Some(command_id) {
+            state.pending_music_stop_command_id = None;
+        }
+        state
+            .project_recording_snapshot(&snapshot, at_ms)
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 }
 
@@ -13397,13 +11818,17 @@ impl MobileRideMapCore {
     ///
     /// Returns an error when the transition is invalid, another operation is pending, or the
     /// bounded storage queue cannot accept the command.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "The exported UniFFI method retains its owned DTO contract."
+    )]
     pub fn begin_lifecycle_command(
         self: &Arc<Self>,
         event: MobileRideEventDto,
         expected: MobileRideMapCommandTokenDto,
         at_ms: u64,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
-        self.begin_lifecycle_command_inner(event, expected, at_ms)
+        self.begin_lifecycle_command_inner(event, &expected, at_ms)
     }
 
     /// Shares music admission with every explicit Stop route on this Core.
@@ -13453,7 +11878,12 @@ impl MobileRideMapCore {
     /// Returns a storage error if the saved preference cannot be read.
     pub fn ride_autostart_enabled(&self) -> Result<bool, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.ride_autostart_enabled()
+        state.database.as_ref().map_or(Ok(true), |database| {
+            database
+                .inner
+                .ride_autostart_enabled()
+                .map_err(map_storage_core_error)
+        })
     }
 
     /// Saves the preference for future connections without changing the current ride.
@@ -13514,18 +11944,23 @@ impl MobileRideMapCore {
     /// Core Location callback frequency.
     pub fn current_snapshot(&self, at_ms: u64) -> Option<MobileRideMapCoreSnapshotDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state
-            .ride_id
-            .as_ref()
-            .zip(state.recorder.state())
-            .map(|(_, active)| state.snapshot_at(active.into(), at_ms))
+        let snapshot = state.recording.snapshot();
+        (snapshot.lifecycle != Some(ride_maps::RideLifecycleState::Discarded))
+            .then(|| state.project_recording_snapshot(&snapshot, at_ms))
+            .flatten()
     }
 
     /// Returns a storage error encountered while restoring the previous ride projection.
     #[must_use]
     pub fn initialization_error(&self) -> Option<MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.initialization_error.clone()
+        state.initialization_error.clone().or_else(|| {
+            state.recording.requires_restore().then(|| {
+                map_ride_recording_error(
+                    cutout_application::ride_recording::RideRecordingError::RecoveryRequired,
+                )
+            })
+        })
     }
 
     /// Returns whether durable ride recovery has completed successfully.
@@ -13533,6 +11968,7 @@ impl MobileRideMapCore {
     pub fn is_ready(&self) -> bool {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.restoration_state == MobileRideMapRestorationState::Ready
+            && !state.recording.requires_restore()
     }
 
     /// Completes deferred durable ride recovery on the caller's serialized ride-map queue.
@@ -13564,9 +12000,28 @@ impl MobileRideMapCore {
         &self,
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_lifecycle_ready()?;
-        state.start_gps_only(at_ms)
+        let (recording, candidate_vehicle) = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_lifecycle_ready()?;
+            let recording = Arc::clone(&state.recording);
+            let candidate_vehicle = recording.snapshot().last_connected_vehicle;
+            (recording, candidate_vehicle)
+        };
+        let operation = recording
+            .begin_start(at_ms, wall_clock_milliseconds()?, candidate_vehicle, None)
+            .map_err(map_start_recording_error)?;
+        let snapshot = recording.finish_start(operation).map_err(|error| {
+            let mapped = map_start_recording_error(error);
+            if recording.requires_restore() {
+                self.mark_restoration_failed(mapped.clone());
+            }
+            mapped
+        })?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .project_recording_snapshot(&snapshot, at_ms)
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 
     fn ensure_recording_for_vehicle_with_connection_generation(
@@ -13578,110 +12033,64 @@ impl MobileRideMapCore {
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         let identity = ride_maps::VehicleIdentity::new(platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let platform_identifier = identity.as_str().to_owned();
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_lifecycle_ready()?;
-        let connection_generation_consumed = connection_generation.is_some_and(|generation| {
-            state.last_connection_transition_generation == Some(generation)
-        });
-        if connection_generation.is_some_and(|generation| {
-            state.last_connection_association_generation == Some(generation)
-                && state.last_connection_association_ride_id == state.ride_id
-        }) {
-            return Ok(state
-                .recorder
-                .state()
-                .map(|lifecycle| state.snapshot(lifecycle.into())));
-        }
-        remember_last_connected_vehicle(&mut state, &identity, &platform_identifier)?;
-        let automatic_policy =
-            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
-        let autostart_disabled = automatic_policy
-            == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
-            && !state.ride_autostart_enabled()?;
-        if !connection_generation_consumed {
-            apply_connection_recording_policy(
-                &mut state,
-                &platform_identifier,
-                at_ms,
-                automatic_policy,
-            )?;
-            // Consume lifecycle admission before attempting association. A timestamp-order
-            // retry must not reapply this policy if preferences change in the meantime.
-            state.remember_connection_admission(connection_generation);
-        }
-
-        // Remember the admission decision even when autostart is off. Changing the setting
-        // must not turn the next notification into a fresh connection. A manual start changes
-        // ride_id, so the same generation can still associate with that new ride.
-        if state.recorder.state().is_none() {
-            state.remember_connection_admission(connection_generation);
-            state.remember_connection_association(connection_generation);
-            return if connection_generation.is_some() {
+        let recording = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_lifecycle_ready()?;
+            Arc::clone(&state.recording)
+        };
+        let has_connection_generation = connection_generation.is_some();
+        let connection_generation = match connection_generation {
+            Some(generation) => generation,
+            None => recording
+                .snapshot()
+                .last_connection_transition_generation
+                .map_or(Ok(0), |previous| {
+                    previous.checked_add(1).ok_or_else(|| {
+                        MobileRideMapCoreErrorDto::Storage(
+                            "connection generation identifiers are exhausted".to_owned(),
+                        )
+                    })
+                })?,
+        };
+        let policy = match explicit_policy {
+            Some(MobileRideMapAutomaticRecordingPolicyDto::ManualOnly) => {
+                cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly
+            }
+            Some(MobileRideMapAutomaticRecordingPolicyDto::StartAndResume) => {
+                cutout_application::ride_recording::VerifiedConnectionTestPolicy::StartAndResume
+            }
+            None => cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly,
+        };
+        let admission_result = if explicit_policy.is_some() {
+            recording
+                .begin_verified_connection_admission_with_test_policy(
+                    identity.as_str(),
+                    at_ms,
+                    connection_generation,
+                    CoreMusicHistoryPolicy::Disabled,
+                    policy,
+                )
+                .and_then(|operation| recording.finish_verified_connection_admission(operation))
+        } else {
+            recording
+                .begin_verified_connection_admission(
+                    identity.as_str(),
+                    at_ms,
+                    connection_generation,
+                    CoreMusicHistoryPolicy::Disabled,
+                )
+                .and_then(|operation| recording.finish_verified_connection_admission(operation))
+        };
+        let snapshot = admission_result.map_err(map_verified_connection_admission_error)?;
+        let Some(snapshot) = snapshot else {
+            return if has_connection_generation {
                 Ok(None)
             } else {
                 Err(MobileRideMapCoreErrorDto::NoActiveRide)
             };
-        }
-        if connection_generation.is_some()
-            && !state
-                .recorder
-                .state()
-                .is_some_and(ride_maps::RideLifecycleState::is_recording)
-        {
-            // Retain the terminal ride and consume this automatic admission decision.
-            // A later manual start can still associate because its ride identity is different.
-            state.remember_connection_admission(connection_generation);
-            state.remember_connection_association(connection_generation);
-            let lifecycle = state
-                .recorder
-                .state()
-                .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-            return Ok(Some(state.snapshot(lifecycle.into())));
-        }
-
-        let mut staged = state.admission_recorder.clone();
-        let mut durable_staged = state.recorder.clone();
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let association =
-            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        if association == ride_maps::VehicleAssociation::Associated {
-            let _ = durable_staged
-                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-            if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
-                database
-                    .update_ride_map_metadata(
-                        id,
-                        staged.candidate_vehicle().map(str::to_owned),
-                        Some(platform_identifier),
-                        staged
-                            .associated_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                        staged
-                            .last_telemetry_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    )
-                    .map_err(map_core_error)?;
-            }
-            state.revision = state.revision.saturating_add(1);
-        }
-        state.recorder = durable_staged;
-        state.admission_recorder = staged;
-        let lifecycle = state
-            .recorder
-            .state()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        if let Some(generation) = connection_generation
-            && (match association {
-                ride_maps::VehicleAssociation::Associated
-                | ride_maps::VehicleAssociation::AlreadyAssociated => true,
-                ride_maps::VehicleAssociation::IdentityMismatch => autostart_disabled,
-                _ => false,
-            })
-        {
-            state.remember_connection_association(Some(generation));
-        }
-        Ok(Some(state.snapshot(lifecycle.into())))
+        };
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(state.project_recording_snapshot(&snapshot, at_ms))
     }
 
     /// Pauses the active ride.
@@ -13710,8 +12119,12 @@ impl MobileRideMapCore {
         expected: Option<MobileRideMapRecordingTokenDto>,
         at_ms: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
+        let (recording, database) = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_ready()?;
+            (Arc::clone(&state.recording), state.database.clone())
+        };
+        let snapshot = recording.snapshot();
         let expected = expected
             .map(|token| {
                 let ride_id = Uuid::parse_str(&token.ride_id)
@@ -13723,16 +12136,12 @@ impl MobileRideMapCore {
                 })
             })
             .transpose()?;
-        let current = if state.recorder.state() == Some(ride_maps::RideLifecycleState::Active) {
+        let current = if snapshot.lifecycle == Some(ride_maps::RideLifecycleState::Active) {
             Some(persistence::RecordingToken {
-                ride_id: parse_mobile_ride_id(
-                    state
-                        .ride_id
-                        .as_ref()
-                        .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?,
-                )
-                .map_err(map_core_error)?,
-                generation: state.generation,
+                ride_id: snapshot
+                    .ride_id
+                    .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?,
+                generation: snapshot.generation,
             })
         } else {
             None
@@ -13740,22 +12149,19 @@ impl MobileRideMapCore {
         if current != expected {
             return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
         }
-        state.flush_telemetry_receipt()?;
-        if let Some(database) = state.database.as_ref() {
+        if let Some(database) = database {
             database
                 .inner
                 .wait_for_ride_checkpoint()
                 .map_err(map_storage_core_error)?;
         }
-        let logical_at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let outcomes = state.poll_location_write_outcomes(logical_at_ms);
-        state.settled_location_outcomes.extend(outcomes);
-        match state.recorder.state() {
-            Some(lifecycle) => Ok(Some(
-                state.snapshot_at_logical(lifecycle.into(), logical_at_ms),
-            )),
-            None => Ok(None),
+        let settled =
+            recording.snapshot_at(at_ms.saturating_add(snapshot.monotonic_epoch_offset_ms));
+        if settled.lifecycle.is_none() {
+            return Ok(None);
         }
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(state.project_recording_snapshot(&settled, at_ms))
     }
 
     /// Evaluates the pause transition at the supplied monotonic timestamp.
@@ -13841,11 +12247,15 @@ impl MobileRideMapCore {
     /// Returns an error when no stopped ride exists or durable storage rejects the transition.
     /// Pending writes are retained until they settle so the saved recorder matches `SQLite`.
     pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
-        let snapshot = state.transition_inner(MobileRideEventDto::Save)?;
-        state.admission_recorder = state.recorder.clone();
-        Ok(snapshot)
+        let at_ms = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_ready()?;
+            let snapshot = state.recording.snapshot();
+            snapshot
+                .last_monotonic_ms
+                .saturating_sub(snapshot.monotonic_epoch_offset_ms)
+        };
+        self.transition_at(MobileRideEventDto::Save, at_ms)
     }
 
     /// Discards the stopped ride and removes it from the active projection.
@@ -13855,32 +12265,26 @@ impl MobileRideMapCore {
     /// Returns an error when no stopped ride exists or durable storage rejects the transition.
     /// Discard intentionally cancels pending in-memory results for the discarded ride.
     pub fn discard(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
-        let snapshot = state.transition_inner(MobileRideEventDto::Discard)?;
-        state.pending_location_writes.clear();
-        state.admission_recorder = state.recorder.clone();
-        state.ride_id = None;
-        state.recoverable_updated_at_milliseconds = None;
-        state.reset_music_history_policy();
-        state.music_restore_failed = false;
-        Ok(snapshot)
+        let at_ms = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_ready()?;
+            let snapshot = state.recording.snapshot();
+            snapshot
+                .last_monotonic_ms
+                .saturating_sub(snapshot.monotonic_epoch_offset_ms)
+        };
+        self.transition_at(MobileRideEventDto::Discard, at_ms)
     }
 
     /// Returns the Rust-owned music-history policy for the active ride.
     #[must_use]
     pub fn current_music_history_policy(&self) -> MobileMusicHistoryPolicyDto {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.ride_id.clone() else {
-            return MobileMusicHistoryPolicyDto::Disabled;
-        };
-        if let Some(database) = state.database.as_ref()
-            && let Ok(ride_id) = parse_mobile_ride_id(&ride_id)
-            && let Ok(policy) = database.inner.music_history_policy(ride_id)
-        {
-            state.music_history_policy = policy;
-        }
-        state.music_history_policy.into()
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .recording
+            .current_music_history_policy()
+            .into()
     }
 
     /// Sets the bounded music-history policy for the active or paused ride.
@@ -13896,26 +12300,12 @@ impl MobileRideMapCore {
         &self,
         policy: MobileMusicHistoryPolicyDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let Some(ride_id) = state.ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if !music_history_is_recordable(state.recorder.state()) {
-            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-        }
-        let policy = CoreMusicHistoryPolicy::from(policy);
-        let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        database
-            .inner
-            .save_music_history_policy(ride_id, policy)
-            .map_err(map_storage_core_error)?;
-        state.apply_music_history_policy(policy);
-        state.music_restore_failed = false;
-        Ok(())
+        state
+            .recording
+            .set_music_history_policy(policy.into())
+            .map_err(map_ride_music_error)
     }
 
     /// Queues a music-history policy update on the bounded SQLite worker.
@@ -13934,28 +12324,11 @@ impl MobileRideMapCore {
     ) -> Result<Arc<MobileRideMapMusicWriteCommand>, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let Some(ride_id) = state.ride_id.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if !music_history_is_recordable(state.recorder.state()) {
-            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
-        }
-        let Some(database) = state.database.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        let ride_id_dto = ride_id.clone();
-        let ride_id = parse_mobile_ride_id(ride_id).map_err(map_core_error)?;
-        let storage = database
-            .inner
-            .queue_save_music_history_policy(ride_id, policy.into())
-            .map_err(map_storage_core_error)?;
-        Ok(MobileRideMapMusicWriteCommand::pending(
-            Arc::clone(self),
-            ride_id_dto,
-            None,
-            false,
-            storage,
-        ))
+        let operation = state
+            .recording
+            .begin_set_music_history_policy(policy.into())
+            .map_err(map_ride_music_error)?;
+        Ok(MobileRideMapMusicWriteCommand::pending(operation))
     }
 
     /// Queues deletion of stored music metadata for one ride.
@@ -13970,28 +12343,13 @@ impl MobileRideMapCore {
         self: &Arc<Self>,
         ride_id: MobileRideIdDto,
     ) -> Result<Arc<MobileRideMapMusicWriteCommand>, MobileRideMapCoreErrorDto> {
-        let parsed_ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        let previous_policy =
-            (state.ride_id.as_ref() == Some(&ride_id)).then_some(state.music_history_policy);
-        let storage = database
-            .inner
-            .queue_delete_music_history(parsed_ride_id)
-            .map_err(map_storage_core_error)?;
-        if previous_policy.is_some() {
-            state.apply_music_history_policy(CoreMusicHistoryPolicy::Disabled);
-        }
-        drop(state);
-        Ok(MobileRideMapMusicWriteCommand::pending(
-            Arc::clone(self),
-            ride_id,
-            previous_policy,
-            true,
-            storage,
-        ))
+        let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let operation = state
+            .recording
+            .begin_delete_music_history(ride_id)
+            .map_err(map_ride_music_error)?;
+        Ok(MobileRideMapMusicWriteCommand::pending(operation))
     }
 
     /// Queues deletion of music metadata for the current ride.
@@ -14005,10 +12363,11 @@ impl MobileRideMapCore {
             .inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .recording
+            .snapshot()
             .ride_id
-            .clone()
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        self.begin_delete_stored_music_history(ride_id)
+        self.begin_delete_stored_music_history(mobile_ride_id(ride_id))
     }
 
     /// Records one low-rate provider transition for the active ride.
@@ -14054,67 +12413,18 @@ impl MobileRideMapCore {
     ) -> Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let monotonic_at_ms = state.logical_monotonic_milliseconds(monotonic_at_ms);
-        let mut snapshot = snapshot;
-        snapshot.observed_at_ms = state.logical_monotonic_milliseconds(snapshot.observed_at_ms);
-        let snapshot = CoreMusicSnapshot::try_from(snapshot)
-            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        let Some(ride_id) = state.ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
-            return Ok(MobileMusicTimelineRecordResultDto {
-                outcome: MobileMusicTimelineOutcomeDto::RideNotOpen,
-                sequence: None,
-
-                effective_policy: None,
-            });
-        }
-        if snapshot.state() == CoreMusicPlaybackState::Stale
-            || snapshot.observed_at() > MonotonicTimestamp::from_milliseconds(monotonic_at_ms)
-        {
-            return Ok(MobileMusicTimelineRecordResultDto {
-                outcome: MobileMusicTimelineOutcomeDto::OutOfOrder,
-                sequence: None,
-
-                effective_policy: None,
-            });
-        }
-        let Some(database) = state.database.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let policy = database
-            .inner
-            .music_history_policy(ride_id)
-            .map_err(map_storage_core_error)?;
-        let Some(event) = CoreMusicRideEvent::try_from_snapshot(
-            &snapshot,
-            kind.into(),
-            MonotonicTimestamp::from_milliseconds(monotonic_at_ms),
-            WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
+        let observation = ride_music_observation(
+            snapshot,
+            kind,
+            monotonic_at_ms,
+            wall_clock_at_ms,
             clock_uncertainty_ms,
-            policy,
-        )
-        .map_err(|error| MobileRideMapCoreErrorDto::InvalidMusicInput(error.to_string()))?
-        else {
-            return Ok(MobileMusicTimelineRecordResultDto {
-                outcome: MobileMusicTimelineOutcomeDto::Disabled,
-                sequence: None,
-
-                effective_policy: None,
-            });
-        };
-        let result = database
-            .inner
-            .record_music_event_with_sequence(ride_id, event)
-            .map_err(map_storage_core_error)?;
-        Ok(MobileMusicTimelineRecordResultDto {
-            outcome: result.outcome.into(),
-            sequence: result.sequence,
-
-            effective_policy: Some(result.effective_policy.into()),
-        })
+        )?;
+        state
+            .recording
+            .record_music_event(&observation)
+            .map(ride_music_result_dto)
+            .map_err(map_ride_music_error)
     }
 
     /// Queues one provider transition through the bounded Rust SQLite worker.
@@ -14160,26 +12470,23 @@ impl MobileRideMapCore {
     pub fn begin_current_music_history(
         &self,
     ) -> Result<Arc<MobileRideMapMusicHistoryCommand>, MobileRideMapCoreErrorDto> {
+        use cutout_application::ride_recording::music::RideMusicHistoryRead;
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.ride_id.as_ref() else {
-            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(None)));
-        };
-        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Discarded) {
-            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(None)));
+        match state
+            .recording
+            .begin_current_music_history()
+            .map_err(map_ride_music_error)?
+        {
+            RideMusicHistoryRead::Absent => {
+                Ok(MobileRideMapMusicHistoryCommand::completed(Ok(None)))
+            }
+            RideMusicHistoryRead::Unavailable => Ok(MobileRideMapMusicHistoryCommand::completed(
+                Ok(Some(unavailable_music_history())),
+            )),
+            RideMusicHistoryRead::Pending(storage) => {
+                Ok(MobileRideMapMusicHistoryCommand::pending(storage))
+            }
         }
-        let Some(database) = state.database.as_ref() else {
-            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(Some(
-                MobileMusicHistoryDto {
-                    status: MobileMusicHistoryStatusDto::Unavailable,
-                    events: Vec::new(),
-                },
-            ))));
-        };
-        let storage = database
-            .inner
-            .queue_music_history(parse_mobile_ride_id(ride_id).map_err(map_core_error)?)
-            .map_err(map_storage_core_error)?;
-        Ok(MobileRideMapMusicHistoryCommand::pending(storage))
     }
 
     /// Queues one ride's authoritative stored music-history query on the bounded SQLite worker.
@@ -14193,44 +12500,25 @@ impl MobileRideMapCore {
         ride_id: MobileRideIdDto,
     ) -> Result<Arc<MobileRideMapMusicHistoryCommand>, MobileRideMapCoreErrorDto> {
         let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let database = self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .database
-            .clone()
-            .ok_or_else(MobileRideMapCoreErrorDto::storage_unavailable)?;
-        let storage = database
-            .inner
-            .queue_music_history(ride_id)
-            .map_err(map_storage_core_error)?;
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let storage = state
+            .recording
+            .begin_stored_music_history(ride_id)
+            .map_err(map_ride_music_error)?;
         Ok(MobileRideMapMusicHistoryCommand::pending(storage))
     }
 
     /// Returns authoritative active history, distinguishing unavailable storage from empty history.
     #[must_use]
     pub fn current_music_history(&self) -> Option<MobileMusicHistoryDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let ride_id = state.ride_id.as_ref()?;
-        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Discarded) {
-            return None;
-        }
-        let Some(database) = state.database.as_ref() else {
-            return Some(MobileMusicHistoryDto {
-                status: MobileMusicHistoryStatusDto::Unavailable,
-                events: Vec::new(),
-            });
-        };
-        if let Ok(history) = database.music_history(ride_id.clone()) {
-            state.music_restore_failed = false;
-            Some(history)
-        } else {
-            state.music_restore_failed = true;
-            Some(MobileMusicHistoryDto {
-                status: MobileMusicHistoryStatusDto::Unavailable,
-                events: Vec::new(),
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .recording
+            .current_music_history()
+            .map(|result| match result {
+                Ok(history) => history.into(),
+                Err(_) => unavailable_music_history(),
             })
-        }
     }
 
     /// Returns the bounded stored music timeline for one ride.
@@ -14244,20 +12532,13 @@ impl MobileRideMapCore {
         ride_id: MobileRideIdDto,
     ) -> Result<Vec<MobileMusicRideEventDto>, MobileRideMapCoreErrorDto> {
         let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let Some(database) = self
-            .inner
+        self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .database
-            .clone()
-        else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        database
-            .inner
-            .music_history(ride_id)
+            .recording
+            .stored_music_history(ride_id)
             .map(|history| mobile_music_event_dtos(history.events))
-            .map_err(map_storage_core_error)
+            .map_err(map_ride_music_error)
     }
 
     /// Permanently deletes stored music metadata for one ride.
@@ -14271,19 +12552,12 @@ impl MobileRideMapCore {
         ride_id: MobileRideIdDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let Some(database) = self
-            .inner
+        self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .database
-            .clone()
-        else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        database
-            .inner
-            .delete_music_history(ride_id)
-            .map_err(map_storage_core_error)
+            .recording
+            .delete_stored_music_history(ride_id)
+            .map_err(map_ride_music_error)
     }
 
     /// Redacts stored music metadata for one completed or active ride.
@@ -14297,19 +12571,12 @@ impl MobileRideMapCore {
         ride_id: MobileRideIdDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-        let Some(database) = self
-            .inner
+        self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .database
-            .clone()
-        else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        database
-            .inner
-            .save_music_history_policy(ride_id, CoreMusicHistoryPolicy::OpaqueItem)
-            .map_err(map_storage_core_error)
+            .recording
+            .redact_stored_music_history(ride_id)
+            .map_err(map_ride_music_error)
     }
 
     /// Deletes music metadata for the current ride, including its in-memory timeline.
@@ -14323,19 +12590,12 @@ impl MobileRideMapCore {
     /// Returns an error when no current ride exists, storage is unavailable, or the ride
     /// identifier cannot be parsed.
     pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        database
-            .inner
-            .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
-            .map_err(map_storage_core_error)?;
-        state.reset_music_history_policy();
-        Ok(())
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .recording
+            .delete_current_music_history()
+            .map_err(map_ride_music_error)
     }
 
     /// Records a confirmed vehicle telemetry timestamp without backfilling route points.
@@ -14360,15 +12620,16 @@ impl MobileRideMapCore {
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let is_current_vehicle = state.last_connection_transition_generation
+        let recording = state.recording.snapshot();
+        let is_current_vehicle = recording.last_connection_transition_generation
             == Some(connection_generation)
-            && state
+            && recording
                 .last_connected_vehicle
                 .as_ref()
                 .map(cutout_ride_maps::VehicleIdentity::as_str)
                 == Some(platform_identifier);
         let is_associated_vehicle =
-            state.recorder.associated_vehicle() == Some(platform_identifier);
+            recording.associated_vehicle.as_deref() == Some(platform_identifier);
         if !is_current_vehicle || !is_associated_vehicle {
             return Ok(MobileRideMapTelemetryObservationDto::NotAssociated);
         }
@@ -14406,7 +12667,7 @@ impl MobileRideMapCore {
                 LocationWriteSubmission::Nonblocking,
                 None,
             )
-            .map(|(decision, _)| decision)
+            .map(|(decision, _, _)| decision)
     }
 
     /// Forwards a complete Core Location callback while keeping timestamp admission in Rust.
@@ -14518,7 +12779,7 @@ impl MobileRideMapCore {
     /// Returns whether a location write or settled decision still needs publication.
     pub fn has_pending_location_writes(&self) -> bool {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        !state.pending_location_writes.is_empty() || !state.settled_location_outcomes.is_empty()
+        state.recording.has_pending_location_writes()
     }
 
     ///
@@ -14527,14 +12788,12 @@ impl MobileRideMapCore {
     /// cannot affect a newly started ride.
     pub fn poll_location_writes(&self) -> Vec<MobileRideMapCoreDecisionDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let at_milliseconds = state
-            .recorder
-            .recording_timing()
-            .last_monotonic_milliseconds()
-            .as_u64();
-        let mut outcomes: Vec<_> = state.settled_location_outcomes.drain(..).collect();
-        outcomes.extend(state.poll_location_write_outcomes(at_milliseconds));
-        outcomes
+        let recording = state.recording.snapshot();
+        let at_milliseconds = recording
+            .last_event_at_ms
+            .saturating_sub(recording.monotonic_epoch_offset_ms);
+        state
+            .poll_location_write_outcomes(at_milliseconds)
             .into_iter()
             .map(|outcome| outcome.decision)
             .collect()
@@ -14552,10 +12811,17 @@ impl MobileRideMapCore {
     pub fn checkpoint(
         &self,
     ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        state.flush_telemetry_receipt()?;
-        state.checkpoint_location_outcomes()
+        let outcomes = state
+            .recording
+            .checkpoint()
+            .map_err(map_ride_recording_error)?;
+        let recording = state.recording.snapshot();
+        let at_ms = recording
+            .last_monotonic_ms
+            .saturating_sub(recording.monotonic_epoch_offset_ms);
+        Ok(state.project_location_write_outcomes(outcomes, at_ms))
     }
 
     /// Drains durable location results with the matching Rust projection snapshot.
@@ -14564,10 +12830,7 @@ impl MobileRideMapCore {
         at_milliseconds: u64,
     ) -> Vec<MobileRideMapCoreOutcomeDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let at_milliseconds = state.logical_monotonic_milliseconds(at_milliseconds);
-        let mut outcomes: Vec<_> = state.settled_location_outcomes.drain(..).collect();
-        outcomes.extend(state.poll_location_write_outcomes(at_milliseconds));
-        outcomes
+        state.poll_location_write_outcomes(at_milliseconds)
     }
 
     /// Returns a bounded page of active route points.
@@ -14589,10 +12852,11 @@ impl MobileRideMapCore {
             return Ok(empty_map_point_batch());
         }
         let page_size = limit.min(500);
-        if let (Some(database), Some(ride_id)) = (state.database.as_ref(), state.ride_id.clone()) {
+        let recording = state.recording.snapshot();
+        if let (Some(database), Some(ride_id)) = (state.database.as_ref(), recording.ride_id) {
             let page = database
                 .route_points(
-                    ride_id,
+                    mobile_ride_id(ride_id),
                     after_cursor.map(|sequence| MobileRoutePointCursorDto { sequence }),
                     page_size,
                 )
@@ -14628,23 +12892,26 @@ impl MobileRideMapCore {
             });
         }
 
-        let start = after_cursor.map_or(state.recorder.first_point_sequence(), |cursor| {
-            ride_maps::RidePointSequence::new(cursor.saturating_add(1))
+        let start = after_cursor.map_or(recording.first_point_sequence, |cursor| {
+            cursor.saturating_add(1)
         });
-        let first_point_sequence = state.recorder.first_point_sequence();
-        let mut points: Vec<_> = state
-            .recorder
-            .points()
+        let mut points: Vec<_> = recording
+            .route_points
             .iter()
             .copied()
             .enumerate()
-            .map(|(offset, sample)| (first_point_sequence.saturating_add(offset as u64), sample))
+            .map(|(offset, point)| {
+                (
+                    recording.first_point_sequence.saturating_add(offset as u64),
+                    point,
+                )
+            })
             .filter(|(sequence, _)| *sequence >= start)
             .take(page_size as usize + 1)
             .map(|(sequence, sample)| {
                 MobileRideMapCoreInner::point_from_location(
                     mobile_ride_location_dto(sample.sample()),
-                    sequence.as_u64(),
+                    sequence,
                     sample.segment_id(),
                     sample.segment_start_reason(),
                     sample.telemetry_state(),
@@ -14715,13 +12982,14 @@ fn project_live_route_points(
     ) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
+        let recording = state.recording.snapshot();
         (
-            state.recorder.points().to_vec(),
-            state.recorder.first_point_sequence(),
-            state.revision,
-            state.recorder.point_count(),
-            state.recorder.segment_count().as_u64(),
-            state.recorder.background_gap_count().as_u64(),
+            recording.route_points,
+            ride_maps::RidePointSequence::new(recording.first_point_sequence),
+            recording.revision,
+            recording.route_point_count,
+            recording.segment_count,
+            recording.background_gap_count,
         )
     };
     if is_cancelled() {
@@ -14787,93 +13055,6 @@ fn project_live_route_points(
 }
 
 impl MobileRideMapCoreInner {
-    fn validate_lifecycle_command(
-        &self,
-        event: MobileRideEventDto,
-        expected: &MobileRideMapCommandTokenDto,
-    ) -> Result<
-        (
-            MobileRideIdDto,
-            ride_maps::RideLifecycleState,
-            ride_maps::ValidatedRideTransition,
-        ),
-        MobileRideMapCoreErrorDto,
-    > {
-        let ride_id = self
-            .ride_id
-            .clone()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        let expected_ride_id = &expected.ride_id;
-        let expected_generation = expected.generation;
-        if *expected_ride_id != mobile_ride_id_string(&ride_id)
-            || expected_generation != self.generation
-        {
-            return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
-        }
-        let current = self
-            .recorder
-            .state()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        let transition = current
-            .transition(event.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        Ok((ride_id, current, transition))
-    }
-
-    fn prepare_lifecycle_transition(
-        &mut self,
-        event: MobileRideEventDto,
-        expected: &MobileRideMapCommandTokenDto,
-        at_ms: u64,
-        command_id: u64,
-    ) -> Result<PendingMobileRideLifecycle, MobileRideMapCoreErrorDto> {
-        self.require_lifecycle_ready()?;
-        let (ride_id, current, transition) = self.validate_lifecycle_command(event, expected)?;
-        let can_resume_from_current = match current {
-            ride_maps::RideLifecycleState::Interrupted | ride_maps::RideLifecycleState::Paused => {
-                true
-            }
-            _ => false,
-        };
-        let epoch_offset = if event == MobileRideEventDto::Resume && can_resume_from_current {
-            self.recorder
-                .recording_timing()
-                .last_monotonic_milliseconds()
-                .as_u64()
-                .saturating_sub(at_ms)
-        } else {
-            self.monotonic_epoch_offset_milliseconds
-        };
-        let logical_at_ms = at_ms.saturating_add(epoch_offset);
-        let last_telemetry_at_ms = self.pending_telemetry_receipt();
-        let storage = self
-            .database
-            .as_ref()
-            .map(|database| {
-                database
-                    .inner
-                    .queue_transition_at_with_telemetry(
-                        parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
-                        event.into(),
-                        logical_at_ms,
-                        last_telemetry_at_ms,
-                    )
-                    .map_err(map_storage_core_error)
-            })
-            .transpose()?;
-        self.pending_lifecycle_command_id = Some(command_id);
-        Ok(PendingMobileRideLifecycle {
-            command_id,
-            event,
-            ride_id,
-            epoch_offset_ms: epoch_offset,
-            logical_at_ms,
-            transition,
-            storage,
-            last_telemetry_at_ms,
-        })
-    }
-
     fn require_lifecycle_ready(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         self.require_ready()?;
         if self.pending_music_stop_command_id.is_some() {
@@ -14887,14 +13068,18 @@ impl MobileRideMapCoreInner {
         expected: &MobileRideMapRecordingTokenDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         self.require_ready()?;
-        let current = self
-            .recorder
-            .state()
-            .and_then(|state| self.snapshot(state.into()).recording_token);
-        if current.as_ref() != Some(expected) {
+        let parsed = Uuid::parse_str(&expected.ride_id)
+            .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
+        if parsed.to_string() != expected.ride_id {
             return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
         }
-        Ok(())
+        let ride_id = persistence::RideId::from_uuid(parsed);
+        self.recording
+            .validate_music_recording(cutout_application::ride_recording::RideRecordingToken {
+                ride_id,
+                generation: expected.generation,
+            })
+            .map_err(map_ride_recording_error)
     }
     pub(crate) fn queue_music_event(
         &self,
@@ -14904,285 +13089,41 @@ impl MobileRideMapCoreInner {
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
     ) -> Result<Arc<MobileRideMapMusicCommand>, MobileRideMapCoreErrorDto> {
+        use cutout_application::ride_recording::music::RideMusicEventAdmission;
         self.require_ready()?;
-        let monotonic_at_ms = self.logical_monotonic_milliseconds(monotonic_at_ms);
-        let mut snapshot = snapshot;
-        snapshot.observed_at_ms = self.logical_monotonic_milliseconds(snapshot.observed_at_ms);
-        let snapshot = CoreMusicSnapshot::try_from(snapshot)
-            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        let Some(ride_id) = self.ride_id.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if self.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
-            return Ok(MobileRideMapMusicCommand::completed(Ok(
-                MobileMusicTimelineRecordResultDto {
-                    outcome: MobileMusicTimelineOutcomeDto::RideNotOpen,
-                    sequence: None,
-
-                    effective_policy: None,
-                },
-            )));
-        }
-        if snapshot.state() == CoreMusicPlaybackState::Stale
-            || snapshot.observed_at() > MonotonicTimestamp::from_milliseconds(monotonic_at_ms)
-        {
-            return Ok(MobileRideMapMusicCommand::completed(Ok(
-                MobileMusicTimelineRecordResultDto {
-                    outcome: MobileMusicTimelineOutcomeDto::OutOfOrder,
-                    sequence: None,
-
-                    effective_policy: None,
-                },
-            )));
-        }
-        let Some(database) = self.database.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        let ride_id = parse_mobile_ride_id(ride_id).map_err(map_core_error)?;
-        // Construct the most detailed Rust-internal event; the ordered SQLite writer applies
-        // the authoritative durable policy and removes any metadata not permitted for this ride.
-        let Some(event) = CoreMusicRideEvent::try_from_snapshot(
-            &snapshot,
-            kind.into(),
-            MonotonicTimestamp::from_milliseconds(monotonic_at_ms),
-            WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
+        let observation = ride_music_observation(
+            snapshot,
+            kind,
+            monotonic_at_ms,
+            wall_clock_at_ms,
             clock_uncertainty_ms,
-            CoreMusicHistoryPolicy::HumanReadable,
-        )
-        .map_err(|error| MobileRideMapCoreErrorDto::InvalidMusicInput(error.to_string()))?
-        else {
-            return Ok(MobileRideMapMusicCommand::completed(Ok(
-                MobileMusicTimelineRecordResultDto {
-                    outcome: MobileMusicTimelineOutcomeDto::Disabled,
-                    sequence: None,
-
-                    effective_policy: None,
-                },
-            )));
-        };
-        let storage = database
-            .inner
-            .queue_record_music_event(ride_id, event)
-            .map_err(map_storage_core_error)?;
-        Ok(MobileRideMapMusicCommand::pending(storage))
-    }
-
-    fn pending_telemetry_receipt(&self) -> Option<u64> {
-        let id = self.ride_id.as_ref()?;
-        let at = self.recorder.last_telemetry_at_milliseconds()?.as_u64();
-        (self.persisted_telemetry_receipt.as_ref() != Some(&(id.clone(), at))).then_some(at)
-    }
-
-    fn flush_telemetry_receipt(&mut self) -> Result<(), MobileRideMapCoreErrorDto> {
-        let Some(at) = self.pending_telemetry_receipt() else {
-            return Ok(());
-        };
-        if let (Some(database), Some(id)) = (self.database.as_ref(), self.ride_id.clone()) {
-            let checkpoint = database
-                .update_ride_map_metadata_with_motion(
-                    &id,
-                    self.recorder.candidate_vehicle(),
-                    self.recorder.associated_vehicle(),
-                    self.recorder
-                        .associated_at_milliseconds()
-                        .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    Some(at),
-                    self.speed.latest_motion(),
-                    None,
-                )
-                .map_err(map_core_error)?;
-            self.publish_moving_time_checkpoint(&id, checkpoint);
-            self.persisted_telemetry_receipt = Some((id, at));
+        )?;
+        match self
+            .recording
+            .begin_record_music_event(&observation)
+            .map_err(map_ride_music_error)?
+        {
+            RideMusicEventAdmission::Completed(result) => Ok(MobileRideMapMusicCommand::completed(
+                Ok(ride_music_result_dto(result)),
+            )),
+            RideMusicEventAdmission::Pending(storage) => {
+                Ok(MobileRideMapMusicCommand::pending(storage))
+            }
         }
-        Ok(())
     }
 
     fn checkpoint_location_outcomes(
-        &mut self,
-    ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
-        if let Some(database) = self.database.as_ref() {
-            database
-                .inner
-                .wait_for_ride_checkpoint()
-                .map_err(map_storage_core_error)?;
-        }
-        let at_ms = self
-            .recorder
-            .recording_timing()
-            .last_monotonic_milliseconds()
-            .as_u64();
-        let mut outcomes = self.settled_location_outcomes.drain(..).collect::<Vec<_>>();
-        outcomes.extend(self.poll_location_write_outcomes(at_ms));
-        Ok(outcomes)
-    }
-
-    fn remember_connection_admission(&mut self, generation: Option<u64>) {
-        self.last_connection_transition_generation = generation;
-        self.last_connection_transition_ride_id
-            .clone_from(&self.ride_id);
-    }
-
-    fn remember_connection_association(&mut self, generation: Option<u64>) {
-        self.last_connection_association_generation = generation;
-        self.last_connection_association_ride_id
-            .clone_from(&self.ride_id);
-    }
-
-    fn ride_autostart_enabled(&self) -> Result<bool, MobileRideMapCoreErrorDto> {
-        self.database.as_ref().map_or(Ok(true), |database| {
-            database
-                .inner
-                .ride_autostart_enabled()
-                .map_err(map_storage_core_error)
-        })
-    }
-
-    fn automatic_policy_for_vehicle(
         &self,
-        platform_identifier: &str,
-    ) -> Result<MobileRideMapAutomaticRecordingPolicyDto, MobileRideMapCoreErrorDto> {
-        let Some(database) = self.database.as_ref() else {
-            return Ok(MobileRideMapAutomaticRecordingPolicyDto::ManualOnly);
-        };
-        let remembered = database
-            .inner
-            .selected_device()
-            .map_err(map_storage_core_error)?;
-        Ok(if remembered.as_deref() == Some(platform_identifier) {
-            MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
-        } else {
-            MobileRideMapAutomaticRecordingPolicyDto::ManualOnly
-        })
-    }
-
-    fn logical_monotonic_milliseconds(&self, raw: u64) -> u64 {
-        raw.saturating_add(self.monotonic_epoch_offset_milliseconds)
-    }
-
-    fn transition_inner(
-        &mut self,
-        event: MobileRideEventDto,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let at_milliseconds = self
-            .recorder
-            .recording_timing()
-            .last_monotonic_milliseconds()
-            .as_u64();
-        let (_, transition) = self.transition_state(event, at_milliseconds)?;
-        let outcomes = self.poll_location_write_outcomes(at_milliseconds);
-        self.settled_location_outcomes.extend(outcomes);
-        self.recorder
-            .apply_transition(transition)
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.admission_recorder
-            .apply_transition(transition)
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.revision = self.revision.saturating_add(1);
-        self.generation = self.generation.saturating_add(1);
-        if event == MobileRideEventDto::Resume {
-            self.speed_generation_started_at_ms = at_milliseconds;
-        }
-        Ok(self.snapshot(transition.next().into()))
-    }
-    fn transition_inner_at(
-        &mut self,
-        event: MobileRideEventDto,
-        at_milliseconds: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let epoch_offset = if event == MobileRideEventDto::Resume
-            && (match self.recorder.state() {
-                Some(
-                    ride_maps::RideLifecycleState::Interrupted
-                    | ride_maps::RideLifecycleState::Paused,
-                ) => true,
-                _ => false,
-            }) {
-            self.recorder
-                .recording_timing()
-                .last_monotonic_milliseconds()
-                .as_u64()
-                .saturating_sub(at_milliseconds)
-        } else {
-            self.monotonic_epoch_offset_milliseconds
-        };
-        let at_milliseconds = at_milliseconds.saturating_add(epoch_offset);
-        let (_, transition) = self.transition_state(event, at_milliseconds)?;
-        let outcomes = self.poll_location_write_outcomes(at_milliseconds);
-        self.settled_location_outcomes.extend(outcomes);
-        self.monotonic_epoch_offset_milliseconds = epoch_offset;
-        self.recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(at_milliseconds),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.admission_recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(at_milliseconds),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.revision = self.revision.saturating_add(1);
-        self.generation = self.generation.saturating_add(1);
-        if event == MobileRideEventDto::Resume {
-            self.speed_generation_started_at_ms = at_milliseconds;
-        }
-        Ok(self.snapshot_at_logical(transition.next().into(), at_milliseconds))
-    }
-
-    fn apply_connection_transition_in_memory(
-        &mut self,
-        event: MobileRideEventDto,
-        at_milliseconds: u64,
-    ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let epoch_offset = if event == MobileRideEventDto::Resume
-            && (match self.recorder.state() {
-                Some(
-                    ride_maps::RideLifecycleState::Interrupted
-                    | ride_maps::RideLifecycleState::Paused,
-                ) => true,
-                _ => false,
-            }) {
-            self.recorder
-                .recording_timing()
-                .last_monotonic_milliseconds()
-                .as_u64()
-                .saturating_sub(at_milliseconds)
-        } else {
-            self.monotonic_epoch_offset_milliseconds
-        };
-        let logical_at_ms = at_milliseconds.saturating_add(epoch_offset);
-        let transition = self
-            .recorder
-            .state()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?
-            .transition(event.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        let outcomes = self.poll_location_write_outcomes(logical_at_ms);
-        self.settled_location_outcomes.extend(outcomes);
-        self.monotonic_epoch_offset_milliseconds = epoch_offset;
-        self.recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.admission_recorder
-            .apply_transition_at(
-                transition,
-                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
-            )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        if event == MobileRideEventDto::Resume {
-            self.recoverable_updated_at_milliseconds = None;
-        }
-        self.revision = self.revision.saturating_add(1);
-        self.generation = self.generation.saturating_add(1);
-        if event == MobileRideEventDto::Resume {
-            self.speed_generation_started_at_ms = logical_at_ms;
-        }
-        self.latest_verified_vehicle_moving_time = None;
-        Ok(())
+    ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
+        let write_outcomes = self
+            .recording
+            .checkpoint_location_writes()
+            .map_err(map_ride_recording_error)?;
+        let recording = self.recording.snapshot();
+        let at_ms = recording
+            .last_event_at_ms
+            .saturating_sub(recording.monotonic_epoch_offset_ms);
+        Ok(self.project_location_write_outcomes(write_outcomes, at_ms))
     }
 }
 
@@ -15193,8 +13134,30 @@ impl MobileRideMapCore {
         at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.start_gps_only_at(at_ms, candidate_vehicle)
+        let recording = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_lifecycle_ready()?;
+            Arc::clone(&state.recording)
+        };
+        let candidate_vehicle = match candidate_vehicle {
+            Some(candidate) => {
+                Some(ride_maps::VehicleIdentity::new(candidate).ok_or_else(|| {
+                    MobileRideMapCoreErrorDto::Storage("invalid candidate vehicle".to_owned())
+                })?)
+            }
+            None => None,
+        };
+        let operation = recording
+            .begin_start(at_ms, wall_clock_milliseconds()?, candidate_vehicle, None)
+            .map_err(map_start_recording_error)?;
+        let snapshot = recording
+            .finish_start(operation)
+            .map_err(map_start_recording_error)?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .project_recording_snapshot(&snapshot, at_ms)
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 
     fn transition_at(
@@ -15202,17 +13165,104 @@ impl MobileRideMapCore {
         event: MobileRideEventDto,
         at_milliseconds: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        inner.require_lifecycle_ready()?;
-        if event == MobileRideEventDto::Stop
-            && let Some(queue) = &*self
-                .music_observations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-        {
-            queue.require_quiescent_stop()?;
+        let (recording, token, last_telemetry_at_ms) = {
+            let inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.require_lifecycle_ready()?;
+            if event == MobileRideEventDto::Stop
+                && let Some(queue) = &*self
+                    .music_observations
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+            {
+                queue.require_quiescent_stop()?;
+            }
+            let recording = Arc::clone(&inner.recording);
+            let token = recording
+                .snapshot()
+                .command_token
+                .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+            let last_telemetry_at_ms = recording.pending_telemetry_receipt();
+            (recording, token, last_telemetry_at_ms)
+        };
+        let operation = recording
+            .begin_transition(token, event.into(), at_milliseconds, last_telemetry_at_ms)
+            .map_err(map_ride_recording_error)?;
+        let snapshot = recording.finish_transition(operation).map_err(|error| {
+            let mapped = map_ride_recording_error(error);
+            if recording.requires_restore() {
+                self.mark_restoration_failed(mapped.clone());
+            }
+            mapped
+        })?;
+        let inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let projected = if event == MobileRideEventDto::Discard {
+            let logical_at_ms = at_milliseconds.saturating_add(snapshot.monotonic_epoch_offset_ms);
+            inner.project_recording_projection(snapshot, logical_at_ms)
+        } else {
+            inner.project_recording_snapshot(&snapshot, at_milliseconds)
+        };
+        projected.ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
+    }
+}
+
+fn map_ride_location_admission(
+    admission: cutout_application::ride_recording::RideLocationAdmission,
+) -> (MobileRideMapCoreDecisionDto, Option<u64>) {
+    use cutout_application::ride_recording::RideLocationAdmission;
+
+    match admission {
+        RideLocationAdmission::Queued {
+            request_id,
+            point,
+            sequence,
+        } => {
+            let point = MobileRideMapCoreInner::point_from_location(
+                mobile_ride_location_dto(point.sample()),
+                sequence,
+                point.segment_id(),
+                point.segment_start_reason(),
+                point.telemetry_state(),
+            );
+            (
+                MobileRideMapCoreDecisionDto::Pending { point },
+                Some(request_id),
+            )
         }
-        inner.transition_inner_at(event, at_milliseconds)
+        RideLocationAdmission::AcceptedInMemory { point, sequence } => {
+            let point = MobileRideMapCoreInner::point_from_location(
+                mobile_ride_location_dto(point.sample()),
+                sequence,
+                point.segment_id(),
+                point.segment_start_reason(),
+                point.telemetry_state(),
+            );
+            (MobileRideMapCoreDecisionDto::Accepted { point }, None)
+        }
+        RideLocationAdmission::ClockOnly => (
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+            },
+            None,
+        ),
+        RideLocationAdmission::Parked => (
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::Parked,
+            },
+            None,
+        ),
+        RideLocationAdmission::MotionHistoryRetired => (
+            MobileRideMapCoreDecisionDto::Rejected {
+                reason: MobileRideMapDecisionReasonDto::MotionHistoryRetired,
+            },
+            None,
+        ),
+        RideLocationAdmission::Rejected(reason) => (location_admission_decision(reason), None),
+        RideLocationAdmission::QueueFull => (
+            MobileRideMapCoreDecisionDto::StorageError {
+                message: "ride location outcome queue is full".to_owned(),
+            },
+            None,
+        ),
     }
 }
 
@@ -15225,8 +13275,133 @@ fn map_core_error(error: MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
     }
 }
 
+fn ride_recovery_policy(
+    database: Option<&Arc<RideDatabaseHandle>>,
+    monotonic_now_ms: u64,
+    enabled: bool,
+) -> Result<cutout_application::ride_recording::RideRecoveryPolicy, MobileRideMapCoreErrorDto> {
+    let (autostart_enabled, selected_vehicle_identifier) = match database {
+        Some(database) => (
+            database
+                .inner
+                .ride_autostart_enabled()
+                .map_err(map_storage_core_error)?,
+            database
+                .inner
+                .selected_device()
+                .map_err(map_storage_core_error)?,
+        ),
+        None => (false, None),
+    };
+    Ok(cutout_application::ride_recording::RideRecoveryPolicy {
+        monotonic_now_ms,
+        wall_clock_now_ms: wall_clock_milliseconds()?,
+        auto_resume_window_ms: AUTO_RESUME_RIDE_WINDOW_MILLISECONDS,
+        explicit_pause_window_ms: EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS,
+        enabled,
+        autostart_enabled,
+        selected_vehicle_identifier,
+    })
+}
+
 fn map_storage_core_error(error: persistence::StorageError) -> MobileRideMapCoreErrorDto {
     map_core_error(map_ride_database_error(error))
+}
+
+fn map_ride_recording_error(
+    error: cutout_application::ride_recording::RideRecordingError,
+) -> MobileRideMapCoreErrorDto {
+    use cutout_application::ride_recording::RideRecordingError;
+
+    match error {
+        RideRecordingError::RestorationNotReady => MobileRideMapCoreErrorDto::Storage(
+            "ride map restoration is still in progress".to_owned(),
+        ),
+        RideRecordingError::RecoveryRequired => MobileRideMapCoreErrorDto::Storage(
+            "ride map restoration is required after an unsettled storage result".to_owned(),
+        ),
+        RideRecordingError::CommandPending => MobileRideMapCoreErrorDto::AdmissionPending,
+        RideRecordingError::NoActiveRide => MobileRideMapCoreErrorDto::NoActiveRide,
+        RideRecordingError::StaleCommand => MobileRideMapCoreErrorDto::StaleRideCommand,
+        RideRecordingError::InvalidTransition => MobileRideMapCoreErrorDto::InvalidTransition,
+        RideRecordingError::CommandIdExhausted => MobileRideMapCoreErrorDto::Storage(
+            "ride recording command identifiers are exhausted".to_owned(),
+        ),
+        RideRecordingError::Storage(error) => map_storage_core_error(error),
+        RideRecordingError::MusicAdmission(error) => map_music_admission_error(error),
+    }
+}
+
+fn map_verified_connection_admission_error(
+    error: cutout_application::ride_recording::VerifiedConnectionAdmissionError,
+) -> MobileRideMapCoreErrorDto {
+    use cutout_application::ride_recording::{
+        RideRecordingError, VerifiedConnectionAdmissionError,
+    };
+
+    match error {
+        VerifiedConnectionAdmissionError::InvalidVehicleIdentity => {
+            MobileRideMapCoreErrorDto::InvalidVehicleIdentity
+        }
+        VerifiedConnectionAdmissionError::WallClock(error) => {
+            MobileRideMapCoreErrorDto::Storage(error.clone())
+        }
+        VerifiedConnectionAdmissionError::Storage(error) => map_storage_core_error(error),
+        VerifiedConnectionAdmissionError::Ride(error) => match error {
+            RideRecordingError::RestorationNotReady => MobileRideMapCoreErrorDto::Storage(
+                "ride map restoration is still in progress".to_owned(),
+            ),
+            RideRecordingError::RecoveryRequired => MobileRideMapCoreErrorDto::Storage(
+                "ride map restoration is required after an unsettled storage result".to_owned(),
+            ),
+            RideRecordingError::CommandPending => MobileRideMapCoreErrorDto::AdmissionPending,
+            RideRecordingError::NoActiveRide => MobileRideMapCoreErrorDto::NoActiveRide,
+            RideRecordingError::StaleCommand => MobileRideMapCoreErrorDto::StaleRideCommand,
+            RideRecordingError::InvalidTransition => MobileRideMapCoreErrorDto::InvalidTransition,
+            RideRecordingError::CommandIdExhausted => MobileRideMapCoreErrorDto::Storage(
+                "verified connection admission identifiers are exhausted".to_owned(),
+            ),
+            RideRecordingError::Storage(error) => map_storage_core_error(error),
+            RideRecordingError::MusicAdmission(error) => map_music_admission_error(error),
+        },
+    }
+}
+
+fn map_music_admission_error(
+    error: cutout_application::music::observation_admission::AdmissionError,
+) -> MobileRideMapCoreErrorDto {
+    use cutout_application::music::observation_admission::AdmissionError;
+
+    match error {
+        AdmissionError::Stale => MobileRideMapCoreErrorDto::StaleRideCommand,
+        AdmissionError::Incomplete => MobileRideMapCoreErrorDto::MusicObservationIncomplete,
+        AdmissionError::Pending => MobileRideMapCoreErrorDto::AdmissionPending,
+        AdmissionError::Exhausted => {
+            MobileRideMapCoreErrorDto::Storage("music observation identifiers exhausted".to_owned())
+        }
+    }
+}
+
+fn map_start_recording_error(
+    error: cutout_application::ride_recording::RideRecordingError,
+) -> MobileRideMapCoreErrorDto {
+    if let cutout_application::ride_recording::RideRecordingError::InvalidTransition = &error {
+        MobileRideMapCoreErrorDto::AlreadyRecording
+    } else {
+        map_ride_recording_error(error)
+    }
+}
+
+fn is_unknown_recording_storage_outcome(
+    error: &cutout_application::ride_recording::RideRecordingError,
+) -> bool {
+    match error {
+        cutout_application::ride_recording::RideRecordingError::Storage(
+            persistence::StorageError::ResponseDropped
+            | persistence::StorageError::DeadlineExceeded,
+        ) => true,
+        _ => false,
+    }
 }
 
 impl From<cutout_application::location::PhoneLocationSnapshot> for MobilePhoneLocationSnapshotDto {
@@ -17660,33 +15835,6 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
-fn round_f64_to_i32(value: f64) -> i32 {
-    if value.is_nan() {
-        return 0;
-    }
-    if value <= f64::from(i32::MIN) {
-        return i32::MIN;
-    }
-    if value >= f64::from(i32::MAX) {
-        return i32::MAX;
-    }
-    let rounded = value.round();
-    let mut low = i64::from(i32::MIN);
-    let mut high = i64::from(i32::MAX);
-    while low <= high {
-        let midpoint = low + (high - low) / 2;
-        let Ok(candidate) = i32::try_from(midpoint) else {
-            return 0;
-        };
-        match f64::from(candidate).total_cmp(&rounded) {
-            std::cmp::Ordering::Less => low = midpoint + 1,
-            std::cmp::Ordering::Greater => high = midpoint - 1,
-            std::cmp::Ordering::Equal => return candidate,
-        }
-    }
-    0
-}
-
 impl From<MobileSessionInputDto> for SessionInputDto {
     fn from(input: MobileSessionInputDto) -> Self {
         match input.kind {
@@ -18499,39 +16647,35 @@ impl From<ParserDiagnosticsDto> for MobileParserDiagnosticsDto {
     }
 }
 
-#[derive(Debug)]
-struct MobileChargeEstimatorState {
-    estimator: cutout_core::ChargeEstimator,
-    voltage_sag: VoltageSagEstimator,
-    last_sag_pair: Option<(MonotonicTimestamp, MonotonicTimestamp)>,
-    last_sag_estimate: Option<VoltageSagEstimate>,
-    profile: Option<MobileChargeProfileDto>,
+/// Rust-owned charging estimate engine for mobile sessions.
+#[derive(Debug, Default, uniffi::Object)]
+pub struct MobileChargeEstimator {
+    application: cutout_application::charging::estimate::ChargeEstimatorApplication,
 }
 
-/// Rust-owned charging estimate engine for mobile sessions.
-#[derive(Debug, uniffi::Object)]
-pub struct MobileChargeEstimator {
-    state: Mutex<MobileChargeEstimatorState>,
+impl From<MobileChargeProfileDto> for cutout_application::charging::estimate::ChargeProfile {
+    fn from(profile: MobileChargeProfileDto) -> Self {
+        Self {
+            session_id: profile.session_id,
+            profile_id: profile.profile_id,
+            capacity_milliamp_hours: profile.capacity_milliamp_hours,
+            capacity_source: profile.capacity_source.into(),
+            verification: profile.verification.into(),
+            charge_flow_verification: profile.charge_flow_verification.into(),
+        }
+    }
 }
 
 #[uniffi::export]
 impl MobileChargeEstimator {
-    /// Creates an empty estimator. A verified profile must be configured before use.
+    /// Creates an empty estimator. Configure a verified profile before use.
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            state: Mutex::new(MobileChargeEstimatorState {
-                estimator: cutout_core::ChargeEstimator::new(),
-                voltage_sag: VoltageSagEstimator::new(),
-                last_sag_pair: None,
-                last_sag_estimate: None,
-                profile: None,
-            }),
-        })
+        Arc::new(Self::default())
     }
 
-    /// Selects the Rust-owned battery profile for a supported EUC model.
+    /// Selects the shared battery profile for a supported EUC model.
     pub fn configure_electric_unicycle_profile(&self, model: DiscoveryElectricUnicycleModel) {
         match model {
             DiscoveryElectricUnicycleModel::Aero => {
@@ -18542,55 +16686,21 @@ impl MobileChargeEstimator {
             }
         }
     }
-
-    /// Configures the confirmed NOSFET Aero pack basis: 30s2p Samsung 50S,
-    /// with a 10 Ah profile capacity. Charge-flow polarity remains unverified
-    /// until the LIBCU-521 hardware matrix is complete.
+    /// Selects the Aero pack profile with independently unverified flow polarity.
     pub fn configure_nosfet_aero_30s2p_samsung_50s_profile(&self) {
-        self.configure_profile(MobileChargeProfileDto {
-            session_id: 43,
-            profile_id: 43,
-            capacity_milliamp_hours: 10_000,
-            capacity_source: MobileChargeCapacitySourceDto::ProtocolProfile,
-            verification: MobileVerificationStatusDto::SourceVerified,
-            charge_flow_verification: MobileVerificationStatusDto::Unverified,
-        });
+        self.application
+            .configure_nosfet_aero_30s2p_samsung_50s_profile();
     }
-
-    /// Configures the current Falcon battery basis: 24s2p Samsung 50S,
-    /// 100.8 V full-charge class and approximately 900 Wh nominal energy.
-    /// Charge-flow polarity remains unverified until the LIBCU-521 hardware
-    /// matrix is complete.
+    /// Selects the Falcon pack profile with independently unverified flow polarity.
     pub fn configure_begode_falcon_24s2p_samsung_50s_profile(&self) {
-        self.configure_profile(MobileChargeProfileDto {
-            session_id: 44,
-            profile_id: 44,
-            capacity_milliamp_hours: 10_000,
-            capacity_source: MobileChargeCapacitySourceDto::ProtocolProfile,
-            verification: MobileVerificationStatusDto::SourceVerified,
-            charge_flow_verification: MobileVerificationStatusDto::Unverified,
-        });
+        self.application
+            .configure_begode_falcon_24s2p_samsung_50s_profile();
     }
-
     /// Replaces the usable pack profile and resets bounded history.
     pub fn configure_profile(&self, profile: MobileChargeProfileDto) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let incompatible_profile = state.profile.is_some_and(|current| {
-            current.profile_id != profile.profile_id
-                || current.capacity_milliamp_hours != profile.capacity_milliamp_hours
-        });
-        state.estimator.reset();
-        if incompatible_profile {
-            state.voltage_sag.reset();
-        } else {
-            state.voltage_sag.reset_observations();
-        }
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-        state.profile = Some(profile);
+        self.application.configure_profile(profile.into());
     }
-
-    /// Applies the optional charge basis carried by a device-specific VESC profile.
+    /// Applies the optional estimate basis carried by a board profile.
     pub fn configure_vesc_board_profile(&self, board_profile: VescBoardProfile) {
         if let Some(profile) = board_profile.charge_profile {
             self.configure_profile(profile);
@@ -18598,33 +16708,18 @@ impl MobileChargeEstimator {
             self.clear_profile();
         }
     }
-
-    /// Removes the usable pack profile and resets bounded history.
+    /// Removes the profile and resets observation windows.
     pub fn clear_profile(&self) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.estimator.reset();
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-        state.profile = None;
+        self.application.clear_profile();
     }
-
-    /// Resets the bounded current and sag windows.
+    /// Resets the current and sag observation windows.
     pub fn reset(&self) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.estimator.reset();
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
+        self.application.reset();
     }
-
-    /// Returns the durable learned resistance for persistence by the platform layer.
+    /// Returns the durable resistance model in the native persistence record.
     pub fn voltage_sag_model(&self) -> Option<MobileVoltageSagModelDto> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .voltage_sag
-            .model()
+        self.application
+            .voltage_sag_model()
             .map(|model| MobileVoltageSagModelDto {
                 schema_version: 1,
                 effective_resistance_milliohms: model.effective_resistance.as_milliohms(),
@@ -18632,263 +16727,60 @@ impl MobileChargeEstimator {
                 hardware_verified: model.hardware_verified,
             })
     }
-
-    /// Restores a validated resistance model already scoped to the active EUC identity.
+    /// Decodes and restores the resistance model scoped to the active vehicle.
     #[must_use]
     pub fn restore_voltage_sag_model(&self, model: MobileVoltageSagModelDto) -> bool {
-        if model.schema_version != 1 {
-            return false;
-        }
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-        state.voltage_sag.restore_model(VoltageSagModel::new(
-            EffectiveResistance::from_milliohms(model.effective_resistance_milliohms),
-            model.observations,
-            model.hardware_verified,
-        ))
+        model.schema_version == 1
+            && self
+                .application
+                .restore_voltage_sag_model(VoltageSagModel::new(
+                    EffectiveResistance::from_milliohms(model.effective_resistance_milliohms),
+                    model.observations,
+                    model.hardware_verified,
+                ))
     }
-
-    /// Explicitly clears the durable learned resistance for the active EUC.
+    /// Clears the durable learned resistance for the active vehicle.
     pub fn clear_voltage_sag_model(&self) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.voltage_sag.reset();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
+        self.application.clear_voltage_sag_model();
     }
-
-    /// Admits one typed telemetry sample and returns its presentation state.
+    /// Adapts observed telemetry to the shared estimate operation.
     pub fn update(&self, input: MobileChargeEstimateInputDto) -> MobileChargeEstimateStateDto {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        use cutout_application::charging::estimate::{EstimateInput, EstimateTelemetry};
         let snapshot = input.snapshot;
-        let now = input.at.into_core();
-        let charge_mode = resolve_mobile_charge_mode(&snapshot, now);
-        let charge_flow_verification = state
-            .profile
-            .map_or(VerificationStatus::Unverified, |profile| {
-                profile.charge_flow_verification.into()
-            });
-        let current_observed_at = snapshot
-            .battery_current_observed_at_ms
-            .map(MobileMonotonicMillisDto::into_core);
-        let current_is_fresh = current_observed_at.is_some_and(|observed_at| {
-            now >= observed_at
-                && now.saturating_duration_since(observed_at).as_milliseconds()
-                    <= cutout_core::CONNECTED_WHEEL_MOTION_FRESHNESS_MS
+        let result = self.application.update(EstimateInput {
+            at: input.at.into_core(),
+            freshness: CoreDuration::from_milliseconds(input.freshness.milliseconds),
+            snapshot: EstimateTelemetry {
+                at_ms: snapshot.at_ms.map(MobileMonotonicMillisDto::into_core),
+                battery_current_observed_at_ms: snapshot
+                    .battery_current_observed_at_ms
+                    .map(MobileMonotonicMillisDto::into_core),
+                voltage_observed_at_ms: snapshot
+                    .voltage_observed_at_ms
+                    .map(MobileMonotonicMillisDto::into_core),
+                speed_observed_at_ms: snapshot
+                    .speed_observed_at_ms
+                    .map(MobileMonotonicMillisDto::into_core),
+                battery_current: snapshot.battery_current.map(core_measured_battery_current),
+                voltage: snapshot.voltage.map(core_measured_voltage),
+                speed: snapshot.speed.map(|value| {
+                    cutout_core::Speed::from_millimetres_per_second(value.value.value)
+                }),
+                charge_mode: snapshot.charge_mode.map(core_charge_mode),
+                operating_state: core_ride_operating_state(snapshot.operating_state),
+                power_flow: snapshot.power_flow.map(|flow| match flow {
+                    PowerFlowDirection::Discharge => CorePowerFlowDirection::Discharge,
+                    PowerFlowDirection::Zero => CorePowerFlowDirection::Zero,
+                    PowerFlowDirection::Charging => CorePowerFlowDirection::Charging,
+                    PowerFlowDirection::Regeneration => CorePowerFlowDirection::Regeneration,
+                    PowerFlowDirection::Unknown => CorePowerFlowDirection::Unknown,
+                }),
+                battery_level_reported: snapshot.battery_level_reported.map(core_battery_level),
+                battery_level_estimated: snapshot.battery_level_estimated.map(core_battery_level),
+                battery_temperature: snapshot.battery_temperature.map(core_temperature),
+            },
         });
-        let mut flow = core_charge_flow(&snapshot, charge_mode, charge_flow_verification);
-        if !current_is_fresh {
-            flow.value = ChargeFlow::Unknown;
-        }
-        let voltage_sag = update_mobile_voltage_sag(
-            &mut state,
-            &snapshot,
-            now,
-            input.freshness.milliseconds,
-            flow.value,
-        );
-        let Some(profile) = state.profile else {
-            return charge_estimate_state_unavailable(
-                MobileChargeEstimateUnavailableReasonDto::CapacityMissing,
-                None,
-                voltage_sag,
-            );
-        };
-        let battery_level = snapshot
-            .battery_level_reported
-            .map(core_battery_level)
-            .map(BatteryLevelBasis::reported)
-            .or_else(|| {
-                snapshot.battery_level_estimated.map(|level| {
-                    BatteryLevelBasis::profile_estimated(
-                        core_battery_level(level),
-                        ChargeProfileIdentity::new(profile.profile_id),
-                        MobileEstimateConfidenceDto::Medium.into(),
-                    )
-                })
-            })
-            .unwrap_or(BatteryLevelBasis::Unavailable);
-        let at = MonotonicTimestamp::new(input.at.milliseconds);
-        let snapshot_observed_at = snapshot.at_ms.map_or(at, |timestamp| {
-            MonotonicTimestamp::new(timestamp.milliseconds)
-        });
-        let battery_current = current_is_fresh
-            .then_some(snapshot.battery_current)
-            .flatten()
-            .map(core_battery_current);
-        // Other telemetry fields can advance the snapshot without a new current sample.
-        let observed_at = current_observed_at
-            .filter(|_| {
-                battery_current.is_some_and(|current| current.value.magnitude_milliamps() != 0)
-            })
-            .unwrap_or(snapshot_observed_at);
-        let result = state.estimator.update(ChargeEstimateInput {
-            session: ChargeSessionIdentity::new(profile.session_id),
-            profile: ChargeProfileIdentity::new(profile.profile_id),
-            at,
-            observed_at,
-            battery_current,
-            charge_mode,
-            flow,
-            battery_level,
-            usable_capacity: UsablePackCapacity::new(
-                Capacity::from_milliamp_hours(profile.capacity_milliamp_hours),
-                profile.capacity_source.into(),
-                profile.verification.into(),
-            ),
-            battery_temperature: snapshot.battery_temperature.map(core_temperature),
-            voltage_sag,
-            freshness: TelemetryFreshness::new(CoreDuration::from_milliseconds(
-                input.freshness.milliseconds,
-            )),
-        });
-        mobile_charge_estimate_state(result, state.estimator.last_reset_reason(), voltage_sag)
-    }
-}
-
-fn update_mobile_voltage_sag(
-    state: &mut MobileChargeEstimatorState,
-    snapshot: &MobileTelemetrySnapshotDto,
-    now: MonotonicTimestamp,
-    freshness_ms: u64,
-    flow: ChargeFlow,
-) -> Option<VoltageSagEstimate> {
-    let current_at = snapshot
-        .battery_current_observed_at_ms
-        .map(MobileMonotonicMillisDto::into_core);
-    let voltage_at = snapshot
-        .voltage_observed_at_ms
-        .map(MobileMonotonicMillisDto::into_core);
-    let is_fresh = |observed_at: Option<MonotonicTimestamp>| {
-        observed_at.is_some_and(|observed_at| {
-            now >= observed_at
-                && now.saturating_duration_since(observed_at).as_milliseconds()
-                    <= cutout_core::CONNECTED_WHEEL_MOTION_FRESHNESS_MS
-        })
-    };
-    if !is_fresh(current_at) || !is_fresh(voltage_at) {
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-        return None;
-    }
-
-    let (Some(voltage), Some(battery_current), Some(voltage_at), Some(current_at)) = (
-        snapshot.voltage,
-        snapshot.battery_current,
-        voltage_at,
-        current_at,
-    ) else {
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-        return None;
-    };
-
-    let pair_regressed = state
-        .last_sag_pair
-        .is_some_and(|(last_voltage, last_current)| {
-            voltage_at < last_voltage || current_at < last_current
-        });
-    if pair_regressed {
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-        state.last_sag_estimate = None;
-    }
-
-    let measured_voltage = core_measured_voltage(voltage);
-    let measured_current = core_measured_battery_current(battery_current);
-    let inputs_are_trusted = measured_voltage.verification.is_trusted()
-        && measured_voltage.quality != CoreValueQuality::Inferred
-        && measured_current.verification.is_trusted()
-        && measured_current.quality != CoreValueQuality::Inferred;
-    let current_is_out =
-        measured_current.value.direction() == cutout_core::BatteryCurrentDirection::Out;
-    let flow_is_valid = inputs_are_trusted && current_is_out && flow == ChargeFlow::Discharging;
-    let pair_is_new = state
-        .last_sag_pair
-        .is_none_or(|(last_voltage, last_current)| {
-            voltage_at > last_voltage && current_at > last_current
-        });
-
-    if pair_is_new {
-        let result = state.voltage_sag.update(VoltageSagInput {
-            at: voltage_at.max(current_at),
-            flow,
-            voltage: measured_voltage,
-            battery_current: measured_current,
-            freshness: TelemetryFreshness::new(CoreDuration::from_milliseconds(freshness_ms)),
-        });
-        state.last_sag_pair = Some((voltage_at, current_at));
-        state.last_sag_estimate = result;
-        return result;
-    }
-
-    if flow_is_valid {
-        return state
-            .last_sag_estimate
-            .filter(|estimate| estimate.calculated_at <= now && estimate.valid_until >= now);
-    }
-
-    // An unloaded zero is a valid baseline while the other field catches up.
-    if !inputs_are_trusted
-        || flow != ChargeFlow::Discharging
-        || measured_current.value.direction() != cutout_core::BatteryCurrentDirection::Zero
-    {
-        state.voltage_sag.reset_observations();
-        state.last_sag_pair = None;
-    }
-    state.last_sag_estimate = None;
-    None
-}
-
-fn resolve_mobile_charge_mode(
-    snapshot: &MobileTelemetrySnapshotDto,
-    now: MonotonicTimestamp,
-) -> Measured<ChargeMode> {
-    let reported = core_ride_operating_state(snapshot.operating_state);
-    let speed = snapshot
-        .speed
-        .map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value.value));
-    let speed_at = snapshot
-        .speed_observed_at_ms
-        .map(MobileMonotonicMillisDto::into_core);
-    let raw_charge_mode = snapshot
-        .charge_mode
-        .map(|mode| core_charge_mode(mode).value);
-    let (_, guarded_charge_mode) = CoreRideOperatingState::resolve_fresh(
-        Some(reported),
-        raw_charge_mode,
-        speed,
-        speed_at,
-        Some(now),
-    );
-    snapshot.charge_mode.map_or_else(
-        || Measured::estimated(ChargeMode::NotCharging),
-        |reading| {
-            let mut reading = core_charge_mode(reading);
-            reading.value = guarded_charge_mode.unwrap_or(ChargeMode::Unknown);
-            if reading.value != raw_charge_mode.unwrap_or(ChargeMode::NotCharging) {
-                reading.source = ValueSource::Calculated;
-                reading.quality = ValueQuality::Inferred;
-                reading.verification = VerificationStatus::Inferred;
-            }
-            reading
-        },
-    )
-}
-
-impl Default for MobileChargeEstimator {
-    fn default() -> Self {
-        Self {
-            state: Mutex::new(MobileChargeEstimatorState {
-                estimator: cutout_core::ChargeEstimator::new(),
-                voltage_sag: VoltageSagEstimator::new(),
-                last_sag_pair: None,
-                last_sag_estimate: None,
-                profile: None,
-            }),
-        }
+        mobile_charge_estimate_state(result.state, result.reset_reason, result.voltage_sag)
     }
 }
 
@@ -18920,10 +16812,6 @@ fn core_measured_battery_current(reading: BatteryCurrentReading) -> Measured<Cor
         reading.quality,
         reading.verification,
     )
-}
-
-fn core_battery_current(reading: BatteryCurrentReading) -> Measured<CoreBatteryCurrent> {
-    core_measured_battery_current(reading)
 }
 
 fn core_measured_voltage(reading: VoltageReading) -> Measured<CoreVoltage> {
@@ -18964,47 +16852,6 @@ fn core_charge_mode(reading: MobileChargeModeReadingDto) -> Measured<ChargeMode>
         reading.quality,
         reading.verification,
     )
-}
-
-fn core_charge_flow(
-    snapshot: &MobileTelemetrySnapshotDto,
-    charge_mode: Measured<ChargeMode>,
-    charge_flow_verification: VerificationStatus,
-) -> Measured<ChargeFlow> {
-    let flow = if charge_mode.value.is_active() {
-        match snapshot.power_flow {
-            Some(PowerFlowDirection::Discharge) if charge_flow_verification.is_trusted() => {
-                ChargeFlow::Discharging
-            }
-            Some(PowerFlowDirection::Regeneration) if charge_flow_verification.is_trusted() => {
-                ChargeFlow::Regeneration
-            }
-            Some(
-                PowerFlowDirection::Unknown
-                | PowerFlowDirection::Discharge
-                | PowerFlowDirection::Regeneration,
-            ) => ChargeFlow::Unknown,
-            Some(PowerFlowDirection::Charging | PowerFlowDirection::Zero) | None => {
-                ChargeFlow::Charging
-            }
-        }
-    } else {
-        match snapshot.power_flow {
-            Some(PowerFlowDirection::Discharge) => ChargeFlow::Discharging,
-            Some(PowerFlowDirection::Regeneration) => ChargeFlow::Regeneration,
-            Some(PowerFlowDirection::Zero) => ChargeFlow::Zero,
-            Some(PowerFlowDirection::Charging) => ChargeFlow::Charging,
-            Some(PowerFlowDirection::Unknown) | None => ChargeFlow::Unknown,
-        }
-    };
-    Measured {
-        value: flow,
-        source: charge_mode.source,
-        quality: charge_mode.quality,
-        verification: charge_mode
-            .verification
-            .intersection(charge_flow_verification),
-    }
 }
 
 fn mobile_charge_estimate_state(
@@ -19096,23 +16943,6 @@ fn mobile_charge_estimate_state(
             samples: 0,
             observed_for: MobileDurationDto { milliseconds: 0 },
         },
-    }
-}
-
-fn charge_estimate_state_unavailable(
-    reason: MobileChargeEstimateUnavailableReasonDto,
-    reset_reason: Option<MobileChargeEstimateResetReasonDto>,
-    voltage_sag: Option<VoltageSagEstimate>,
-) -> MobileChargeEstimateStateDto {
-    MobileChargeEstimateStateDto {
-        kind: MobileChargeEstimateStateKindDto::Unavailable,
-        estimate: None,
-        voltage_sag: voltage_sag.map(Into::into),
-        unavailable_reason: Some(reason),
-        error: None,
-        reset_reason,
-        samples: 0,
-        observed_for: MobileDurationDto { milliseconds: 0 },
     }
 }
 
@@ -28681,7 +26511,7 @@ mod tests {
         ));
         assert!(!state.has_pending_location_writes());
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
+        assert_eq!(inner.recording.snapshot().route_point_count, 1);
         drop(inner);
         assert_eq!(
             database
@@ -28915,10 +26745,10 @@ mod tests {
             .inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .admission_recorder
-            .last_telemetry_at_milliseconds()
-            .unwrap()
-            .as_u64();
+            .recording
+            .snapshot()
+            .last_telemetry_at_ms
+            .unwrap();
         assert_eq!(last_telemetry, expected_last_telemetry);
     }
 
@@ -28977,7 +26807,7 @@ mod tests {
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
         assert_unassociated_connection_does_not_refresh_telemetry(&state, "pev-2", 2, 4_000, 3_000);
         assert_eq!(
-            state.current_snapshot(5_001).unwrap().telemetry_state,
+            state.current_snapshot(4_001).unwrap().telemetry_state,
             MobileRideMapCoreTelemetryStateDto::AssociatedStale
         );
 
@@ -29212,14 +27042,6 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-            assert_eq!(
-                state
-                    .inner
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .music_history_policy,
-                policy.into()
-            );
             assert_eq!(state.current_music_history_policy(), policy);
             assert_eq!(state.current_music_history().unwrap().status, status);
             assert_eq!(
@@ -29335,18 +27157,19 @@ mod tests {
             }
 
             state.interrupt_at(2_200).unwrap();
-            let restored = database
-                .inner
-                .queue_restore_snapshot()
-                .unwrap()
-                .wait_result()
-                .unwrap();
-            // Leave recovery to verified connection admission rather than the general restore path.
-            state
-                .inner
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .restore_active_ride(2_300, false, &restored)
+            // Restore through the application owner, but leave recovery to verified connection
+            // admission rather than applying the general startup policy here.
+            let recording = Arc::clone(
+                &state
+                    .inner
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .recording,
+            );
+            let restore = recording.begin_restore().unwrap();
+            let policy = ride_recovery_policy(Some(&database), 2_300, false).unwrap();
+            recording
+                .finish_restore_with_policy(restore, &policy)
                 .unwrap();
             let pending = state
                 .begin_verified_connection_admission(
@@ -29362,18 +27185,12 @@ mod tests {
                 .unwrap();
             assert_eq!(resumed.ride_id, original.ride_id);
             assert_eq!(resumed.state, MobileRideLifecycleStateDto::Active);
-            assert_eq!(
-                state
-                    .inner
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .music_history_policy,
-                if expected_status == MobileMusicHistoryStatusDto::Deleted {
-                    CoreMusicHistoryPolicy::Disabled
-                } else {
-                    CoreMusicHistoryPolicy::OpaqueItem
-                }
-            );
+            let expected_policy = if expected_status == MobileMusicHistoryStatusDto::Deleted {
+                MobileMusicHistoryPolicyDto::Disabled
+            } else {
+                MobileMusicHistoryPolicyDto::OpaqueItem
+            };
+            assert_eq!(state.current_music_history_policy(), expected_policy);
             assert_eq!(
                 state.current_music_history().unwrap().status,
                 expected_status
@@ -29420,6 +27237,8 @@ mod tests {
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
             inner
+                .recording
+                .snapshot()
                 .last_connected_vehicle
                 .as_ref()
                 .map(ride_maps::VehicleIdentity::as_str),
@@ -30343,9 +28162,9 @@ mod tests {
                 .inner
                 .lock()
                 .unwrap()
-                .recorder
-                .summary()
-                .distance_millimetres()
+                .recording
+                .snapshot()
+                .distance_millimetres
         );
         let paused = state.pause_at(4_500).expect("ride pauses");
         assert_eq!(
@@ -30774,14 +28593,15 @@ mod tests {
         );
         let restored = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
-            restored.recorder.points().len(),
+            restored.recording.snapshot().route_points.len(),
             ride_maps::MAX_LIVE_ROUTE_POINTS
         );
-        assert_eq!(restored.recorder.first_point_sequence().as_u64(), 2);
+        assert_eq!(restored.recording.snapshot().first_point_sequence, 2);
         assert_eq!(
             restored
-                .recorder
-                .points()
+                .recording
+                .snapshot()
+                .route_points
                 .last()
                 .unwrap()
                 .sample()
@@ -31443,166 +29263,6 @@ mod tests {
     }
 
     #[test]
-    fn ride_invariant_committed_transition_projection_failure_requires_restore() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-transition-projection-{}.sqlite3",
-            Uuid::new_v4()
-        ));
-        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
-        let core = restored_database_core(database.clone());
-        let active = core.start_gps_only(1_000).unwrap();
-        let sql = rusqlite::Connection::open(&path).unwrap();
-        let command = {
-            let mut state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
-            let command_id = state.next_lifecycle_command_id;
-            let next_command_id = command_id.checked_add(1).unwrap();
-            let (command, admission) =
-                MobileRideMapLifecycleCommand::prepare(Arc::clone(&core), command_id).unwrap();
-            let pending = state
-                .prepare_lifecycle_transition(
-                    MobileRideEventDto::Pause,
-                    active.command_token.as_ref().unwrap(),
-                    2_000,
-                    command_id,
-                )
-                .unwrap();
-            state.next_lifecycle_command_id = next_command_id;
-            // SQL may commit, but settlement cannot project until this guard is released.
-            let projection = &mut state.recorder;
-            let transition = projection
-                .state()
-                .unwrap()
-                .transition(ride_maps::RideEvent::Stop)
-                .unwrap();
-            projection
-                .apply_transition_at(transition, ride_maps::MonotonicMilliseconds::new(1_500))
-                .unwrap();
-            assert!(
-                admission
-                    .send(PendingMobileRideCommand::Transition(pending))
-                    .is_ok()
-            );
-            command
-        };
-        assert_eq!(
-            command.wait_result(),
-            Err(MobileRideMapCoreErrorDto::InvalidTransition)
-        );
-        assert_eq!(
-            sql.query_row("SELECT state FROM rides", [], |row| row.get::<_, String>(0))
-                .unwrap(),
-            "paused"
-        );
-        assert!(
-            !core.is_ready(),
-            "post-commit projection failure must require durable reconciliation"
-        );
-        {
-            let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
-            assert_eq!(state.pending_lifecycle_command_id, None);
-            assert_eq!(
-                state.initialization_error,
-                Some(MobileRideMapCoreErrorDto::InvalidTransition)
-            );
-        }
-        assert_eq!(
-            core.pause(2_100),
-            Err(MobileRideMapCoreErrorDto::InvalidTransition)
-        );
-        let recovered = core.restore(2_100).unwrap().unwrap();
-        assert_eq!(recovered.ride_id, active.ride_id);
-        assert_eq!(recovered.state, MobileRideLifecycleStateDto::Paused);
-        assert!(
-            recovered.command_token.unwrap().generation
-                > active.command_token.clone().unwrap().generation
-        );
-        assert_eq!(
-            core.begin_lifecycle_command(
-                MobileRideEventDto::Resume,
-                active.command_token.unwrap(),
-                2_200
-            )
-            .err(),
-            Some(MobileRideMapCoreErrorDto::StaleRideCommand)
-        );
-        assert_eq!(
-            command.poll(),
-            Err(MobileRideMapCoreErrorDto::InvalidTransition)
-        );
-        drop(sql);
-        database.shutdown().unwrap();
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn ride_invariant_committed_start_projection_failure_requires_restore() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-start-projection-{}.sqlite3",
-            Uuid::new_v4()
-        ));
-        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
-        let core = restored_database_core(database.clone());
-        let sql = rusqlite::Connection::open(&path).unwrap();
-        sql.execute_batch("BEGIN IMMEDIATE;").unwrap();
-        let command = core
-            .begin_start_gps_only_command(1_000, MobileMusicHistoryPolicyDto::Disabled)
-            .unwrap();
-        // Exercise a real staged-recorder rejection after admitting the SQL command.
-        core.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .recorder
-            .start(ride_maps::MonotonicMilliseconds::new(500), None)
-            .unwrap();
-        sql.execute_batch("COMMIT;").unwrap();
-        assert_eq!(
-            command.wait_result(),
-            Err(MobileRideMapCoreErrorDto::AlreadyRecording)
-        );
-        assert_eq!(
-            sql.query_row("SELECT state FROM rides", [], |row| row.get::<_, String>(0))
-                .unwrap(),
-            "active"
-        );
-        assert!(
-            !core.is_ready(),
-            "committed creation cannot be treated as a rejected start"
-        );
-        {
-            let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
-            assert_eq!(state.pending_lifecycle_command_id, None);
-            assert_eq!(
-                state.initialization_error,
-                Some(MobileRideMapCoreErrorDto::AlreadyRecording)
-            );
-        }
-        assert_eq!(
-            core.start_gps_only(2_000),
-            Err(MobileRideMapCoreErrorDto::AlreadyRecording)
-        );
-        let recovered = core.restore(2_000).unwrap().unwrap();
-        assert_eq!(recovered.state, MobileRideLifecycleStateDto::Active);
-        assert_eq!(
-            sql.query_row("SELECT COUNT(*) FROM rides", [], |row| row.get::<_, u64>(0))
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            command.poll(),
-            Err(MobileRideMapCoreErrorDto::AlreadyRecording)
-        );
-        drop(sql);
-        database.shutdown().unwrap();
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
     fn ride_invariant_lost_transition_storage_reply_requires_durable_restore() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -31612,21 +29272,18 @@ mod tests {
         let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
         let core = restored_database_core(database.clone());
         let active = core.start_gps_only(1_000).unwrap();
-        let (ride_id, transition, command_id) = {
+        let (ride_id, command_id) = {
             let mut state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
             let command_id = state.next_lifecycle_command_id;
             state.next_lifecycle_command_id += 1;
             state.pending_lifecycle_command_id = Some(command_id);
-            (
-                state.ride_id.clone().unwrap(),
-                state
-                    .recorder
-                    .state()
-                    .unwrap()
-                    .transition(ride_maps::RideEvent::Pause)
-                    .unwrap(),
-                command_id,
-            )
+            let ride_id = state
+                .recording
+                .snapshot()
+                .ride_id
+                .map(mobile_ride_id)
+                .unwrap();
+            (ride_id, command_id)
         };
         let mut storage = database
             .inner
@@ -31653,24 +29310,29 @@ mod tests {
                 .unwrap(),
             "paused"
         );
-        let (command, admission) =
-            MobileRideMapLifecycleCommand::prepare(Arc::clone(&core), command_id).unwrap();
-        admission
-            .send(PendingMobileRideCommand::Transition(
-                PendingMobileRideLifecycle {
-                    command_id,
-                    event: MobileRideEventDto::Pause,
-                    ride_id,
-                    epoch_offset_ms: 0,
-                    logical_at_ms: 2_000,
-                    transition,
-                    storage: Some(storage),
-                    last_telemetry_at_ms: None,
-                },
-            ))
+        let recording = Arc::clone(
+            &core
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .recording,
+        );
+        let token = recording.snapshot().command_token.unwrap();
+        let prepared = recording
+            .begin_transition(token, ride_maps::RideEvent::Pause, 2_000, None)
             .unwrap();
+        drop(prepared);
         assert!(matches!(
-            command.wait_result(),
+            core.complete_lifecycle_command(
+                command_id,
+                MobileRideEventDto::Pause,
+                2_000,
+                Err(
+                    cutout_application::ride_recording::RideRecordingError::Storage(
+                        persistence::StorageError::ResponseDropped,
+                    )
+                ),
+            ),
             Err(MobileRideMapCoreErrorDto::Storage(_))
         ));
         assert!(
@@ -31691,10 +29353,6 @@ mod tests {
                 .err(),
             Some(MobileRideMapCoreErrorDto::StaleRideCommand)
         );
-        assert!(matches!(
-            command.poll(),
-            Err(MobileRideMapCoreErrorDto::Storage(_))
-        ));
         drop(sql);
         database.shutdown().unwrap();
         fs::remove_file(path).unwrap();
@@ -31734,20 +29392,16 @@ mod tests {
                 .unwrap(),
             "active"
         );
-        let (command, admission) =
-            MobileRideMapLifecycleCommand::prepare(Arc::clone(&core), command_id).unwrap();
-        admission
-            .send(PendingMobileRideCommand::Start(PendingMobileRideStart {
-                command_id,
-                at_ms: 1_000,
-                candidate_vehicle: None,
-                music_history_policy: CoreMusicHistoryPolicy::Disabled,
-                storage: Some(storage),
-                committed_ride_checkpoint: None,
-            }))
-            .unwrap();
         assert!(matches!(
-            command.wait_result(),
+            core.complete_start_gps_only_command(
+                command_id,
+                1_000,
+                Err(
+                    cutout_application::ride_recording::RideRecordingError::Storage(
+                        persistence::StorageError::ResponseDropped,
+                    )
+                ),
+            ),
             Err(MobileRideMapCoreErrorDto::Storage(_))
         ));
         assert!(
@@ -31765,10 +29419,6 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert!(matches!(
-            command.poll(),
-            Err(MobileRideMapCoreErrorDto::Storage(_))
-        ));
         drop(sql);
         database.shutdown().unwrap();
         fs::remove_file(path).unwrap();
@@ -31859,7 +29509,8 @@ mod tests {
         core.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .generation = u64::MAX;
+            .recording
+            .set_generation_for_test(u64::MAX);
         let command = core.begin_restore_command(0).unwrap();
         assert!(
             matches!(
@@ -32352,30 +30003,45 @@ mod tests {
             1
         );
         let connection = rusqlite::Connection::open(&path).unwrap();
-        connection.execute_batch("CREATE TRIGGER deny_location_observation BEFORE UPDATE OF last_location_observed_monotonic_ms ON rides BEGIN SELECT RAISE(ABORT, 'test clock checkpoint failure'); END;").unwrap();
+        connection.execute_batch("CREATE TRIGGER deny_location_observation BEFORE UPDATE OF last_location_observed_monotonic_ms ON rides WHEN NEW.last_location_observed_monotonic_ms = 3000 BEGIN SELECT RAISE(ABORT, 'test clock checkpoint failure'); END;").unwrap();
         let repeated = MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: wall + 1_000,
+            speed_meters_per_second: Some(6.0),
+            ..first
+        };
+        let failed_repeated = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: wall + 2_000,
             speed_meters_per_second: Some(7.0),
             ..first
         };
         let failed = state
             .ingest_location_batch_with_outcomes(
                 started.recording_token.clone(),
-                2_000,
-                wall + 1_000,
-                vec![repeated],
+                3_000,
+                wall + 2_000,
+                vec![repeated, failed_repeated],
             )
             .unwrap();
+        assert_eq!(
+            failed.len(),
+            2,
+            "a later clock failure preserves earlier outcomes"
+        );
         assert!(matches!(
-            failed.as_slice(),
-            [MobileRideMapCoreOutcomeDto {
-                decision: MobileRideMapCoreDecisionDto::StorageError { .. },
-                ..
-            }]
+            failed[0].decision,
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+            }
         ));
+        assert!(matches!(
+            failed[1].decision,
+            MobileRideMapCoreDecisionDto::StorageError { .. }
+        ));
+        assert_eq!(failed[0].snapshot.live_speed.millimetres_per_second, 6_000);
+        assert_eq!(failed[1].snapshot.live_speed.millimetres_per_second, 7_000);
         assert_eq!(
             state
-                .current_snapshot(2_000)
+                .current_snapshot(3_000)
                 .unwrap()
                 .live_speed
                 .millimetres_per_second,
@@ -32383,13 +30049,13 @@ mod tests {
         );
         let replay = MobilePhoneLocationSampleDto {
             speed_meters_per_second: Some(99.0),
-            ..repeated
+            ..failed_repeated
         };
         let replayed = state
             .ingest_location_batch_with_outcomes(
                 started.recording_token.clone(),
-                2_500,
-                wall + 1_500,
+                3_000,
+                wall + 2_000,
                 vec![replay],
             )
             .unwrap();
@@ -32399,15 +30065,17 @@ mod tests {
         ));
         assert_eq!(
             state
-                .current_snapshot(2_500)
+                .current_snapshot(3_500)
                 .unwrap()
                 .live_speed
                 .millimetres_per_second,
             7_000
         );
+        // The failed sample is sourced at 3000, so the shared 2000ms freshness window expires
+        // just after 5000 even though its location-observation checkpoint failed.
         assert_eq!(
             state
-                .current_snapshot(4_001)
+                .current_snapshot(5_001)
                 .unwrap()
                 .live_speed
                 .millimetres_per_second,
@@ -32435,7 +30103,7 @@ mod tests {
             }]
         ));
         assert_eq!(retried[0].snapshot.live_speed.millimetres_per_second, 7_000);
-        for second in 3..=41 {
+        for second in 4..=41 {
             let monotonic = second * 1_000;
             let wall_clock = wall + monotonic - 1_000;
             let sample = MobilePhoneLocationSampleDto {
@@ -32480,15 +30148,19 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
             state
-                .recorder
-                .latest_location_observation()
+                .recording
+                .snapshot()
+                .route_points
+                .first()
                 .unwrap()
+                .sample()
                 .monotonic_milliseconds()
                 .as_u64(),
             41_000
         );
-        assert_eq!(state.recorder.point_count(), 1);
-        assert_eq!(state.recorder.background_gap_count().as_u64(), 0);
+        let recording = state.recording.snapshot();
+        assert_eq!(recording.route_point_count, 1);
+        assert_eq!(recording.background_gap_count, 0);
         drop(state);
         assert_eq!(
             restored.current_snapshot(0).unwrap().state,
@@ -32734,7 +30406,7 @@ mod tests {
     }
 
     #[test]
-    fn music_restore_failure_is_unavailable_and_does_not_disable_the_ride() {
+    fn music_history_policy_updates_keep_the_ride_available() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -32748,11 +30420,6 @@ mod tests {
             .expect("enable history");
         core.set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
             .expect("redact history");
-        // Model a failed history restore after the active ride itself was recovered.
-        core.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .music_restore_failed = true;
         core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("worker result is authoritative after a successful commit");
         assert_eq!(
@@ -33285,3 +30952,57 @@ mod tests {
 
 mod soundcloud_player;
 pub use soundcloud_player::*;
+
+fn map_ride_music_error(
+    error: cutout_application::ride_recording::music::RideMusicError,
+) -> MobileRideMapCoreErrorDto {
+    use cutout_application::ride_recording::music::RideMusicError;
+    match error {
+        RideMusicError::Recording(error) => map_ride_recording_error(error),
+        RideMusicError::Unavailable => MobileRideMapCoreErrorDto::storage_unavailable(),
+        RideMusicError::Storage(error) => map_storage_core_error(error),
+        RideMusicError::InvalidInput(error) => {
+            MobileRideMapCoreErrorDto::InvalidMusicInput(error.to_string())
+        }
+    }
+}
+fn unavailable_music_history() -> MobileMusicHistoryDto {
+    MobileMusicHistoryDto {
+        status: MobileMusicHistoryStatusDto::Unavailable,
+        events: Vec::new(),
+    }
+}
+fn ride_music_observation(
+    snapshot: MobileMusicSnapshotDto,
+    kind: MobileMusicRideEventKindDto,
+    monotonic_at_ms: u64,
+    wall_clock_at_ms: u64,
+    clock_uncertainty_ms: u64,
+) -> Result<
+    cutout_application::ride_recording::music::RideMusicObservation,
+    MobileRideMapCoreErrorDto,
+> {
+    Ok(
+        cutout_application::ride_recording::music::RideMusicObservation {
+            snapshot: CoreMusicSnapshot::try_from(snapshot)
+                .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?,
+            kind: kind.into(),
+            monotonic_at_ms,
+            wall_clock_at_ms,
+            clock_uncertainty_ms,
+        },
+    )
+}
+fn ride_music_result_dto(
+    result: cutout_application::ride_recording::music::RideMusicEventResult,
+) -> MobileMusicTimelineRecordResultDto {
+    use cutout_application::ride_recording::music::RideMusicEventOutcome;
+    MobileMusicTimelineRecordResultDto {
+        outcome: match result.outcome {
+            RideMusicEventOutcome::RideNotOpen => MobileMusicTimelineOutcomeDto::RideNotOpen,
+            RideMusicEventOutcome::Timeline(outcome) => outcome.into(),
+        },
+        sequence: result.sequence,
+        effective_policy: result.effective_policy.map(Into::into),
+    }
+}

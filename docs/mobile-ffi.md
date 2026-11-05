@@ -1,8 +1,8 @@
 # Mobile FFI Boundary
 
-`cutout-mobile-ffi` is the UniFFI boundary between the Rust protocol engine and
-the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
-concrete protocol sessions; platform code owns Bluetooth and UI concerns.
+`cutout-mobile-ffi` adapts the shared Rust application API to Swift and Kotlin
+through UniFFI. Application services compose the protocol engine, recording,
+storage and music services. Platform code owns Bluetooth handles and UI concerns.
 
 ## Shared application services
 
@@ -11,8 +11,9 @@ clients and the native binding adapter. It has no dependency on UniFFI or a UI
 toolkit. It owns device-session orchestration, capture startup and durable writer
 operations, location normalization and freshness, activity work admission, music
 provider and observation coordination, phone-alarm effects, camera command and
-media authorization, lighting session reduction, and charging editor and map
-workflows. The corresponding `cutout-mobile-ffi` exports convert inputs and
+media authorization, lighting sessions and accessory collections, battery and
+voltage-sag estimation, and charging editor, map and network workflows. The
+corresponding `cutout-mobile-ffi` exports convert inputs and
 results and delegate to these services; their existing Swift and Kotlin API
 remains the binding contract.
 
@@ -28,10 +29,16 @@ catalog, and publishes only acknowledged observations. Database application
 operations retain bounded BMS requests and ordered ride-marker writes across
 calls. Persistence continues to own SQLite transactions and stored queries.
 
-Live ride-map recording and the charging network runtime are still being
-extracted from the mobile binding crate. Native adapters continue to own
-platform handles and effects. Compose the application services once per process
-so consumers share the same session, recording and database owners.
+Private capture submission uses the shared bounded HTTP transport with the
+existing durable submission owner. SoundCloud playback retains its catalogue,
+authorization and player state in one application service. Charging sync, refresh
+and account deletion share the gate retained with the database handle.
+
+Live ride-map lifecycle, recovery, location admission, motion accounting and
+music history share one application recording owner. Native adapters retain
+platform handles, callback delivery and DTO conversion. Compose the application
+services once per process so consumers share the same session, recording and
+database owners.
 
 ## Native shell ownership
 

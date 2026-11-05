@@ -137,10 +137,11 @@ impl MobileRideMapLocationCallback {
                 .inner
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
+            let recording = state.recording.snapshot();
             if callback.may_adopt_connection_start
-                && callback.generation_at_receipt.checked_add(1) == Some(state.generation)
-                && state.last_connection_transition_generation.is_some()
-                && state.last_connection_transition_ride_id == state.ride_id
+                && callback.generation_at_receipt.checked_add(1) == Some(recording.generation)
+                && recording.last_connection_transition_generation.is_some()
+                && recording.last_connection_transition_ride_id == recording.ride_id
             {
                 state
                     .snapshot_for_outcome(callback.receipt_monotonic_ms)
@@ -183,13 +184,14 @@ impl MobileRideMapCore {
             if let Some(error) = state.restoration_error() {
                 return Err(error);
             }
+            let recording = state.recording.snapshot();
             (
                 state
                     .snapshot_for_outcome(receipt_monotonic_ms)
                     .and_then(|snapshot| snapshot.recording_token),
                 Arc::clone(&state.location_callback_capacity),
-                state.generation,
-                state.recorder.state().is_none(),
+                recording.generation,
+                recording.lifecycle.is_none(),
             )
         };
         let permit = capacity.acquire(samples.len())?;
@@ -277,18 +279,18 @@ impl MobileRideMapConnectionAdmission {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let pending = match std::mem::replace(
             &mut *state,
-            MobileRideMapAdmissionState::Completed(Err(
+            MobileRideMapAdmissionState::Completed(Box::new(Err(
                 MobileRideMapCoreErrorDto::AdmissionPending,
-            )),
+            ))),
         ) {
             MobileRideMapAdmissionState::Pending(pending) => pending,
             MobileRideMapAdmissionState::Completed(result) => {
                 *state = MobileRideMapAdmissionState::Completed(result.clone());
-                return result;
+                return *result;
             }
         };
-        let result = self.core.finish_verified_connection_admission(pending);
-        *state = MobileRideMapAdmissionState::Completed(result.clone());
+        let result = self.core.finish_verified_connection_admission(*pending);
+        *state = MobileRideMapAdmissionState::Completed(Box::new(result.clone()));
         result
     }
 }
@@ -313,9 +315,9 @@ mod tests {
     use super::*;
     use crate::{
         CoreMusicHistoryPolicy, MobileRideMapAdmissionPollDto, MobileRideMapCoreDecisionDto,
-        MobileRideMapCoreInner, MobileRideMapLocationAuthorizationDto,
-        MobileRideMapLocationEnvironmentDto, MobileRideMapRestorationState,
-        MobileStoredBmsVoltageSampleDto, Voltage, open_ride_database,
+        MobileRideMapLocationAuthorizationDto, MobileRideMapLocationEnvironmentDto,
+        MobileRideMapRestorationState, MobileStoredBmsVoltageSampleDto, Voltage,
+        open_ride_database,
     };
     use std::{sync::mpsc, time::Duration};
     use uuid::Uuid;
@@ -506,8 +508,8 @@ mod tests {
             )
             .unwrap();
         core.inner.lock().unwrap().pending_restore_command_id = Some(1);
-        core.complete_restore(1, MobileRideMapCoreInner::new(None), Ok(None))
-            .unwrap();
+        let restored = core.inner.lock().unwrap().recording.snapshot();
+        core.complete_restore(1, 0, Ok(restored)).unwrap();
         let (entered, observing) = mpsc::sync_channel(1);
         let (admitted, result) = mpsc::sync_channel(1);
         let worker_core = Arc::clone(&core);
