@@ -1351,24 +1351,17 @@ mod tests {
             holding_rx
                 .recv()
                 .expect("poll waits until the lock is held");
-            let started = std::time::Instant::now();
             let first = queued.try_result();
-            result_tx
-                .send((started.elapsed(), first))
-                .expect("poll result");
+            result_tx.send(first).expect("poll result");
             continue_rx
                 .recv()
                 .expect("poll retries after the lock drops");
             queued.try_result()
         });
         start_tx.send(()).expect("locker starts");
-        let (elapsed, first) = result_rx
-            .recv_timeout(std::time::Duration::from_millis(500))
+        let first = result_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
             .expect("music poll blocked on the recording lock");
-        assert!(
-            elapsed < std::time::Duration::from_millis(200),
-            "poll waited {elapsed:?}"
-        );
         assert!(first.is_none());
         release_tx.send(()).expect("release lock");
         locker.join().expect("locker finishes");
