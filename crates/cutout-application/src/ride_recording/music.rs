@@ -542,12 +542,12 @@ fn settle_deletion(
     }
     state.pending_music_deletion_epoch = None;
     state.policy_before_pending_deletion = None;
-    if let Some((ticket, policy)) = state.suppressed_music_policy.take() {
-        if ticket >= state.published_music_cache_epoch {
-            state.music_history_policy = Some(policy);
-            state.music_history_available = true;
-            state.published_music_cache_epoch = ticket;
-        }
+    if let Some((ticket, policy)) = state.suppressed_music_policy.take()
+        && ticket >= state.published_music_cache_epoch
+    {
+        state.music_history_policy = Some(policy);
+        state.music_history_available = true;
+        state.published_music_cache_epoch = ticket;
         return;
     }
     if previous_policy_epoch >= state.published_music_cache_epoch
@@ -751,6 +751,50 @@ fn overlapping_failed_deletions_restore_the_policy_from_before_either() {
         second_epoch,
         second_previous,
         second_previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::HumanReadable)
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn failed_second_deletion_restores_the_policy_published_between_deletions() {
+    let mut state = RecordingState::default();
+    state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
+    state.music_cache_epoch = 1;
+    state.published_music_cache_epoch = 1;
+    let older_policy = reserve_music_cache(&mut state);
+    let (first_epoch, first_previous, first_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    settle_policy_success(&mut state, older_policy, MusicHistoryPolicy::OpaqueItem);
+    let newer_policy = reserve_music_cache(&mut state);
+    settle_policy_success(&mut state, newer_policy, MusicHistoryPolicy::HumanReadable);
+    let (second_epoch, second_previous, second_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    assert_eq!(second_previous, Some(MusicHistoryPolicy::HumanReadable));
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::Disabled)
+    );
+    settle_deletion(
+        &mut state,
+        second_epoch,
+        second_previous,
+        second_previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::HumanReadable)
+    );
+    settle_deletion(
+        &mut state,
+        first_epoch,
+        first_previous,
+        first_previous_epoch,
         &Err(StorageError::NotFound),
     );
     assert_eq!(
