@@ -11,7 +11,7 @@ use libcutout_persistence::{
     MusicHistory, MusicTimelineRecordResult, PendingMusicEventWrite, PendingMusicHistoryRead,
     PendingMusicHistoryWrite, RideId, StorageError,
 };
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 /// Admission or persistence failure for a ride music operation.
 #[derive(Debug, thiserror::Error)]
@@ -122,13 +122,18 @@ pub struct PendingRideMusicWrite {
 }
 
 impl PendingRideMusicWrite {
-    /// Polls without blocking. A failed write does not read the database.
+    /// Polls without blocking. A busy recording owner leaves the receipt pending.
     ///
-    /// A deletion receipt applies only for its owning selected ride. While that deletion is
-    /// queued, an older successful policy is remembered and published only if the deletion fails.
+    /// A failed write does not read the database. A deletion receipt applies only for its owning
+    /// selected ride. While that deletion is queued, an older successful policy is remembered
+    /// and published only if the deletion fails.
     pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
         let result = self.storage.try_result()?;
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if state.ride_id != Some(self.ride_id) {
             return Some(result);
         }
@@ -214,17 +219,40 @@ impl RideRecordingApplication {
         }
     }
 
-    /// Reads the authoritative policy where possible, retaining the last known choice on error.
+    /// Reads the durable policy, keeping the cached choice while a deletion is pending or the read fails.
+    ///
+    /// The database read does not hold the recording lock.
     #[must_use]
     pub fn current_music_history_policy(&self) -> MusicHistoryPolicy {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.ride_id else {
-            return MusicHistoryPolicy::Disabled;
+        let (ride_id, published_epoch, cached) = {
+            let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some(ride_id) = state.ride_id else {
+                return MusicHistoryPolicy::Disabled;
+            };
+            if state.pending_music_deletion_epoch.is_some() {
+                return state
+                    .music_history_policy
+                    .unwrap_or(MusicHistoryPolicy::Disabled);
+            }
+            (
+                ride_id,
+                state.published_music_cache_epoch,
+                state.music_history_policy,
+            )
         };
-        if let Some(database) = self.database.as_ref()
-            && let Ok(policy) = database.music_history_policy(ride_id)
+        let Some(database) = self.database.as_ref() else {
+            return cached.unwrap_or(MusicHistoryPolicy::Disabled);
+        };
+        let Ok(policy) = database.music_history_policy(ride_id) else {
+            return cached.unwrap_or(MusicHistoryPolicy::Disabled);
+        };
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.ride_id == Some(ride_id)
+            && state.pending_music_deletion_epoch.is_none()
+            && state.published_music_cache_epoch == published_epoch
         {
             state.music_history_policy = Some(policy);
+            return policy;
         }
         state
             .music_history_policy
@@ -525,7 +553,8 @@ fn settle_deletion(
 ) {
     let owns_fence = state.pending_music_deletion_epoch == Some(epoch);
     if result.is_ok() {
-        if epoch >= state.published_music_cache_epoch {
+        // An earlier deletion no longer owns the fence, so its success cannot replace the cache.
+        if owns_fence && epoch >= state.published_music_cache_epoch {
             state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
             state.music_history_available = true;
             state.published_music_cache_epoch = epoch;
@@ -804,6 +833,61 @@ fn failed_second_deletion_restores_the_policy_published_between_deletions() {
 }
 
 #[cfg(test)]
+#[test]
+fn successful_deletion_disables_the_cache_when_it_owns_the_fence() {
+    let mut state = RecordingState::default();
+    state.music_history_policy = Some(MusicHistoryPolicy::HumanReadable);
+    state.music_cache_epoch = 1;
+    state.published_music_cache_epoch = 1;
+    let (epoch, previous, previous_epoch) = queue_selected_music_deletion(&mut state);
+    settle_deletion(&mut state, epoch, previous, previous_epoch, &Ok(()));
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::Disabled)
+    );
+    assert_eq!(state.pending_music_deletion_epoch, None);
+}
+
+#[cfg(test)]
+#[test]
+fn successful_earlier_deletion_keeps_a_newer_observed_policy() {
+    let mut state = RecordingState::default();
+    state.music_history_policy = Some(MusicHistoryPolicy::OpaqueItem);
+    state.music_cache_epoch = 1;
+    state.published_music_cache_epoch = 1;
+    let (first_epoch, first_previous, first_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    let (second_epoch, second_previous, second_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    state.music_history_policy = Some(MusicHistoryPolicy::HumanReadable);
+    let published = state.published_music_cache_epoch;
+    settle_deletion(
+        &mut state,
+        first_epoch,
+        first_previous,
+        first_previous_epoch,
+        &Ok(()),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::HumanReadable)
+    );
+    assert_eq!(state.published_music_cache_epoch, published);
+    assert_eq!(state.pending_music_deletion_epoch, Some(second_epoch));
+    settle_deletion(
+        &mut state,
+        second_epoch,
+        second_previous,
+        second_previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::OpaqueItem)
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1032,6 +1116,137 @@ mod tests {
         database.clone().shutdown().expect("database shuts down");
         drop(queued);
         drop(unrelated);
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pending_deletion_policy_read_keeps_the_settlement_cache() {
+        let _guard = crate::ride_recording::tests::DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-app-ride-music-pending-read-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = libcutout_persistence::RideDatabase::open(&path).expect("database opens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore admitted"))
+            .expect("restore completes");
+        let started = application
+            .finish_start(
+                application
+                    .begin_start(100, 1_700_000_000_000, None, None)
+                    .expect("start admitted"),
+            )
+            .expect("start commits");
+        application
+            .set_music_history_policy(MusicHistoryPolicy::HumanReadable)
+            .expect("history enabled");
+        let mut deletion = application
+            .begin_delete_music_history(started.ride_id.expect("ride exists"))
+            .expect("deletion queues");
+        {
+            let mut state = application
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            assert!(state.pending_music_deletion_epoch.is_some());
+            state.music_history_policy = Some(MusicHistoryPolicy::OpaqueItem);
+        }
+        assert_eq!(
+            application.current_music_history_policy(),
+            MusicHistoryPolicy::OpaqueItem
+        );
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::OpaqueItem)
+        );
+        poll_music_write(&mut deletion);
+        database.clone().shutdown().expect("database shuts down");
+        drop(deletion);
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ready_music_poll_returns_while_the_recording_lock_is_held() {
+        let _guard = crate::ride_recording::tests::DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-app-ride-music-poll-lock-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = libcutout_persistence::RideDatabase::open(&path).expect("database opens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore admitted"))
+            .expect("restore completes");
+        let started = application
+            .finish_start(
+                application
+                    .begin_start(100, 1_700_000_000_000, None, None)
+                    .expect("start admitted"),
+            )
+            .expect("start commits");
+        let ride_id = started.ride_id.expect("ride exists");
+        let mut queued = application
+            .begin_set_music_history_policy(MusicHistoryPolicy::OpaqueItem)
+            .expect("policy queues");
+        database
+            .music_history_policy(ride_id)
+            .expect("queued policy commits before the poll");
+
+        let state = Arc::clone(&application.state);
+        let (start_tx, start_rx) = std::sync::mpsc::channel();
+        let (holding_tx, holding_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let locker = std::thread::spawn(move || {
+            start_rx.recv().expect("locker starts");
+            let _guard = state.lock().unwrap_or_else(PoisonError::into_inner);
+            holding_tx.send(()).expect("lock is held");
+            release_rx.recv().expect("lock released");
+        });
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+        let poller = std::thread::spawn(move || {
+            holding_rx
+                .recv()
+                .expect("poll waits until the lock is held");
+            let started = std::time::Instant::now();
+            let first = queued.try_result();
+            result_tx
+                .send((started.elapsed(), first))
+                .expect("poll result");
+            continue_rx
+                .recv()
+                .expect("poll retries after the lock drops");
+            queued.try_result()
+        });
+        start_tx.send(()).expect("locker starts");
+        let (elapsed, first) = result_rx
+            .recv_timeout(std::time::Duration::from_millis(500))
+            .expect("music poll blocked on the recording lock");
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "poll waited {elapsed:?}"
+        );
+        assert!(first.is_none());
+        release_tx.send(()).expect("release lock");
+        locker.join().expect("locker finishes");
+        continue_tx.send(()).expect("poll continues");
+        let second = poller.join().expect("poller finishes");
+        assert!(second.expect("receipt is ready").is_ok());
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::OpaqueItem)
+        );
+
+        database.clone().shutdown().expect("database shuts down");
         drop(application);
         drop(database);
         let _ = std::fs::remove_file(path);
