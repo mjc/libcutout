@@ -280,7 +280,7 @@ impl RideRecordingApplication {
         })
     }
 
-    /// Queues deletion and fences the selected ride's cached policy until its receipt settles.
+    /// Queues deletion and fences the selected ride's cache only when that ride is deleted.
     ///
     /// # Errors
     /// Returns storage availability or durable queue admission errors.
@@ -289,14 +289,21 @@ impl RideRecordingApplication {
         ride_id: RideId,
     ) -> Result<PendingRideMusicWrite, RideMusicError> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let previous_policy = (state.ride_id == Some(ride_id)).then_some(
+        let selected = state.ride_id == Some(ride_id);
+        let previous_policy = selected.then_some(
             state
                 .music_history_policy
                 .unwrap_or(MusicHistoryPolicy::Disabled),
         );
         let storage = self.music_database()?.queue_delete_music_history(ride_id)?;
-        let cache_epoch = reserve_music_cache(&mut state);
-        if previous_policy.is_some() {
+        // An unrelated ride does not own the active cache. Reserving here would make a pending
+        // policy receipt for the selected ride miss its epoch and leave the old policy published.
+        let cache_epoch = if selected {
+            reserve_music_cache(&mut state)
+        } else {
+            state.music_cache_epoch
+        };
+        if selected {
             state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
         }
         Ok(PendingRideMusicWrite {
@@ -727,6 +734,64 @@ mod tests {
         drop(older);
         drop(superseded);
         drop(deletion);
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn unrelated_history_deletion_keeps_a_pending_policy_receipt() {
+        let _guard = crate::ride_recording::tests::DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-app-ride-music-unrelated-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = libcutout_persistence::RideDatabase::open(&path).expect("database opens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore admitted"))
+            .expect("restore completes");
+        application
+            .finish_start(
+                application
+                    .begin_start(100, 1_700_000_000_000, None, None)
+                    .expect("start admitted"),
+            )
+            .expect("start commits");
+
+        let mut queued = application
+            .begin_set_music_history_policy(MusicHistoryPolicy::OpaqueItem)
+            .expect("policy queues");
+        let mut unrelated = application
+            .begin_delete_music_history(RideId::new())
+            .expect("other ride deletion queues");
+        poll_music_write(&mut queued);
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::OpaqueItem)
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if unrelated.try_result().is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "unrelated deletion did not settle"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::OpaqueItem)
+        );
+
+        database.clone().shutdown().expect("database shuts down");
+        drop(queued);
+        drop(unrelated);
         drop(application);
         drop(database);
         let _ = std::fs::remove_file(path);
