@@ -113,6 +113,8 @@ pub struct PendingRideMusicWrite {
     state: Arc<Mutex<RecordingState>>,
     ride_id: RideId,
     previous_policy: Option<MusicHistoryPolicy>,
+    /// Publication ticket of `previous_policy`. A failed deletion cannot restore an older ticket.
+    previous_policy_epoch: u64,
     policy: Option<MusicHistoryPolicy>,
     cache_epoch: u64,
     deletes_history: bool,
@@ -131,7 +133,13 @@ impl PendingRideMusicWrite {
             return Some(result);
         }
         if self.deletes_history {
-            settle_deletion(&mut state, self.cache_epoch, self.previous_policy, &result);
+            settle_deletion(
+                &mut state,
+                self.cache_epoch,
+                self.previous_policy,
+                self.previous_policy_epoch,
+                &result,
+            );
         } else if let (Ok(()), Some(policy)) = (&result, self.policy) {
             settle_policy_success(&mut state, self.cache_epoch, policy);
         }
@@ -257,6 +265,7 @@ impl RideRecordingApplication {
             state: Arc::clone(&self.state),
             ride_id,
             previous_policy: None,
+            previous_policy_epoch: 0,
             policy: Some(policy),
             cache_epoch,
             deletes_history: false,
@@ -274,26 +283,19 @@ impl RideRecordingApplication {
     ) -> Result<PendingRideMusicWrite, RideMusicError> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let selected = state.ride_id == Some(ride_id);
-        let previous_policy = selected.then_some(
-            state
-                .music_history_policy
-                .unwrap_or(MusicHistoryPolicy::Disabled),
-        );
         let storage = self.music_database()?.queue_delete_music_history(ride_id)?;
         // An unrelated ride does not own the active cache. Reserving here would hide a pending
         // policy receipt for the selected ride.
-        let cache_epoch = if selected {
-            let cache_epoch = reserve_music_cache(&mut state);
-            state.pending_music_deletion_epoch = Some(cache_epoch);
-            state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
-            cache_epoch
+        let (cache_epoch, previous_policy, previous_policy_epoch) = if selected {
+            queue_selected_music_deletion(&mut state)
         } else {
-            state.music_cache_epoch
+            (state.music_cache_epoch, None, 0)
         };
         Ok(PendingRideMusicWrite {
             state: Arc::clone(&self.state),
             ride_id,
             previous_policy,
+            previous_policy_epoch,
             policy: None,
             cache_epoch,
             deletes_history: true,
@@ -470,6 +472,25 @@ fn publish_music_policy(state: &mut RecordingState, policy: MusicHistoryPolicy) 
     state.published_music_cache_epoch = reserve_music_cache(state);
     state.pending_music_deletion_epoch = None;
     state.suppressed_music_policy = None;
+    state.policy_before_pending_deletion = None;
+}
+
+fn queue_selected_music_deletion(
+    state: &mut RecordingState,
+) -> (u64, Option<MusicHistoryPolicy>, u64) {
+    let captured = state.policy_before_pending_deletion.unwrap_or((
+        state.published_music_cache_epoch,
+        state
+            .music_history_policy
+            .unwrap_or(MusicHistoryPolicy::Disabled),
+    ));
+    if state.policy_before_pending_deletion.is_none() {
+        state.policy_before_pending_deletion = Some(captured);
+    }
+    let cache_epoch = reserve_music_cache(state);
+    state.pending_music_deletion_epoch = Some(cache_epoch);
+    state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
+    (cache_epoch, Some(captured.1), captured.0)
 }
 
 fn settle_policy_success(state: &mut RecordingState, epoch: u64, policy: MusicHistoryPolicy) {
@@ -489,6 +510,9 @@ fn settle_policy_success(state: &mut RecordingState, epoch: u64, policy: MusicHi
         state.music_history_policy = Some(policy);
         state.music_history_available = true;
         state.published_music_cache_epoch = epoch;
+        if state.pending_music_deletion_epoch.is_some() {
+            state.policy_before_pending_deletion = Some((epoch, policy));
+        }
     }
 }
 
@@ -496,6 +520,7 @@ fn settle_deletion(
     state: &mut RecordingState,
     epoch: u64,
     previous_policy: Option<MusicHistoryPolicy>,
+    previous_policy_epoch: u64,
     result: &Result<(), StorageError>,
 ) {
     let owns_fence = state.pending_music_deletion_epoch == Some(epoch);
@@ -508,6 +533,7 @@ fn settle_deletion(
         if owns_fence {
             state.pending_music_deletion_epoch = None;
             state.suppressed_music_policy = None;
+            state.policy_before_pending_deletion = None;
         }
         return;
     }
@@ -515,13 +541,16 @@ fn settle_deletion(
         return;
     }
     state.pending_music_deletion_epoch = None;
+    state.policy_before_pending_deletion = None;
     if let Some((ticket, policy)) = state.suppressed_music_policy.take() {
-        state.music_history_policy = Some(policy);
-        state.music_history_available = true;
-        state.published_music_cache_epoch = ticket;
+        if ticket >= state.published_music_cache_epoch {
+            state.music_history_policy = Some(policy);
+            state.music_history_available = true;
+            state.published_music_cache_epoch = ticket;
+        }
         return;
     }
-    if epoch >= state.published_music_cache_epoch
+    if previous_policy_epoch >= state.published_music_cache_epoch
         && let Some(policy) = previous_policy
     {
         state.music_history_policy = Some(policy);
@@ -629,6 +658,7 @@ fn failed_deletion_publishes_a_policy_that_committed_while_it_was_queued() {
         &mut state,
         deletion_epoch,
         Some(MusicHistoryPolicy::Disabled),
+        0,
         &Err(StorageError::NotFound),
     );
     assert_eq!(
@@ -652,6 +682,7 @@ fn failed_deletion_keeps_an_unpolled_policy_receipt_able_to_publish() {
         &mut state,
         deletion_epoch,
         Some(MusicHistoryPolicy::HumanReadable),
+        0,
         &Err(StorageError::NotFound),
     );
     assert_eq!(
@@ -662,6 +693,69 @@ fn failed_deletion_keeps_an_unpolled_policy_receipt_able_to_publish() {
     assert_eq!(
         state.music_history_policy,
         Some(MusicHistoryPolicy::OpaqueItem)
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn failed_deletion_keeps_a_newer_published_policy() {
+    let mut state = RecordingState::default();
+    state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
+    state.music_cache_epoch = 1;
+    state.published_music_cache_epoch = 1;
+    let older_policy = reserve_music_cache(&mut state);
+    let (deletion_epoch, previous, previous_epoch) = queue_selected_music_deletion(&mut state);
+    settle_policy_success(&mut state, older_policy, MusicHistoryPolicy::OpaqueItem);
+    let newer_policy = reserve_music_cache(&mut state);
+    settle_policy_success(&mut state, newer_policy, MusicHistoryPolicy::HumanReadable);
+    let published = state.published_music_cache_epoch;
+    settle_deletion(
+        &mut state,
+        deletion_epoch,
+        previous,
+        previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::HumanReadable)
+    );
+    assert_eq!(state.published_music_cache_epoch, published);
+}
+
+#[cfg(test)]
+#[test]
+fn overlapping_failed_deletions_restore_the_policy_from_before_either() {
+    let mut state = RecordingState::default();
+    state.music_history_policy = Some(MusicHistoryPolicy::HumanReadable);
+    state.music_cache_epoch = 1;
+    state.published_music_cache_epoch = 1;
+    let (first_epoch, first_previous, first_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    let (second_epoch, second_previous, second_previous_epoch) =
+        queue_selected_music_deletion(&mut state);
+    assert_eq!(second_previous, Some(MusicHistoryPolicy::HumanReadable));
+    settle_deletion(
+        &mut state,
+        first_epoch,
+        first_previous,
+        first_previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::Disabled)
+    );
+    settle_deletion(
+        &mut state,
+        second_epoch,
+        second_previous,
+        second_previous_epoch,
+        &Err(StorageError::NotFound),
+    );
+    assert_eq!(
+        state.music_history_policy,
+        Some(MusicHistoryPolicy::HumanReadable)
     );
 }
 

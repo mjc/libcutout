@@ -105,6 +105,8 @@ struct RecordingState {
     pending_music_deletion_epoch: Option<u64>,
     /// Successful policy hidden while that deletion is still queued, with its ticket.
     suppressed_music_policy: Option<(u64, MusicHistoryPolicy)>,
+    /// Policy visible before the pending deletion's optimistic disable, with its publication ticket.
+    policy_before_pending_deletion: Option<(u64, MusicHistoryPolicy)>,
     pending_locations: VecDeque<PendingLocation>,
     settled_locations: VecDeque<RideLocationWriteOutcome>,
     next_location_request_id: u64,
@@ -138,6 +140,7 @@ impl Default for RecordingState {
             published_music_cache_epoch: 0,
             pending_music_deletion_epoch: None,
             suppressed_music_policy: None,
+            policy_before_pending_deletion: None,
             pending_locations: VecDeque::new(),
             settled_locations: VecDeque::new(),
             next_location_request_id: 1,
