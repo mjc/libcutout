@@ -339,6 +339,100 @@ class LocalVescDrivetrainPanelTest {
         } finally { host.pause().stop().destroy() }
     }
 
+    @Test
+    fun unsavedDrivetrainDraftSurvivesActivityStateRestore() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        try {
+            val attempt = MobileConnectionAttemptTokenDto(platformIdentifier = "draft-wheel", generation = 1UL)
+            val persisted = MobileVescDrivetrainDraft("90", "7", "2.5")
+            var failNextLoad = false
+            fun panel() = SettingsPanel(activity, "drivetrain-recreation",
+                loadDrivetrain = { _, done ->
+                    if (failNextLoad) {
+                        failNextLoad = false
+                        done(Result.failure(IllegalStateException("storage unavailable")))
+                    } else {
+                        done(Result.success(persisted))
+                    }
+                },
+                saveDrivetrain = { _, draft, done -> done(Result.success(draft)) },
+                submit = { _, _, _, _ -> })
+            fun show(panel: SettingsPanel, value: BlePresentation) {
+                activity.setContentView(panel)
+                panel.restoreUiState(null)
+                panel.render(value.settings)
+                panel.renderVehicleSetup(value)
+            }
+            val current = presentation(attempt)
+            val original = panel()
+            show(original, current)
+            field(original, "wheel-diameter").setText("210,5")
+            field(original, "motor-pole-pairs").setText("7")
+            field(original, "reduction").setText("2,5")
+            val saved = original.saveUiState()
+            assertEquals("210,5", saved.getBundle("drivetrain")?.getBundle("diameter")?.getString("text"))
+            assertEquals("2,5", saved.getBundle("drivetrain")?.getBundle("reduction")?.getString("text"))
+
+            failNextLoad = true
+            val recreated = panel()
+            activity.setContentView(recreated)
+            recreated.restoreUiState(saved)
+            recreated.render(current.settings)
+            recreated.renderVehicleSetup(current)
+            assertEquals("", field(recreated, "wheel-diameter").text.toString())
+            assertTrue(recreated.findViewWithTag<View>("vesc.drivetrain.retry-load").isShown)
+            assertTrue(recreated.findViewWithTag<View>("vesc.drivetrain.retry-load").performClick())
+            assertEquals("210,5", field(recreated, "wheel-diameter").text.toString())
+            assertEquals("7", field(recreated, "motor-pole-pairs").text.toString())
+            assertEquals("2,5", field(recreated, "reduction").text.toString())
+
+            val other = presentation(attempt.copy(generation = 2UL))
+            val replaced = panel()
+            activity.setContentView(replaced)
+            replaced.restoreUiState(saved)
+            replaced.render(other.settings)
+            replaced.renderVehicleSetup(other)
+            assertEquals("90", field(replaced, "wheel-diameter").text.toString())
+            assertEquals("7", field(replaced, "motor-pole-pairs").text.toString())
+            assertEquals("2.5", field(replaced, "reduction").text.toString())
+        } finally { host.pause().stop().destroy() }
+    }
+
+    private fun presentation(attempt: MobileConnectionAttemptTokenDto): BlePresentation {
+        val connection = MobileConnectionAttemptSnapshotDto(
+            generation = attempt.generation,
+            revision = 1UL,
+            token = attempt,
+            readiness = MobileConnectionReadinessDto.VERIFIED,
+            transport = MobileConnectionTransportStateDto.CONNECTED,
+            deadlineMs = null,
+        )
+        val settings = MobileSettingsDto(
+            connection = connection,
+            validationAuthorized = false,
+            atMs = 0UL,
+            defaultChargeProfile = null,
+            settingDescriptors = emptyList(),
+            settings = emptyList(),
+            actionDescriptors = emptyList(),
+            actions = emptyList(),
+        )
+        val identity = MobileDeviceIdentityDto(
+            protocol = MobileProtocolFamilyDto.VESC,
+            vehicleKind = MobileVehicleKindDto.ESKATE,
+            classificationProvenance = MobileVehicleClassificationProvenanceDto.PROTOCOL,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.RESOLVED,
+            vescApplication = MobileVescApplicationDiscoveryDto.ABSENT,
+            vescApplicationQuery = null,
+            model = null,
+        )
+        return BlePresentation(
+            session = MobileDeviceSessionSnapshotDto(connection = connection, identity = identity),
+            settings = settings,
+        )
+    }
+
     private fun accepted(editor: EditText, value: String): String {
         val filter = editor.keyListener as InputFilter
         val filtered = filter.filter(value, 0, value.length, editor.text, 0, editor.text.length)

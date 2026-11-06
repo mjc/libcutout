@@ -169,6 +169,7 @@ class SettingsPanel(
         putString("attempt.platform", token.platformIdentifier)
         putString("attempt.owner", ownerLifetimeId)
         rows.forEach { (id, row) -> row.saveUiState()?.let { putBundle("row.${id.name}", it) } }
+        drivetrain.saveUiState(token)?.let { putBundle("drivetrain", it) }
     }
 
     /** Restore local drafts only after the matching attempt snapshot has arrived. */
@@ -187,7 +188,10 @@ class SettingsPanel(
             saved.getString("attempt.generation") == token.generation.toString() &&
             saved.getString("attempt.platform") == token.platformIdentifier
         pendingUiState = null
-        if (matches) rows.forEach { (id, row) -> row.restoreUiState(saved.getBundle("row.${id.name}")) }
+        if (matches) {
+            rows.forEach { (id, row) -> row.restoreUiState(saved.getBundle("row.${id.name}")) }
+            drivetrain.restoreUiState(token, saved.getBundle("drivetrain"))
+        }
     }
 
     private fun descriptorKey(value: MobileSettingDescriptorDto) =

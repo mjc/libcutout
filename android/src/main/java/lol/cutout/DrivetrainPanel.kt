@@ -1,6 +1,7 @@
 package lol.cutout
 
 import android.content.Context
+import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -20,6 +21,8 @@ class DrivetrainPanel(
 ) : LinearLayout(context) {
     private val ui = CutoutUi(context)
     private var token: MobileConnectionAttemptTokenDto? = null
+    private var pendingEditors: Bundle? = null
+    private var pendingAttempt: MobileConnectionAttemptTokenDto? = null
     private var revision = 0L
     private var loaded = false
     private var busy = false
@@ -59,6 +62,10 @@ class DrivetrainPanel(
     /** Unrelated telemetry updates leave the same editors and their drafts in place. */
     fun bind(attempt: MobileConnectionAttemptTokenDto?) {
         if (token == attempt) return
+        if (attempt != null && pendingAttempt != null && attempt != pendingAttempt) {
+            pendingEditors = null
+            pendingAttempt = null
+        }
         token = attempt
         revision++
         loaded = false
@@ -67,6 +74,21 @@ class DrivetrainPanel(
         applyDraft(null)
         updateEnabled()
         if (attempt != null) reload()
+    }
+
+    /** Editor text for this attempt. Held across the reload that follows activity recreation. */
+    fun saveUiState(attempt: MobileConnectionAttemptTokenDto): Bundle? {
+        if (pendingAttempt == attempt && pendingEditors != null) return pendingEditors
+        if (token == attempt && loaded) return editorBundle()
+        return null
+    }
+
+    /** Keep a restored draft until this attempt finishes loading. A stored draft must not replace it. */
+    fun restoreUiState(attempt: MobileConnectionAttemptTokenDto, saved: Bundle?) {
+        if (token != null && token != attempt) return
+        pendingEditors = saved
+        pendingAttempt = if (saved == null) null else attempt
+        if (loaded && token == attempt) applyPendingEditors()
     }
 
     private fun reload() {
@@ -79,8 +101,11 @@ class DrivetrainPanel(
         load(attempt) { result ->
             if (request != revision || token != attempt) return@load
             busy = false
-            result.onSuccess { draft -> loaded = true; applyDraft(draft) }
-                .onFailure { showFailure(it, loading = true) }
+            result.onSuccess { draft ->
+                loaded = true
+                applyDraft(draft)
+                applyPendingEditors()
+            }.onFailure { showFailure(it, loading = true) }
             updateEnabled()
         }
     }
@@ -88,6 +113,8 @@ class DrivetrainPanel(
     private fun submit() {
         val attempt = token ?: return
         if (busy || !loaded) return
+        pendingEditors = null
+        pendingAttempt = null
         val draft = MobileVescDrivetrainDraft(decimalText(diameter), poles.text.toString(), decimalText(reduction))
         val request = ++revision
         busy = true
@@ -105,6 +132,39 @@ class DrivetrainPanel(
         diameter.setText(draft?.wheelDiameterMm.orEmpty())
         poles.setText(draft?.motorPolePairs.orEmpty())
         reduction.setText(draft?.motorToWheelRatio.orEmpty())
+    }
+
+    private fun applyPendingEditors() {
+        val saved = pendingEditors ?: return
+        if (!loaded || token == null || token != pendingAttempt) return
+        listOf("diameter" to diameter, "poles" to poles, "reduction" to reduction).forEach { (key, editor) ->
+            val item = saved.getBundle(key) ?: return@forEach
+            val text = item.getString("text") ?: return@forEach
+            editor.setText(text)
+            val length = editor.length()
+            editor.setSelection(
+                item.getInt("start").coerceIn(0, length),
+                item.getInt("end").coerceIn(0, length),
+            )
+            if (item.getBoolean("focused")) editor.requestFocus()
+        }
+        pendingEditors = null
+        pendingAttempt = null
+    }
+
+    private fun editorBundle() = Bundle().apply {
+        putEditor("diameter", diameter)
+        putEditor("poles", poles)
+        putEditor("reduction", reduction)
+    }
+
+    private fun Bundle.putEditor(key: String, editor: EditText) {
+        putBundle(key, Bundle().apply {
+            putString("text", editor.text.toString())
+            putInt("start", editor.selectionStart.coerceAtLeast(0))
+            putInt("end", editor.selectionEnd.coerceAtLeast(0))
+            putBoolean("focused", editor.hasFocus())
+        })
     }
 
     private fun updateEnabled() {
