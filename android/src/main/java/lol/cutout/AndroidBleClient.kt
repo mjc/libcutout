@@ -279,6 +279,7 @@ class AndroidBleClient(
             session = state.deviceSessionSnapshot(), problem = false, notificationCount = 0UL)
         val next = Connection(token, device, recordOnly)
         connection = next
+        if (!recordOnly) restoreStoredVehicleKind(token)
         try {
             next.gatt = device.connectGatt(context, false, next.callback, BluetoothDevice.TRANSPORT_LE)
             if (next.gatt == null) next.fail("Android refused the connection")
@@ -530,6 +531,61 @@ class AndroidBleClient(
         }
     }
 
+    /** All portable decisions and persistence are committed by the shared Rust owner. */
+    fun selectVehicleKind(token: MobileConnectionAttemptTokenDto, kind: MobileVehicleKindDto,
+        completed: (Result<MobileDeviceSessionSnapshotDto>) -> Unit) = withSessionStorage(token, {
+        it.selectConnectionVehicleKind(token, kind, System.currentTimeMillis().toULong())
+    }, completed)
+
+    fun loadVescDrivetrain(token: MobileConnectionAttemptTokenDto,
+        completed: (Result<MobileVescDrivetrainDraft?>) -> Unit) = withSessionStorage(token, {
+        it.restoreConnectionVescDrivetrain(token)
+    }, completed)
+
+    fun saveVescDrivetrain(token: MobileConnectionAttemptTokenDto, draft: MobileVescDrivetrainDraft,
+        completed: (Result<MobileVescDrivetrainDraft>) -> Unit) = withSessionStorage(token, {
+        it.saveConnectionVescDrivetrain(token, draft, System.currentTimeMillis().toULong())
+    }, completed)
+
+    /** Storage runs on the existing database worker; GATT keeps its serialized callback owner. */
+    private fun <T> withSessionStorage(token: MobileConnectionAttemptTokenDto,
+        work: (CutoutSessionStateHandle) -> T, completed: (Result<T>) -> Unit) {
+        postOnOwner {
+            val sessionState = state
+            (context.applicationContext as CutoutApplication).rides.withDatabase({ _ -> runCatching { work(sessionState) } }) { storage ->
+                val result = storage.fold(onSuccess = { it }, onFailure = { Result.failure(it) })
+                owner.post {
+                    refreshAfterStorage(token)
+                    main.post { completed(result) }
+                }
+            }
+        }
+    }
+
+    private fun refreshAfterStorage(token: MobileConnectionAttemptTokenDto) {
+        if (!state.connectionAttemptIsCurrent(token)) return
+        view = view.copy(session = state.deviceSessionSnapshot(),
+            telemetry = state.connectionTelemetrySnapshot(token), settings = state.settings())
+        publish()
+    }
+
+    private fun restoreStoredVehicleKind(token: MobileConnectionAttemptTokenDto) {
+        val sessionState = state
+        (context.applicationContext as CutoutApplication).rides.withDatabase({ database ->
+            database.userVehicleKind(token.platformIdentifier)?.let {
+                sessionState.restoreConnectionVehicleKind(token, it)
+            }
+        }) { result ->
+            owner.post {
+                if (result.isFailure && state.connectionAttemptIsCurrent(token)) {
+                    Log.w("CutoutBle", "Saved vehicle type could not be loaded", result.exceptionOrNull())
+                    view = view.copy(problem = true)
+                }
+                refreshAfterStorage(token)
+            }
+        }
+    }
+
     private fun now(): ULong = SystemClock.elapsedRealtime().toULong()
 
     private fun stopScanOnOwner(outcome: String = "stopped") {
@@ -568,6 +624,7 @@ class AndroidBleClient(
         private var nativeNotificationCount = 0UL
         private var captureWriteId = 0UL
         var captureLinkUp = false
+        private var drivetrainRestoreStarted = false
         private var retired = false
         private var ending = false
         private var draining = false
@@ -592,6 +649,14 @@ class AndroidBleClient(
                     cancelDeadline?.invoke(); cancelDeadline = null
                 }
                 view = view.copy(session = snapshot, telemetry = telemetry, settings = settings)
+                val identity = snapshot.identity
+                if (!drivetrainRestoreStarted && identity?.protocol == MobileProtocolFamilyDto.VESC &&
+                    identity.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT) {
+                    drivetrainRestoreStarted = true
+                    loadVescDrivetrain(token) { result ->
+                        if (result.isFailure) Log.w("CutoutBle", "Saved drivetrain could not be loaded", result.exceptionOrNull())
+                    }
+                }
                 publish()
             }
         }
