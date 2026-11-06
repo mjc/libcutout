@@ -329,6 +329,7 @@ fun checkControllerGeometryBoundary(storageRoot: File) {
                     state.saveConnectionVescControllerDrivetrain(token, can, changed, 4UL)
                     val after = checkNotNull(state.connectionTelemetrySnapshot(token))
                     check(after.configuredVescDrivetrains[1].revision == 2UL)
+                    check(after.configuredVescDrivetrains[1].wheelDiameterMicrometres == 210_000U)
                     check(after.vescDrivetrainContext == before.vescDrivetrainContext)
                     check(after.speed == before.speed && after.speedObservedAtMs == before.speedObservedAtMs)
                     check(configured.revision == 1UL && configured.wheelDiameterMicrometres == 200_000U)
@@ -377,7 +378,7 @@ private fun connectGeometryScooter(state: CutoutSessionStateHandle): MobileConne
     session.notification(byteArrayOf(), byteArrayOf(2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0,
         117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208.toByte(), 3))
     val query = outputs.first { it.applicationQuery != null }
-    session.writeReceipt(query, NativeReceipt.SUBMITTED)
+    session.applicationQueryReceipt(checkNotNull(query.applicationQuery), 0U, 1U, NativeReceipt.SUBMITTED)
     clock = 3_000UL
     session.tick()
     check(state.deviceSessionSnapshot().identity?.vescApplication == MobileVescApplicationDiscoveryDto.ABSENT)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.text.method.DigitsKeyListener
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -87,7 +88,7 @@ class DrivetrainPanel(
     private fun submit() {
         val attempt = token ?: return
         if (busy || !loaded) return
-        val draft = MobileVescDrivetrainDraft(diameter.text.toString(), poles.text.toString(), reduction.text.toString())
+        val draft = MobileVescDrivetrainDraft(decimalText(diameter), poles.text.toString(), decimalText(reduction))
         val request = ++revision
         busy = true
         clearFailure()
@@ -121,13 +122,15 @@ class DrivetrainPanel(
         setTextColor(ui.foreground)
         setSingleLine(true)
         minHeight = ui.dp(48)
-        inputType = InputType.TYPE_CLASS_NUMBER or (if (decimal) InputType.TYPE_NUMBER_FLAG_DECIMAL else 0)
+        if (decimal) keyListener = DecimalKeyListener() else inputType = InputType.TYPE_CLASS_NUMBER
         addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { if (loaded && !busy) clearFailure() }
             override fun afterTextChanged(s: Editable?) {}
         })
     }
+
+    private fun decimalText(editor: EditText) = editor.text.toString().replace(',', '.')
 
     private fun clearFailure() {
         diameter.error = null; poles.error = null; reduction.error = null
@@ -155,5 +158,15 @@ class DrivetrainPanel(
             feedback.visibility = View.VISIBLE
         }
         retry.visibility = if (loading) View.VISIBLE else View.GONE
+    }
+}
+
+/** Digits plus comma and period. A locale listener would drop the stored period when a draft reloads. */
+@Suppress("DEPRECATION")
+private class DecimalKeyListener : DigitsKeyListener(false, true) {
+    override fun getAcceptedChars(): CharArray = ACCEPTED
+
+    private companion object {
+        val ACCEPTED = charArrayOf('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', ',')
     }
 }

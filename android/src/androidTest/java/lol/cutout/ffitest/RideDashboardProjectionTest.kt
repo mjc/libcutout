@@ -525,8 +525,10 @@ open class RideDashboardProjectionTest {
                 } else {
                     check(hasText(ride, localized(ui, activity, "device.type.choose.explanation")))
                     val choiceButton = tagged<TextView>(ride, "ride.choose-vehicle-kind")
-                    check(choiceButton.text.isNotBlank() && choiceButton.text.toString() != "device.type.choose") {
-                        "Vehicle choice displayed a raw localization key"
+                    val choiceLabel = localized(ui, activity, "device.type.choose")
+                    check(choiceButton.text.isNotBlank() && choiceButton.text.toString() != "device.type.choose" &&
+                        choiceButton.text.toString() == choiceLabel) {
+                        "Vehicle choice displayed an incorrect localization"
                     }
                     choiceButton.performClick()
                     check(choices == 1)

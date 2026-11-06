@@ -1,6 +1,8 @@
 package lol.cutout.local
 
 import android.app.Activity
+import android.text.InputFilter
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -303,6 +305,46 @@ class LocalVescDrivetrainPanelTest {
         } finally { host.pause().stop().destroy() }
     }
 
+    @Test
+    fun commaDecimalStaysInTheEditorAndSavesAsAPeriod() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        try {
+            val token = MobileConnectionAttemptTokenDto(platformIdentifier = "comma", generation = 1UL)
+            var saved: MobileVescDrivetrainDraft? = null
+            val panel = DrivetrainPanel(activity,
+                load = { _, completed -> completed(Result.success(MobileVescDrivetrainDraft("90.125", "7", "2.75"))) },
+                save = { _, draft, completed ->
+                    saved = draft
+                    completed(Result.success(draft))
+                })
+            activity.setContentView(panel)
+            panel.bind(token)
+            val diameter = field(panel, "wheel-diameter")
+            val reduction = field(panel, "reduction")
+            assertEquals(InputType.TYPE_CLASS_NUMBER, reduction.inputType and InputType.TYPE_MASK_CLASS)
+            assertNotEquals(0, reduction.inputType and InputType.TYPE_NUMBER_FLAG_DECIMAL)
+            assertEquals("90.125", diameter.text.toString())
+            assertEquals("2.75", reduction.text.toString())
+            assertEquals("2,5", accepted(reduction, "2,5"))
+            assertEquals("90.125", accepted(diameter, "90.125"))
+            diameter.setText("210,5")
+            reduction.setText("2,5")
+            assertEquals("210,5", diameter.text.toString())
+            assertEquals("2,5", reduction.text.toString())
+            assertTrue(panel.findViewWithTag<Button>("vesc.drivetrain.save").performClick())
+            assertEquals(MobileVescDrivetrainDraft("210.5", "7", "2.5"), saved)
+            assertEquals("210.5", diameter.text.toString())
+            assertEquals("2.5", reduction.text.toString())
+        } finally { host.pause().stop().destroy() }
+    }
+
+    private fun accepted(editor: EditText, value: String): String {
+        val filter = editor.keyListener as InputFilter
+        val filtered = filter.filter(value, 0, value.length, editor.text, 0, editor.text.length)
+        return filtered?.toString() ?: value
+    }
+
     private fun clickNavigation(activity: Activity, label: Int) {
         fun descendants(view: View): Sequence<View> = sequence {
             yield(view)
@@ -357,7 +399,7 @@ class LocalVescDrivetrainPanelTest {
         session.notification(byteArrayOf(), byteArrayOf(2, 20, 157.toByte(), 7, 1, 2, 97, 98, 99, 49, 50, 51, 0,
             117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208.toByte(), 3))
         val query = outputs.first { it.applicationQuery != null }
-        session.writeReceipt(query, NativeReceipt.SUBMITTED)
+        session.applicationQueryReceipt(checkNotNull(query.applicationQuery), 0U, 1U, NativeReceipt.SUBMITTED)
         val awaiting = state.deviceSessionSnapshot().identity?.vescApplicationQuery as MobileVescApplicationQueryStateDto.AwaitingResponse
         clock = awaiting.responseDeadlineMs
         session.tick()
