@@ -1,24 +1,16 @@
 //! Rust-owned per-vehicle accessory selection and durable collection.
 
-use std::sync::{Arc, Mutex, PoisonError};
-
+#[cfg(test)]
+use super::MobileRgbLightingProfileKindDto;
+use cutout_application::lighting::store::AccessoryStore;
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use std::sync::Arc;
 
 use super::{
     MobileMelkLightingRestoreStateDto, MobileRgbLightingAccessoryRecord,
-    MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
+    MobileRgbLightingRecordError,
 };
-
-fn same_platform_identifier(left: &str, right: &str) -> bool {
-    // UUIDs are case-insensitive. Other platform identifiers, such as Android
-    // BLE addresses, are opaque and compare byte-for-byte.
-    left == right
-        || Uuid::parse_str(left)
-            .ok()
-            .zip(Uuid::parse_str(right).ok())
-            .is_some_and(|(left, right)| left == right)
-}
 
 /// An opted-in request for one compatible accessory; it is not device-state evidence.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -29,23 +21,7 @@ pub struct MobileRgbLightingRestoreCandidate {
     pub requested_state: MobileMelkLightingRestoreStateDto,
 }
 
-#[derive(Debug)]
-struct Entry {
-    record: Arc<MobileRgbLightingAccessoryRecord>,
-    fingerprint: Option<String>,
-    retired: bool,
-}
-
-impl Entry {
-    fn is_compatible(&self) -> bool {
-        !self.retired
-            && self.record.profile() == MobileRgbLightingProfileKindDto::MelkOc21
-            && self.record.profile_version() == super::mobile_melk_lighting_profile_version()
-            && self.fingerprint.as_deref()
-                == Some(super::mobile_melk_lighting_capabilities_fingerprint().as_str())
-    }
-}
-
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireStore {
@@ -54,6 +30,7 @@ struct WireStore {
     adopt_legacy: bool,
 }
 
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireEntry {
@@ -63,24 +40,10 @@ struct WireEntry {
     retired: bool,
 }
 
-#[derive(Debug, Default)]
-struct Store {
-    entries: Vec<Entry>,
-    adopt_legacy: bool,
-}
-
-impl Store {
-    fn entry(&self, identifier: &str) -> Option<&Entry> {
-        self.entries
-            .iter()
-            .find(|entry| same_platform_identifier(&entry.record.platform_identifier(), identifier))
-    }
-}
-
 /// Accessories retained across vehicle changes and app restarts.
-#[derive(Debug, Default, uniffi::Object)]
+#[derive(Debug, uniffi::Object)]
 pub struct MobileRgbLightingAccessoryStore {
-    inner: Mutex<Store>,
+    inner: AccessoryStore,
 }
 
 #[uniffi::export]
@@ -93,7 +56,12 @@ impl MobileRgbLightingAccessoryStore {
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            inner: AccessoryStore::new(
+                super::mobile_melk_lighting_profile_version(),
+                super::mobile_melk_lighting_capabilities_fingerprint(),
+            ),
+        })
     }
 
     /// Loads a versioned collection, rejecting invalid or duplicate identities.
@@ -102,33 +70,13 @@ impl MobileRgbLightingAccessoryStore {
     /// Returns a record error for malformed or unsupported persisted data.
     #[uniffi::constructor]
     pub fn decode(bytes: Vec<u8>) -> Result<Arc<Self>, MobileRgbLightingRecordError> {
-        let wire: WireStore = serde_json::from_slice(&bytes)
-            .map_err(|_| MobileRgbLightingRecordError::InvalidEncoding)?;
-        if wire.version != 1 || wire.entries.len() > 32 {
-            return Err(MobileRgbLightingRecordError::InvalidEncoding);
-        }
-        let mut entries: Vec<Entry> = Vec::new();
-        for entry in wire.entries {
-            let record = MobileRgbLightingAccessoryRecord::decode(entry.record)?;
-            if entries.iter().any(|existing| {
-                same_platform_identifier(
-                    &existing.record.platform_identifier(),
-                    &record.platform_identifier(),
-                )
-            }) {
-                return Err(MobileRgbLightingRecordError::InvalidEncoding);
-            }
-            entries.push(Entry {
-                record,
-                fingerprint: entry.fingerprint,
-                retired: entry.retired,
-            });
-        }
         Ok(Arc::new(Self {
-            inner: Mutex::new(Store {
-                entries,
-                adopt_legacy: wire.adopt_legacy,
-            }),
+            inner: AccessoryStore::decode(
+                &bytes,
+                super::mobile_melk_lighting_profile_version(),
+                super::mobile_melk_lighting_capabilities_fingerprint(),
+            )
+            .map_err(MobileRgbLightingRecordError::from)?,
         }))
     }
 
@@ -137,24 +85,7 @@ impl MobileRgbLightingAccessoryStore {
     /// # Errors
     /// Returns a record error when serialization fails.
     pub fn encode(&self) -> Result<Vec<u8>, MobileRgbLightingRecordError> {
-        let store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let entries = store
-            .entries
-            .iter()
-            .map(|entry| {
-                Ok(WireEntry {
-                    record: entry.record.encode()?,
-                    fingerprint: entry.fingerprint.clone(),
-                    retired: entry.retired,
-                })
-            })
-            .collect::<Result<Vec<_>, MobileRgbLightingRecordError>>()?;
-        serde_json::to_vec(&WireStore {
-            version: 1,
-            entries,
-            adopt_legacy: store.adopt_legacy,
-        })
-        .map_err(|_| MobileRgbLightingRecordError::InvalidEncoding)
+        self.inner.encode().map_err(Into::into)
     }
 
     /// Imports the previous single-accessory format once.
@@ -163,15 +94,8 @@ impl MobileRgbLightingAccessoryStore {
         record: Arc<MobileRgbLightingAccessoryRecord>,
         fingerprint: Option<String>,
     ) {
-        let mut store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if store.entries.is_empty() {
-            store.adopt_legacy = record.vehicle_identifier().is_none();
-            store.entries.push(Entry {
-                record,
-                fingerprint,
-                retired: false,
-            });
-        }
+        self.inner
+            .import_legacy(Arc::clone(&record.inner), fingerprint);
     }
 
     /// Chooses the accessory saved for this vehicle. A legacy unassigned accessory is adopted once.
@@ -182,19 +106,11 @@ impl MobileRgbLightingAccessoryStore {
         &self,
         vehicle_identifier: Option<String>,
     ) -> Result<Option<Arc<MobileRgbLightingAccessoryRecord>>, MobileRgbLightingRecordError> {
-        let mut store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if store.adopt_legacy && vehicle_identifier.is_some() && store.entries.len() == 1 {
-            store.entries[0]
-                .record
-                .set_vehicle_identifier(vehicle_identifier.clone())?;
-            store.adopt_legacy = false;
-        }
-        Ok(store
-            .entries
-            .iter()
-            .rev()
-            .find(|entry| !entry.retired && entry.record.vehicle_identifier() == vehicle_identifier)
-            .map(|entry| Arc::clone(&entry.record)))
+        Ok(self
+            .inner
+            .select_vehicle(vehicle_identifier.as_deref())
+            .map_err(MobileRgbLightingRecordError::from)?
+            .map(|record| Arc::new(MobileRgbLightingAccessoryRecord::from_application(record))))
     }
 
     /// Saves a verified accessory against the current vehicle, retaining its settings.
@@ -207,68 +123,29 @@ impl MobileRgbLightingAccessoryStore {
         vehicle_identifier: Option<String>,
         fingerprint: String,
     ) -> Result<Arc<MobileRgbLightingAccessoryRecord>, MobileRgbLightingRecordError> {
-        let mut store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let record = if let Some(entry) = store.entries.iter().find(|entry| {
-            same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
-        }) {
-            Arc::clone(&entry.record)
-        } else {
-            if store.entries.len() >= 32 {
-                return Err(MobileRgbLightingRecordError::InvalidText);
-            }
-            MobileRgbLightingAccessoryRecord::new(
+        let record = self
+            .inner
+            .pair(
                 platform_identifier,
-                MobileRgbLightingProfileKindDto::MelkOc21,
-                super::mobile_melk_lighting_profile_version(),
-            )?
-        };
-        record.set_vehicle_identifier(vehicle_identifier.clone())?;
-        for entry in &mut store.entries {
-            if !same_platform_identifier(
-                &entry.record.platform_identifier(),
-                &record.platform_identifier(),
-            ) && entry.record.vehicle_identifier() == vehicle_identifier
-            {
-                entry.retired = true;
-            }
-        }
-        store.entries.retain(|entry| {
-            !same_platform_identifier(
-                &entry.record.platform_identifier(),
-                &record.platform_identifier(),
+                vehicle_identifier.as_deref(),
+                fingerprint,
             )
-        });
-        store.entries.push(Entry {
-            record: Arc::clone(&record),
-            fingerprint: Some(fingerprint),
-            retired: false,
-        });
-        store.adopt_legacy = false;
-        Ok(record)
+            .map_err(MobileRgbLightingRecordError::from)?;
+        Ok(Arc::new(
+            MobileRgbLightingAccessoryRecord::from_application(record),
+        ))
     }
 
     /// Returns the saved capability fingerprint for one accessory.
     #[must_use]
     pub fn fingerprint(&self, platform_identifier: String) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries
-            .iter()
-            .find(|entry| {
-                same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
-            })
-            .and_then(|entry| entry.fingerprint.clone())
+        self.inner.fingerprint(&platform_identifier)
     }
 
     /// Checks persisted profile and capability evidence for this accessory identity.
     #[must_use]
     pub fn is_compatible_with_current_profile(&self, platform_identifier: String) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(&platform_identifier)
-            .is_some_and(Entry::is_compatible)
+        self.inner.is_compatible(&platform_identifier)
     }
 
     /// Returns opted-in saved intent only for a valid identity and compatible profile.
@@ -279,42 +156,22 @@ impl MobileRgbLightingAccessoryStore {
         &self,
         platform_identifier: String,
     ) -> Option<MobileRgbLightingRestoreCandidate> {
-        let store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = store.entry(&platform_identifier)?;
-        if !entry.is_compatible() {
-            return None;
-        }
+        let candidate = self.inner.restore_candidate(&platform_identifier)?;
         Some(MobileRgbLightingRestoreCandidate {
-            platform_identifier: entry.record.platform_identifier(),
-            requested_state: entry.record.restore_request()?,
+            platform_identifier: candidate.platform_identifier,
+            requested_state: candidate.requested_state.into(),
         })
     }
 
     /// Backfills the fingerprint for an old record without replacing present evidence.
     pub fn backfill_fingerprint(&self, platform_identifier: String, fingerprint: String) {
-        if let Some(entry) = self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries
-            .iter_mut()
-            .find(|entry| {
-                same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
-            })
-        {
-            entry.fingerprint.get_or_insert(fingerprint);
-        }
+        self.inner
+            .backfill_fingerprint(&platform_identifier, fingerprint);
     }
 
     /// Removes only the selected accessory; other vehicles keep their settings.
     pub fn forget(&self, platform_identifier: String) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries
-            .retain(|entry| {
-                !same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
-            });
+        self.inner.forget(&platform_identifier);
     }
 }
 

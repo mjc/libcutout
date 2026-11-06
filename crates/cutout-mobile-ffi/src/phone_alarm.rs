@@ -1,5 +1,5 @@
 use cutout_core::{
-    InvalidPwmDutyAlarmThreshold, PhoneAlarmActions, PhoneAlarmDeliveryRequest, PhoneAlarmEvent,
+    InvalidPwmDutyAlarmThreshold, PhoneAlarmDeliveryRequest, PhoneAlarmEvent,
     PhoneAlarmManagerError, PhoneAlarmPreferences, RideStopReason, RideWarning,
 };
 
@@ -128,17 +128,6 @@ impl From<InvalidPwmDutyAlarmThreshold> for MobilePhoneAlarmError {
 }
 
 impl MobilePhoneAlarmActionsDto {
-    pub(crate) fn from_core(actions: PhoneAlarmActions, plays_sound: bool) -> Self {
-        let (schedule, cancel_request_ids) = actions.into_parts();
-        Self {
-            schedule: schedule
-                .into_iter()
-                .map(|request| MobilePhoneAlarmDeliveryRequestDto::from_core(request, plays_sound))
-                .collect(),
-            cancel_request_ids,
-        }
-    }
-
     pub(crate) fn cancellations(cancel_request_ids: Vec<u64>) -> Self {
         Self {
             schedule: Vec::new(),
@@ -148,7 +137,7 @@ impl MobilePhoneAlarmActionsDto {
 }
 
 impl MobilePhoneAlarmDeliveryRequestDto {
-    fn from_core(request: PhoneAlarmDeliveryRequest, plays_sound: bool) -> Self {
+    pub(crate) fn from_core(request: PhoneAlarmDeliveryRequest, plays_sound: bool) -> Self {
         Self {
             id: request.id(),
             event: request.event().into(),

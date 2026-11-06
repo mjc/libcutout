@@ -1,13 +1,15 @@
 //! Shared Spotify Web API policy; native SDKs retain credentials and execute HTTP.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use cutout_core::MonotonicTimestamp;
-use cutout_music::spotify::playback::{
-    SpotifyHttpRequest, SpotifyHttpSession, SpotifyPlayback, SpotifyPlaybackError,
-};
+use cutout_music::spotify::playback::SpotifyPlaybackError;
 
-use crate::{MobileMusicCommandDto, MobileMusicPlaybackStateDto, MobileMusicSnapshotDto};
+use crate::{
+    CoreMusicCommand, CoreMusicPlaybackState, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
+    MobileMusicSnapshotDto,
+};
+use cutout_application::music::spotify_playback as application;
 
 /// Bounded provider errors; no raw response or credential is included.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -51,7 +53,7 @@ impl From<SpotifyPlaybackError> for MobileSpotifyPlaybackError {
 /// Immutable, validated Spotify metadata shared by both native consumers.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileSpotifyPlayback {
-    inner: SpotifyPlayback,
+    inner: application::SpotifyPlayback,
 }
 
 #[uniffi::export]
@@ -63,7 +65,7 @@ impl MobileSpotifyPlayback {
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary bytes")]
     pub fn parse(body: Vec<u8>) -> Result<Arc<Self>, MobileSpotifyPlaybackError> {
         Ok(Arc::new(Self {
-            inner: SpotifyPlayback::parse(&body)?,
+            inner: application::SpotifyPlayback::parse(&body)?,
         }))
     }
 
@@ -106,9 +108,10 @@ impl MobileSpotifyPlayback {
         state: MobileMusicPlaybackStateDto,
         observed_at_ms: u64,
     ) -> MobileMusicSnapshotDto {
-        (&self
-            .inner
-            .snapshot(state.into(), MonotonicTimestamp::new(observed_at_ms)))
+        (&self.inner.snapshot(
+            CoreMusicPlaybackState::from(state),
+            MonotonicTimestamp::new(observed_at_ms),
+        ))
             .into()
     }
 }
@@ -122,8 +125,8 @@ pub struct MobileSpotifyHttpRequest {
     pub method: String,
 }
 
-impl From<SpotifyHttpRequest> for MobileSpotifyHttpRequest {
-    fn from(request: SpotifyHttpRequest) -> Self {
+impl From<application::SpotifyRequest> for MobileSpotifyHttpRequest {
+    fn from(request: application::SpotifyRequest) -> Self {
         Self {
             url: request.url,
             method: request.method,
@@ -134,7 +137,7 @@ impl From<SpotifyHttpRequest> for MobileSpotifyHttpRequest {
 /// Rust-owned request and retry policy for one native Web API client.
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobileSpotifyHttpSession {
-    inner: Mutex<SpotifyHttpSession>,
+    inner: application::SpotifyHttpPolicy,
 }
 
 #[uniffi::export]
@@ -143,7 +146,9 @@ impl MobileSpotifyHttpSession {
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            inner: application::SpotifyHttpPolicy::new(),
+        })
     }
 
     /// Admits metadata observation without starting playback.
@@ -153,12 +158,7 @@ impl MobileSpotifyHttpSession {
         &self,
         now_ms: u64,
     ) -> Result<MobileSpotifyHttpRequest, MobileSpotifyPlaybackError> {
-        Ok(self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .playback_request(now_ms)?
-            .into())
+        Ok(self.inner.playback_request(now_ms)?.into())
     }
 
     /// Admits an explicit command for the observed device only.
@@ -176,9 +176,7 @@ impl MobileSpotifyHttpSession {
     ) -> Result<MobileSpotifyHttpRequest, MobileSpotifyPlaybackError> {
         Ok(self
             .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .command_request(command.into(), &device_id, now_ms)?
+            .command_request(CoreMusicCommand::from(command), &device_id, now_ms)?
             .into())
     }
 
@@ -198,8 +196,6 @@ impl MobileSpotifyHttpSession {
     ) -> Result<bool, MobileSpotifyPlaybackError> {
         Ok(self
             .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
             .receive_response(status, retry_after.as_deref(), body_length, now_ms)?)
     }
 }

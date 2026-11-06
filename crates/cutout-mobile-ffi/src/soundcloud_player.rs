@@ -1,7 +1,8 @@
 //! Native `SoundCloud` player projection. The platform executes HTTP and audio only.
 
+use cutout_application::music::soundcloud_player::SoundCloudPlayerService;
 use cutout_music::soundcloud_player::{self as core, PlayableTrack, PlayerEffect};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
 /// Bounded official API data or selection failure.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -131,23 +132,10 @@ pub enum MobileSoundCloudCommand {
     Next,
 }
 
-#[derive(Debug, Default)]
-struct State {
-    catalogue: Vec<PlayableTrack>,
-    player: core::SoundCloudPlayer,
-    authorization: Option<cutout_music::soundcloud_auth::ApiAuthorization>,
-}
-
 /// Rust-owned catalogue and playback queue retained by the app.
-#[derive(Debug, Default, uniffi::Object)]
+#[derive(Debug, uniffi::Object)]
 pub struct MobileSoundCloudPlayer {
-    state: Mutex<State>,
-}
-
-impl MobileSoundCloudPlayer {
-    fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+    service: SoundCloudPlayerService,
 }
 
 #[uniffi::export]
@@ -157,13 +145,15 @@ impl MobileSoundCloudPlayer {
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self {
+            service: SoundCloudPlayerService::default(),
+        })
     }
 
     /// Fixed token-service URL. The mobile app never receives a client secret.
     #[must_use]
     pub fn token_endpoint(&self) -> String {
-        cutout_music::soundcloud_auth::TOKEN_ENDPOINT.to_owned()
+        SoundCloudPlayerService::token_endpoint()
     }
 
     /// Accepts an expiring app token from the broker without storing it on disk.
@@ -175,23 +165,20 @@ impl MobileSoundCloudPlayer {
         json: Vec<u8>,
         now_ms: u64,
     ) -> Result<(), MobileSoundCloudError> {
-        let authorization = cutout_music::soundcloud_auth::ApiAuthorization::parse(&json, now_ms)?;
-        self.lock().authorization = Some(authorization);
-        Ok(())
+        self.service
+            .accept_authorization(&json, now_ms)
+            .map_err(Into::into)
     }
 
     /// Projects a provider header only within the admitted token lifetime.
     #[must_use]
     pub fn authorization(&self, now_ms: u64) -> Option<String> {
-        self.lock()
-            .authorization
-            .as_ref()
-            .and_then(|authorization| authorization.header(now_ms))
+        self.service.authorization(now_ms)
     }
 
     /// Invalidates an expired or rejected token; local playback remains independent.
     pub fn invalidate_authorization(&self) {
-        self.lock().authorization = None;
+        self.service.invalidate_authorization();
     }
 
     /// Builds the official public track search URL.
@@ -199,7 +186,7 @@ impl MobileSoundCloudPlayer {
     /// # Errors
     /// Rejects blank or oversized queries.
     pub fn search_endpoint(&self, query: String) -> Result<String, MobileSoundCloudError> {
-        Ok(core::search_endpoint(&query)?)
+        Ok(SoundCloudPlayerService::search_endpoint(&query)?)
     }
 
     /// Admits a bounded catalogue. This never replaces the current playback queue.
@@ -210,10 +197,12 @@ impl MobileSoundCloudPlayer {
         &self,
         json: Vec<u8>,
     ) -> Result<Vec<MobileSoundCloudTrack>, MobileSoundCloudError> {
-        let catalogue = core::parse_tracks(&json)?;
-        let tracks = catalogue.iter().cloned().map(Into::into).collect();
-        self.lock().catalogue = catalogue;
-        Ok(tracks)
+        Ok(self
+            .service
+            .accept_catalogue(&json)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     /// Selects a track from the last admitted catalogue.
@@ -221,11 +210,7 @@ impl MobileSoundCloudPlayer {
     /// # Errors
     /// Rejects unknown track identities.
     pub fn select(&self, urn: String) -> Result<MobileSoundCloudEffect, MobileSoundCloudError> {
-        let mut state = self.lock();
-        let State {
-            catalogue, player, ..
-        } = &mut *state;
-        Ok(player.select(catalogue, &urn)?.into())
+        Ok(self.service.select(&urn)?.into())
     }
 
     /// Admits the full HLS API endpoint, excluding previews.
@@ -233,7 +218,7 @@ impl MobileSoundCloudPlayer {
     /// # Errors
     /// Rejects unsupported streams or malformed data.
     pub fn stream_endpoint(&self, json: Vec<u8>) -> Result<String, MobileSoundCloudError> {
-        Ok(core::stream_endpoint(&json)?)
+        Ok(SoundCloudPlayerService::stream_endpoint(&json)?)
     }
 
     /// Admits the provider's signed redirect only for the current track fetch.
@@ -245,12 +230,12 @@ impl MobileSoundCloudPlayer {
         id: u64,
         url: String,
     ) -> Result<MobileSoundCloudEffect, MobileSoundCloudError> {
-        Ok(self.lock().player.stream_resolved(id, &url)?.into())
+        Ok(self.service.stream_resolved(id, &url)?.into())
     }
 
     /// Commits a current platform readiness callback.
     pub fn player_ready(&self, id: u64) -> MobileSoundCloudEffect {
-        self.lock().player.player_ready(id).into()
+        self.service.player_ready(id).into()
     }
 
     /// Handles current item completion; stale notifications cannot skip a newer track.
@@ -258,19 +243,17 @@ impl MobileSoundCloudPlayer {
     /// # Errors
     /// Returns an error if the next track identity cannot be allocated.
     pub fn ended(&self, id: u64) -> Result<MobileSoundCloudEffect, MobileSoundCloudError> {
-        Ok(self.lock().player.ended(id)?.into())
+        Ok(self.service.ended(id)?.into())
     }
 
     /// Commits a current platform failure callback.
     pub fn failed(&self, id: u64) -> MobileSoundCloudEffect {
-        self.lock().player.failed(id).into()
+        self.service.failed(id).into()
     }
 
     /// Ends the content session, clearing its catalogue, queue and stream callbacks.
     pub fn stop(&self) -> MobileSoundCloudEffect {
-        let mut state = self.lock();
-        state.catalogue.clear();
-        state.player.stop().into()
+        self.service.stop().into()
     }
 
     /// Local pause/resume does not require HTTP or provider authorization.
@@ -287,13 +270,13 @@ impl MobileSoundCloudPlayer {
             MobileSoundCloudCommand::Previous => core::PlayerCommand::Previous,
             MobileSoundCloudCommand::Next => core::PlayerCommand::Next,
         };
-        Ok(self.lock().player.command(command)?.into())
+        Ok(self.service.command(command)?.into())
     }
 
     /// Projects current metadata and queue capabilities without recording history.
     #[must_use]
     pub fn snapshot(&self) -> MobileSoundCloudSnapshot {
-        let snapshot = self.lock().player.snapshot();
+        let snapshot = self.service.snapshot();
         let state = match snapshot.state {
             core::PlayerState::Idle => MobileSoundCloudState::Idle,
             core::PlayerState::Loading => MobileSoundCloudState::Loading,

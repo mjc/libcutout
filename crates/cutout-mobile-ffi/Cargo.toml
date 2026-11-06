@@ -17,6 +17,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 workspace = true
 
 [dependencies]
+cutout-application = { path = "../cutout-application", version = "0.1.0" }
 jni.workspace = true
 hex.workspace = true
 futures-util.workspace = true
@@ -37,6 +38,7 @@ uuid.workspace = true
 rustls-platform-verifier.workspace = true
 
 [dev-dependencies]
+cutout-application = { path = "../cutout-application", version = "0.1.0", features = ["test-support"] }
 reqwest = { workspace = true, features = ["json"] }
 hex-literal.workspace = true
 axum.workspace = true

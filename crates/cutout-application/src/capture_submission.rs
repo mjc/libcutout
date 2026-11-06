@@ -1,10 +1,10 @@
 //! Bounded HTTP effects for Rust's retained private capture snapshot.
 
-use crate::persistence::{
+use cutout_core::{CaptureSubmissionMetadata, CaptureSubmissionReceipt, PevcapEncoding};
+use libcutout_persistence::{
     CaptureSubmissionFuture, CaptureSubmissionPayload, CaptureSubmissionTransferError,
     CaptureSubmissionTransport,
 };
-use cutout_core::{CaptureSubmissionMetadata, CaptureSubmissionReceipt, PevcapEncoding};
 use reqwest::{Client, Method, Response, StatusCode, Url, header};
 use serde::Deserialize;
 use std::{
@@ -20,13 +20,19 @@ const MAX_RESPONSE_BYTES: usize = 32 * 1024;
 const MAX_METADATA_BYTES: usize = 4096;
 const UPLOAD_CHUNK_BYTES: usize = 128 * 1024;
 
-pub(super) struct HttpCaptureTransport {
+/// Bounded streaming transport for a retained private capture submission.
+#[derive(Debug)]
+pub struct HttpCaptureTransport {
     client: Client,
     base_url: Url,
 }
 
 impl HttpCaptureTransport {
-    pub(super) fn production() -> Result<Self, CaptureSubmissionTransferError> {
+    /// Creates the fixed production service transport without starting a transfer.
+    ///
+    /// # Errors
+    /// Returns a network error if the HTTP client cannot be configured.
+    pub fn production() -> Result<Self, CaptureSubmissionTransferError> {
         Self::build(SERVICE_URL)
     }
 
@@ -46,8 +52,11 @@ impl HttpCaptureTransport {
         Ok(Self { client, base_url })
     }
 
-    #[cfg(test)]
-    pub(super) fn loopback(base_url: &str) -> Result<Self, CaptureSubmissionTransferError> {
+    /// Creates a development transport restricted to a literal HTTP loopback origin.
+    ///
+    /// # Errors
+    /// Rejects non-loopback origins, URL credentials, paths, queries and fragments.
+    pub fn loopback(base_url: &str) -> Result<Self, CaptureSubmissionTransferError> {
         let url = Url::parse(base_url).map_err(|_| CaptureSubmissionTransferError::Network)?;
         let loopback = url.scheme() == "http"
             && url.username().is_empty()

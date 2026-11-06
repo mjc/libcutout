@@ -1,7 +1,9 @@
 use super::MobileChargingError;
 use super::sync::ChargingHttpClient;
-use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use cutout_application::charging::{
+    reports::{ChargingContentReport, ReportSubmitError},
+    sync_runtime::ChargingSyncService,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,9 +17,7 @@ pub struct MobileChargingReportReceiptDto {
 /// One immutable report operation. Explicit retries reuse its identifier and text.
 #[derive(uniffi::Object)]
 pub struct MobileChargingContentReport {
-    spot_id: Uuid,
-    operation_id: Uuid,
-    message: Option<String>,
+    policy: ChargingContentReport,
 }
 
 impl std::fmt::Debug for MobileChargingContentReport {
@@ -26,30 +26,6 @@ impl std::fmt::Debug for MobileChargingContentReport {
             .debug_struct("MobileChargingContentReport")
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Serialize)]
-struct ReportRequest<'a> {
-    operation_id: Uuid,
-    reason: &'static str,
-    message: Option<&'a str>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReportReceipt {
-    operation_id: Uuid,
-    id: Uuid,
-    applied_revision: u64,
-    revision: u64,
-    status: ReportStatus,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ReportStatus {
-    Open,
-    Resolved,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -65,24 +41,15 @@ impl MobileChargingContentReport {
     pub fn new(spot_id: String, message: String) -> Result<Arc<Self>, MobileChargingError> {
         let spot_id =
             Uuid::parse_str(&spot_id).map_err(|_| MobileChargingError::InvalidIdentifier)?;
-        let message = message.trim();
-        if message.len() > 1_000
-            || message
-                .chars()
-                .any(|value| value.is_control() && !['\n', '\r', '\t'].contains(&value))
-        {
-            return Err(MobileChargingError::InvalidMetadata);
-        }
-        Ok(Arc::new(Self {
-            spot_id,
-            operation_id: Uuid::new_v4(),
-            message: (!message.is_empty()).then(|| message.to_owned()),
-        }))
+        let operation_id = Uuid::new_v4();
+        let policy = ChargingContentReport::new(spot_id, operation_id, &message)
+            .map_err(|_| MobileChargingError::InvalidMetadata)?;
+        Ok(Arc::new(Self { policy }))
     }
 
     /// Submits this report to the fixed HTTPS service and returns only a validated receipt.
     /// # Errors
-    /// Returns authentication, rejection, throttling or transport errors without claiming success.
+    /// Returns authentication, service, or invalid-receipt errors without claiming success.
     pub async fn submit(
         &self,
         token: String,
@@ -98,33 +65,29 @@ impl MobileChargingContentReport {
         client: &ChargingHttpClient,
         token: &str,
     ) -> Result<MobileChargingReportReceiptDto, MobileChargingError> {
-        if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
-            return Err(MobileChargingError::Unauthorized);
+        ChargingSyncService::submit_report(&client.inner, &self.policy, token)
+            .await
+            .map(|receipt| MobileChargingReportReceiptDto {
+                report_id: receipt.report_id.to_string(),
+            })
+            .map_err(MobileChargingError::from)
+    }
+}
+
+impl From<ReportSubmitError> for MobileChargingError {
+    fn from(error: ReportSubmitError) -> Self {
+        use cutout_application::charging::reports::{
+            ReportRemoteError as Remote, ReportSubmitError as Error,
+        };
+        match error {
+            Error::Unauthorized | Error::Remote(Remote::Unauthorized) => {
+                MobileChargingError::Unauthorized
+            }
+            Error::InvalidReceipt | Error::Remote(Remote::Network) => MobileChargingError::Network,
+            Error::Remote(Remote::Conflict) => MobileChargingError::Conflict,
+            Error::Remote(Remote::Rejected) => MobileChargingError::Rejected,
+            Error::Remote(Remote::Throttled) => MobileChargingError::Throttled,
         }
-        let body = serde_json::to_vec(&ReportRequest {
-            operation_id: self.operation_id,
-            reason: "abusive",
-            message: self.message.as_deref(),
-        })
-        .map_err(|_| MobileChargingError::InvalidMetadata)?;
-        let receipt: ReportReceipt = client
-            .request(
-                Method::POST,
-                &format!("v1/charging-spots/{}/reports", self.spot_id),
-                Some(token),
-                Some(body),
-            )
-            .await?;
-        if receipt.operation_id != self.operation_id
-            || receipt.applied_revision == 0
-            || receipt.revision < receipt.applied_revision
-        {
-            return Err(MobileChargingError::Network);
-        }
-        let _ = receipt.status;
-        Ok(MobileChargingReportReceiptDto {
-            report_id: receipt.id.to_string(),
-        })
     }
 }
 
@@ -149,10 +112,7 @@ mod tests {
         assert!(MobileChargingContentReport::new(id.clone(), "text\0private".into()).is_err());
         let report = MobileChargingContentReport::new(id, "  Details\nfor the moderator  ".into())
             .expect("report");
-        assert_eq!(
-            report.message.as_deref(),
-            Some("Details\nfor the moderator")
-        );
+        assert_eq!(report.policy.message(), Some("Details\nfor the moderator"));
     }
 
     async fn start(
@@ -243,7 +203,10 @@ mod tests {
             .clone()
             .ok_or("missing original")?;
         assert_eq!(original["id"], receipt.report_id);
-        assert_eq!(original["operation_id"], report.operation_id.to_string());
+        assert_eq!(
+            original["operation_id"],
+            report.policy.operation_id().to_string()
+        );
         let unauthenticated = "0".repeat(64);
         assert_eq!(
             report.submit_with(&client, &unauthenticated).await,

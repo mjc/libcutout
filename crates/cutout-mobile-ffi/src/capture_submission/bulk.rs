@@ -441,7 +441,7 @@ impl ReviewCommitment {
 
 struct FfiCommittedSend {
     commitment: Arc<ReviewCommitment>,
-    transport: Arc<super::http::HttpCaptureTransport>,
+    transport: Arc<super::HttpCaptureTransport>,
     runtime: tokio::runtime::Handle,
 }
 

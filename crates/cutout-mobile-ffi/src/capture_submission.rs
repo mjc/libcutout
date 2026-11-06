@@ -1,12 +1,11 @@
 //! Explicit private diagnostic Send through Rust's retained snapshot owner.
 
 mod bulk;
-mod http;
 pub use bulk::*;
 
 use crate::{RideDatabaseHandle, persistence};
+use cutout_application::capture_submission::HttpCaptureTransport;
 use cutout_core::{CaptureSubmissionIntegrity, CaptureSubmissionReceipt};
-use http::HttpCaptureTransport;
 use std::sync::{Arc, atomic::AtomicBool};
 
 /// A retained capture identity, never a foreign path or eligibility decision.
