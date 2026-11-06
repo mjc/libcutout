@@ -15,8 +15,8 @@ use cutout_core::{
 use libcutout_persistence::{
     CaptureFlushOutcome, CaptureJsonlExport, CaptureMetadata, CaptureRecordAdmission,
     CaptureRecordingPolicy, CaptureSettingsObservationAdmission, CaptureWriteOutcome,
-    CaptureWriter, CaptureWriterFinish, CaptureWriterMonitor, CaptureWriterStatus, RideDatabase,
-    SavedCaptureArtifact,
+    CaptureWriter, CaptureWriterFinish, CaptureWriterIngress, CaptureWriterMonitor,
+    CaptureWriterStatus, RideDatabase, SavedCaptureArtifact,
 };
 use uuid::Uuid;
 
@@ -99,6 +99,9 @@ pub struct CaptureWriterService {
     capture_identity_admission: Mutex<Option<CaptureIdentityAdmission>>,
     annotations: Mutex<CaptureAnnotations>,
     writer: Mutex<WriterSlot>,
+    /// Location admission is separate from the writer lock. Flush waits on that lock, and a
+    /// Core Location callback must not wait with it.
+    location_ingress: Mutex<Option<CaptureWriterIngress>>,
     finish_lock: Mutex<()>,
     writer_monitor: Mutex<Option<CaptureWriterMonitor>>,
     database: Mutex<Option<RideDatabase>>,
@@ -227,6 +230,7 @@ impl CaptureWriterService {
             capture_identity_admission: Mutex::new(None),
             annotations: Mutex::new(CaptureAnnotations::default()),
             writer: Mutex::new(WriterSlot::Ready),
+            location_ingress: Mutex::new(None),
             finish_lock: Mutex::new(()),
             writer_monitor: Mutex::new(None),
             database: Mutex::new(None),
@@ -251,6 +255,8 @@ impl CaptureWriterService {
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         if writer.accepts_metadata() {
             *writer = WriterSlot::Finalizing;
+            drop(writer);
+            self.clear_location_ingress();
         }
     }
 
@@ -537,22 +543,21 @@ impl CaptureWriterService {
     }
 
     /// Appends an ordered location batch through cloneable bounded ingress.
+    ///
+    /// The ingress is cloned and the lock dropped before admission, so this does not wait for
+    /// a flush barrier held on the writer lock.
     pub fn record_location_batch(&self, locations: &[PevcapLocationSample]) -> CaptureWriteOutcome {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        writer
-            .as_ref()
-            .map_or(CaptureWriteOutcome::Failed, |writer| {
-                writer.ingress().record_location_batch(locations)
+        self.location_ingress()
+            .map_or(CaptureWriteOutcome::Failed, |ingress| {
+                ingress.record_location_batch(locations)
             })
     }
 
     /// Accounts for a location batch rejected before allocation because it exceeded the bound.
     pub fn reject_location_batch(&self, requested: usize) -> CaptureWriteOutcome {
-        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        writer
-            .as_ref()
-            .map_or(CaptureWriteOutcome::Failed, |writer| {
-                writer.ingress().reject_location_batch(requested)
+        self.location_ingress()
+            .map_or(CaptureWriteOutcome::Failed, |ingress| {
+                ingress.reject_location_batch(requested)
             })
     }
 
@@ -774,6 +779,10 @@ impl CaptureWriterService {
         match start {
             Ok(writer) => {
                 *self
+                    .location_ingress
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(writer.ingress());
+                *self
                     .writer_monitor
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner) = Some(writer.monitor());
@@ -817,11 +826,43 @@ impl CaptureWriterService {
     }
 
     /// Requests a writer flush and reports its durable barrier outcome.
+    ///
+    /// A writer that failed before it became active keeps that error. `Rejected` stays reserved
+    /// for a healthy writer that did not admit the barrier.
     pub fn flush(&self) -> CaptureFlushOutcome {
         let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        writer
+        if let Some(writer) = writer.as_ref() {
+            return writer.flush_outcome();
+        }
+        drop(writer);
+        let status = self
+            .writer_monitor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .map_or(CaptureFlushOutcome::Rejected, CaptureWriter::flush_outcome)
+            .map(CaptureWriterMonitor::status);
+        match status {
+            Some(status) if status.failed => CaptureFlushOutcome::Failed {
+                message: status
+                    .last_error
+                    .unwrap_or_else(|| "capture writer failed".into()),
+            },
+            _ => CaptureFlushOutcome::Rejected,
+        }
+    }
+
+    fn location_ingress(&self) -> Option<CaptureWriterIngress> {
+        self.location_ingress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn clear_location_ingress(&self) {
+        *self
+            .location_ingress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// Finishes the writer and retains its result for later reads.
@@ -915,6 +956,7 @@ impl CaptureWriterService {
                 _ => unreachable!("recording state was checked while holding the lock"),
             }
         };
+        self.clear_location_ingress();
         let result = if export_jsonl {
             writer.finish()
         } else {
