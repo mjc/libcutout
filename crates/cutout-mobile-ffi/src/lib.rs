@@ -10708,6 +10708,76 @@ impl MobileRideMapCore {
         .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 
+    #[cfg(test)]
+    fn ensure_recording_for_vehicle_with_connection_generation(
+        &self,
+        platform_identifier: &str,
+        at_ms: u64,
+        connection_generation: Option<u64>,
+        explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let identity = ride_maps::VehicleIdentity::new(platform_identifier)
+            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
+        let recording = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            state.require_lifecycle_ready()?;
+            Arc::clone(&state.recording)
+        };
+        let has_connection_generation = connection_generation.is_some();
+        let connection_generation = match connection_generation {
+            Some(generation) => generation,
+            None => recording
+                .snapshot()
+                .last_connection_transition_generation
+                .map_or(Ok(0), |previous| {
+                    previous.checked_add(1).ok_or_else(|| {
+                        MobileRideMapCoreErrorDto::Storage(
+                            "connection generation identifiers are exhausted".to_owned(),
+                        )
+                    })
+                })?,
+        };
+        let policy = match explicit_policy {
+            Some(MobileRideMapAutomaticRecordingPolicyDto::ManualOnly) => {
+                cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly
+            }
+            Some(MobileRideMapAutomaticRecordingPolicyDto::StartAndResume) => {
+                cutout_application::ride_recording::VerifiedConnectionTestPolicy::StartAndResume
+            }
+            None => cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly,
+        };
+        let admission_result = if explicit_policy.is_some() {
+            recording
+                .begin_verified_connection_admission_with_test_policy(
+                    identity.as_str(),
+                    at_ms,
+                    connection_generation,
+                    CoreMusicHistoryPolicy::Disabled,
+                    policy,
+                )
+                .and_then(|operation| recording.finish_verified_connection_admission(operation))
+        } else {
+            recording
+                .begin_verified_connection_admission(
+                    identity.as_str(),
+                    at_ms,
+                    connection_generation,
+                    CoreMusicHistoryPolicy::Disabled,
+                )
+                .and_then(|operation| recording.finish_verified_connection_admission(operation))
+        };
+        let snapshot = admission_result.map_err(map_verified_connection_admission_error)?;
+        let Some(snapshot) = snapshot else {
+            return if has_connection_generation {
+                Ok(None)
+            } else {
+                Err(MobileRideMapCoreErrorDto::NoActiveRide)
+            };
+        };
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(state.project_recording_snapshot(&snapshot, at_ms))
+    }
+
     /// Applies connection policy for an already verified Rust connection attempt.
     #[cfg(test)]
     pub(crate) fn ensure_recording_for_vehicle_on_connection(
@@ -12022,75 +12092,6 @@ impl MobileRideMapCore {
             .unwrap_or_else(PoisonError::into_inner)
             .project_recording_snapshot(&snapshot, at_ms)
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
-    }
-
-    fn ensure_recording_for_vehicle_with_connection_generation(
-        &self,
-        platform_identifier: &str,
-        at_ms: u64,
-        connection_generation: Option<u64>,
-        explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let identity = ride_maps::VehicleIdentity::new(platform_identifier)
-            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let recording = {
-            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-            state.require_lifecycle_ready()?;
-            Arc::clone(&state.recording)
-        };
-        let has_connection_generation = connection_generation.is_some();
-        let connection_generation = match connection_generation {
-            Some(generation) => generation,
-            None => recording
-                .snapshot()
-                .last_connection_transition_generation
-                .map_or(Ok(0), |previous| {
-                    previous.checked_add(1).ok_or_else(|| {
-                        MobileRideMapCoreErrorDto::Storage(
-                            "connection generation identifiers are exhausted".to_owned(),
-                        )
-                    })
-                })?,
-        };
-        let policy = match explicit_policy {
-            Some(MobileRideMapAutomaticRecordingPolicyDto::ManualOnly) => {
-                cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly
-            }
-            Some(MobileRideMapAutomaticRecordingPolicyDto::StartAndResume) => {
-                cutout_application::ride_recording::VerifiedConnectionTestPolicy::StartAndResume
-            }
-            None => cutout_application::ride_recording::VerifiedConnectionTestPolicy::ManualOnly,
-        };
-        let admission_result = if explicit_policy.is_some() {
-            recording
-                .begin_verified_connection_admission_with_test_policy(
-                    identity.as_str(),
-                    at_ms,
-                    connection_generation,
-                    CoreMusicHistoryPolicy::Disabled,
-                    policy,
-                )
-                .and_then(|operation| recording.finish_verified_connection_admission(operation))
-        } else {
-            recording
-                .begin_verified_connection_admission(
-                    identity.as_str(),
-                    at_ms,
-                    connection_generation,
-                    CoreMusicHistoryPolicy::Disabled,
-                )
-                .and_then(|operation| recording.finish_verified_connection_admission(operation))
-        };
-        let snapshot = admission_result.map_err(map_verified_connection_admission_error)?;
-        let Some(snapshot) = snapshot else {
-            return if has_connection_generation {
-                Ok(None)
-            } else {
-                Err(MobileRideMapCoreErrorDto::NoActiveRide)
-            };
-        };
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        Ok(state.project_recording_snapshot(&snapshot, at_ms))
     }
 
     /// Pauses the active ride.
