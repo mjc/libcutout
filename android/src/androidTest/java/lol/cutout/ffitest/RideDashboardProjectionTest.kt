@@ -441,23 +441,43 @@ open class RideDashboardProjectionTest {
     fun standardVescRecordingSummaryUsesRustStatisticsAndClearsTerminalValues() = withActivity { activity ->
         val ride = RideDashboardView(activity, {}, {})
         activity.setContentView(ride)
-        ride.render(productionReplayPresentation().withStandardVesc())
-        val recording = recordingProjection()
+        val replay = productionReplayPresentation().withStandardVesc()
+        val connected = checkNotNull(replay.session?.connection?.token?.platformIdentifier)
+        ride.render(replay)
+        val recording = recordingProjection(connected)
         ride.renderRecording(recording)
+        val unavailable = activity.getString(lol.cutout.R.string.unavailable)
         check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
         val trip = tagged<TextView>(ride, "ride.metric.trip").text.toString()
-        check(trip != activity.getString(lol.cutout.R.string.unavailable))
+        check(trip != unavailable)
         val width = (360 * activity.resources.displayMetrics.density).toInt()
         val height = (760 * activity.resources.displayMetrics.density).toInt()
         layout(ride, height, width)
         check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
         check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == trip)
+        ride.renderRecording(recording.copy(associatedVehicle = "other-board"))
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == unavailable)
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == unavailable)
+        val session = checkNotNull(replay.session)
+        val token = checkNotNull(session.connection.token)
+        ride.render(replay.copy(session = session.copy(connection = session.connection.copy(
+            token = token.copy(platformIdentifier = "other-board")))))
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == trip)
+        ride.render(replay)
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == unavailable)
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == unavailable)
+        ride.renderRecording(recording.copy(associatedVehicle = null))
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == unavailable)
+        ride.renderRecording(recording)
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == "1:05")
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == trip)
         ride.renderRecording(recording.copy(summary = recording.summary.copy(pointCount = 0UL)))
-        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == unavailable)
         ride.renderRecording(recording.copy(state = MobileRideLifecycleStateDto.STOPPED, liveActivityStatistics = null))
-        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+        check(tagged<TextView>(ride, "ride.metric.ride_time").text.toString() == unavailable)
         ride.renderRecording(null)
-        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == activity.getString(lol.cutout.R.string.unavailable))
+        check(tagged<TextView>(ride, "ride.metric.trip").text.toString() == unavailable)
     }
 
     @Test
@@ -565,7 +585,7 @@ open class RideDashboardProjectionTest {
     }
 
     /** Native presentation fixture over exported Rust projection fields; not wire/clock validation. */
-    private fun recordingProjection() = MobileRideMapCoreSnapshotDto(
+    private fun recordingProjection(associatedVehicle: String?) = MobileRideMapCoreSnapshotDto(
         rideId = "ride-projection", revision = 1UL, recordingToken = null, commandToken = null,
         locationAcquisition = MobileRideMapSnapshotLocationAcquisitionDto(MobileRideMapAvailabilityDto.READY,
             MobileRideMapLocationDemandDto.RECORD, MobileRideMapLocationRecoveryActionDto.NONE),
@@ -575,7 +595,7 @@ open class RideDashboardProjectionTest {
             MobileRideMovingTimeDto.Unavailable, MobileRideElapsedTimeDto.Unavailable),
         liveActivityStatistics = MobileRideMapLiveActivityStatisticsDto(65_000UL, 1_609_344UL),
         liveSpeed = MobileRideMapSpeedDto(0, MobileRideMapSpeedSourceDto.UNAVAILABLE),
-        segmentCount = 1UL, associatedVehicle = null, recordedBoundsAvailable = true,
+        segmentCount = 1UL, associatedVehicle = associatedVehicle, recordedBoundsAvailable = true,
     )
 
     private fun BlePresentation.withTelemetry(operatingState: RideOperatingState): BlePresentation = copy(

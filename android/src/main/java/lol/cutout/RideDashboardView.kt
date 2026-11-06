@@ -209,7 +209,7 @@ class RideDashboardView(
         }
     }
 
-    /** Present the existing Rust recording projection; no native ride clock or distance accumulator. */
+    /** Present the connected vehicle's Rust recording. Another open ride stays off these instruments. */
     fun renderRecording(value: MobileRideMapCoreSnapshotDto?) {
         recordingSnapshot = value
         updateRecordingReadings()
@@ -222,15 +222,20 @@ class RideDashboardView(
         }
     }
 
+    private fun recordingForThisVehicle(): MobileRideMapCoreSnapshotDto? {
+        val connected = latestPresentation?.session?.connection?.token?.platformIdentifier ?: return null
+        return recordingSnapshot?.takeIf { it.associatedVehicle == connected }
+    }
+
     private fun recordingTripText(): String {
-        val snapshot = recordingSnapshot
+        val snapshot = recordingForThisVehicle()
         val statistics = snapshot?.liveActivityStatistics
         return if (snapshot != null && snapshot.summary.pointCount > 0UL && statistics != null)
             RideMetricFormatting.distance(context, statistics.distanceMillimetres.toDouble() / 1000)
         else context.getString(R.string.unavailable)
     }
 
-    private fun recordingDurationText(): String = recordingSnapshot?.liveActivityStatistics
+    private fun recordingDurationText(): String = recordingForThisVehicle()?.liveActivityStatistics
         ?.let { RideMetricFormatting.duration(it.durationMilliseconds) } ?: context.getString(R.string.unavailable)
 
     private fun updateRecordingReadings() {
