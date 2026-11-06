@@ -111,9 +111,11 @@ pub enum RideMusicHistoryRead {
 #[derive(Debug)]
 pub struct PendingRideMusicWrite {
     state: Arc<Mutex<RecordingState>>,
-    _database_owner: libcutout_persistence::RideDatabase,
+    database: libcutout_persistence::RideDatabase,
     ride_id: RideId,
     previous_policy: Option<MusicHistoryPolicy>,
+    policy: Option<MusicHistoryPolicy>,
+    cache_epoch: u64,
     deletes_history: bool,
     storage: PendingMusicHistoryWrite,
 }
@@ -122,18 +124,29 @@ impl PendingRideMusicWrite {
     /// Polls without blocking; applies a deletion receipt only to its owning selected ride.
     pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
         let result = self.storage.try_result()?;
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let current =
+            state.ride_id == Some(self.ride_id) && state.music_cache_epoch == self.cache_epoch;
+        if !current {
+            return Some(result);
+        }
         if self.deletes_history {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            if state.ride_id == Some(self.ride_id) {
-                match &result {
-                    Ok(()) => state.music_history_policy = Some(MusicHistoryPolicy::Disabled),
-                    Err(_) => {
-                        if let Some(policy) = self.previous_policy {
-                            state.music_history_policy = Some(policy);
-                        }
+            match &result {
+                Ok(()) => state.music_history_policy = Some(MusicHistoryPolicy::Disabled),
+                Err(_) => {
+                    if let Some(policy) = self.previous_policy {
+                        state.music_history_policy = Some(policy);
                     }
                 }
             }
+        } else if let (Ok(()), Some(policy)) = (&result, self.policy) {
+            state.music_history_policy = Some(policy);
+            state.music_history_available = true;
+        } else if result.is_err()
+            && let Ok(policy) = self.database.music_history_policy(self.ride_id)
+        {
+            state.music_history_policy = Some(policy);
+            state.music_history_available = true;
         }
         Some(result)
     }
@@ -237,6 +250,7 @@ impl RideRecordingApplication {
             .save_music_history_policy(ride_id, policy)?;
         state.music_history_policy = Some(policy);
         state.music_history_available = true;
+        reserve_music_cache(&mut state);
         Ok(())
     }
 
@@ -248,16 +262,19 @@ impl RideRecordingApplication {
         &self,
         policy: MusicHistoryPolicy,
     ) -> Result<PendingRideMusicWrite, RideMusicError> {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let ride_id = recordable_ride(&state)?;
         let storage = self
             .music_database()?
             .queue_save_music_history_policy(ride_id, policy)?;
+        let cache_epoch = reserve_music_cache(&mut state);
         Ok(PendingRideMusicWrite {
             state: Arc::clone(&self.state),
-            _database_owner: self.music_database()?.clone(),
+            database: self.music_database()?.clone(),
             ride_id,
             previous_policy: None,
+            policy: Some(policy),
+            cache_epoch,
             deletes_history: false,
             storage,
         })
@@ -278,14 +295,17 @@ impl RideRecordingApplication {
                 .unwrap_or(MusicHistoryPolicy::Disabled),
         );
         let storage = self.music_database()?.queue_delete_music_history(ride_id)?;
+        let cache_epoch = reserve_music_cache(&mut state);
         if previous_policy.is_some() {
             state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
         }
         Ok(PendingRideMusicWrite {
             state: Arc::clone(&self.state),
-            _database_owner: self.music_database()?.clone(),
+            database: self.music_database()?.clone(),
             ride_id,
             previous_policy,
+            policy: None,
+            cache_epoch,
             deletes_history: true,
             storage,
         })
@@ -441,12 +461,18 @@ impl RideRecordingApplication {
         let ride_id = state.ride_id.ok_or(RideRecordingError::NoActiveRide)?;
         self.music_database()?.delete_music_history(ride_id)?;
         state.music_history_policy = Some(MusicHistoryPolicy::Disabled);
+        reserve_music_cache(&mut state);
         Ok(())
     }
 
     fn music_database(&self) -> Result<&libcutout_persistence::RideDatabase, RideMusicError> {
         self.database.as_ref().ok_or(RideMusicError::Unavailable)
     }
+}
+
+fn reserve_music_cache(state: &mut RecordingState) -> u64 {
+    state.music_cache_epoch = state.music_cache_epoch.saturating_add(1);
+    state.music_cache_epoch
 }
 
 fn recordable_ride(state: &RecordingState) -> Result<RideId, RideRecordingError> {
@@ -603,6 +629,103 @@ mod tests {
             libcutout_persistence::MusicHistoryStatus::Deleted
         );
         database.clone().shutdown().expect("database shuts down");
+        drop(deletion);
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn poll_music_write(pending: &mut PendingRideMusicWrite) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if let Some(result) = pending.try_result() {
+                result.expect("music write commits");
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "music write did not settle"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn queued_policy_receipt_publishes_the_cache_and_keeps_a_newer_change() {
+        let _guard = crate::ride_recording::tests::DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-app-ride-music-policy-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = libcutout_persistence::RideDatabase::open(&path).expect("database opens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore admitted"))
+            .expect("restore completes");
+        let started = application
+            .finish_start(
+                application
+                    .begin_start(100, 1_700_000_000_000, None, None)
+                    .expect("start admitted"),
+            )
+            .expect("start commits");
+        let ride_id = started.ride_id.expect("ride exists");
+        application
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .music_history_available = false;
+
+        let mut queued = application
+            .begin_set_music_history_policy(MusicHistoryPolicy::OpaqueItem)
+            .expect("policy queues");
+        poll_music_write(&mut queued);
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::OpaqueItem)
+        );
+        assert!(application.snapshot().music_history_available);
+
+        let mut older = application
+            .begin_set_music_history_policy(MusicHistoryPolicy::HumanReadable)
+            .expect("older policy queues");
+        application
+            .set_music_history_policy(MusicHistoryPolicy::Disabled)
+            .expect("newer policy commits");
+        poll_music_write(&mut older);
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::Disabled)
+        );
+
+        let mut superseded = application
+            .begin_set_music_history_policy(MusicHistoryPolicy::HumanReadable)
+            .expect("superseded policy queues");
+        let mut deletion = application
+            .begin_delete_music_history(ride_id)
+            .expect("deletion queues");
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::Disabled)
+        );
+        poll_music_write(&mut superseded);
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::Disabled),
+            "an older policy receipt must not undo a deletion"
+        );
+        poll_music_write(&mut deletion);
+        assert_eq!(
+            application.snapshot().music_history_policy,
+            Some(MusicHistoryPolicy::Disabled)
+        );
+
+        database.clone().shutdown().expect("database shuts down");
+        drop(queued);
+        drop(older);
+        drop(superseded);
         drop(deletion);
         drop(application);
         drop(database);

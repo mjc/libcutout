@@ -211,6 +211,7 @@ pub struct PreparedVerifiedConnectionAdmission {
     platform_identifier: String,
     connection_generation: u64,
     logical_at_ms: u64,
+    selected_logical_at_ms: u64,
 }
 
 impl PreparedVerifiedConnectionAdmission {
@@ -232,6 +233,7 @@ impl PreparedVerifiedConnectionAdmission {
             platform_identifier: identity.as_str().to_owned(),
             connection_generation,
             logical_at_ms,
+            selected_logical_at_ms: logical_at_ms,
         }
     }
 
@@ -354,12 +356,14 @@ impl RideRecordingApplication {
             )?;
         }
 
+        let selected_logical_at_ms =
+            at_ms.saturating_add(selected_preview.monotonic_epoch_offset_ms);
         if selected_preview
             .recorder
             .state()
             .is_some_and(RideLifecycleState::is_recording)
         {
-            selected_preview.associate_vehicle(&identity, logical_at_ms);
+            selected_preview.associate_vehicle(&identity, selected_logical_at_ms);
         }
         if unselected_preview
             .recorder
@@ -399,6 +403,7 @@ impl RideRecordingApplication {
             platform_identifier: identity.as_str().to_owned(),
             connection_generation,
             logical_at_ms,
+            selected_logical_at_ms,
         })
     }
 
@@ -431,18 +436,20 @@ impl RideRecordingApplication {
         };
 
         // Settle older admitted route points before applying lifecycle transitions, as the
-        // previous recording owner did while holding its admission lock.
-        let _ = self.poll_location_writes();
-        let lease = operation
-            .lease
-            .as_ref()
-            .ok_or(RideRecordingError::StaleCommand)?;
+        // previous recording owner did while holding its admission lock. Keep the outcomes for
+        // the location callback; dropping them here hides a durable result.
+        let settled_locations = self.poll_location_writes();
+        let Some(lease) = operation.lease.as_ref() else {
+            retain_settled_locations(self, settled_locations);
+            return Err(RideRecordingError::StaleCommand.into());
+        };
         let (created_ride_id, committed_checkpoint, selected_device_matches) =
             match reconcile_admission_receipt(self.database.as_ref(), &operation, outcome.as_ref())
             {
                 Ok(receipt) => receipt,
                 Err(error) => {
                     let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+                    state.settled_locations.extend(settled_locations);
                     if ensure_command(&state, lease.id).is_ok() {
                         state.pending_command_id = None;
                         state.restore_phase = super::RestorePhase::RecoveryRequired;
@@ -451,6 +458,7 @@ impl RideRecordingApplication {
                 }
             };
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.settled_locations.extend(settled_locations);
         ensure_command(&state, lease.id)?;
         apply_verified_admission_receipt(
             &mut state,
@@ -480,15 +488,15 @@ impl RideRecordingApplication {
             .ok_or(VerifiedConnectionAdmissionError::InvalidVehicleIdentity)?;
         let mut staged = state.admission_recorder.clone();
         let mut durable_staged = state.recorder.clone();
-        let association = staged.observe_vehicle(
-            &identity,
-            MonotonicMilliseconds::new(operation.logical_at_ms),
-        );
+        let association_at_ms = if selected_device_matches || self.database.is_none() {
+            operation.selected_logical_at_ms
+        } else {
+            operation.logical_at_ms
+        };
+        let association_at = MonotonicMilliseconds::new(association_at_ms);
+        let association = staged.observe_vehicle(&identity, association_at);
         if association == VehicleAssociation::Associated {
-            let _ = durable_staged.observe_vehicle(
-                &identity,
-                MonotonicMilliseconds::new(operation.logical_at_ms),
-            );
+            let _ = durable_staged.observe_vehicle(&identity, association_at);
             state.revision = state.revision.saturating_add(1);
         }
         state.recorder = durable_staged;
@@ -854,6 +862,20 @@ fn plan_auto_recording(
     Ok(())
 }
 
+fn retain_settled_locations(
+    application: &RideRecordingApplication,
+    outcomes: Vec<super::RideLocationWriteOutcome>,
+) {
+    if outcomes.is_empty() {
+        return;
+    }
+    let mut state = application
+        .state
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    state.settled_locations.extend(outcomes);
+}
+
 fn wall_clock_milliseconds() -> Result<u64, VerifiedConnectionAdmissionError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -949,6 +971,157 @@ mod tests {
             mutations.as_slice(),
             [VerifiedConnectionLifecycleMutation::StartLive { .. }]
         ));
+    }
+
+    #[test]
+    fn resumed_candidate_and_replacement_use_the_planned_association_time() {
+        let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+        let path = database_path();
+        let database = RideDatabase::open(&path).expect("database opens");
+        database
+            .save_selected_device("wheel-a", 1)
+            .expect("device is selected");
+        database
+            .save_ride_autostart_enabled(true)
+            .expect("autostart is enabled");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore queues"))
+            .expect("restore completes");
+        let started = application
+            .finish_start(
+                application
+                    .begin_start(
+                        1_000,
+                        1_700_000_000_000,
+                        VehicleIdentity::new("wheel-a"),
+                        None,
+                    )
+                    .expect("gps ride queues"),
+            )
+            .expect("gps ride commits");
+        assert_eq!(started.candidate_vehicle.as_deref(), Some("wheel-a"));
+        assert_eq!(started.associated_vehicle, None);
+        application
+            .finish_transition(
+                application
+                    .begin_transition(
+                        started.command_token.expect("ride token"),
+                        RideEvent::Interrupt,
+                        5_000,
+                        None,
+                    )
+                    .expect("interrupt queues"),
+            )
+            .expect("interrupt commits");
+        drop(application);
+        database.shutdown().expect("database shuts down");
+
+        let database = RideDatabase::open(&path).expect("database reopens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore queues"))
+            .expect("interrupted ride restores");
+        let resumed = application
+            .finish_verified_connection_admission(
+                application
+                    .begin_verified_connection_admission(
+                        "wheel-a",
+                        200,
+                        1,
+                        MusicHistoryPolicy::Disabled,
+                    )
+                    .expect("resume admission queues"),
+            )
+            .expect("resume admission commits")
+            .expect("resumed ride is published");
+        assert_eq!(resumed.lifecycle, Some(RideLifecycleState::Active));
+        assert_eq!(resumed.ride_id, started.ride_id);
+        assert_eq!(resumed.associated_vehicle.as_deref(), Some("wheel-a"));
+        assert_eq!(resumed.associated_at_ms, Some(5_000));
+        assert_eq!(resumed.monotonic_epoch_offset_ms, 4_800);
+
+        database
+            .save_selected_device("wheel-b", 2)
+            .expect("replacement device is selected");
+        let replaced = application
+            .finish_verified_connection_admission(
+                application
+                    .begin_verified_connection_admission(
+                        "wheel-b",
+                        300,
+                        2,
+                        MusicHistoryPolicy::Disabled,
+                    )
+                    .expect("replacement admission queues"),
+            )
+            .expect("replacement admission commits")
+            .expect("replacement ride is published");
+        assert_ne!(replaced.ride_id, started.ride_id);
+        assert_eq!(replaced.lifecycle, Some(RideLifecycleState::Active));
+        assert_eq!(replaced.associated_vehicle.as_deref(), Some("wheel-b"));
+        assert_eq!(replaced.associated_at_ms, Some(300));
+        assert_eq!(replaced.monotonic_epoch_offset_ms, 0);
+
+        database.clone().shutdown().expect("database shuts down");
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn verified_connection_keeps_a_ready_location_outcome() {
+        let _guard = DATABASE_TEST_LOCK.lock().unwrap();
+        let path = database_path();
+        let database = RideDatabase::open(&path).expect("database opens");
+        let application = RideRecordingApplication::new(database.clone());
+        application
+            .finish_restore(application.begin_restore().expect("restore queues"))
+            .expect("restore completes");
+        application
+            .finish_start(
+                application
+                    .begin_start(100, 1_700_000_000_000, None, None)
+                    .expect("ride queues"),
+            )
+            .expect("ride commits");
+        let sample = cutout_ride_maps::LocationSample::new(
+            cutout_ride_maps::Coordinate::from_degrees(39.7, -104.9).expect("coordinate"),
+            MonotonicMilliseconds::new(110),
+            WallClockUnixMilliseconds::new(1_700_000_000_010),
+            Some(10_000),
+            cutout_ride_maps::LocationSource::Live,
+        );
+        let request_id = match application.admit_location(sample).expect("location admits") {
+            super::super::RideLocationAdmission::Queued { request_id, .. } => request_id,
+            other => panic!("location should queue a route point: {other:?}"),
+        };
+        database
+            .wait_for_ride_checkpoint()
+            .expect("location write reaches the worker");
+        application
+            .finish_verified_connection_admission(
+                application
+                    .begin_verified_connection_admission(
+                        "wheel-a",
+                        150,
+                        1,
+                        MusicHistoryPolicy::Disabled,
+                    )
+                    .expect("admission queues"),
+            )
+            .expect("admission commits");
+        let outcome = application
+            .poll_location_writes()
+            .into_iter()
+            .find(|outcome| outcome.request_id == request_id)
+            .expect("admission keeps the settled location outcome");
+        assert!(outcome.result.is_ok());
+
+        database.clone().shutdown().expect("database shuts down");
+        drop(application);
+        drop(database);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

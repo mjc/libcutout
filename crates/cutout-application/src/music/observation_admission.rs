@@ -458,7 +458,14 @@ impl ObservationLease {
             Err(error) => {
                 state.entries[index].phase = Phase::Failed;
                 mark_failure(&mut state, self.epoch, self.id);
+                // `notify_all` wakes Stop fences blocked on the condvar. A later lease parked
+                // in `wait` only resumes when its stored task waker runs.
+                let wake = head_waker(&mut state);
+                drop(state);
                 self.queue.changed.notify_all();
+                if let Some(waker) = wake {
+                    waker.wake();
+                }
                 return Err(ClassificationError::Operation(error));
             }
         };
@@ -626,6 +633,12 @@ impl ObservationLease {
             if rejected_receipt {
                 state.entries[index].phase = Phase::Failed;
                 mark_failure(&mut state, self.epoch, self.id);
+                let wake = head_waker(&mut state);
+                drop(state);
+                self.queue.changed.notify_all();
+                if let Some(waker) = wake {
+                    waker.wake();
+                }
             }
             return Err(AdmissionError::Incomplete);
         }
@@ -905,6 +918,51 @@ mod tests {
             .classify(None, || Ok::<_, std::convert::Infallible>(((), None)))
             .expect("next observation");
         later.settle().expect("required work complete");
+    }
+
+    #[test]
+    fn classification_failure_wakes_the_next_waiting_lease() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::task::{Wake, Waker};
+
+        let queue = Arc::new(ObservationQueue::default());
+        let first = queue.admit(None);
+        let later = queue.admit(None);
+        let (Admission::Admitted(first_lease), Admission::Admitted(later_lease)) =
+            (first.admission(), later.admission())
+        else {
+            panic!("both admissions fit");
+        };
+
+        struct Flag(AtomicBool);
+        impl Wake for Flag {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let flag = Arc::new(Flag(AtomicBool::new(false)));
+        let waker = Waker::from(Arc::clone(&flag));
+        let mut context = Context::from_waker(&waker);
+        let mut waiting = std::pin::pin!(later_lease.wait());
+        assert!(matches!(waiting.as_mut().poll(&mut context), Poll::Pending));
+
+        let error = first_lease
+            .classify(None, || {
+                Err::<((), Option<MusicHistoryTransition>), &str>("classification failed")
+            })
+            .expect_err("classification reports the operation error");
+        assert!(matches!(
+            error,
+            ClassificationError::Operation("classification failed")
+        ));
+        assert!(
+            flag.0.load(Ordering::SeqCst),
+            "the next lease stayed parked after classification failed"
+        );
+        assert!(matches!(
+            waiting.as_mut().poll(&mut context),
+            Poll::Ready(Ok(LeaseState::Ready))
+        ));
     }
 
     #[test]

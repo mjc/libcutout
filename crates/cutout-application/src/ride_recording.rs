@@ -97,6 +97,9 @@ struct RecordingState {
     last_connection_admission_generation: Option<u64>,
     music_history_policy: Option<MusicHistoryPolicy>,
     music_history_available: bool,
+    /// Reservation counter for cached music-history policy. A receipt applies only when it still
+    /// owns this value, so an older policy write cannot replace a newer change or deletion.
+    music_cache_epoch: u64,
     pending_locations: VecDeque<PendingLocation>,
     settled_locations: VecDeque<RideLocationWriteOutcome>,
     next_location_request_id: u64,
@@ -126,6 +129,7 @@ impl Default for RecordingState {
             last_connection_admission_generation: None,
             music_history_policy: None,
             music_history_available: true,
+            music_cache_epoch: 0,
             pending_locations: VecDeque::new(),
             settled_locations: VecDeque::new(),
             next_location_request_id: 1,
