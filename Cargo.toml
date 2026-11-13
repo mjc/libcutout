@@ -35,7 +35,7 @@ retina = { path = "vendor/retina" }
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mjc/libcutout"
 
