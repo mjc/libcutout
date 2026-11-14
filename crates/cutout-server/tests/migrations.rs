@@ -173,7 +173,7 @@ fn assert_retained_signup_data(connection: &Connection, version: u32) {
     let actual: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("version");
-    assert_eq!(actual, 7);
+    assert_eq!(actual, 8);
     let (role,review):(String,bool)=connection.query_row("SELECT role,private_capture_review FROM contributors WHERE id='00000000-0000-4000-8000-000000000002'",[],|row|Ok((row.get(0)?,row.get(1)?))).expect("moderator");
     assert_eq!(role, "moderator");
     assert!(

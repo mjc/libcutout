@@ -17,6 +17,10 @@ use cutout_core::{
     CaptureSubmissionMetadata, CaptureSubmissionReceipt, CaptureSubmissionValidationError,
     MAX_CAPTURE_SUBMISSION_BYTES, PevcapEncoding, validate_capture_submission_payload,
 };
+
+/// Cloudflare refuses a proxied body above this size. Reject the declaration before the
+/// handler reads the body, so hyper does not answer `100 Continue`.
+const MAX_PROXIED_CAPTURE_BODY_BYTES: u64 = 100_000_000;
 use serde::Deserialize;
 use std::{future::poll_fn, io::SeekFrom, path::PathBuf, pin::Pin, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -105,13 +109,16 @@ fn metadata(headers: &HeaderMap) -> Result<CaptureSubmissionMetadata, Error> {
     {
         return Err(Error::Invalid);
     }
+    if metadata.bytes > MAX_PROXIED_CAPTURE_BODY_BYTES {
+        return Err(Error::CaptureTooLarge);
+    }
     if let Some(length) = headers.get(header::CONTENT_LENGTH) {
         let length: u64 = length
             .to_str()
             .map_err(|_| Error::Invalid)?
             .parse()
             .map_err(|_| Error::Invalid)?;
-        if length > MAX_CAPTURE_SUBMISSION_BYTES {
+        if length > MAX_CAPTURE_SUBMISSION_BYTES || length > MAX_PROXIED_CAPTURE_BODY_BYTES {
             return Err(Error::CaptureTooLarge);
         }
         if length != metadata.bytes {

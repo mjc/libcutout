@@ -418,6 +418,9 @@ impl DatabaseWorker<'_> {
                     },
                 ));
             }
+            Command::AppendLiveCaptureEvents { events, reply } => {
+                let _ = reply.send(super::live_capture::append_events(connection, &events));
+            }
             Command::FinishLiveCapture {
                 id,
                 finished_at_ms,

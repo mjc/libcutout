@@ -1011,6 +1011,22 @@ impl RideRecordingApplication {
         snapshot_from_at(&state, MonotonicMilliseconds::new(logical_at_ms))
     }
 
+    /// Live speed for a location outcome.
+    ///
+    /// An older receipt must not hide a newer speed that is still inside its freshness window.
+    /// The GPS receipt clock is not used, so an invalid later sample cannot extend that window.
+    #[must_use]
+    pub fn outcome_live_speed(&self, receipt_monotonic_ms: u64) -> Option<RecordingSpeed> {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let logical_receipt = receipt_monotonic_ms.saturating_add(state.monotonic_epoch_offset_ms);
+        let at = state
+            .speed
+            .latest_speed_observed_at(state.generation)
+            .map_or(logical_receipt, |observed| logical_receipt.max(observed));
+        let lifecycle = state.recorder.state()?;
+        state.speed.selected_at(lifecycle, state.generation, at)
+    }
+
     /// Copies the retained live route tail.
     ///
     /// [`Self::snapshot`] and [`Self::snapshot_at`] carry counts and the first sequence only.

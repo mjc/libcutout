@@ -6,8 +6,7 @@ use super::{
 };
 use cutout_ride_maps::{
     MonotonicMilliseconds, RideDurationMilliseconds, RideEvent, RideLifecycleState,
-    RideRecoveryDecision, RideRecoveryKind, VehicleIdentity, WallClockUnixMilliseconds,
-    ride_recovery_decision,
+    RideRecoveryDecision, RideRecoveryKind, WallClockUnixMilliseconds, ride_recovery_decision,
 };
 use libcutout_persistence::{
     CommittedRideMovingTimeCheckpoint, PendingRideRestoreSnapshot, RideId, RideRestoreSnapshot,
@@ -27,11 +26,6 @@ pub struct RideRecoveryPolicy {
     pub explicit_pause_window_ms: u64,
     /// Whether automatic recovery is enabled.
     pub enabled: bool,
-    /// Whether automatic recording is enabled for newly created rides.
-    pub autostart_enabled: bool,
-    /// Device selected in preferences; recovery cross-checks it against the snapshot's last
-    /// connected vehicle before creating a replacement ride.
-    pub selected_vehicle_identifier: Option<String>,
 }
 
 /// Recovery operation applied after the durable ride snapshot is loaded.
@@ -51,8 +45,6 @@ pub enum RideRecoveryDisposition {
     Saved,
     /// An empty stale ride was discarded.
     Discarded,
-    /// A stale ride was settled and a replacement live ride was created atomically.
-    Replaced,
     /// An interrupted vehicle ride stays inactive until a verified connection admits it.
     AwaitingConnection,
 }
@@ -119,7 +111,6 @@ struct RecoveryContext {
     point_count: u64,
     has_telemetry_receipt: bool,
     recorded_duration: Option<RideDurationMilliseconds>,
-    last_connected_vehicle: Option<VehicleIdentity>,
     has_vehicle_identity: bool,
 }
 
@@ -142,9 +133,6 @@ fn recovery_context(snapshot: &RideRestoreSnapshot) -> Option<RecoveryContext> {
         point_count: ride.summary().point_count().as_u64(),
         has_telemetry_receipt: ride.last_telemetry_at_milliseconds().is_some(),
         recorded_duration: ride.last_recorded_point_duration_milliseconds(),
-        last_connected_vehicle: snapshot
-            .last_connected_device()
-            .and_then(VehicleIdentity::new),
         has_vehicle_identity: ride.candidate_vehicle().is_some()
             || ride.associated_vehicle().is_some(),
     })
@@ -210,11 +198,8 @@ fn apply_recovery(
     }
 
     let discard_empty = context.point_count == 0 && !context.has_telemetry_receipt;
-    let replacement_candidate = context.last_connected_vehicle.filter(|identity| {
-        policy.autostart_enabled
-            && policy.selected_vehicle_identifier.as_deref() == Some(identity.as_str())
-    });
-    let candidate = replacement_candidate.as_ref().map(VehicleIdentity::as_str);
+    // A remembered device stays disconnected until verified admission. Restore does not
+    // open a replacement ride for it.
     let committed = database
         .map(|database| {
             database.settle_recovered_ride_with_checkpoint(
@@ -222,32 +207,23 @@ fn apply_recovery(
                 discard_empty,
                 policy.wall_clock_now_ms,
                 policy.monotonic_now_ms,
-                candidate,
+                None,
             )
         })
         .transpose()?;
     state.recoverable_updated_at_ms = None;
     let committed = committed.flatten();
-    if let Some(committed) = committed
-        && committed.ride_id() != context.ride_id
+    if committed
+        .as_ref()
+        .is_some_and(|committed| committed.ride_id() != context.ride_id)
     {
-        reset_after_recovery(state);
-        start_replacement(
-            state,
-            committed,
-            policy.monotonic_now_ms,
-            replacement_candidate,
-        )?;
-        return Ok(RideRecoveryDisposition::Replaced);
+        return Err(RideRecordingError::StaleCommand);
     }
     if discard_empty {
         reset_after_recovery(state);
         return Ok(RideRecoveryDisposition::Discarded);
     }
     if let Some(committed) = committed {
-        if committed.ride_id() != context.ride_id {
-            return Err(RideRecordingError::StaleCommand);
-        }
         state.checkpoint = Some(committed.checkpoint());
     }
     save_recovered_projection(state, context.explicit_pause, context.recorded_duration)?;
@@ -347,32 +323,4 @@ fn reset_after_recovery(state: &mut RecordingState) {
 fn clear_projection(state: &mut RecordingState) {
     reset_after_recovery(state);
     state.last_connected_vehicle = None;
-}
-
-fn start_replacement(
-    state: &mut RecordingState,
-    committed: CommittedRideMovingTimeCheckpoint,
-    monotonic_now_ms: u64,
-    candidate: Option<VehicleIdentity>,
-) -> Result<(), RideRecordingError> {
-    if committed.lifecycle() != RideLifecycleState::Active {
-        return Err(RideRecordingError::InvalidTransition);
-    }
-    let mut recorder = super::RideMapRecorder::new();
-    recorder
-        .start(MonotonicMilliseconds::new(monotonic_now_ms), candidate)
-        .map_err(|_| RideRecordingError::InvalidTransition)?;
-    state.recorder = recorder.clone();
-    state.admission_recorder = recorder;
-    state.ride_id = Some(committed.ride_id());
-    state.checkpoint = Some(committed.checkpoint());
-    state.persisted_telemetry_receipt = None;
-    state.speed = libcutout_persistence::RecordingSpeedState::default();
-    state.speed_generation_started_ms = monotonic_now_ms;
-    state.monotonic_epoch_offset_ms = 0;
-    state.recoverable_updated_at_ms = None;
-    state.pending_locations.clear();
-    state.revision = state.revision.saturating_add(1);
-    state.generation = state.generation.saturating_add(1);
-    Ok(())
 }

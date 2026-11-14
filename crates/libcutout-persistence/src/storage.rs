@@ -5781,6 +5781,17 @@ struct PevcapImportCompletion {
     publication: CapturePublication,
 }
 
+struct LiveCaptureEventWrite {
+    id: LiveCaptureId,
+    kind: LiveCaptureEventKind,
+    receipt_monotonic_ms: u64,
+    source_monotonic_offset_ms: Option<i64>,
+    source_wall_clock_unix_ms: Option<u64>,
+    payload: Vec<u8>,
+    location: Option<LiveCaptureLocationObservation>,
+    ble_record: Option<Box<PevcapRecord>>,
+}
+
 enum Command {
     PhoneControl(phone_control::Command),
     DeviceVehicle(device_vehicle::Command),
@@ -5803,6 +5814,11 @@ enum Command {
         location: Option<LiveCaptureLocationObservation>,
         ble_record: Option<Box<PevcapRecord>>,
         reply: Reply<u64>,
+    },
+    /// Records already queued behind one another. One `synchronous=FULL` commit covers the group.
+    AppendLiveCaptureEvents {
+        events: Vec<LiveCaptureEventWrite>,
+        reply: Reply<()>,
     },
     FinishLiveCapture {
         id: LiveCaptureId,

@@ -1002,21 +1002,21 @@ impl RideMapRecorder {
         true
     }
 
-    /// Restores dedicated durable location evidence anchored to the last retained point.
+    /// Restores dedicated durable location evidence onto the last retained point.
     ///
-    /// Lifecycle timing alone is insufficient evidence of a location observation. Callers
-    /// must supply the separately persisted observation clocks; legacy absent metadata must
-    /// leave the last retained point as the observation baseline.
+    /// Callers supply the persisted observation clocks. A later pair replaces that point's
+    /// clocks in the live tail, so the next admission uses the same baseline storage will
+    /// load. Absent observation metadata leaves the retained point as the baseline.
     pub fn restore_location_observation(
         &mut self,
         at: MonotonicMilliseconds,
         wall_clock: crate::WallClockUnixMilliseconds,
     ) -> bool {
-        let Some(point) = self.points.last() else {
+        let Some(point) = self.points.last().copied() else {
             return false;
         };
-        let sample = point.sample();
-        if at < sample.monotonic_milliseconds()
+        let retained = point.sample();
+        if at < retained.monotonic_milliseconds()
             || at > self.last_monotonic_milliseconds
             || self
                 .latest_location_observation
@@ -1024,13 +1024,24 @@ impl RideMapRecorder {
         {
             return false;
         }
-        self.latest_location_observation = Some(LocationSample::new(
-            sample.coordinate(),
+        let sample = LocationSample::new(
+            retained.coordinate(),
             at,
             wall_clock,
-            sample.horizontal_accuracy_millimetres(),
-            sample.source(),
-        ));
+            retained.horizontal_accuracy_millimetres(),
+            retained.source(),
+        );
+        self.latest_location_observation = Some(sample);
+        if at > retained.monotonic_milliseconds()
+            && let Some(last) = Arc::make_mut(&mut self.points).last_mut()
+        {
+            *last = RideMapPoint::new_with_start_reason(
+                sample,
+                point.segment_id(),
+                point.telemetry_state(),
+                point.segment_start_reason(),
+            );
+        }
         true
     }
 
