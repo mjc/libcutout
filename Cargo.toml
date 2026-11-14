@@ -46,7 +46,7 @@ bitflags = "2.13.2"
 btleplug = "0.13.5"
 bytes = { version = "1.12.1", features = ["serde"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
-crc32fast = "1.5.3"
+crc32fast = "1.5.5"
 crc = { version = "3.4.0", default-features = false }
 futures-util = "0.3.34"
 hex = "0.4.3"
@@ -57,20 +57,20 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 retina = { version = "=0.4.21", default-features = false }
 proptest = "1.12.0"
 quick-xml = { version = "=0.42.0", default-features = false }
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "fallible_uint", "hooks", "limits"] }
+rusqlite = { version = "0.42.0", default-features = false, features = ["bundled", "cache", "fallible_uint", "hooks", "limits"] }
 sha2 = "0.11.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-signal-hook = "0.4.5"
-smallvec = "1.16.3"
+signal-hook = "0.4.6"
+smallvec = "1.16.5"
 thiserror = "2.0.21"
-tokio = { version = "1.54.0", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 url = "2.5.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 uniffi = "0.32.2"
-uuid = { version = "1.28.0", features = ["v4"] }
+uuid = { version = "1.29.2", features = ["v4"] }
 vesc = { version = "0.4.0", default-features = false }
 arrayvec = { version = "0.7.8", features = ["serde"] }
 axum = "0.8.9"

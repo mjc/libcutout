@@ -12893,11 +12893,11 @@ impl MobileRideMapCore {
             });
         }
 
+        let (recording, route_points) = state.recording.snapshot_with_route_points();
         let start = after_cursor.map_or(recording.first_point_sequence, |cursor| {
             cursor.saturating_add(1)
         });
-        let mut points: Vec<_> = recording
-            .route_points
+        let mut points: Vec<_> = route_points
             .iter()
             .copied()
             .enumerate()
@@ -12983,9 +12983,9 @@ fn project_live_route_points(
     ) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let recording = state.recording.snapshot();
+        let (recording, route_points) = state.recording.snapshot_with_route_points();
         (
-            recording.route_points,
+            route_points,
             ride_maps::RidePointSequence::new(recording.first_point_sequence),
             recording.revision,
             recording.route_point_count,
@@ -28594,15 +28594,14 @@ mod tests {
         );
         let restored = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
-            restored.recording.snapshot().route_points.len(),
+            restored.recording.route_points().len(),
             ride_maps::MAX_LIVE_ROUTE_POINTS
         );
         assert_eq!(restored.recording.snapshot().first_point_sequence, 2);
         assert_eq!(
             restored
                 .recording
-                .snapshot()
-                .route_points
+                .route_points()
                 .last()
                 .unwrap()
                 .sample()
@@ -30150,8 +30149,7 @@ mod tests {
         assert_eq!(
             state
                 .recording
-                .snapshot()
-                .route_points
+                .route_points()
                 .first()
                 .unwrap()
                 .sample()

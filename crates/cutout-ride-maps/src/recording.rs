@@ -6,7 +6,10 @@ use crate::{
 };
 use std::{
     num::NonZeroU64,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 // Cloned admission/durable projections share one identity. Starting or restoring a
@@ -618,7 +621,9 @@ pub struct RideMapRecorder {
     last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
     latest_location_observation: Option<LocationSample>,
     stationary_boundary_at: Option<MonotonicMilliseconds>,
-    points: Vec<RideMapPoint>,
+    /// Shared live tail. Cloning a recorder shares this buffer; the next
+    /// mutation copies it only while another projection still holds it.
+    points: Arc<Vec<RideMapPoint>>,
     first_point_sequence: RidePointSequence,
     summary: RideSummary,
     segment_id: RideMapSegmentId,
@@ -640,7 +645,7 @@ impl Default for RideMapRecorder {
 impl RideMapRecorder {
     /// Creates an empty recording projection.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: None,
             recording_generation: None,
@@ -652,7 +657,7 @@ impl RideMapRecorder {
             last_telemetry_at_milliseconds: None,
             latest_location_observation: None,
             stationary_boundary_at: None,
-            points: Vec::new(),
+            points: Arc::new(Vec::new()),
             first_point_sequence: RidePointSequence::new(0),
             summary: RideSummary::from_stored(RidePointCount::new(0), 0),
             segment_id: RideMapSegmentId::new(0),
@@ -821,7 +826,7 @@ impl RideMapRecorder {
             )),
             first_point_sequence,
             summary,
-            points,
+            points: Arc::new(points),
         }
     }
 
@@ -883,7 +888,7 @@ impl RideMapRecorder {
             )),
             first_point_sequence,
             summary,
-            points,
+            points: Arc::new(points),
         }
     }
 
@@ -1095,7 +1100,7 @@ impl RideMapRecorder {
     /// Returns the projected canonical points.
     #[must_use]
     pub fn points(&self) -> &[RideMapPoint] {
-        &self.points
+        self.points.as_slice()
     }
 
     /// Returns the sequence number of the first retained in-memory point.
@@ -1182,7 +1187,7 @@ impl RideMapRecorder {
         self.last_telemetry_at_milliseconds = None;
         self.latest_location_observation = None;
         self.stationary_boundary_at = None;
-        self.points.clear();
+        self.points = Arc::new(Vec::new());
         self.first_point_sequence = RidePointSequence::new(0);
         self.summary = RideSummary::from_stored(RidePointCount::new(0), 0);
         self.segment_id = RideMapSegmentId::new(0);
@@ -1521,13 +1526,12 @@ impl RideMapRecorder {
         }
     }
 
-    /// Settles a sample that was admitted while recording was active.
+    /// Returns whether [`Self::record_admitted_sample`] would retain this sample.
     ///
-    /// Durable location writes may complete after a pause, interruption, stop, or save. The
-    /// admission capability proves that the sample passed route policy before the write was
-    /// queued; the lifecycle check here prevents a stale completion from mutating a discarded
-    /// or otherwise closed projection.
-    pub fn record_admitted_sample(&mut self, admitted_sample: AdmittedLocationSample) -> bool {
+    /// A `false` result does not mutate. A `true` result stays true until this recorder changes,
+    /// so a caller can refuse a full queue before appending to the live tail.
+    #[must_use]
+    pub fn can_record_admitted_sample(&self, admitted_sample: AdmittedLocationSample) -> bool {
         if !(match self.state {
             Some(
                 RideLifecycleState::Active
@@ -1541,13 +1545,23 @@ impl RideMapRecorder {
             return false;
         }
         let sample = admitted_sample.sample();
-        if Some(admitted_sample.recording_generation()) != self.recording_generation
-            || self.points.last().is_some_and(|point| {
+        Some(admitted_sample.recording_generation()) == self.recording_generation
+            && !self.points.last().is_some_and(|point| {
                 sample.monotonic_milliseconds() <= point.sample().monotonic_milliseconds()
             })
-        {
+    }
+
+    /// Settles a sample that was admitted while recording was active.
+    ///
+    /// Durable location writes may complete after a pause, interruption, stop, or save. The
+    /// admission capability proves that the sample passed route policy before the write was
+    /// queued; the lifecycle check here prevents a stale completion from mutating a discarded
+    /// or otherwise closed projection.
+    pub fn record_admitted_sample(&mut self, admitted_sample: AdmittedLocationSample) -> bool {
+        if !self.can_record_admitted_sample(admitted_sample) {
             return false;
         }
+        let sample = admitted_sample.sample();
         let point = admitted_sample.point();
         // A preceding queued boundary may have failed. Summary distance and gap count
         // follow the actual durable predecessor, while the captured point context stays exact.
@@ -1594,10 +1608,13 @@ impl RideMapRecorder {
         }) {
             self.latest_location_observation = Some(sample);
         }
-        self.points.push(point);
-        if self.points.len() > MAX_LIVE_ROUTE_POINTS {
-            let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
-            self.points.drain(..excess);
+        {
+            let points = Arc::make_mut(&mut self.points);
+            points.push(point);
+            if points.len() > MAX_LIVE_ROUTE_POINTS {
+                let excess = points.len() - MAX_LIVE_ROUTE_POINTS;
+                points.drain(..excess);
+            }
         }
         self.first_point_sequence = RidePointSequence::new(
             self.summary

@@ -2,8 +2,8 @@
 use super::append_location_with_result;
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
-    append_location_with_moving_time, append_pevcap_location_batch, append_trail_segment,
-    apply_verified_connection_admission, backup, begin_pevcap_import,
+    append_location_with_moving_time, append_pevcap_location_batch, append_queued_location_batch,
+    append_trail_segment, apply_verified_connection_admission, backup, begin_pevcap_import,
     checkpoint_location_observation, checkpoint_stationary_location_observation,
     clear_last_connected_device, clear_ride_session_marker, clear_selected_device,
     create_map_point, create_ride, create_started_live_ride, create_started_ride, create_trail,
@@ -66,17 +66,34 @@ pub(super) fn run(
     let mut normalization_state = worker.normalize_maintenance_batch();
     let mut last_command_at = Instant::now();
     let mut next_compaction_attempt = last_command_at + Duration::from_secs(5);
+    let mut deferred = None;
     loop {
+        if let Some(command) = deferred.take() {
+            last_command_at = Instant::now();
+            note_capture_cleanup(
+                &mut worker,
+                &command,
+                &mut normalization_state,
+                &mut next_compaction_attempt,
+                last_command_at,
+            );
+            if dispatch_command(&mut worker, command, receiver, &mut deferred).is_break() {
+                break;
+            }
+            continue;
+        }
         let idle_delay = maintenance_idle_delay(normalization_state);
         match receiver.recv_timeout(idle_delay) {
             Ok(command) => {
                 last_command_at = Instant::now();
-                if requests_capture_cleanup(&command) {
-                    worker.capture_cleanup_cursor = None;
-                    normalization_state = super::normalization::BatchState::Pending;
-                    next_compaction_attempt = last_command_at + Duration::from_secs(5);
-                }
-                if worker.dispatch(command).is_break() {
+                note_capture_cleanup(
+                    &mut worker,
+                    &command,
+                    &mut normalization_state,
+                    &mut next_compaction_attempt,
+                    last_command_at,
+                );
+                if dispatch_command(&mut worker, command, receiver, &mut deferred).is_break() {
                     break;
                 }
             }
@@ -85,12 +102,16 @@ pub(super) fn run(
                 match receiver.try_recv() {
                     Ok(command) => {
                         last_command_at = Instant::now();
-                        if requests_capture_cleanup(&command) {
-                            worker.capture_cleanup_cursor = None;
-                            normalization_state = super::normalization::BatchState::Pending;
-                            next_compaction_attempt = last_command_at + Duration::from_secs(5);
-                        }
-                        if worker.dispatch(command).is_break() {
+                        note_capture_cleanup(
+                            &mut worker,
+                            &command,
+                            &mut normalization_state,
+                            &mut next_compaction_attempt,
+                            last_command_at,
+                        );
+                        if dispatch_command(&mut worker, command, receiver, &mut deferred)
+                            .is_break()
+                        {
                             break;
                         }
                         continue;
@@ -124,6 +145,83 @@ pub(super) fn run(
         }
     }
     worker.stop();
+}
+
+fn note_capture_cleanup(
+    worker: &mut DatabaseWorker<'_>,
+    command: &Command,
+    normalization_state: &mut super::normalization::BatchState,
+    next_compaction_attempt: &mut Instant,
+    last_command_at: Instant,
+) {
+    if requests_capture_cleanup(command) {
+        worker.capture_cleanup_cursor = None;
+        *normalization_state = super::normalization::BatchState::Pending;
+        *next_compaction_attempt = last_command_at + Duration::from_secs(5);
+    }
+}
+
+/// Location writes already sitting in the queue share one synced commit.
+///
+/// The callback admits a bounded group and then waits, so those commands are queued together.
+/// A command that is not another location write stays in `deferred` and runs after the commit.
+fn dispatch_command(
+    worker: &mut DatabaseWorker<'_>,
+    command: Command,
+    receiver: &Receiver<Command>,
+    deferred: &mut Option<Command>,
+) -> ControlFlow<()> {
+    let Command::AppendLocationAsync { .. } = &command else {
+        return worker.dispatch(command);
+    };
+    let mut batch = vec![command];
+    // A callback queues a group without waiting on each write. Keep taking location
+    // writes until the group stops, the batch is full, or another command arrives.
+    // The wait ends as soon as the next command is sent; a lone write commits after it.
+    loop {
+        take_queued_location_writes(receiver, &mut batch, deferred);
+        if batch.len() >= 32 || deferred.is_some() {
+            break;
+        }
+        match receiver.recv_timeout(Duration::from_millis(15)) {
+            Ok(command @ Command::AppendLocationAsync { .. }) => batch.push(command),
+            Ok(command) => {
+                *deferred = Some(command);
+                break;
+            }
+            Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => break,
+        }
+    }
+    if batch.len() == 1 {
+        let command = batch
+            .pop()
+            .expect("batch contains the received location write");
+        return worker.dispatch(command);
+    }
+    append_queued_location_batch(&mut worker.connection, batch);
+    ControlFlow::Continue(())
+}
+
+fn take_queued_location_writes(
+    receiver: &Receiver<Command>,
+    batch: &mut Vec<Command>,
+    deferred: &mut Option<Command>,
+) {
+    while batch.len() < 32 {
+        match receiver.try_recv() {
+            Ok(command @ Command::AppendLocationAsync { .. }) => batch.push(command),
+            Ok(command) => {
+                *deferred = Some(command);
+                break;
+            }
+            Err(
+                std::sync::mpsc::TryRecvError::Empty | std::sync::mpsc::TryRecvError::Disconnected,
+            ) => break,
+        }
+    }
 }
 
 fn requests_capture_cleanup(command: &Command) -> bool {
@@ -1164,7 +1262,7 @@ impl DatabaseWorker<'_> {
 
 #[cfg(test)]
 fn install_sqlite_progress_gate(
-    connection: &Connection,
+    connection: &mut Connection,
     entered: SyncSender<()>,
     release: Receiver<()>,
 ) {
