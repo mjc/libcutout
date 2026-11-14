@@ -10577,7 +10577,11 @@ fn observe_telemetry_locked(
     speed_observation: Option<MobileRideMapSpeedObservationDto>,
     verified_vehicle: Option<(&str, u64)>,
 ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
-    state.require_ready()?;
+    if verified_vehicle.is_some() {
+        state.require_verified_connection_ready()?;
+    } else {
+        state.require_ready()?;
+    }
     let recording = &state.recording;
     let offset_ms = recording.snapshot().monotonic_epoch_offset_ms;
     let at_ms = at_ms.saturating_add(offset_ms);
@@ -10810,7 +10814,7 @@ impl MobileRideMapCore {
             // fence. The application owner returns an idempotent no-op for the already-current
             // connection generation, but still rejects a different generation while the stop
             // command owns its single-operation fence.
-            state.require_ready()?;
+            state.require_verified_connection_ready()?;
             let admission_id = state.next_connection_admission_id;
             let following_admission_id = admission_id.checked_add(1).ok_or_else(|| {
                 MobileRideMapCoreErrorDto::Storage(
@@ -11183,7 +11187,12 @@ impl MobileRideMapCoreInner {
     }
 
     fn snapshot_for_outcome(&self, at_milliseconds: u64) -> Option<MobileRideMapCoreSnapshotDto> {
-        self.project_recording_snapshot(&self.recording.snapshot(), at_milliseconds)
+        let mut snapshot =
+            self.project_recording_snapshot(&self.recording.snapshot(), at_milliseconds)?;
+        if let Some(speed) = self.recording.outcome_live_speed(at_milliseconds) {
+            snapshot.live_speed = speed.into();
+        }
+        Some(snapshot)
     }
 
     fn ingest_location_batch(
@@ -11385,6 +11394,18 @@ impl MobileRideMapCoreInner {
     fn require_ready(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         if self.pending_connection_admission_id.is_some()
             || self.pending_lifecycle_command_id.is_some()
+        {
+            return Err(MobileRideMapCoreErrorDto::AdmissionPending);
+        }
+        self.restoration_error().map_or(Ok(()), Err)
+    }
+
+    /// Verified packets for the current connection stay admissible while Stop waits on music.
+    /// A different lifecycle command, a second admission, and a failed restore still block.
+    fn require_verified_connection_ready(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        if self.pending_connection_admission_id.is_some()
+            || (self.pending_lifecycle_command_id.is_some()
+                && self.pending_music_stop_command_id.is_none())
         {
             return Err(MobileRideMapCoreErrorDto::AdmissionPending);
         }
@@ -12620,7 +12641,7 @@ impl MobileRideMapCore {
         speed_observation: Option<MobileRideMapSpeedObservationDto>,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
+        state.require_verified_connection_ready()?;
         let recording = state.recording.snapshot();
         let is_current_vehicle = recording.last_connection_transition_generation
             == Some(connection_generation)
@@ -12893,11 +12914,11 @@ impl MobileRideMapCore {
             });
         }
 
+        let (recording, route_points) = state.recording.snapshot_with_route_points();
         let start = after_cursor.map_or(recording.first_point_sequence, |cursor| {
             cursor.saturating_add(1)
         });
-        let mut points: Vec<_> = recording
-            .route_points
+        let mut points: Vec<_> = route_points
             .iter()
             .copied()
             .enumerate()
@@ -12983,9 +13004,9 @@ fn project_live_route_points(
     ) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let recording = state.recording.snapshot();
+        let (recording, route_points) = state.recording.snapshot_with_route_points();
         (
-            recording.route_points,
+            route_points,
             ride_maps::RidePointSequence::new(recording.first_point_sequence),
             recording.revision,
             recording.route_point_count,
@@ -13277,31 +13298,16 @@ fn map_core_error(error: MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
 }
 
 fn ride_recovery_policy(
-    database: Option<&Arc<RideDatabaseHandle>>,
+    _database: Option<&Arc<RideDatabaseHandle>>,
     monotonic_now_ms: u64,
     enabled: bool,
 ) -> Result<cutout_application::ride_recording::RideRecoveryPolicy, MobileRideMapCoreErrorDto> {
-    let (autostart_enabled, selected_vehicle_identifier) = match database {
-        Some(database) => (
-            database
-                .inner
-                .ride_autostart_enabled()
-                .map_err(map_storage_core_error)?,
-            database
-                .inner
-                .selected_device()
-                .map_err(map_storage_core_error)?,
-        ),
-        None => (false, None),
-    };
     Ok(cutout_application::ride_recording::RideRecoveryPolicy {
         monotonic_now_ms,
         wall_clock_now_ms: wall_clock_milliseconds()?,
         auto_resume_window_ms: AUTO_RESUME_RIDE_WINDOW_MILLISECONDS,
         explicit_pause_window_ms: EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS,
         enabled,
-        autostart_enabled,
-        selected_vehicle_identifier,
     })
 }
 
@@ -26808,7 +26814,7 @@ mod tests {
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
         assert_unassociated_connection_does_not_refresh_telemetry(&state, "pev-2", 2, 4_000, 3_000);
         assert_eq!(
-            state.current_snapshot(4_001).unwrap().telemetry_state,
+            state.current_snapshot(5_001).unwrap().telemetry_state,
             MobileRideMapCoreTelemetryStateDto::AssociatedStale
         );
 
@@ -28594,15 +28600,14 @@ mod tests {
         );
         let restored = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
-            restored.recording.snapshot().route_points.len(),
+            restored.recording.route_points().len(),
             ride_maps::MAX_LIVE_ROUTE_POINTS
         );
         assert_eq!(restored.recording.snapshot().first_point_sequence, 2);
         assert_eq!(
             restored
                 .recording
-                .snapshot()
-                .route_points
+                .route_points()
                 .last()
                 .unwrap()
                 .sample()
@@ -30150,8 +30155,7 @@ mod tests {
         assert_eq!(
             state
                 .recording
-                .snapshot()
-                .route_points
+                .route_points()
                 .first()
                 .unwrap()
                 .sample()

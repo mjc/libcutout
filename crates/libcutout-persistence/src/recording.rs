@@ -347,6 +347,19 @@ impl RecordingSpeedState {
         });
     }
 
+    /// Latest valid vehicle or phone speed time for this recording generation.
+    ///
+    /// An invalid GPS receipt updates order only and is not a speed observation.
+    #[must_use]
+    pub fn latest_speed_observed_at(&self, recording_generation: u64) -> Option<u64> {
+        let observed_at = |observation: Option<SpeedObservation>| {
+            observation
+                .filter(|observation| observation.recording_generation == recording_generation)
+                .map(|observation| observation.observed_at_milliseconds)
+        };
+        observed_at(self.vehicle).max(observed_at(self.phone_gps))
+    }
+
     /// Selects fresh vehicle speed first, falling back to fresh GPS speed.
     #[must_use]
     pub fn selected_at(

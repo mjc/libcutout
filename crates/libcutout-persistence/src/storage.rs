@@ -2382,7 +2382,7 @@ mod route_projection_cancellation_tests {
 
     #[test]
     fn explicit_cancellation_interrupts_a_long_sqlite_query() {
-        let connection = Connection::open_in_memory().expect("SQLite opens");
+        let mut connection = Connection::open_in_memory().expect("SQLite opens");
         let cancellation = RouteProjectionCancellation::new();
         cancellation.install_interrupt(connection.get_interrupt_handle());
         let (query_entered_sender, query_entered_receiver) = sync_channel(0);
@@ -2440,7 +2440,7 @@ mod route_projection_cancellation_tests {
 
     #[test]
     fn endpoint_query_maps_sqlite_interrupt_to_cancellation() {
-        let connection = Connection::open_in_memory().expect("SQLite opens");
+        let mut connection = Connection::open_in_memory().expect("SQLite opens");
         connection
             .execute_batch(
                 "CREATE TABLE ride_points (
@@ -5781,6 +5781,17 @@ struct PevcapImportCompletion {
     publication: CapturePublication,
 }
 
+struct LiveCaptureEventWrite {
+    id: LiveCaptureId,
+    kind: LiveCaptureEventKind,
+    receipt_monotonic_ms: u64,
+    source_monotonic_offset_ms: Option<i64>,
+    source_wall_clock_unix_ms: Option<u64>,
+    payload: Vec<u8>,
+    location: Option<LiveCaptureLocationObservation>,
+    ble_record: Option<Box<PevcapRecord>>,
+}
+
 enum Command {
     PhoneControl(phone_control::Command),
     DeviceVehicle(device_vehicle::Command),
@@ -5803,6 +5814,11 @@ enum Command {
         location: Option<LiveCaptureLocationObservation>,
         ble_record: Option<Box<PevcapRecord>>,
         reply: Reply<u64>,
+    },
+    /// Records already queued behind one another. One `synchronous=FULL` commit covers the group.
+    AppendLiveCaptureEvents {
+        events: Vec<LiveCaptureEventWrite>,
+        reply: Reply<()>,
     },
     FinishLiveCapture {
         id: LiveCaptureId,
@@ -6339,9 +6355,9 @@ fn configure_connection(
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
-    // Live capture commits every observation. WAL avoids journaling and then
-    // overwriting the same database pages for each event. Keep each successful
-    // commit synced: NORMAL would weaken the recording durability contract.
+    // WAL keeps a commit from journaling and then overwriting the same pages.
+    // synchronous=FULL syncs each successful commit. Location writes already
+    // waiting in the queue share one of those commits.
     let journal: String =
         connection.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
     if journal != "wal" {
@@ -10127,6 +10143,102 @@ fn append_location_with_moving_time(
     Ok(result)
 }
 
+/// Commits location writes that were already queued behind one another.
+///
+/// Each write keeps its own admission result. One `synchronous=FULL` commit covers the
+/// group, and replies are sent only after that commit. A single queued write does not use
+/// this path. A crash before the commit drops the group rather than a committed prefix.
+fn append_queued_location_batch(connection: &mut Connection, batch: Vec<Command>) {
+    let mut transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            let mut error = Some(StorageError::from(error));
+            for command in batch {
+                let Command::AppendLocationAsync { reply, .. } = command else {
+                    continue;
+                };
+                let failure = error
+                    .take()
+                    .unwrap_or(StorageError::Sqlite(rusqlite::Error::InvalidQuery));
+                let _ = reply.send(Err(failure));
+            }
+            return;
+        }
+    };
+    let mut outcomes = Vec::with_capacity(batch.len());
+    for command in batch {
+        let Command::AppendLocationAsync {
+            ride_id,
+            sample,
+            segment_id,
+            start_reason,
+            telemetry_state,
+            moving_time_observation,
+            latest_vehicle_moving_time_observation,
+            inactivity_evidence,
+            reply,
+        } = command
+        else {
+            unreachable!("location batch contains only location writes");
+        };
+        if let Err(error) = validate_paired_moving_time_observations(
+            sample,
+            moving_time_observation,
+            latest_vehicle_moving_time_observation,
+        ) {
+            outcomes.push((reply, Err(error)));
+            continue;
+        }
+        let savepoint = match transaction.savepoint() {
+            Ok(savepoint) => savepoint,
+            Err(error) => {
+                outcomes.push((reply, Err(error.into())));
+                continue;
+            }
+        };
+        match append_location_in_transaction(
+            &savepoint,
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            SegmentStartReasonInput::Recorded(start_reason),
+            LocationWriteMode::Live,
+            moving_time_observation,
+            latest_vehicle_moving_time_observation,
+            inactivity_evidence,
+        ) {
+            Ok(result) => match savepoint.commit() {
+                Ok(()) => outcomes.push((reply, Ok(result))),
+                Err(error) => outcomes.push((reply, Err(error.into()))),
+            },
+            Err(error) => {
+                drop(savepoint);
+                outcomes.push((reply, Err(error)));
+            }
+        }
+    }
+    match transaction.commit() {
+        Ok(()) => {
+            for (reply, result) in outcomes {
+                let _ = reply.send(result);
+            }
+        }
+        Err(error) => {
+            let mut commit_error = Some(StorageError::from(error));
+            for (reply, result) in outcomes {
+                let failure = match result {
+                    Err(error) => error,
+                    Ok(_) => commit_error
+                        .take()
+                        .unwrap_or(StorageError::Sqlite(rusqlite::Error::InvalidQuery)),
+                };
+                let _ = reply.send(Err(failure));
+            }
+        }
+    }
+}
+
 fn validate_paired_moving_time_observations(
     sample: LocationSample,
     moving_time_observation: Option<MovingTimeObservation>,
@@ -10900,8 +11012,13 @@ fn load_ride_write_state(
 ) -> Result<RideWriteState, StorageError> {
     let stored = connection
         .query_row(
+            // The unique index is (ride_id, monotonic_ms, ...). MAX() over that prefix
+            // walks every point for the ride; the newest row is one reverse index step.
             "SELECT source, state, monotonic_created_at_ms, monotonic_last_event_ms,
-                    (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
+                    (SELECT monotonic_ms FROM ride_points
+                      WHERE ride_id = rides.id
+                      ORDER BY monotonic_ms DESC
+                      LIMIT 1),
                     paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms,
                     stationary_latitude_e7, stationary_longitude_e7, stationary_horizontal_accuracy_mm,
                     last_location_observed_monotonic_ms, last_location_observed_wall_clock_ms,

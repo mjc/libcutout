@@ -205,8 +205,6 @@ pub struct RideRecordingSnapshot {
     pub first_point_sequence: u64,
     /// Distance retained by the route projection.
     pub distance_millimetres: u64,
-    /// Retained route points in canonical sequence order.
-    pub route_points: Vec<RideMapPoint>,
     /// Number of canonical route segments.
     pub segment_count: u64,
     /// Recording duration at the latest logical timestamp.
@@ -1013,6 +1011,42 @@ impl RideRecordingApplication {
         snapshot_from_at(&state, MonotonicMilliseconds::new(logical_at_ms))
     }
 
+    /// Live speed for a location outcome.
+    ///
+    /// An older receipt must not hide a newer speed that is still inside its freshness window.
+    /// The GPS receipt clock is not used, so an invalid later sample cannot extend that window.
+    #[must_use]
+    pub fn outcome_live_speed(&self, receipt_monotonic_ms: u64) -> Option<RecordingSpeed> {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let logical_receipt = receipt_monotonic_ms.saturating_add(state.monotonic_epoch_offset_ms);
+        let at = state
+            .speed
+            .latest_speed_observed_at(state.generation)
+            .map_or(logical_receipt, |observed| logical_receipt.max(observed));
+        let lifecycle = state.recorder.state()?;
+        state.speed.selected_at(lifecycle, state.generation, at)
+    }
+
+    /// Copies the retained live route tail.
+    ///
+    /// [`Self::snapshot`] and [`Self::snapshot_at`] carry counts and the first sequence only.
+    /// Call this when a reader needs the points themselves.
+    #[must_use]
+    pub fn route_points(&self) -> Vec<RideMapPoint> {
+        self.snapshot_with_route_points().1
+    }
+
+    /// Copies the summary projection and its live route tail under one lock.
+    ///
+    /// The tail matches `first_point_sequence` and `route_point_count` from the same recorder
+    /// state. Summary snapshots omit the tail so per-sample publication does not clone it.
+    #[must_use]
+    pub fn snapshot_with_route_points(&self) -> (RideRecordingSnapshot, Vec<RideMapPoint>) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let points = state.recorder.points().to_vec();
+        (snapshot_from(&state), points)
+    }
+
     /// Admits phone GPS speed evidence for the current recording generation.
     pub fn observe_phone_gps_speed(
         &self,
@@ -1449,8 +1483,12 @@ impl RideRecordingApplication {
         let next_location_request_id = request_id
             .checked_add(1)
             .ok_or(RideRecordingError::CommandIdExhausted)?;
-        let mut admission_recorder = state.admission_recorder.clone();
-        if !admission_recorder.record_admitted_sample(admitted) {
+        // Refuse before appending. A cloned recorder would copy the live tail on every sample,
+        // and a failed queue must leave that tail unchanged.
+        if !state
+            .admission_recorder
+            .can_record_admitted_sample(admitted)
+        {
             return Err(RideRecordingError::InvalidTransition.into());
         }
         let Some(database) = self.database.as_ref() else {
@@ -1512,8 +1550,10 @@ impl RideRecordingApplication {
                 point.telemetry_state(),
             )?
         };
+        if !state.admission_recorder.record_admitted_sample(admitted) {
+            return Err(RideRecordingError::InvalidTransition.into());
+        }
         state.next_location_request_id = next_location_request_id;
-        state.admission_recorder = admission_recorder;
         state.pending_locations.push_back(PendingLocation {
             request_id,
             ride_id,
@@ -1792,7 +1832,6 @@ fn snapshot_from_at(
         route_point_count: state.recorder.summary().point_count().as_u64(),
         first_point_sequence: state.recorder.first_point_sequence().as_u64(),
         distance_millimetres: state.recorder.summary().distance_millimetres(),
-        route_points: state.recorder.points().to_vec(),
         segment_count: state.recorder.segment_count().as_u64(),
         duration_milliseconds: state.recorder.duration_milliseconds_at(latest_at).as_u64(),
         telemetry_state: state.recorder.telemetry_state_at(latest_at),
