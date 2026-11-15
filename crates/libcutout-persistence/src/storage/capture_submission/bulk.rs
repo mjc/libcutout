@@ -4409,4 +4409,238 @@ mod tests {
         assert_eq!(result.failed, 0);
         database.shutdown().unwrap();
     }
+
+    #[test]
+    fn reviewed_send_discloses_evidence_counts_and_keeps_rides_bms_and_music() {
+        use crate::BmsVoltageSampleRecord;
+        use cutout_core::{CaptureAttachments, CaptureScreenshot, CaptureSubmissionIntegrity};
+        use cutout_music::{
+            MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent,
+            MusicRideEventKind, MusicTimelineOutcome,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let ride = database
+            .create_started_live_ride(1_700_000_000_000, 100, None)
+            .unwrap();
+        database
+            .save_music_history_policy(ride, MusicHistoryPolicy::HumanReadable)
+            .unwrap();
+        let recorded = database
+            .record_music_event(
+                ride,
+                MusicRideEvent::new(
+                    MusicProvider::AppleMusic,
+                    Some("kept-track".to_owned()),
+                    Some("Kept title".to_owned()),
+                    None,
+                    MusicRideEventKind::ItemChanged,
+                    MusicEventTiming {
+                        observed_at: None,
+                        monotonic_at: MonotonicTimestamp::new(110),
+                        wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+                        clock_uncertainty_milliseconds: 5,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(recorded, MusicTimelineOutcome::Recorded);
+        let samples = [
+            BmsVoltageSampleRecord::new("wheel-a", "session-a", 1, 1_000, 2_000, 45, 4_193)
+                .unwrap(),
+            BmsVoltageSampleRecord::new("wheel-a", "session-a", 2, 1_000, 2_000, 46, 4_192)
+                .unwrap(),
+        ];
+        database.record_bms_voltage_samples(&samples).unwrap();
+
+        let note = "private-note-body-not-for-review";
+        let sent_id = finished_capture(&database, directory.path(), 0x21);
+        let failed_id = finished_capture(&database, directory.path(), 0x22);
+        database
+            .save_capture_evidence(
+                CaptureSubmissionSource::LiveCapture(sent_id),
+                CaptureAttachments {
+                    note: note.to_owned(),
+                    screenshots: vec![CaptureScreenshot {
+                        jpeg: vec![0xff, 0xd8, 0xff, 0xd9],
+                    }],
+                },
+            )
+            .unwrap();
+
+        let plan = database.review_capture_submission_batch(&[]).unwrap();
+        for id in [sent_id, failed_id] {
+            assert!(
+                database
+                    .capture_submission(CaptureSubmissionSource::LiveCapture(id))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(
+            plan.candidates()
+                .iter()
+                .all(|candidate| candidate.status.is_none())
+        );
+        let sent_source = live_source_id(&plan, sent_id);
+        let failed_source = live_source_id(&plan, failed_id);
+        let disclosed = plan
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.source_artifact_id == sent_source)
+            .expect("reviewed capture");
+        assert_eq!(disclosed.origin, CaptureSubmissionOrigin::Manual);
+        assert_eq!(disclosed.integrity, CaptureSubmissionIntegrity::Complete);
+        assert!(disclosed.source_bytes > 0);
+        assert_eq!(
+            disclosed.eligibility,
+            CaptureSubmissionBatchEligibility::Eligible
+        );
+        assert!(disclosed.skip_reason.is_none());
+        let categories = disclosed.categories.expect("note category");
+        assert!(categories.notes);
+        assert!(!categories.location);
+        let evidence = disclosed.evidence.as_ref().expect("evidence counts");
+        assert_eq!(evidence.note_bytes, u32::try_from(note.len()).unwrap());
+        assert_eq!(evidence.screenshots, 1);
+        let rendered = format!("{disclosed:?}");
+        assert!(!rendered.contains(note));
+        let sent_bytes = exported_capture_bytes(&database, directory.path(), sent_id, "sent");
+        let failed_bytes = exported_capture_bytes(&database, directory.path(), failed_id, "failed");
+        assert_ne!(sent_bytes, failed_bytes);
+
+        let failing = BatchTransport {
+            fail_next: Mutex::new(true),
+            ..BatchTransport::default()
+        };
+        let result = ready(database.send_capture_submission_batch(
+            &plan,
+            &[failed_source.clone(), sent_source.clone()],
+            ACCOUNT,
+            "secret",
+            &failing,
+            Arc::new(|_| {}),
+        ))
+        .unwrap();
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.sent, 1);
+        assert_eq!(result.failed_source_artifact_ids.len(), 1);
+        assert_eq!(failing.uploads.load(Ordering::Acquire), 2);
+        assert_eq!(failing.deletes.load(Ordering::Acquire), 0);
+        let failed_artifact = &result.failed_source_artifact_ids[0];
+        let (retired_id, retained_id, retained_source, retained_bytes) =
+            if failed_artifact == &sent_source {
+                (failed_id, sent_id, &sent_source, &sent_bytes)
+            } else if failed_artifact == &failed_source {
+                (sent_id, failed_id, &failed_source, &failed_bytes)
+            } else {
+                panic!("failed source {failed_artifact} was not selected");
+            };
+        assert_eq!(failed_artifact, retained_source);
+
+        let retired = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(retired_id))
+            .unwrap()
+            .expect("receipted capture keeps its submission");
+        assert_eq!(retired.phase, CaptureSubmissionPhase::Sent);
+        assert_eq!(
+            retired.local_payload_state,
+            CaptureSubmissionLocalPayloadState::Removed
+        );
+        let receipt = retired.receipt.expect("validated receipt");
+        assert_eq!(receipt.operation_id, retired.operation_id);
+        assert_eq!(receipt.sha256, retired.metadata.sha256);
+        assert_eq!(receipt.bytes, retired.metadata.bytes);
+
+        let retained = database
+            .capture_submission(CaptureSubmissionSource::LiveCapture(retained_id))
+            .unwrap()
+            .expect("failed capture keeps its submission");
+        assert_eq!(retained.phase, CaptureSubmissionPhase::Retryable);
+        assert_eq!(
+            retained.local_payload_state,
+            CaptureSubmissionLocalPayloadState::Retained
+        );
+        assert!(retained.receipt.is_none());
+        assert_eq!(
+            retained.failure,
+            Some(CaptureSubmissionTransferError::Network)
+        );
+        assert_ne!(receipt.sha256, retained.metadata.sha256);
+        assert_eq!(
+            exported_capture_bytes(&database, directory.path(), retained_id, "retained"),
+            *retained_bytes
+        );
+        assert!(receipted_session_is_retired(&database, retired_id));
+        let history = database
+            .list_live_capture_history(None, QueryLimit::new(10).unwrap())
+            .unwrap();
+        assert!(
+            history
+                .captures
+                .iter()
+                .any(|capture| capture.id == retained_id)
+        );
+        assert!(
+            history
+                .captures
+                .iter()
+                .all(|capture| capture.id != retired_id)
+        );
+        assert!(
+            history
+                .unreadable
+                .iter()
+                .all(|capture| capture.id != retired_id)
+        );
+        let rides = database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap();
+        assert!(rides.rides().iter().any(|listed| listed.id() == ride));
+        let music = database.music_history(ride).unwrap();
+        assert_eq!(music.events.len(), 1);
+        assert_eq!(
+            music.events[0]
+                .item_identifier()
+                .map(cutout_music::MusicIdentifier::as_str),
+            Some("kept-track")
+        );
+        assert_eq!(music.events[0].title(), Some("Kept title"));
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&database_path).unwrap();
+        let bms_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM bms_voltage_samples", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let ride_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get(0))
+            .unwrap();
+        let music_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM ride_music_event", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let retained_events: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+                [retained_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let retired_events: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM live_capture_events WHERE capture_id = ?1",
+                [retired_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((bms_rows, ride_rows, music_rows), (2, 1, 1));
+        assert!(retained_events > 0);
+        assert_eq!(retired_events, 0);
+    }
 }
