@@ -354,6 +354,18 @@ impl RideRecordingApplication {
                 music_history_policy,
                 &mut selected_mutations,
             )?;
+        } else if automatic_recording_override.is_none()
+            && !connection_generation_consumed
+            && selected_device_matches(self.database.as_ref(), identity.as_str())?
+        {
+            // Autostart controls new rides. A matching interrupted ride still resumes.
+            resume_matching_interrupted_ride(
+                &mut selected_preview,
+                identity.as_str(),
+                at_ms,
+                updated_at_ms,
+                &mut selected_mutations,
+            )?;
         }
 
         let selected_logical_at_ms =
@@ -477,6 +489,10 @@ impl RideRecordingApplication {
             return Ok(None);
         };
         if !lifecycle.is_recording() {
+            // A stopped or saved ride still settles this generation. The next implicit
+            // connection can then replace a saved ride instead of repeating the consumed one.
+            state.last_connection_transition_generation = Some(operation.connection_generation);
+            state.last_connection_transition_ride_id = state.ride_id;
             let snapshot = snapshot_from(&state);
             state.pending_command_id = None;
             drop(state);
@@ -688,9 +704,24 @@ fn should_start_recording(
     let Some(database) = database else {
         return Ok(false);
     };
-    Ok(!connection_generation_consumed
-        && database.ride_autostart_enabled()?
-        && database.selected_device()?.as_deref() == Some(identity))
+    if connection_generation_consumed {
+        return Ok(false);
+    }
+    // Manual admission has no selected device and must not read the autostart table.
+    if !selected_device_matches(Some(database), identity)? {
+        return Ok(false);
+    }
+    Ok(database.ride_autostart_enabled()?)
+}
+
+fn selected_device_matches(
+    database: Option<&libcutout_persistence::RideDatabase>,
+    identity: &str,
+) -> Result<bool, VerifiedConnectionAdmissionError> {
+    let Some(database) = database else {
+        return Ok(false);
+    };
+    Ok(database.selected_device()?.as_deref() == Some(identity))
 }
 
 fn apply_selected_mutations(
@@ -830,21 +861,7 @@ fn plan_auto_recording(
         preview.transition(RideEvent::Save, at_ms, occurred_at_ms, mutations)?;
     }
 
-    if preview.recorder.state() == Some(RideLifecycleState::Interrupted) {
-        let matches_vehicle = preview.recorder.associated_vehicle() == Some(identity)
-            || (preview.recorder.associated_vehicle().is_none()
-                && preview.recorder.candidate_vehicle() == Some(identity));
-        let recovery_decision = preview.recoverable_updated_at_ms.map(|updated_at| {
-            ride_recovery_decision(
-                RideRecoveryKind::InvoluntaryInterruption,
-                WallClockUnixMilliseconds::new(occurred_at_ms),
-                WallClockUnixMilliseconds::new(updated_at),
-            )
-        });
-        if matches_vehicle && recovery_decision == Some(RideRecoveryDecision::Resume) {
-            preview.transition(RideEvent::Resume, at_ms, occurred_at_ms, mutations)?;
-        }
-    }
+    resume_matching_interrupted_ride(preview, identity, at_ms, occurred_at_ms, mutations)?;
 
     if preview
         .recorder
@@ -858,6 +875,32 @@ fn plan_auto_recording(
             music_history_policy,
             mutations,
         )?;
+    }
+    Ok(())
+}
+
+fn resume_matching_interrupted_ride(
+    preview: &mut AdmissionPreview,
+    identity: &str,
+    at_ms: u64,
+    occurred_at_ms: u64,
+    mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
+) -> Result<(), RideRecordingError> {
+    if preview.recorder.state() != Some(RideLifecycleState::Interrupted) {
+        return Ok(());
+    }
+    let matches_vehicle = preview.recorder.associated_vehicle() == Some(identity)
+        || (preview.recorder.associated_vehicle().is_none()
+            && preview.recorder.candidate_vehicle() == Some(identity));
+    let recovery_decision = preview.recoverable_updated_at_ms.map(|updated_at| {
+        ride_recovery_decision(
+            RideRecoveryKind::InvoluntaryInterruption,
+            WallClockUnixMilliseconds::new(occurred_at_ms),
+            WallClockUnixMilliseconds::new(updated_at),
+        )
+    });
+    if matches_vehicle && recovery_decision == Some(RideRecoveryDecision::Resume) {
+        preview.transition(RideEvent::Resume, at_ms, occurred_at_ms, mutations)?;
     }
     Ok(())
 }

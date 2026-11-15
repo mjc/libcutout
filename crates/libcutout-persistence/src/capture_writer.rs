@@ -64,6 +64,7 @@ pub enum CaptureRecordAdmission {
 }
 
 pub(crate) const LIVE_CAPTURE_EXPORT_PAGE_SIZE: u32 = 32;
+const LIVE_CAPTURE_RECORD_BATCH: usize = 32;
 
 /// Pages read by live-capture export. Review tests use this to see that Send all
 /// uploads captures already accepted before a later page of the current capture.
@@ -1425,11 +1426,8 @@ fn write_capture_stream(
     state
         .physical_bytes_written
         .fetch_add(header_bytes as u64, Ordering::AcqRel);
+    // The header is visible to a pinned read before a data sync. Flush and finish still sync.
     writer.flush().map_err(|error| error.to_string())?;
-    writer
-        .get_mut()
-        .sync_data()
-        .map_err(|error| error.to_string())?;
     let mut flush = CaptureFlushState::default();
     let mut pending_metadata = None;
     let mut material = MaterialBaseline::new(CaptureRecordingPolicy::EveryObservation);
@@ -1507,6 +1505,51 @@ fn write_capture_stream(
     Ok(())
 }
 
+fn persist_database_record_batch(
+    queued_records: Vec<CaptureWriterMessage>,
+    records: &CaptureRecordPool,
+    material: &mut MaterialBaseline,
+    state: &CaptureWriterState,
+    capture: &DatabaseCapture,
+) -> Result<(), String> {
+    let mut accepted = Vec::with_capacity(queued_records.len());
+    let mut bytes = 0_u64;
+    for message in queued_records {
+        match capture_writer_action(message, records, material)? {
+            CaptureWriterAction::Suppressed => {}
+            CaptureWriterAction::Event(event) => {
+                let CaptureWriterEventLine {
+                    json_line,
+                    record: Some(record),
+                    prepared_material,
+                    durability_reply: None,
+                    ..
+                } = *event
+                else {
+                    return Err("queued capture record was not a plain transport record".into());
+                };
+                let payload = json_line.into_bytes();
+                bytes = bytes.saturating_add(payload.len() as u64 + 1);
+                // The next comparison has to see this record. The group syncs once.
+                material.commit(prepared_material);
+                accepted.push((record, payload));
+            }
+            CaptureWriterAction::Metadata(_) | CaptureWriterAction::Barrier(_, _) => {
+                return Err("queued capture record was not a plain transport record".into());
+            }
+        }
+    }
+    if accepted.is_empty() {
+        return Ok(());
+    }
+    capture
+        .database
+        .append_live_capture_record_group(capture.id, accepted)
+        .map_err(|error| format!("could not persist live capture event: {error}"))?;
+    state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+    Ok(())
+}
+
 fn write_database_capture_stream(
     path: &Path,
     header: &mut PevcapHeader,
@@ -1533,70 +1576,113 @@ fn write_database_capture_stream(
     let mut material = MaterialBaseline::new(capture.policy);
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        match capture_writer_action(message, records, &mut material)? {
-            CaptureWriterAction::Suppressed => {}
-            CaptureWriterAction::Event(event) => {
-                let prepared = event.prepared_material;
-                let payload = event.json_line.into_bytes();
-                let serialized_size = payload.len() as u64 + 1;
-                let persisted = if let Some(record) = event.record {
-                    capture
-                        .database
-                        .append_live_capture_record(capture.id, record, payload)
-                } else if let Some(location) = event.location {
-                    capture.database.append_live_capture_location(
-                        capture.id,
-                        event.receipt_monotonic_ms,
-                        event.source_monotonic_offset_ms,
-                        location,
-                        payload,
-                    )
-                } else {
-                    capture.database.append_live_capture_event(
-                        capture.id,
-                        event.kind,
-                        event.receipt_monotonic_ms,
-                        event.source_monotonic_offset_ms,
-                        event.source_wall_clock_unix_ms,
-                        payload,
-                    )
-                }
-                .map_err(|error| format!("could not persist live capture event: {error}"));
-                if let Err(error) = persisted {
-                    return match event.durability_reply {
-                        Some(reply) => reply_capture_writer_result(Err(error), &reply),
-                        None => Err(error),
-                    };
-                }
-                material.commit(prepared);
-                state
-                    .bytes_written
-                    .fetch_add(serialized_size, Ordering::AcqRel);
-                if let Some(reply) = event.durability_reply {
-                    finish_database_capture_barrier(
-                        path,
-                        header,
-                        &mut pending_metadata,
+        let mut pending = Some(message);
+        while let Some(message) = pending.take() {
+            match message {
+                CaptureWriterMessage::Record => {
+                    let mut queued_records = vec![CaptureWriterMessage::Record];
+                    while queued_records.len() < LIVE_CAPTURE_RECORD_BATCH {
+                        match receiver.try_recv() {
+                            Ok(CaptureWriterMessage::Record) => {
+                                state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                                queued_records.push(CaptureWriterMessage::Record);
+                            }
+                            Ok(next) => {
+                                state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                                pending = Some(next);
+                                break;
+                            }
+                            Err(
+                                std::sync::mpsc::TryRecvError::Empty
+                                | std::sync::mpsc::TryRecvError::Disconnected,
+                            ) => break,
+                        }
+                    }
+                    persist_database_record_batch(
+                        queued_records,
+                        records,
+                        &mut material,
                         state,
                         capture,
-                        CaptureBarrier::Flush,
-                        &reply,
                     )?;
+                    continue;
                 }
-            }
-            CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
-            CaptureWriterAction::Barrier(kind, reply) => {
-                if finish_database_capture_barrier(
-                    path,
-                    header,
-                    &mut pending_metadata,
-                    state,
-                    capture,
-                    kind,
-                    &reply,
-                )? {
-                    return Ok(());
-                }
+                message => match capture_writer_action(message, records, &mut material)? {
+                    CaptureWriterAction::Suppressed => {}
+                    CaptureWriterAction::Event(event) => {
+                        let prepared = event.prepared_material;
+                        let payload = event.json_line.into_bytes();
+                        let serialized_size = payload.len() as u64 + 1;
+                        let persisted = if let Some(record) = event.record {
+                            capture
+                                .database
+                                .append_live_capture_record(capture.id, record, payload)
+                        } else if let Some(location) = event.location {
+                            capture.database.append_live_capture_location(
+                                capture.id,
+                                event.receipt_monotonic_ms,
+                                event.source_monotonic_offset_ms,
+                                location,
+                                payload,
+                            )
+                        } else {
+                            capture.database.append_live_capture_event(
+                                capture.id,
+                                event.kind,
+                                event.receipt_monotonic_ms,
+                                event.source_monotonic_offset_ms,
+                                event.source_wall_clock_unix_ms,
+                                payload,
+                            )
+                        }
+                        .map_err(|error| format!("could not persist live capture event: {error}"));
+                        if let Err(error) = persisted {
+                            return match event.durability_reply {
+                                Some(reply) => reply_capture_writer_result(Err(error), &reply),
+                                None => Err(error),
+                            };
+                        }
+                        material.commit(prepared);
+                        state
+                            .bytes_written
+                            .fetch_add(serialized_size, Ordering::AcqRel);
+                        if let Some(reply) = event.durability_reply {
+                            finish_database_capture_barrier(
+                                path,
+                                header,
+                                &mut pending_metadata,
+                                state,
+                                capture,
+                                CaptureBarrier::Flush,
+                                &reply,
+                            )?;
+                        }
+                    }
+                    CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
+                    CaptureWriterAction::Barrier(kind, reply) => {
+                        if kind == CaptureBarrier::ReadPrefix && pending_metadata.is_none() {
+                            let result = CaptureTransportReadPrefix::live(
+                                capture.database.clone(),
+                                capture.id,
+                            )
+                            .map(CaptureWriterBarrierResult::ReadPrefix)
+                            .map_err(|error| error.to_string());
+                            reply_capture_writer_result(result, &reply)?;
+                            continue;
+                        }
+                        if finish_database_capture_barrier(
+                            path,
+                            header,
+                            &mut pending_metadata,
+                            state,
+                            capture,
+                            kind,
+                            &reply,
+                        )? {
+                            return Ok(());
+                        }
+                    }
+                },
             }
         }
     }
@@ -2052,6 +2138,12 @@ fn flush_capture_barrier(
     }
     if rewrite_pending_capture_metadata(path, writer, header, pending_metadata, state)? {
         *flush = CaptureFlushState::default();
+        Ok(())
+    } else if kind == CaptureBarrier::ReadPrefix {
+        // Accepted bytes have to be readable without waiting for a durability sync.
+        writer.flush().map_err(|error| error.to_string())?;
+        flush.bytes_since_flush = 0;
+        flush.last_flush = Instant::now();
         Ok(())
     } else {
         maybe_flush(writer, flush, true)

@@ -5,6 +5,7 @@ use cutout_ride_maps::{
     RideEvent, RouteDisplayBudget, RoutePrivacyPolicy,
 };
 use libcutout_persistence::{RideDatabase, RideId, RideRecord, RideSource, RoutePointProjection};
+use rusqlite::backup::NO_PROGRESS;
 use rusqlite::{Connection, OpenFlags};
 
 const MILE_MILLIMETRES: u64 = 1_609_344;
@@ -50,7 +51,7 @@ impl Fixture {
             let source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
                 .expect("open source database read-only");
             source
-                .backup("main", &path, None)
+                .backup("main", &path, NO_PROGRESS)
                 .expect("snapshot database");
             let snapshot =
                 Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();

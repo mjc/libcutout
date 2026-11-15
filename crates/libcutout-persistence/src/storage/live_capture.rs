@@ -491,6 +491,46 @@ pub(super) const BLE_SEMANTIC_TELEMETRY_SCHEMA: &str = "
     ) WITHOUT ROWID;
 ";
 
+fn live_capture_record_write(
+    id: LiveCaptureId,
+    record: PevcapRecord,
+    payload: Vec<u8>,
+) -> Result<super::LiveCaptureEventWrite, StorageError> {
+    let kind = match record.direction {
+        PevcapDirection::LinkUp => LiveCaptureEventKind::LinkUp,
+        PevcapDirection::LinkDown => LiveCaptureEventKind::LinkDown,
+        PevcapDirection::Inbound => LiveCaptureEventKind::Notification,
+        PevcapDirection::Outbound => LiveCaptureEventKind::Write,
+    };
+    let receipt_monotonic_ms = record.monotonic_ms.as_milliseconds();
+    let source_wall_clock_unix_ms = record
+        .phone_location
+        .map(|location| location.wall_clock_unix_ms)
+        .filter(|timestamp| *timestamp != 0);
+    validate_timestamp(receipt_monotonic_ms)?;
+    if let Some(timestamp) = source_wall_clock_unix_ms {
+        validate_timestamp(timestamp)?;
+    }
+    if payload.is_empty() || payload.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+        return Err(StorageError::LiveCaptureInputInvalid("event payload size"));
+    }
+    if record.bytes.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+        return Err(StorageError::LiveCaptureInputInvalid(
+            "transport payload size",
+        ));
+    }
+    Ok(super::LiveCaptureEventWrite {
+        id,
+        kind,
+        receipt_monotonic_ms,
+        source_monotonic_offset_ms: None,
+        source_wall_clock_unix_ms,
+        payload,
+        location: None,
+        ble_record: Some(Box::new(record)),
+    })
+}
+
 impl RideDatabase {
     /// Starts a live capture in the existing Rust-owned database worker.
     ///
@@ -574,40 +614,38 @@ impl RideDatabase {
         record: PevcapRecord,
         payload: Vec<u8>,
     ) -> Result<u64, StorageError> {
-        let kind = match record.direction {
-            PevcapDirection::LinkUp => LiveCaptureEventKind::LinkUp,
-            PevcapDirection::LinkDown => LiveCaptureEventKind::LinkDown,
-            PevcapDirection::Inbound => LiveCaptureEventKind::Notification,
-            PevcapDirection::Outbound => LiveCaptureEventKind::Write,
-        };
-        let receipt_monotonic_ms = record.monotonic_ms.as_milliseconds();
-        let source_wall_clock_unix_ms = record
-            .phone_location
-            .map(|location| location.wall_clock_unix_ms)
-            .filter(|timestamp| *timestamp != 0);
-        validate_timestamp(receipt_monotonic_ms)?;
-        if let Some(timestamp) = source_wall_clock_unix_ms {
-            validate_timestamp(timestamp)?;
-        }
-        if payload.is_empty() || payload.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
-            return Err(StorageError::LiveCaptureInputInvalid("event payload size"));
-        }
-        if record.bytes.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
-            return Err(StorageError::LiveCaptureInputInvalid(
-                "transport payload size",
-            ));
-        }
+        let write = live_capture_record_write(id, record, payload)?;
         self.request(|reply| Command::AppendLiveCaptureEvent {
-            id,
-            kind,
-            receipt_monotonic_ms,
-            source_monotonic_offset_ms: None,
-            source_wall_clock_unix_ms,
-            payload,
-            location: None,
-            ble_record: Some(Box::new(record)),
+            id: write.id,
+            kind: write.kind,
+            receipt_monotonic_ms: write.receipt_monotonic_ms,
+            source_monotonic_offset_ms: write.source_monotonic_offset_ms,
+            source_wall_clock_unix_ms: write.source_wall_clock_unix_ms,
+            payload: write.payload,
+            location: write.location,
+            ble_record: write.ble_record,
             reply,
         })
+    }
+
+    /// Appends queued transport records in one synced commit.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, input-bound, inactive-session, or SQLite error.
+    /// A later record can fail after earlier records in the group are committed.
+    pub(crate) fn append_live_capture_record_group(
+        &self,
+        id: LiveCaptureId,
+        records: Vec<(PevcapRecord, Vec<u8>)>,
+    ) -> Result<(), StorageError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut events = Vec::with_capacity(records.len());
+        for (record, payload) in records {
+            events.push(live_capture_record_write(id, record, payload)?);
+        }
+        self.request(|reply| Command::AppendLiveCaptureEvents { events, reply })
     }
 
     /// Appends one raw location event and its typed facts in the same ordered transaction.
@@ -869,6 +907,61 @@ pub(super) fn append(
     connection: &mut Connection,
     event: &LiveCaptureEventAppend<'_>,
 ) -> Result<u64, StorageError> {
+    let transaction = connection.transaction()?;
+    let sequence = append_in_transaction(&transaction, event)?;
+    transaction.commit()?;
+    Ok(sequence)
+}
+
+/// Inserts already-queued events and syncs them once.
+///
+/// A failed event keeps the prefix that was saved before it. The caller sees that failure
+/// after the prefix commit. An empty group, or a failure of the first event, leaves no rows.
+pub(super) fn append_events(
+    connection: &mut Connection,
+    events: &[super::LiveCaptureEventWrite],
+) -> Result<(), StorageError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = connection.transaction()?;
+    let mut committed = 0_usize;
+    for event in events {
+        let savepoint = transaction.savepoint()?;
+        let appended = append_in_transaction(
+            &savepoint,
+            &LiveCaptureEventAppend {
+                id: event.id,
+                kind: event.kind,
+                receipt_monotonic_ms: event.receipt_monotonic_ms,
+                source_monotonic_offset_ms: event.source_monotonic_offset_ms,
+                source_wall_clock_unix_ms: event.source_wall_clock_unix_ms,
+                payload: &event.payload,
+                location: event.location.as_ref(),
+                ble_record: event.ble_record.as_deref(),
+            },
+        );
+        match appended {
+            Ok(_) => savepoint.commit()?,
+            Err(error) => {
+                drop(savepoint);
+                if committed == 0 {
+                    return Err(error);
+                }
+                transaction.commit()?;
+                return Err(error);
+            }
+        }
+        committed += 1;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn append_in_transaction(
+    transaction: &Connection,
+    event: &LiveCaptureEventAppend<'_>,
+) -> Result<u64, StorageError> {
     let LiveCaptureEventAppend {
         id,
         kind,
@@ -879,7 +972,6 @@ pub(super) fn append(
         location,
         ble_record,
     } = event;
-    let transaction = connection.transaction()?;
     let session: Option<(String, i64, i64)> = transaction
         .query_row(
             "SELECT state, next_sequence, stored_bytes FROM live_capture_sessions WHERE capture_id = ?1",
@@ -934,17 +1026,16 @@ pub(super) fn append(
         ],
     )?;
     if let Some(location) = location {
-        insert_location(&transaction, *id, sequence, location)?;
+        insert_location(transaction, *id, sequence, location)?;
     }
     if let Some(record) = ble_record {
-        insert_ble_observation(&transaction, *id, sequence, record, payload)?;
+        insert_ble_observation(transaction, *id, sequence, record, payload)?;
     }
-    transaction.commit()?;
     Ok(sequence)
 }
 
 fn insert_ble_observation(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &Connection,
     id: LiveCaptureId,
     sequence: u64,
     record: &PevcapRecord,
@@ -1012,7 +1103,7 @@ fn insert_ble_observation(
 }
 
 fn insert_ble_telemetry(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &Connection,
     id: LiveCaptureId,
     sequence: u64,
     record: &PevcapRecord,
@@ -1086,7 +1177,7 @@ fn insert_ble_telemetry(
 }
 
 fn insert_location(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &Connection,
     id: LiveCaptureId,
     sequence: u64,
     observation: &LiveCaptureLocationObservation,
