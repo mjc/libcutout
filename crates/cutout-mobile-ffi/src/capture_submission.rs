@@ -1,6 +1,8 @@
 //! Explicit private diagnostic Send through Rust's retained snapshot owner.
 
+mod batch_session;
 mod bulk;
+pub use batch_session::*;
 pub use bulk::*;
 
 use crate::{RideDatabaseHandle, persistence};

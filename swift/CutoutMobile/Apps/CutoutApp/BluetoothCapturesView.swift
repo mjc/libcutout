@@ -689,10 +689,9 @@ final class CaptureSubmissionBatchModel: Identifiable {
     private(set) var itemProgress: [String: ItemProgress] = [:]
     private(set) var summary: CaptureSubmissionBatchSummary?
     private(set) var failedSourceArtifactIDs: [String] = []
-    private var sendAttempt: UInt64 = 0
-    private var userAdjustedSelection = false
     private var reviewWaiters: [CheckedContinuation<Void, Never>] = []
     private var reviewTask: Task<Void, Never>?
+    @ObservationIgnored private let session = MobileCaptureBatchSession()
     @ObservationIgnored private let adapter: CaptureSubmissionBatchAdapter
     @ObservationIgnored private var onTerminalUpdate: @MainActor () -> Void
 
@@ -713,12 +712,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
     var eligibleCount: Int { candidates.filter(\.isEligible).count }
     var skippedCount: Int { candidates.filter { !$0.isEligible && !$0.isChecking }.count }
     var selectedCount: Int { selectedSourceArtifactIDs.count }
-    var canSend: Bool {
-        if isSending || isWaitingToSend || didFinishSend || error != nil || selectedCount == 0 {
-            return false
-        }
-        return isReviewing || !requiresFreshReview
-    }
+    var canSend: Bool { session.canSend() }
     func replaceTerminalUpdate(_ update: @escaping @MainActor () -> Void) {
         onTerminalUpdate = update
     }
@@ -730,32 +724,27 @@ final class CaptureSubmissionBatchModel: Identifiable {
     }
 
     func review() async {
-        await review(preselecting: nil)
+        await review(failedOnly: false)
     }
 
     func reviewFailed() async {
-        guard didFinishSend, !failedSourceArtifactIDs.isEmpty else { return }
-        await review(preselecting: Set(failedSourceArtifactIDs))
+        await review(failedOnly: true)
     }
 
     func cancelReview() {
         adapter.requestCancel()
     }
 
-    private func review(preselecting previousFailures: Set<String>?) async {
-        guard !isReviewing, !isSending else { return }
-        isReviewing = true
-        requiresFreshReview = true
+    private func review(failedOnly: Bool) async {
+        guard session.beginReview(failedOnly: failedOnly) else { return }
         error = nil
         candidates = []
-        selectedSourceArtifactIDs = []
-        userAdjustedSelection = false
         progress = nil
         itemProgress = [:]
         summary = nil
-        didFinishSend = false
+        publish()
         defer {
-            isReviewing = false
+            publish()
             let waiters = reviewWaiters
             reviewWaiters.removeAll()
             for waiter in waiters {
@@ -764,62 +753,46 @@ final class CaptureSubmissionBatchModel: Identifiable {
         }
         do {
             let reviewed = try await adapter.review { [weak self] candidate in
-                self?.upsertReviewed(candidate, preselecting: previousFailures)
+                self?.upsertReviewed(candidate)
             }
-            let finished = !Task.isCancelled && !reviewed.contains(where: \.isChecking)
             candidates = reviewed
-            let eligible = Set(reviewed.filter(\.isEligible).map(\.sourceArtifactID))
-            if finished && !userAdjustedSelection {
-                selectedSourceArtifactIDs = Set(
-                    reviewed.filter { candidate in
-                        guard candidate.isEligible else { return false }
-                        return previousFailures?.contains(candidate.sourceArtifactID) ?? true
-                    }.map(\.sourceArtifactID))
-            } else {
-                selectedSourceArtifactIDs.formIntersection(eligible)
-            }
-            requiresFreshReview = !finished
-            if finished {
-                didRequestStop = false
-                failedSourceArtifactIDs = []
-            }
+            session.finishReview(
+                rows: reviewed.map { candidate in
+                    MobileCaptureBatchRowDto(
+                        sourceArtifactId: candidate.sourceArtifactID,
+                        eligible: candidate.isEligible,
+                        checking: candidate.isChecking)
+                },
+                scanCompleted: !Task.isCancelled && !reviewed.contains(where: \.isChecking))
         } catch is CancellationError {
-            requiresFreshReview = true
+            session.noteReviewInterrupted()
         } catch {
+            session.failReview()
             self.error = localizedAppText("capture.batch.review_error")
-            requiresFreshReview = true
         }
     }
 
-    private func upsertReviewed(
-        _ candidate: CaptureSubmissionBatchCandidate,
-        preselecting previousFailures: Set<String>?
-    ) {
+    private func upsertReviewed(_ candidate: CaptureSubmissionBatchCandidate) {
+        guard
+            session.observe(
+                id: candidate.sourceArtifactID,
+                eligible: candidate.isEligible,
+                checking: candidate.isChecking)
+        else {
+            publish()
+            return
+        }
         if let index = candidates.firstIndex(where: { $0.sourceArtifactID == candidate.sourceArtifactID }) {
-            if candidates[index].isEligible && candidate.isChecking { return }
             candidates[index] = candidate
         } else {
             candidates.append(candidate)
         }
-        guard candidate.isEligible else {
-            selectedSourceArtifactIDs.remove(candidate.sourceArtifactID)
-            return
-        }
-        guard !userAdjustedSelection else { return }
-        let allowed = previousFailures?.contains(candidate.sourceArtifactID) ?? true
-        if allowed {
-            selectedSourceArtifactIDs.insert(candidate.sourceArtifactID)
-        }
+        publish()
     }
 
     func setSelected(_ selected: Bool, candidate: CaptureSubmissionBatchCandidate) {
-        guard candidate.isEligible, !isSending else { return }
-        userAdjustedSelection = true
-        if selected {
-            selectedSourceArtifactIDs.insert(candidate.sourceArtifactID)
-        } else {
-            selectedSourceArtifactIDs.remove(candidate.sourceArtifactID)
-        }
+        guard session.setSelected(id: candidate.sourceArtifactID, selected: selected) else { return }
+        publish()
     }
 
     func sendSelected() async {
@@ -833,114 +806,132 @@ final class CaptureSubmissionBatchModel: Identifiable {
     }
 
     private func applySendProgress(_ event: CaptureSubmissionBatchProgress, attempt: UInt64) {
-        guard isSending, sendAttempt == attempt else { return }
+        guard
+            session.noteProgress(
+                id: event.sourceArtifactID,
+                kind: Self.progressKind(event.phase),
+                attempt: attempt)
+        else { return }
         progress = event
-        let isFailure = event.phase == .failed
         itemProgress[event.sourceArtifactID] = ItemProgress(
-            phase: event.phase, message: event.message, isFailure: isFailure)
-        if isFailure, !failedSourceArtifactIDs.contains(event.sourceArtifactID) {
-            failedSourceArtifactIDs.append(event.sourceArtifactID)
-        } else if event.phase == .sent || event.phase == .cleaned {
-            failedSourceArtifactIDs.removeAll { $0 == event.sourceArtifactID }
-        }
+            phase: event.phase,
+            message: event.message,
+            isFailure: event.phase == .failed)
+        publish()
     }
 
     func requestStopAfterCurrent() {
-        guard isSending, !didRequestStop else { return }
-        didRequestStop = true
-        requiresFreshReview = true
+        guard session.requestStop() else { return }
         adapter.requestCancel()
+        publish()
     }
 
     private func waitForReviewToEnd() async {
-        if !isReviewing { return }
+        if !session.isReviewing() { return }
         await withCheckedContinuation { continuation in
             reviewWaiters.append(continuation)
         }
     }
 
     private func send(_ sourceArtifactIDs: [String]) async {
-        if isWaitingToSend || isSending { return }
-        var acceptedPartialReview = false
-        var ids = sourceArtifactIDs
-        let eligibleNow = Set(candidates.filter(\.isEligible).map(\.sourceArtifactID))
-        let sendingAll = !ids.isEmpty && Set(ids) == eligibleNow
-        if isReviewing && sendingAll {
-            isSending = true
-            didRequestStop = false
-            error = nil
-            progress = nil
-            failedSourceArtifactIDs = []
-            let attempt = sendAttempt &+ 1
-            sendAttempt = attempt
-            do {
-                var accepted = false
-                for _ in 0..<5 {
-                    accepted = try await adapter.commitSendAll { [weak self] event in
+        await drive(session.requestSend(ids: sourceArtifactIDs))
+    }
+
+    private func drive(_ initial: MobileCaptureBatchEffect) async {
+        var effect = initial
+        while true {
+            switch effect {
+            case .idle:
+                publish()
+                return
+            case .waitForReview:
+                if session.isReviewing() { await waitForReviewToEnd() }
+                effect = session.reviewSettled()
+            case .cancelReview:
+                adapter.requestCancel()
+                if session.isReviewing() { await waitForReviewToEnd() }
+                effect = session.reviewSettled()
+            case .commitAll(let attempt):
+                error = nil
+                progress = nil
+                itemProgress = [:]
+                publish()
+                do {
+                    let accepted = try await adapter.commitSendAll { [weak self] event in
                         self?.applySendProgress(event, attempt: attempt)
                     }
-                    if accepted || !isReviewing { break }
-                    await Task.yield()
-                }
-                if isReviewing { await waitForReviewToEnd() }
-                if accepted, let result = adapter.takeCommittedSummary(), sendAttempt == attempt {
-                    summary = result
-                    failedSourceArtifactIDs = result.failedSourceArtifactIDs
-                    requiresFreshReview = requiresFreshReview || result.cancelled > 0
-                    didFinishSend = true
-                    isSending = false
+                    if accepted {
+                        _ = session.noteCommitAccepted(attempt: attempt)
+                        if session.isReviewing() { await waitForReviewToEnd() }
+                        if let result = adapter.takeCommittedSummary(),
+                            session.noteSummary(
+                                failedSourceArtifactIds: result.failedSourceArtifactIDs,
+                                cancelled: result.cancelled,
+                                attempt: attempt)
+                        {
+                            summary = result
+                            publish()
+                            onTerminalUpdate()
+                            return
+                        }
+                        effect = session.commitSummaryMissing(attempt: attempt)
+                    } else {
+                        effect = session.noteCommitRejected(attempt: attempt)
+                    }
+                } catch {
+                    guard session.noteOperationFailure(attempt: attempt) else { return }
+                    self.error = error.localizedDescription
+                    publish()
                     onTerminalUpdate()
                     return
                 }
-            } catch {
-                guard sendAttempt == attempt else { return }
-                self.error = error.localizedDescription
-                didFinishSend = true
-                isSending = false
-                onTerminalUpdate()
-                return
+            case .send(let sourceArtifactIds, let attempt):
+                error = nil
+                progress = nil
+                itemProgress = [:]
+                publish()
+                do {
+                    let result = try await adapter.sendSelected(sourceArtifactIds) { [weak self] event in
+                        self?.applySendProgress(event, attempt: attempt)
+                    }
+                    guard
+                        session.noteSummary(
+                            failedSourceArtifactIds: result.failedSourceArtifactIDs,
+                            cancelled: result.cancelled,
+                            attempt: attempt)
+                    else { return }
+                    summary = result
+                    publish()
+                    onTerminalUpdate()
+                    return
+                } catch {
+                    guard session.noteSendFailure(ids: sourceArtifactIds, attempt: attempt) else { return }
+                    self.error = error.localizedDescription
+                    publish()
+                    onTerminalUpdate()
+                    return
+                }
             }
-            guard sendAttempt == attempt else { return }
-            isSending = false
-            ids = candidates.filter(\.isEligible).map(\.sourceArtifactID)
-            acceptedPartialReview = true
-        } else if isReviewing {
-            acceptedPartialReview = true
-            isWaitingToSend = true
-            adapter.requestCancel()
-            await waitForReviewToEnd()
-            isWaitingToSend = false
-            let eligible = Set(candidates.filter(\.isEligible).map(\.sourceArtifactID))
-            ids = ids.filter { eligible.contains($0) }
         }
-        guard !isSending, !didFinishSend, error == nil, !ids.isEmpty else { return }
-        guard acceptedPartialReview || !requiresFreshReview else { return }
-        sendAttempt &+= 1
-        let attempt = sendAttempt
-        isSending = true
-        didRequestStop = false
-        error = nil
-        progress = nil
-        failedSourceArtifactIDs = []
-        defer { if sendAttempt == attempt { isSending = false } }
-        do {
-            let result = try await adapter.sendSelected(ids) { [weak self] event in
-                self?.applySendProgress(event, attempt: attempt)
-            }
-            guard sendAttempt == attempt else { return }
-            summary = result
-            failedSourceArtifactIDs = result.failedSourceArtifactIDs
-            requiresFreshReview = requiresFreshReview || result.cancelled > 0
-            didFinishSend = true
-            onTerminalUpdate()
-        } catch {
-            guard sendAttempt == attempt else { return }
-            self.error = error.localizedDescription
-            didFinishSend = true
-            for sourceArtifactID in ids where !failedSourceArtifactIDs.contains(sourceArtifactID) {
-                failedSourceArtifactIDs.append(sourceArtifactID)
-            }
-            onTerminalUpdate()
+    }
+
+    private func publish() {
+        selectedSourceArtifactIDs = Set(session.selectedIds())
+        isReviewing = session.isReviewing()
+        isWaitingToSend = session.isWaiting()
+        isSending = session.isSending()
+        didFinishSend = session.didFinish()
+        didRequestStop = session.didRequestStop()
+        requiresFreshReview = session.requiresFreshReview()
+        failedSourceArtifactIDs = session.failedIds()
+    }
+
+    private static func progressKind(_ phase: CaptureSubmissionBatchProgress.Phase) -> MobileCaptureBatchProgressKind {
+        switch phase {
+        case .failed: .failed
+        case .sent: .sent
+        case .cleaned: .cleaned
+        case .current, .skipped, .cancelled: .other
         }
     }
 }

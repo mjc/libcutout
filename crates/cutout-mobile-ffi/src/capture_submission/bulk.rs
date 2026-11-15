@@ -282,17 +282,19 @@ impl CaptureSubmissionClientHandle {
         listener: Box<dyn MobileCaptureSubmissionBatchReviewListener>,
     ) -> Result<Arc<CaptureSubmissionBatchPlanHandle>, MobileCaptureSubmissionError> {
         self.review_cancel.store(false, Ordering::Release);
-        self.commitment.begin();
+        self.commitment.prepare();
         let database = self.database.clone();
         let cancel = Arc::clone(&self.review_cancel);
         let commitment = Arc::clone(&self.commitment);
+        let on_join_failure = Arc::clone(&commitment);
         let transport = Arc::clone(&self.transport);
         let runtime = tokio::runtime::Handle::current();
         let directories = managed_capture_directories
             .into_iter()
             .map(PathBuf::from)
             .collect::<Vec<_>>();
-        let plan = tokio::task::spawn_blocking(move || {
+        let joined = tokio::task::spawn_blocking(move || {
+            commitment.begin();
             let mut send = FfiCommittedSend {
                 commitment: Arc::clone(&commitment),
                 transport,
@@ -307,14 +309,20 @@ impl CaptureSubmissionClientHandle {
             send.commitment.ensure_idle();
             reviewed
         })
-        .await
-        .map_err(|_| MobileCaptureSubmissionError::StorageFailure)??;
+        .await;
+        if joined.is_err() {
+            on_join_failure.cancel_request();
+        }
+        let plan = joined.map_err(|_| MobileCaptureSubmissionError::StorageFailure)??;
         Ok(Arc::new(CaptureSubmissionBatchPlanHandle { inner: plan }))
     }
 
-    /// Confirms Send all for the review already running on this client.
+    /// Confirms Send all for the review requested on this client.
     ///
-    /// Returns false when no review is running. The caller then sends the finished plan.
+    /// Returns false when no review has been requested. A confirmation that arrives
+    /// after the request and before the worker enters is kept for that review.
+    /// The caller sends the finished plan when this returns false.
+    #[must_use]
     pub fn commit_send_all(
         &self,
         account_id: String,
@@ -361,8 +369,16 @@ impl CaptureSubmissionClientHandle {
 
 type ProgressListener = Arc<dyn MobileCaptureSubmissionBatchProgressListener>;
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "request, entry, and arm are independent latch conditions"
+)]
 struct ReviewGate {
     in_progress: bool,
+    /// Set before the worker enters, so a confirmation can land before `begin`.
+    requested: bool,
+    /// Confirmation arrived after the request and before the worker entered.
+    pending: bool,
     armed: bool,
     covered: bool,
     arm_generation: u64,
@@ -384,6 +400,8 @@ impl ReviewCommitment {
             armed: AtomicBool::new(false),
             gate: Mutex::new(ReviewGate {
                 in_progress: false,
+                requested: false,
+                pending: false,
                 armed: false,
                 covered: false,
                 arm_generation: 0,
@@ -397,32 +415,67 @@ impl ReviewCommitment {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ReviewGate> {
-        self.gate.lock().unwrap_or_else(|error| error.into_inner())
+        self.gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn prepare(&self) {
+        self.lock().requested = true;
     }
 
     pub(super) fn begin(&self) {
         let mut gate = self.lock();
+        let keep_commit = gate.pending;
+        gate.pending = false;
         gate.in_progress = true;
-        gate.armed = false;
+        gate.requested = true;
         gate.covered = false;
+        gate.summary = persistence::CaptureSubmissionBatchSummary::default();
+        gate.offset = 0;
+        if keep_commit {
+            gate.armed = true;
+            self.armed.store(true, Ordering::Release);
+            return;
+        }
+        gate.armed = false;
         gate.arm_generation = 0;
         gate.account_id.clear();
         gate.token.clear();
         gate.listener = None;
-        gate.summary = persistence::CaptureSubmissionBatchSummary::default();
-        gate.offset = 0;
         self.armed.store(false, Ordering::Release);
     }
 
     fn commit(&self, account_id: String, token: String, listener: ProgressListener) -> bool {
         let mut gate = self.lock();
+        if !gate.in_progress && !gate.requested {
+            return false;
+        }
         gate.account_id = account_id;
         gate.token = token;
         gate.listener = Some(listener);
         gate.armed = true;
         gate.arm_generation = 1;
         self.armed.store(true, Ordering::Release);
-        gate.in_progress
+        if !gate.in_progress {
+            gate.pending = true;
+        }
+        true
+    }
+
+    fn cancel_request(&self) {
+        let mut gate = self.lock();
+        gate.requested = false;
+        gate.pending = false;
+        gate.in_progress = false;
+        if gate.covered {
+            return;
+        }
+        gate.armed = false;
+        gate.listener = None;
+        gate.account_id.clear();
+        gate.token.clear();
+        self.armed.store(false, Ordering::Release);
     }
 
     fn take_summary(&self) -> Option<persistence::CaptureSubmissionBatchSummary> {
@@ -435,7 +488,9 @@ impl ReviewCommitment {
     }
 
     fn ensure_idle(&self) {
-        self.lock().in_progress = false;
+        let mut gate = self.lock();
+        gate.in_progress = false;
+        gate.requested = false;
     }
 }
 
@@ -533,5 +588,118 @@ impl persistence::CommittedReviewSend for FfiCommittedSend {
         gate.in_progress = false;
         gate.covered = gate.armed;
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, atomic::Ordering};
+
+    use super::{
+        MobileCaptureSubmissionBatchProgressDto, MobileCaptureSubmissionBatchProgressListener,
+        ReviewCommitment,
+    };
+
+    struct Nop;
+
+    impl MobileCaptureSubmissionBatchProgressListener for Nop {
+        fn on_progress(&self, _progress: MobileCaptureSubmissionBatchProgressDto) {}
+    }
+
+    fn listener() -> Arc<dyn MobileCaptureSubmissionBatchProgressListener> {
+        Arc::new(Nop)
+    }
+
+    fn armed(commitment: &ReviewCommitment) -> bool {
+        commitment.armed.load(Ordering::Acquire)
+    }
+
+    #[test]
+    fn commit_after_prepare_survives_begin() {
+        let commitment = ReviewCommitment::new();
+        commitment.prepare();
+        assert!(commitment.commit("account".to_owned(), "token".to_owned(), listener()));
+
+        commitment.begin();
+
+        let gate = commitment.lock();
+        assert!(gate.in_progress);
+        assert!(!gate.pending);
+        assert!(gate.armed);
+        assert_eq!(gate.arm_generation, 1);
+        assert_eq!(gate.account_id, "account");
+        assert_eq!(gate.token, "token");
+        assert!(gate.listener.is_some());
+        drop(gate);
+        assert!(armed(&commitment));
+    }
+
+    #[test]
+    fn commit_before_prepare_is_rejected_and_begin_clears_the_arm() {
+        let commitment = ReviewCommitment::new();
+        assert!(!commitment.commit("account".to_owned(), "token".to_owned(), listener()));
+
+        commitment.begin();
+
+        let gate = commitment.lock();
+        assert!(gate.in_progress);
+        assert!(!gate.pending);
+        assert!(!gate.armed);
+        assert_eq!(gate.account_id, "");
+        assert!(gate.listener.is_none());
+        drop(gate);
+        assert!(!armed(&commitment));
+    }
+
+    #[test]
+    fn commit_after_ensure_idle_is_rejected() {
+        let commitment = ReviewCommitment::new();
+        commitment.prepare();
+        commitment.begin();
+        commitment.ensure_idle();
+
+        assert!(!commitment.commit("account".to_owned(), "token".to_owned(), listener()));
+
+        let gate = commitment.lock();
+        assert!(!gate.in_progress);
+        assert!(!gate.requested);
+        assert!(!gate.armed);
+        drop(gate);
+        assert!(!armed(&commitment));
+    }
+
+    #[test]
+    fn cancel_request_drops_an_uncovered_pending_arm() {
+        let commitment = ReviewCommitment::new();
+        commitment.prepare();
+        assert!(commitment.commit("account".to_owned(), "token".to_owned(), listener()));
+
+        commitment.cancel_request();
+
+        assert!(!commitment.commit("later".to_owned(), "token".to_owned(), listener()));
+        let gate = commitment.lock();
+        assert!(!gate.pending);
+        assert!(!gate.requested);
+        assert!(!gate.armed);
+        assert_eq!(gate.account_id, "");
+        drop(gate);
+        assert!(!armed(&commitment));
+    }
+
+    #[test]
+    fn cancel_request_keeps_a_covered_arm() {
+        let commitment = ReviewCommitment::new();
+        commitment.prepare();
+        assert!(commitment.commit("account".to_owned(), "token".to_owned(), listener()));
+        commitment.lock().covered = true;
+
+        commitment.cancel_request();
+
+        let gate = commitment.lock();
+        assert!(gate.armed);
+        assert!(gate.covered);
+        assert_eq!(gate.account_id, "account");
+        drop(gate);
+        assert!(armed(&commitment));
     }
 }
