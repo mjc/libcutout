@@ -2398,6 +2398,7 @@ fn family_name(family: ProtocolFamily) -> &'static str {
         ProtocolFamily::VeteranLeaperkimNosfet => "VeteranLeaperkimNosfet",
         ProtocolFamily::BegodeGotway => "BegodeGotway",
         ProtocolFamily::Vesc => "Vesc",
+        ProtocolFamily::Backfire => "Backfire",
     }
 }
 

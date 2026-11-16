@@ -90,7 +90,7 @@ class RideDashboardView(
                 MobileVescApplicationDiscoveryDto.ABSENT -> DisplayKind.STANDARD_VESC
                 MobileVescApplicationDiscoveryDto.PENDING, null -> DisplayKind.UNKNOWN
             }
-            null -> DisplayKind.UNKNOWN
+            MobileProtocolFamilyDto.BACKFIRE, null -> DisplayKind.UNKNOWN
         }
         warningStatus = displayKind == DisplayKind.VESC && snapshot != null && vescWarningTitle(snapshot) != null
         statusText = when {

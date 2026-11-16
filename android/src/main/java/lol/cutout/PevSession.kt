@@ -47,7 +47,7 @@ class PevSession(
     fun notification(channel: ByteArray, service: ByteArray, bytes: ByteArray, capture: Boolean = true) {
         if (!isCurrent) return
         val receivedAtMs = now()
-        state.observeConnectionNotification(token, bytes)
+        state.observeConnectionNotificationOnChannel(token, channel, bytes)
         identify()
         val step = if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes, receivedAtMs = receivedAtMs) else null
         if (capture) onCaptureNotification(

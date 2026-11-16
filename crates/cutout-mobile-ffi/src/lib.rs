@@ -1506,6 +1506,9 @@ pub enum DiscoveryConnectionRoute {
 
     /// Controller-neutral VESC read-only route.
     Vesc,
+
+    /// Electric skateboard route opened after a decoded protocol family.
+    Eskate,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -2485,6 +2488,7 @@ impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
         match route {
             CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
             CoreDiscoveryConnectionRoute::Vesc => Self::Vesc,
+            CoreDiscoveryConnectionRoute::Eskate => Self::Eskate,
         }
     }
 }
@@ -3971,6 +3975,28 @@ impl CutoutSessionStateHandle {
     }
 }
 
+/// Notify characteristics a host may subscribe to before a protocol frame arrives.
+///
+/// The result is limited to characteristics the Rust session can observe passively.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_passive_observation_channels(
+    fingerprints: Vec<MobileGattFingerprintDto>,
+) -> Vec<Vec<u8>> {
+    let fingerprints = fingerprints
+        .into_iter()
+        .map(GattFingerprint::from)
+        .collect::<Vec<_>>();
+    cutout_protocols::passive_observation_channels(&fingerprints)
+        .into_iter()
+        .map(|channel| channel.as_bytes().to_vec())
+        .collect()
+}
+
 /// Transport service UUIDs to request from native Bluetooth scans.
 ///
 /// These are discovery hints; the device still requires protocol detection.
@@ -4278,6 +4304,26 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         };
     }
 
+    if match resolution.protocol_family.as_ref() {
+        Some(MobileProtocolFamilyDto::Backfire) => true,
+        _ => false,
+    } {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric skateboard".to_owned(),
+            evidence: "Backfire telemetry report".to_owned(),
+            detail: "Read-only battery, pack voltage, trip and odometer.".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::Supported,
+            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
+            section: DiscoveryCandidateSupport::Supported.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::Eskate),
+            electric_unicycle_model: None,
+            disabled_reason: None,
+        };
+    }
+
     if (match resolution.protocol_family.as_ref() {
         Some(MobileProtocolFamilyDto::BegodeGotway) => true,
         _ => false,
@@ -4384,7 +4430,7 @@ pub fn mobile_discovery_candidate_from_closest_detection_resolution(
         MobileProtocolFamilyDto::BegodeGotway => {
             ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
         }
-        MobileProtocolFamilyDto::Vesc => return detected,
+        MobileProtocolFamilyDto::Vesc | MobileProtocolFamilyDto::Backfire => return detected,
     };
     let protocol_model = resolution
         .veteran_protocol_model_id
@@ -4445,6 +4491,7 @@ const fn family_label(family: MobileProtocolFamilyDto) -> &'static str {
         MobileProtocolFamilyDto::VeteranLeaperkimNosfet => "Veteran/NOSFET",
         MobileProtocolFamilyDto::BegodeGotway => "Begode/Gotway",
         MobileProtocolFamilyDto::Vesc => "VESC",
+        MobileProtocolFamilyDto::Backfire => "Backfire",
     }
 }
 
@@ -14364,6 +14411,9 @@ pub enum MobileProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+
+    /// Backfire telemetry family.
+    Backfire,
 }
 
 /// Mobile value source.
@@ -14600,6 +14650,7 @@ const fn mobile_protocol_family_from_detection(
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
         ProtocolFamilyState::Vesc => Some(MobileProtocolFamilyDto::Vesc),
+        ProtocolFamilyState::Backfire => Some(MobileProtocolFamilyDto::Backfire),
     }
 }
 
@@ -15566,6 +15617,7 @@ impl From<MobileProtocolFamilyDto> for ProtocolFamily {
             MobileProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             MobileProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             MobileProtocolFamilyDto::Vesc => Self::Vesc,
+            MobileProtocolFamilyDto::Backfire => Self::Backfire,
         }
     }
 }
@@ -15576,6 +15628,7 @@ impl From<ProtocolFamilyDto> for MobileProtocolFamilyDto {
             ProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             ProtocolFamilyDto::Vesc => Self::Vesc,
+            ProtocolFamilyDto::Backfire => Self::Backfire,
         }
     }
 }
@@ -20307,6 +20360,40 @@ mod tests {
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::Vesc)
+        );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_routes_backfire_family() {
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-backfire-family".to_owned(),
+            "Backfire stream".to_owned(),
+            DeviceDetectionResolutionRecord {
+                protocol_family: Some(MobileProtocolFamilyDto::Backfire),
+                awaits_passive_evidence: false,
+                protocol_conflict: false,
+                veteran_protocol_model_id: None,
+                advertised_name: None,
+                model_banner: None,
+                firmware_banner: None,
+                imu_banner: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(candidate.product_category, "Electric skateboard");
+        assert_eq!(candidate.evidence, "Backfire telemetry report");
+        assert_eq!(
+            candidate.detail,
+            "Read-only battery, pack voltage, trip and odometer."
+        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.connection_route,
+            Some(DiscoveryConnectionRoute::Eskate)
         );
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(candidate.disabled_reason, None);

@@ -2959,6 +2959,9 @@ pub enum ProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+
+    /// Backfire telemetry family.
+    Backfire,
 }
 
 impl From<ProtocolFamily> for ProtocolFamilyDto {
@@ -2967,6 +2970,7 @@ impl From<ProtocolFamily> for ProtocolFamilyDto {
             ProtocolFamily::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamily::BegodeGotway => Self::BegodeGotway,
             ProtocolFamily::Vesc => Self::Vesc,
+            ProtocolFamily::Backfire => Self::Backfire,
         }
     }
 }

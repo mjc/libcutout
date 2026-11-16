@@ -3591,6 +3591,7 @@ enum ProtocolFamilyJson {
     VeteranLeaperkimNosfet,
     BegodeGotway,
     Vesc,
+    Backfire,
 }
 
 #[cfg(feature = "serde")]
@@ -3600,6 +3601,7 @@ impl From<ProtocolFamily> for ProtocolFamilyJson {
             ProtocolFamily::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamily::BegodeGotway => Self::BegodeGotway,
             ProtocolFamily::Vesc => Self::Vesc,
+            ProtocolFamily::Backfire => Self::Backfire,
         }
     }
 }
@@ -3611,6 +3613,7 @@ impl ProtocolFamilyJson {
             Self::VeteranLeaperkimNosfet => ProtocolFamily::VeteranLeaperkimNosfet,
             Self::BegodeGotway => ProtocolFamily::BegodeGotway,
             Self::Vesc => ProtocolFamily::Vesc,
+            Self::Backfire => ProtocolFamily::Backfire,
         }
     }
 }

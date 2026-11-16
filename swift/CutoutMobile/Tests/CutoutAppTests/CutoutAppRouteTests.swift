@@ -279,6 +279,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testConnectionRoutesMatchRideSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.electricUnicycle), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.vesc), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.eskate), .vescRide)
         XCTAssertEqual(CutoutAppRoute.route(for: nil), .devicePicker)
     }
 
@@ -300,7 +301,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     func testCameraKeepsRideAndMapTabsWithMoreSelectedForBothDeviceFamilies() throws {
-        for connectionRoute in [DevicePickerConnectionRoute.electricUnicycle, .vesc] {
+        for connectionRoute in [DevicePickerConnectionRoute.electricUnicycle, .vesc, .eskate] {
             let cameraTabs = CutoutAppRoute.camera.primaryNavigationTabs(for: connectionRoute)
             XCTAssertEqual(
                 cameraTabs.map(\.id),

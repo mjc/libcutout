@@ -1033,6 +1033,9 @@ pub enum ProtocolFamily {
 
     /// VESC UART/CAN-derived family used by Refloat-style controllers.
     Vesc,
+
+    /// Backfire telemetry family. A valid report does not identify an exact model.
+    Backfire,
 }
 
 /// Verification state for registry fields.
@@ -2407,6 +2410,7 @@ const fn protocol_family_code(family: ProtocolFamily) -> u8 {
         ProtocolFamily::VeteranLeaperkimNosfet => 1,
         ProtocolFamily::BegodeGotway => 2,
         ProtocolFamily::Vesc => 3,
+        ProtocolFamily::Backfire => 4,
     }
 }
 

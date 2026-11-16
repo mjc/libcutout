@@ -595,6 +595,31 @@ impl CutoutSessionStateHandle {
         self.observe_connection_event(token, DeviceDetectionEvent::Notification { bytes: &bytes })
     }
 
+    /// Observes one notification together with the characteristic that produced it.
+    ///
+    /// A channel that is not 16 bytes falls through to the channel-less detector.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports own byte buffers."
+    )]
+    pub fn observe_connection_notification_on_channel(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        channel: Vec<u8>,
+        bytes: Vec<u8>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+            return self.observe_connection_notification(token, bytes);
+        };
+        self.observe_connection_event(
+            token,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: cutout_core::GattChannel::from_bytes(channel),
+                bytes: &bytes,
+            },
+        )
+    }
+
     /// Feeds one complete GATT inventory to the authoritative detector.
     pub fn observe_connection_gatt(
         &self,

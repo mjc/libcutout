@@ -62,7 +62,9 @@ struct VescRideScreenView: View {
     var body: some View {
         Group {
             if presentation.usesStandardInstruments {
-                if let phoneDrive, liveSnapshot?.vehicleKind == .eskate {
+                if let phoneDrive, liveSnapshot?.vehicleKind == .eskate,
+                    liveSnapshot?.isVescProtocol != false
+                {
                     PhoneDriveRideSurface(model: phoneDrive) { standardInstruments }
                 } else {
                     standardInstruments
@@ -327,7 +329,9 @@ struct VescRideScreenView: View {
 
     @ViewBuilder
     private var drivetrainRecoveryAccessory: some View {
-        if phase == .live, !presentation.speedReadout.isAvailable, let makeDrivetrainEditor {
+        if phase == .live, !presentation.speedReadout.isAvailable, liveSnapshot?.isVescProtocol != false,
+            let makeDrivetrainEditor
+        {
             Button(localizedAppText("vesc.drivetrain.set")) {
                 drivetrainEditor = makeDrivetrainEditor()
             }

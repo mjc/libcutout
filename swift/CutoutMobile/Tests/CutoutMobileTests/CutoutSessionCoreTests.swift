@@ -1857,7 +1857,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testObservedAdvertisementsUpdatePickerScanState() {
         XCTAssertEqual(
             Set(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids),
-            Set([.eucSerialFfe0, .vescSerialFff0, .vescNordicUartService])
+            Set([.eucSerialFfe0, .vescSerialFff0, .vescNordicUartService, .backfireService])
         )
         let core = CutoutSessionCore()
         var observedStates: [DevicePickerScanState] = []
@@ -3724,6 +3724,41 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
         XCTAssertEqual(eskate.vehicleKind, .eskate)
         XCTAssertEqual(eskate.application, .absent)
+        XCTAssertTrue(eskate.isVescProtocol)
+    }
+
+    func testBackfireRideSnapshotUsesStandardInstrumentsWithoutVescControls() throws {
+        let identity = MobileDeviceIdentityDto(
+            protocol: .backfire,
+            vehicleKind: .eskate,
+            classificationProvenance: .protocol,
+            classificationRequirement: .resolved,
+            vescApplication: nil,
+            vescApplicationQuery: nil,
+            model: nil
+        )
+        let snapshot = try XCTUnwrap(
+            VescRideSnapshot(displayState: RideDisplayState(), title: "Zealot", identity: identity))
+        XCTAssertFalse(snapshot.isVescProtocol)
+        XCTAssertEqual(snapshot.application, .absent)
+        XCTAssertEqual(snapshot.vehicleKind, .eskate)
+
+        let controller = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(),
+                title: "Controller",
+                identity: MobileDeviceIdentityDto(
+                    protocol: .vesc,
+                    vehicleKind: .eskate,
+                    classificationProvenance: .userProvided,
+                    classificationRequirement: .resolved,
+                    vescApplication: .pending,
+                    vescApplicationQuery: .notRequested,
+                    model: nil
+                )
+            ))
+        XCTAssertTrue(controller.isVescProtocol)
+        XCTAssertEqual(controller.application, .pending)
     }
 
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
@@ -4511,6 +4546,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             (.veteranLeaperkimNosfet, "protocol_identity.fallback.veteran_nosfet", "Veteran/NOSFET device"),
             (.begodeGotway, "protocol_identity.fallback.begode", "Begode device"),
             (.vesc, "protocol_identity.fallback.vesc", "VESC device"),
+            (.backfire, "protocol_identity.fallback.backfire", "Backfire device"),
             (nil, "protocol_identity.fallback.unknown", "Detected rideable"),
         ]
 

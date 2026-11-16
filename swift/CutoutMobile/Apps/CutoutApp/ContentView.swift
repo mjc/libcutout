@@ -624,7 +624,7 @@ struct ContentView: View {
         return switch selectedConnectionRoute {
         case .vesc:
             .purple
-        case .electricUnicycle:
+        case .electricUnicycle, .eskate:
             .yellow
         case nil:
             switch route {

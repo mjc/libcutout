@@ -300,7 +300,10 @@ fn auto_pevcap_uses_vesc(header: &PevcapHeader) -> Result<bool> {
             _ => false,
         });
     let vesc = protocol == Some(ProtocolFamily::Vesc) || legacy_vesc;
-    let euc = protocol.is_some_and(|family| family != ProtocolFamily::Vesc) || legacy_euc;
+    let euc = protocol.is_some_and(|family| match family {
+        ProtocolFamily::VeteranLeaperkimNosfet | ProtocolFamily::BegodeGotway => true,
+        ProtocolFamily::Vesc | ProtocolFamily::Backfire => false,
+    }) || legacy_euc;
     if vesc && euc {
         bail!("PEVCAP replay --profile auto found conflicting protocol metadata");
     }

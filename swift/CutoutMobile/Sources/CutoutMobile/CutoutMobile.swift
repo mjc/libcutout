@@ -77,6 +77,7 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
     case veteranLeaperkimNosfet
     case begodeGotway
     case vesc
+    case backfire
 
     fileprivate init(_ dto: MobileProtocolFamilyDto) {
         switch dto {
@@ -86,6 +87,8 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             self = .begodeGotway
         case .vesc:
             self = .vesc
+        case .backfire:
+            self = .backfire
         }
     }
 
@@ -97,6 +100,8 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             .begodeGotway
         case .vesc:
             .vesc
+        case .backfire:
+            .backfire
         }
     }
 
@@ -104,7 +109,7 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
         switch self {
         case .veteranLeaperkimNosfet: .aero
         case .begodeGotway: .falcon
-        case .vesc: nil
+        case .vesc, .backfire: nil
         }
     }
 }
@@ -1932,6 +1937,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let motorTemperature: Temperature?
     public let footpad: FootpadTelemetry?
     public let lastUpdate: MonotonicMilliseconds?
+    /// Phone-drive and drivetrain controls belong to a VESC controller.
+    public let isVescProtocol: Bool
 
     public init(
         title: String,
@@ -1959,7 +1966,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         controllerTemperature: Temperature? = nil,
         motorTemperature: Temperature? = nil,
         footpad: FootpadTelemetry? = nil,
-        lastUpdate: MonotonicMilliseconds? = nil
+        lastUpdate: MonotonicMilliseconds? = nil,
+        isVescProtocol: Bool = true
     ) {
         self.title = title
         self.vehicleKind = vehicleKind
@@ -1987,17 +1995,19 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.motorTemperature = motorTemperature
         self.footpad = footpad
         self.lastUpdate = lastUpdate
+        self.isVescProtocol = isVescProtocol
     }
 
     public init?(displayState: RideDisplayState, title: String?, identity: MobileDeviceIdentityDto? = nil) {
         let telemetry = displayState.telemetry ?? TelemetrySnapshot()
-        guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
+        guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc || identity?.protocol == .backfire
+        else { return nil }
         let recording = displayState.logicalRide
         let statistics = recording?.liveActivityStatistics
         self.init(
             title: title ?? Self.defaultTitle,
             vehicleKind: identity?.vehicleKind ?? .unknown,
-            application: identity?.vescApplication ?? .pending,
+            application: identity?.protocol == .backfire ? .absent : (identity?.vescApplication ?? .pending),
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
             operatingMode: telemetry.vescOperatingMode ?? .unknown,
@@ -2022,7 +2032,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             controllerTemperature: telemetry.controllerTemperature,
             motorTemperature: telemetry.motorTemperature,
             footpad: telemetry.footpad,
-            lastUpdate: telemetry.at ?? displayState.lastUpdate
+            lastUpdate: telemetry.at ?? displayState.lastUpdate,
+            isVescProtocol: identity?.protocol != .backfire
         )
     }
 
@@ -4730,6 +4741,10 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
             0xe0, 0xa9,
             0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
         ]))!
+
+    public static let backfireService = bluetooth16(0xf1f0)
+
+    public static let backfireTelemetry = bluetooth16(0xf1f2)
 
     public static let vescNordicUartWrite = BluetoothUuid(
         Data([

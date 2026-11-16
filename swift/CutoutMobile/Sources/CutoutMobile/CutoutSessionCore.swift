@@ -14,6 +14,8 @@ func protocolIdentityFallbackDisplayName(
         pevLocalizedText("protocol_identity.fallback.begode")
     case .vesc:
         pevLocalizedText("protocol_identity.fallback.vesc")
+    case .backfire:
+        pevLocalizedText("protocol_identity.fallback.backfire")
     case nil:
         pevLocalizedText("protocol_identity.fallback.unknown")
     }
@@ -2449,9 +2451,7 @@ public final class CutoutSessionCore: NSObject {
         switch selectedRoute {
         case .electricUnicycle:
             return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
-        case .vesc:
-            return nil
-        case nil:
+        case .vesc, .eskate, nil:
             return nil
         }
     }
@@ -3914,9 +3914,35 @@ extension CutoutSessionCore {
             return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
         case .electricUnicycle:
             return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
-        case nil:
+        case .eskate, nil:
             return nil
         }
+    }
+
+    private func subscribePassiveObservationChannels(on peripheral: CBPeripheral) -> Bool {
+        let fingerprints = subscribedCharacteristics.compactMap {
+            channel, characteristic -> MobileGattFingerprintDto? in
+            guard let serviceUuid = characteristic.service.flatMap({ BluetoothUuid(coreBluetoothUuid: $0.uuid) })
+            else { return nil }
+            return MobileGattFingerprintDto(
+                service: serviceUuid.bytes,
+                characteristic: channel.bytes,
+                roles: characteristic.mobileGattRoles,
+                verification: .sourceVerified
+            )
+        }
+        var didSubscribe = false
+        for channelBytes in mobilePassiveObservationChannels(fingerprints: fingerprints) {
+            guard let channel = BluetoothUuid(channelBytes),
+                let characteristic = subscribedCharacteristics[channel],
+                characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate)
+            else { continue }
+            if !characteristic.isNotifying {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+            didSubscribe = true
+        }
+        return didSubscribe
     }
 
     fileprivate func assertOnBleQueue() {
@@ -4059,7 +4085,8 @@ extension CutoutSessionCore {
         let previous = deviceDetectionSession.resolution
         let current: DeviceDetectionResolution
         if let token = capturedToken ?? connectionAttempt?.token,
-            let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
+            let resolution = rustSessionState.observeConnectionNotificationOnChannel(
+                token: token, channel: channel.bytes, bytes: bytes)
         {
             current = DeviceDetectionResolution(resolution)
         } else if connectionAttempt == nil {
@@ -4259,6 +4286,9 @@ extension CutoutSessionCore {
             } else {
                 identificationProbeTransport.subscribeVesc(using: self)
             }
+            subscribed = true
+        }
+        if subscribePassiveObservationChannels(on: peripheral) {
             subscribed = true
         }
         if !subscribed {
