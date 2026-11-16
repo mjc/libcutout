@@ -533,6 +533,40 @@ fn phone_drive_ffi_returns_an_admitted_write_while_evidence_storage_is_locked() 
 }
 
 #[test]
+fn phone_drive_ffi_retries_a_queued_fact_when_a_tick_records_nothing() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    handle
+        .phone_drive_evidence
+        .push("board-a", vec![phone_drive_intent_at(4)]);
+
+    let _ = handle.tick_phone_drive(token, 12_000, false);
+    handle.phone_drive_evidence.wait_until_idle();
+    let stored = database.inner.phone_drive_evidence("board-a").unwrap();
+    database.shutdown().unwrap();
+    assert_eq!(stored, vec![phone_drive_intent_at(4)]);
+}
+
+#[test]
 fn phone_drive_evidence_outbox_keeps_the_newest_facts_with_their_devices() {
     let outbox = super::PhoneDriveEvidenceOutbox::new();
     let limit = super::PHONE_DRIVE_EVIDENCE_OUTBOX_LIMIT;

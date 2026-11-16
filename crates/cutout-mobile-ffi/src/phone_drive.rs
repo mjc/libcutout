@@ -612,6 +612,8 @@ fn with_phone_drive_evidence_handoff<T>(
             &handoff.device_identity,
             handoff.evidence,
         );
+    } else if let Some(database) = handle.diagnostic_database.clone() {
+        handle.phone_drive_evidence.kick_pending(database);
     }
     value
 }
@@ -625,7 +627,8 @@ struct PhoneDriveEvidenceWrite {
 /// Bounded handoff from a phone-drive call to the ride database.
 ///
 /// The call returns after the facts are queued. A background store uses the device identity
-/// captured with each fact. When the queue is full, the oldest fact is dropped.
+/// captured with each fact. When the queue is full, the oldest fact is dropped. A later
+/// observe, tick, or mark starts a waiting store even when that call records nothing.
 #[derive(Debug)]
 pub(crate) struct PhoneDriveEvidenceOutbox {
     queue: Mutex<VecDeque<PhoneDriveEvidenceWrite>>,
@@ -666,6 +669,17 @@ impl PhoneDriveEvidenceOutbox {
         evidence: Vec<core::PhoneDriveEvidence>,
     ) {
         self.push(device_identity, evidence);
+        self.kick_store(database);
+    }
+
+    fn kick_pending(self: &Arc<Self>, database: persistence::RideDatabase) {
+        if self.lock_queue().is_empty() {
+            return;
+        }
+        self.kick_store(database);
+    }
+
+    fn kick_store(self: &Arc<Self>, database: persistence::RideDatabase) {
         self.kick_with(move |identity, fact| {
             database.record_phone_drive_evidence(identity, fact).is_ok()
         });
