@@ -21,6 +21,7 @@ import uniffi.cutout_mobile_ffi.MobileSoundCloudPlayer
 import uniffi.cutout_mobile_ffi.MobileSoundCloudSnapshot
 import uniffi.cutout_mobile_ffi.MobileSoundCloudState
 import uniffi.cutout_mobile_ffi.MobileSoundCloudTrack
+import uniffi.cutout_mobile_ffi.soundcloudUnauthorizedRetry
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.net.HttpURLConnection

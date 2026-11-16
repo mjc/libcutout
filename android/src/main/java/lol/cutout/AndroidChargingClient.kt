@@ -7,8 +7,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -282,9 +282,8 @@ class AndroidChargingClient(
             throw error
         } catch (error: MobileChargingException) {
             mobileChargingSyncObserveError(runState, error)
-        } catch (error: Throwable) {
-            val message = error.message ?: "Could not save or read the spot"
-            mobileChargingSyncObserveError(runState, MobileChargingException.StorageFailure(message))
+        } catch (_: Throwable) {
+            mobileChargingSyncObserveError(runState, MobileChargingException.StorageFailure())
         }
     }
 
