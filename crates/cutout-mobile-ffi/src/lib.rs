@@ -11406,11 +11406,11 @@ impl MobileRideMapCoreInner {
         self.require_ready_during_music_stop()
     }
 
-    /// Keeps covered work admissible while Stop waits on accepted music.
+    /// Admits covered music work and verified packets while Stop waits.
     ///
-    /// That Stop command is itself the lifecycle barrier. The observation it
-    /// covers still resolves ride context and records. A different lifecycle
-    /// command, a second connection admission, and a failed restore still block.
+    /// Music callers use this after proving an observation lease that Stop
+    /// already covers. A different lifecycle command, a second connection
+    /// admission, and a failed restore still block.
     fn require_ready_during_music_stop(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         if self.pending_connection_admission_id.is_some()
             || (self.pending_lifecycle_command_id.is_some()
@@ -13098,7 +13098,15 @@ impl MobileRideMapCoreInner {
         &self,
         expected: &MobileRideMapRecordingTokenDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
-        self.require_ready_during_music_stop()?;
+        self.require_ready()?;
+        self.validate_admitted_music_recording(expected)
+    }
+
+    /// Validates a recording token after the caller has chosen the lifecycle gate.
+    pub(crate) fn validate_admitted_music_recording(
+        &self,
+        expected: &MobileRideMapRecordingTokenDto,
+    ) -> Result<(), MobileRideMapCoreErrorDto> {
         let parsed = Uuid::parse_str(&expected.ride_id)
             .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
         if parsed.to_string() != expected.ride_id {
@@ -13120,8 +13128,26 @@ impl MobileRideMapCoreInner {
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
     ) -> Result<Arc<MobileRideMapMusicCommand>, MobileRideMapCoreErrorDto> {
+        self.require_ready()?;
+        self.queue_admitted_music_event(
+            snapshot,
+            kind,
+            monotonic_at_ms,
+            wall_clock_at_ms,
+            clock_uncertainty_ms,
+        )
+    }
+
+    /// Queues one music event after the caller has chosen the lifecycle gate.
+    pub(crate) fn queue_admitted_music_event(
+        &self,
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonic_at_ms: u64,
+        wall_clock_at_ms: u64,
+        clock_uncertainty_ms: u64,
+    ) -> Result<Arc<MobileRideMapMusicCommand>, MobileRideMapCoreErrorDto> {
         use cutout_application::ride_recording::music::RideMusicEventAdmission;
-        self.require_ready_during_music_stop()?;
         let observation = ride_music_observation(
             snapshot,
             kind,
@@ -28994,6 +29020,126 @@ mod tests {
         let stopped = stop.wait_result().unwrap();
         assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
         assert_eq!(stopped.ride_id, active.ride_id);
+        let events = core.current_music_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title.as_deref(), Some("Song"));
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "both direct writers and the covered observation share one Stop fence"
+    )]
+    fn stop_waiting_on_music_rejects_a_direct_write() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-stop-music-direct-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let core = restored_database_core(database.clone());
+        let lifecycle = MobileMusicProviderLifecycle::new();
+        core.bind_music_observation_lifecycle(Arc::clone(&lifecycle))
+            .unwrap();
+        let active = core.start_gps_only(1_000).unwrap();
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .unwrap();
+        let recording = active.recording_token.clone().expect("active recording");
+        let request = lifecycle.begin_music_observation();
+        let MobileMusicObservationAdmission::Admitted { lease } = request.admission() else {
+            panic!("available observation admission");
+        };
+        let stop = core
+            .begin_lifecycle_command(
+                MobileRideEventDto::Stop,
+                active.command_token.unwrap(),
+                2_000,
+            )
+            .unwrap();
+        assert_eq!(stop.poll().unwrap(), MobileRideMapLifecyclePollDto::Pending);
+        let mut direct = test_music_snapshot();
+        direct.item.as_mut().unwrap().title = Some("Direct".to_owned());
+        assert_eq!(
+            core.begin_record_music_event(
+                direct.clone(),
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_002_000,
+                7
+            )
+            .unwrap_err(),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+        assert_eq!(
+            core.begin_record_music_event_for_recording(
+                recording,
+                direct,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_002_000,
+                7,
+            )
+            .unwrap_err(),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+        assert_eq!(
+            core.music_observation_context(active.ride_id.clone(), 2_000)
+                .unwrap_err(),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+        let context = core
+            .music_observation_context_for_observation(
+                Arc::clone(&lease),
+                active.ride_id.clone(),
+                2_000,
+            )
+            .expect("the observation holding Stop open still resolves");
+        let MobileMusicObservationContext::Ready { recording } = context else {
+            panic!("observation at the ride clock is in the active interval: {context:?}");
+        };
+        let decision = lifecycle
+            .observe_admitted_music(
+                Arc::clone(&lease),
+                Some(recording),
+                test_music_snapshot(),
+                1_700_000_002_000,
+                7,
+            )
+            .unwrap()
+            .expect("human-readable policy classifies the observation");
+        let music = core
+            .begin_record_music_observation(Arc::clone(&lease))
+            .expect("the covered observation still records");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let receipt = loop {
+            match music.poll().unwrap() {
+                MobileRideMapMusicPollDto::Completed { result } => break result,
+                MobileRideMapMusicPollDto::Pending => {
+                    assert!(Instant::now() < deadline, "music write did not settle");
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        };
+        assert_eq!(receipt.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+        assert_eq!(
+            core.begin_record_music_event(
+                test_music_snapshot(),
+                MobileMusicRideEventKindDto::Pause,
+                2_000,
+                1_700_000_002_000,
+                7,
+            )
+            .unwrap_err(),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+        let _ = lifecycle.acknowledge_history_transition(decision.history_transition.unwrap().id);
+        request.settle().unwrap();
+        let stopped = stop.wait_result().unwrap();
+        assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
         let events = core.current_music_events().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].title.as_deref(), Some("Song"));

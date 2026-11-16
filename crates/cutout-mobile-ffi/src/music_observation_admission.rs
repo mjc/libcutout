@@ -407,7 +407,8 @@ impl MobileRideMapCore {
             .clone()
             .ok_or(MobileRideMapCoreErrorDto::StaleRideCommand)?;
         queue.with_ready(&lease, || ())?;
-        let context = resolve_music_context(&state, &expected_ride_id, observed_at_ms)?;
+        state.require_ready_during_music_stop()?;
+        let context = resolve_admitted_music_context(&state, &expected_ride_id, observed_at_ms)?;
         if context == MobileMusicObservationContext::OutOfOrder {
             queue.skip_history(&lease)?;
         }
@@ -463,14 +464,18 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
         }
         let (recording, transition) = lease.claim_write()?;
-        let result = state.validate_music_recording(&recording).and_then(|()| {
-            state.queue_music_event(
-                transition.snapshot.clone(),
-                transition.kind,
-                transition.snapshot.observed_at_ms,
-                transition.wall_clock_at_ms,
-                transition.clock_uncertainty_ms,
-            )
+        let result = state.require_ready_during_music_stop().and_then(|()| {
+            state
+                .validate_admitted_music_recording(&recording)
+                .and_then(|()| {
+                    state.queue_admitted_music_event(
+                        transition.snapshot.clone(),
+                        transition.kind,
+                        transition.snapshot.observed_at_ms,
+                        transition.wall_clock_at_ms,
+                        transition.clock_uncertainty_ms,
+                    )
+                })
         });
         match result {
             Ok(command) => Ok(command.with_observation(lease)),
@@ -487,8 +492,16 @@ fn resolve_music_context(
     expected_ride_id: &str,
     observed_at_ms: u64,
 ) -> Result<MobileMusicObservationContext, MobileRideMapCoreErrorDto> {
+    state.require_ready()?;
+    resolve_admitted_music_context(state, expected_ride_id, observed_at_ms)
+}
+
+fn resolve_admitted_music_context(
+    state: &crate::MobileRideMapCoreInner,
+    expected_ride_id: &str,
+    observed_at_ms: u64,
+) -> Result<MobileMusicObservationContext, MobileRideMapCoreErrorDto> {
     use cutout_application::ride_recording::music::RideMusicContext;
-    state.require_ready_during_music_stop()?;
     let parsed = uuid::Uuid::parse_str(expected_ride_id)
         .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
     if parsed.to_string() != expected_ride_id {
