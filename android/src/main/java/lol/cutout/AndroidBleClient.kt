@@ -723,10 +723,7 @@ class AndroidBleClient(
                     inventory.forEach { diagnostics.recordFingerprint(token, it) }
                 }
                 view = view.copy(phase = NativePhase.IDENTIFYING)
-                val detectionServices = mobileDiscoveryScanServiceUuids().map { wireUuid(it.bytes) }.toSet()
-                characteristics.filter { it.service.uuid in detectionServices }
-                    .filter { it.properties and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or
-                    BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0 }.forEach { subscribe(it.uuid.wireBytes()) }
+                mobileDiscoverySubscriptionChannels(inventory).forEach { subscribe(it) }
                 characteristics.filter { it.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0 }.forEach { characteristic ->
                     queue.enqueue(GattOperationQueue.Operation(key("read", characteristic), {
                         if (gatt.readCharacteristic(characteristic)) NativeStart.PENDING else NativeStart.COMPLETE

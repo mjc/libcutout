@@ -5,9 +5,10 @@
 //! write characteristic, but no write payload is pinned, so this session never writes.
 
 use cutout_core::{
-    BatteryLevel, Capabilities, DeviceEvent, Distance, GattChannel, GattFingerprint, HostSession,
-    Measured, MonotonicTimestamp, ProtocolSession, SessionInput, SessionInputDto, SessionOutput,
-    TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    BatteryLevel, BluetoothServiceUuid, Capabilities, DeviceEvent, Distance, GattChannel,
+    GattFingerprint, HostSession, Measured, MonotonicTimestamp, ProtocolSession, SessionInput,
+    SessionInputDto, SessionOutput, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 
 use crate::DeviceSessionStep;
@@ -137,6 +138,28 @@ pub fn passive_observation_channels(fingerprints: &[GattFingerprint]) -> Vec<Gat
     for fingerprint in fingerprints {
         if fingerprint.characteristic == BACKFIRE_TELEMETRY_CHANNEL
             && fingerprint.roles.supports_notify()
+            && !channels.contains(&fingerprint.characteristic)
+        {
+            channels.push(fingerprint.characteristic);
+        }
+    }
+    channels
+}
+
+/// Characteristics a host may enable before a protocol frame arrives.
+///
+/// FFE0, FFF0, and Nordic UART contribute each notify or indicate characteristic.
+/// F1F0 contributes only the telemetry characteristic, and only when it notifies.
+#[must_use]
+pub fn discovery_subscription_channels(fingerprints: &[GattFingerprint]) -> Vec<GattChannel> {
+    let mut channels = passive_observation_channels(fingerprints);
+    for fingerprint in fingerprints {
+        let service = fingerprint.service.as_bytes();
+        let blanket = BluetoothServiceUuid::DISCOVERY_NOTIFICATION_SERVICES
+            .iter()
+            .any(|known| known.as_bytes() == &service);
+        if blanket
+            && (fingerprint.roles.supports_notify() || fingerprint.roles.supports_indicate())
             && !channels.contains(&fingerprint.characteristic)
         {
             channels.push(fingerprint.characteristic);
@@ -562,6 +585,46 @@ mod tests {
             vec![BACKFIRE_TELEMETRY_CHANNEL]
         );
         assert_eq!(passive_observation_channels(&[write, indicate]), Vec::new());
+    }
+
+    #[test]
+    fn discovery_subscription_keeps_blanket_services_and_notify_only_backfire_telemetry() {
+        let ffe0 = bluetooth16(0xffe0);
+        let ffe1 = bluetooth16(0xffe1);
+        let ffe1_notify = fingerprint(ffe0, ffe1, GattRoles::empty().with_notify());
+        let ffe1_read = fingerprint(ffe0, bluetooth16(0xffe2), GattRoles::empty().with_read());
+        let indicate_only = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_indicate(),
+        );
+        let other_notify = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_WRITE_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        assert_eq!(
+            discovery_subscription_channels(&[ffe1_notify, ffe1_read, indicate_only, other_notify]),
+            vec![ffe1]
+        );
+
+        let telemetry = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify().with_indicate(),
+        );
+        assert_eq!(
+            discovery_subscription_channels(&[telemetry, telemetry, other_notify, ffe1_notify]),
+            vec![BACKFIRE_TELEMETRY_CHANNEL, ffe1]
+        );
+    }
+
+    fn bluetooth16(value: u16) -> GattChannel {
+        let [high, low] = value.to_be_bytes();
+        GattChannel::from_bytes([
+            0x00, 0x00, high, low, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+            0x34, 0xfb,
+        ])
     }
 
     fn admitted_session() -> DeviceSession {

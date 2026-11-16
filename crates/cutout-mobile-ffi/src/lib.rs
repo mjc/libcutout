@@ -3997,6 +3997,29 @@ pub fn mobile_passive_observation_channels(
         .collect()
 }
 
+/// Characteristics Android may enable before a protocol frame arrives.
+///
+/// F1F0 is limited to a notifying F1F2. The older discovery services still
+/// contribute each notify or indicate characteristic.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_subscription_channels(
+    fingerprints: Vec<MobileGattFingerprintDto>,
+) -> Vec<Vec<u8>> {
+    let fingerprints = fingerprints
+        .into_iter()
+        .map(GattFingerprint::from)
+        .collect::<Vec<_>>();
+    cutout_protocols::discovery_subscription_channels(&fingerprints)
+        .into_iter()
+        .map(|channel| channel.as_bytes().to_vec())
+        .collect()
+}
+
 /// Transport service UUIDs to request from native Bluetooth scans.
 ///
 /// These are discovery hints; the device still requires protocol detection.

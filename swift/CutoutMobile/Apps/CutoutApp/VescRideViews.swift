@@ -373,15 +373,20 @@ struct VescRideScreenView: View {
 
     private var standardSummaryReadings: some View {
         HStack(alignment: .top, spacing: 24) {
-            ForEach(Array(presentation.standardSummaryTiles.enumerated()), id: \.element.kind) { index, tile in
+            let tiles = presentation.standardSummaryTiles
+            ForEach(Array(tiles.enumerated()), id: \.element.kind) { index, tile in
+                let textAlignment: HorizontalAlignment =
+                    tiles.count > 2 && index == 1 ? .center : (index == 0 ? .leading : .trailing)
+                let frameAlignment: Alignment =
+                    tiles.count > 2 && index == 1 ? .center : (index == 0 ? .leading : .trailing)
                 PevInstrumentReading(
                     label: tile.label, value: tile.metricValue, unit: tile.unit,
                     pointSize: usesCompactPhoneInstruments ? 34 : 52, identifier: "vesc.ride.\(tile.kind)",
-                    alignment: index == 0 ? .leading : .trailing, detail: tile.detail,
+                    alignment: textAlignment, detail: tile.detail,
                     ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
                     muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
                 )
-                .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : .trailing)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
             }
         }
         .padding(.vertical, usesCompactPhoneInstruments ? 8 : 18)

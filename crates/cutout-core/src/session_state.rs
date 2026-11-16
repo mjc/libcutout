@@ -641,6 +641,15 @@ impl BluetoothServiceUuid {
         Self::BACKFIRE_F1F0,
     ];
 
+    /// Services whose notify or indicate characteristics may be enabled before a frame arrives.
+    ///
+    /// [`Self::BACKFIRE_F1F0`] is scanned, and it is absent here.
+    pub const DISCOVERY_NOTIFICATION_SERVICES: [Self; 3] = [
+        Self::EUC_SERIAL_FFE0,
+        Self::VESC_SERIAL_FFF0,
+        Self::VESC_NORDIC_UART,
+    ];
+
     /// Normalizes a standard 16-bit service UUID into the Bluetooth base UUID.
     #[must_use]
     pub const fn from_bluetooth16(value: u16) -> Self {
@@ -1708,6 +1717,21 @@ mod tests {
             );
             assert_eq!(candidates[0].connection_route, None);
             assert_eq!(candidates[0].electric_unicycle_model, None);
+        }
+    }
+
+    #[test]
+    fn backfire_service_is_scanned_and_not_blanket_subscribed() {
+        assert!(
+            BluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES
+                .contains(&BluetoothServiceUuid::BACKFIRE_F1F0)
+        );
+        assert!(
+            !BluetoothServiceUuid::DISCOVERY_NOTIFICATION_SERVICES
+                .contains(&BluetoothServiceUuid::BACKFIRE_F1F0)
+        );
+        for service in BluetoothServiceUuid::DISCOVERY_NOTIFICATION_SERVICES {
+            assert!(BluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES.contains(&service));
         }
     }
 

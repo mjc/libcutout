@@ -3403,6 +3403,10 @@
       "comment" : "Ride dashboard battery percentage label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery" } } }
     },
+    "ride.metric.odometer" : {
+      "comment" : "Board lifetime distance reported by the controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Odometer" } } }
+    },
     "ride.metric.limp_home" : {
       "comment" : "Ride dashboard tile label for limp-home range.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "limp-home" } } }
@@ -3664,7 +3668,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride time" } } }
     },
     "vesc.metric.trip" : {
-      "comment" : "Current logical ride route distance, unavailable until a route is observed.",
+      "comment" : "Trip distance. A recorded VESC route uses its route distance. A Backfire board uses the reported trip.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip" } } }
     },
     "vesc.metric.motor_current" : {

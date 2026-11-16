@@ -3806,6 +3806,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let recorded = try snapshot(points: 2, statistics: statistics)
         XCTAssertNil(recorded.boardSpeed)
         XCTAssertEqual(recorded.tripDistance, Distance(value: 1_609_344))
+        XCTAssertNil(recorded.odometer)
         XCTAssertEqual(recorded.rideDuration, MonotonicMilliseconds(522_000))
 
         let withoutRoute = try snapshot(points: 0, statistics: statistics)
@@ -3814,7 +3815,49 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         let stopped = try snapshot(points: 2, statistics: nil)
         XCTAssertNil(stopped.tripDistance)
+        XCTAssertNil(stopped.odometer)
         XCTAssertNil(stopped.rideDuration)
+    }
+
+    func testBackfireRideSnapshotShowsBoardTripAndOdometerWhenARouteIsRecording() throws {
+        let identity = MobileDeviceIdentityDto(
+            protocol: .backfire,
+            vehicleKind: .eskate,
+            classificationProvenance: .protocol,
+            classificationRequirement: .resolved,
+            vescApplication: nil,
+            vescApplicationQuery: nil,
+            model: nil
+        )
+        func snapshot(points: UInt64) throws -> VescRideSnapshot {
+            let statistics = MobileRideMapLiveActivityStatisticsDto(
+                durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
+            let display = RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(47_271),
+                    distance: Distance(value: 87_800_000),
+                    tripDistance: Distance(value: 100_000),
+                    batteryLevelReported: batteryLevelValue(70)
+                ),
+                logicalRide: MobileRideMapSnapshotDto(
+                    rideID: "current-ride", state: .active,
+                    summary: MobileRideMapSummaryDto(
+                        pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                )
+            )
+            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: "Zealot", identity: identity))
+        }
+
+        let recording = try snapshot(points: 2)
+        XCTAssertEqual(recording.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(recording.odometer, Distance(value: 87_800_000))
+        XCTAssertEqual(recording.rideDuration, MonotonicMilliseconds(522_000))
+        XCTAssertFalse(recording.isVescProtocol)
+
+        let withoutRoute = try snapshot(points: 0)
+        XCTAssertEqual(withoutRoute.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(withoutRoute.odometer, Distance(value: 87_800_000))
     }
 
     func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {

@@ -1155,6 +1155,30 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(presentation.standardEnergyTile.metricValue, .unavailable)
     }
 
+    func testBackfireSummaryShowsBoardTripAndOdometer() {
+        let snapshot = VescRideSnapshot(
+            title: "Zealot", vehicleKind: .eskate, application: .absent,
+            controllerState: .unknown,
+            tripDistance: Distance(value: 100_000),
+            odometer: Distance(value: 87_800_000),
+            isVescProtocol: false
+        )
+        let presentation = VescRideScreenPresentation(
+            snapshot: snapshot, phase: .live, now: MonotonicMilliseconds(1_000),
+            connectionStatusText: nil
+        )
+
+        XCTAssertEqual(
+            presentation.standardSummaryTiles.map(\.kind),
+            [.tripDistance, .odometer, .rideDuration]
+        )
+        XCTAssertEqual(presentation.standardSummaryTiles.map(\.unit), ["mi", "mi", ""])
+        XCTAssertEqual(presentation.standardSummaryTiles[0].value, "0.1")
+        XCTAssertEqual(presentation.standardSummaryTiles[1].value, "54.6")
+        XCTAssertEqual(presentation.standardSummaryTiles[1].label, localizedAppText("ride.metric.odometer"))
+        XCTAssertEqual(presentation.standardSummaryTiles[2].metricValue, .unavailable)
+    }
+
     func testStandardVescRidePromotesTypedChargeAndRetainsVoltageInReadings() {
         for reported in [true, false] {
             let snapshot = VescRideSnapshot(

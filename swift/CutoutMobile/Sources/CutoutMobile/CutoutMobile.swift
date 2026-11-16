@@ -1918,8 +1918,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let warning: VescRideWarning
     public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
-    /// Current logical ride route distance, not the controller odometer.
+    /// Trip shown on the ride screen. VESC uses the current logical ride route. Backfire uses the board's reported trip.
     public let tripDistance: Distance?
+    /// Board lifetime distance when the connected protocol publishes one.
+    public let odometer: Distance?
     /// Rust-owned recording duration, excluding pauses and interruptions.
     public let rideDuration: MonotonicMilliseconds?
     public let dutyCycle: DutyCycle?
@@ -1951,6 +1953,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
         tripDistance: Distance? = nil,
+        odometer: Distance? = nil,
         rideDuration: MonotonicMilliseconds? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
@@ -1979,6 +1982,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.stopReason = stopReason
         self.boardSpeed = boardSpeed
         self.tripDistance = tripDistance
+        self.odometer = odometer
         self.rideDuration = rideDuration
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
@@ -2004,6 +2008,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         else { return nil }
         let recording = displayState.logicalRide
         let statistics = recording?.liveActivityStatistics
+        let routeDistance =
+            (recording?.summary.pointCount ?? 0) > 0
+            ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil
+        let boardDistances = identity?.protocol == .backfire
         self.init(
             title: title ?? Self.defaultTitle,
             vehicleKind: identity?.vehicleKind ?? .unknown,
@@ -2014,9 +2022,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             warning: telemetry.vescWarning ?? .unknown,
             stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,
-            // A recording without route points has no observed trip-distance source.
-            tripDistance: (recording?.summary.pointCount ?? 0) > 0
-                ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil,
+            tripDistance: boardDistances ? telemetry.tripDistance : routeDistance,
+            odometer: boardDistances ? telemetry.distance : nil,
             rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
