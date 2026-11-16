@@ -1074,25 +1074,49 @@ fn phone_drive_records_intent_admission_and_native_receipt_without_a_controller_
 }
 
 #[test]
-fn phone_drive_restores_unstored_facts_ahead_of_later_receipts() {
+fn phone_drive_connection_change_drops_facts_still_on_the_session() {
     let contact = PhoneDriveContactId::new(1).unwrap();
-    let (mut owner, token, generation) = active();
-    let write = press(&mut owner, &token, generation);
-    let unstored = owner.take_phone_drive_evidence();
-    assert!(owner.mark_phone_drive_transport(
+    let (mut owner, token) = ready_unarmed();
+    let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    let _ = owner.observe_phone_drive_contacts_at(
         &token,
-        write,
-        ApplicationQueryTransportStatus::Submitted,
-        at(3_002)
-    ));
-    owner.restore_phone_drive_evidence(Vec::new());
-    owner.restore_phone_drive_evidence(unstored);
+        generation,
+        PhoneDriveContacts::Released,
+        at(3_000),
+        at(3_000),
+    );
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        generation,
+        held(PhoneDriveAction::Throttle),
+        at(3_001),
+        at(3_001),
+    );
     assert_eq!(
         owner.take_phone_drive_evidence(),
-        vec![
-            PhoneDriveEvidence::intent(PhoneDriveAction::Throttle, contact, at(3_001)),
-            PhoneDriveEvidence::admitted(PhoneDriveAction::Throttle, contact, at(3_001)),
-            PhoneDriveEvidence::native_receipt(PhoneDriveAction::Throttle, contact, at(3_002)),
-        ]
+        vec![PhoneDriveEvidence::intent(
+            PhoneDriveAction::Throttle,
+            contact,
+            at(3_001),
+        )]
     );
+
+    let (mut owner, token) = ready_unarmed();
+    let generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        generation,
+        PhoneDriveContacts::Released,
+        at(3_000),
+        at(3_000),
+    );
+    let _ = owner.observe_phone_drive_contacts_at(
+        &token,
+        generation,
+        held(PhoneDriveAction::Throttle),
+        at(3_001),
+        at(3_001),
+    );
+    owner.cancel_phone_drive(PhoneDriveCancelReason::ConnectionChanged);
+    assert_eq!(owner.take_phone_drive_evidence(), Vec::new());
 }

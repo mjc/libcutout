@@ -2064,6 +2064,7 @@ pub struct CutoutSessionStateHandle {
     capture_identity_owner_id: Uuid,
     configuration_updates: Mutex<()>,
     diagnostic_database: Option<persistence::RideDatabase>,
+    phone_drive_evidence: Arc<PhoneDriveEvidenceOutbox>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
     novatek_session: Mutex<NovatekCameraSessionState>,
 }
@@ -2791,6 +2792,7 @@ impl CutoutSessionStateHandle {
             capture_identity_owner_id: Uuid::new_v4(),
             configuration_updates: Mutex::new(()),
             diagnostic_database: None,
+            phone_drive_evidence: Arc::new(PhoneDriveEvidenceOutbox::new()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
             novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
@@ -2809,6 +2811,7 @@ impl CutoutSessionStateHandle {
             capture_identity_owner_id: Uuid::new_v4(),
             configuration_updates: Mutex::new(()),
             diagnostic_database: Some(database.inner.clone()),
+            phone_drive_evidence: Arc::new(PhoneDriveEvidenceOutbox::new()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState {
                 database: Some(database.inner.clone()),
                 ..MobilePhoneAlarmState::default()

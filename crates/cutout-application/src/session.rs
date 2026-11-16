@@ -1045,11 +1045,6 @@ impl ApplicationDeviceSession {
     pub fn take_phone_drive_evidence(&mut self) -> Vec<cutout_core::PhoneDriveEvidence> {
         self.protocol.take_phone_drive_evidence()
     }
-
-    /// Puts facts that failed to store ahead of facts recorded after the take.
-    pub fn restore_phone_drive_evidence(&mut self, evidence: Vec<cutout_core::PhoneDriveEvidence>) {
-        self.protocol.restore_phone_drive_evidence(evidence);
-    }
 }
 
 #[cfg(test)]
