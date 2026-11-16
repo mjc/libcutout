@@ -1,8 +1,11 @@
 //! Shared ride display quantities. Platforms render the returned number and unit.
 
-/// Miles per hour for one millimetre per second, scaled so one fractional digit is exact.
-const SPEED_TENTHS_NUMERATOR: i128 = 22_369_362_920_544;
-const SPEED_TENTHS_DENOMINATOR: i128 = 1_000_000_000_000_000;
+/// Tenths of a mile per hour for one millimetre per second.
+///
+/// `10 * 3_600 / 1_609_344` reduces to `125 / 5_588`. The reduced ratio keeps a
+/// value that is exactly halfway on the displayed digit on the away-from-zero side.
+const SPEED_TENTHS_NUMERATOR: i128 = 125;
+const SPEED_TENTHS_DENOMINATOR: i128 = 5_588;
 
 /// Millimetres in one mile. One fractional digit is `millimetres * 10 / MILES_IN_MILLIMETRES`.
 const MILES_IN_MILLIMETRES: i128 = 1_609_344;
@@ -178,6 +181,12 @@ mod tests {
         assert_eq!(ten.scaled, 100);
 
         assert_eq!(ride_speed_display(-1_234).text, "-2.8");
+
+        // 2_794 mm/s is exactly 6.25 mph, so one fractional digit rounds away from zero.
+        assert_eq!(ride_speed_display(2_794).text, "6.3");
+        assert_eq!(ride_speed_display(2_794).scaled, 63);
+        assert_eq!(ride_speed_display(-2_794).text, "-6.3");
+        assert_eq!(ride_speed_display(-2_794).scaled, -63);
     }
 
     #[test]
