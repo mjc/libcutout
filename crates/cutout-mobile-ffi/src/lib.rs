@@ -29049,6 +29049,88 @@ mod tests {
     }
 
     #[test]
+    fn covered_observation_retires_history_while_stop_waits() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-stop-retire-history-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let core = restored_database_core(database.clone());
+        let lifecycle = MobileMusicProviderLifecycle::new();
+        core.bind_music_observation_lifecycle(Arc::clone(&lifecycle))
+            .unwrap();
+        let active = core.start_gps_only(1_000).unwrap();
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .unwrap();
+
+        let older = lifecycle.begin_music_observation();
+        let MobileMusicObservationAdmission::Admitted { lease: older_lease } = older.admission()
+        else {
+            panic!("older observation is admitted");
+        };
+        record_test_observation(
+            &core,
+            &lifecycle,
+            &older_lease,
+            &active.ride_id,
+            titled_test_snapshot("older", "Older"),
+            1_500,
+        );
+        older.settle().unwrap();
+
+        let newer = lifecycle.begin_music_observation();
+        let MobileMusicObservationAdmission::Admitted { lease: newer_lease } = newer.admission()
+        else {
+            panic!("newer observation is admitted");
+        };
+        let newer_snapshot = titled_test_snapshot("newer", "Newer");
+        let stop = core
+            .begin_lifecycle_command(
+                MobileRideEventDto::Stop,
+                active.command_token.unwrap(),
+                2_000,
+            )
+            .unwrap();
+        assert_eq!(stop.poll().unwrap(), MobileRideMapLifecyclePollDto::Pending);
+        lifecycle
+            .observe_admitted_player(Arc::clone(&newer_lease), newer_snapshot.clone())
+            .expect("player projection stays admitted while Stop waits");
+        assert_eq!(
+            core.retire_closed_music_history(Arc::clone(&lifecycle), Arc::clone(&newer_lease))
+                .expect(
+                    "Stop waits on this observation, so closed-history retirement stays admitted"
+                ),
+            None
+        );
+        record_test_observation(
+            &core,
+            &lifecycle,
+            &newer_lease,
+            &active.ride_id,
+            newer_snapshot,
+            1_800,
+        );
+        newer.settle().unwrap();
+
+        let stopped = stop.wait_result().unwrap();
+        assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
+        assert_eq!(stopped.ride_id, active.ride_id);
+        let events = core.current_music_events().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.title.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("Older"), Some("Newer")]
+        );
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     #[allow(
         clippy::too_many_lines,
         reason = "both direct writers and the covered observation share one Stop fence"
@@ -30719,6 +30801,61 @@ mod tests {
         );
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    fn titled_test_snapshot(identifier: &str, title: &str) -> MobileMusicSnapshotDto {
+        let mut snapshot = test_music_snapshot();
+        if let Some(item) = snapshot.item.as_mut() {
+            item.identifier = identifier.to_owned();
+            item.title = Some(title.to_owned());
+        }
+        snapshot
+    }
+
+    fn record_test_observation(
+        core: &MobileRideMapCore,
+        lifecycle: &MobileMusicProviderLifecycle,
+        lease: &Arc<MobileMusicObservationLease>,
+        ride_id: &str,
+        mut observation: MobileMusicSnapshotDto,
+        observed_at_ms: u64,
+    ) {
+        observation.observed_at_ms = observed_at_ms;
+        let context = core
+            .music_observation_context_for_observation(
+                Arc::clone(lease),
+                ride_id.to_owned(),
+                observed_at_ms,
+            )
+            .expect("covered observation keeps its ride context");
+        let MobileMusicObservationContext::Ready { recording } = context else {
+            panic!("observation is inside the active ride: {context:?}");
+        };
+        let decision = lifecycle
+            .observe_admitted_music(
+                Arc::clone(lease),
+                Some(recording),
+                observation,
+                1_700_000_000_000 + observed_at_ms,
+                7,
+            )
+            .unwrap()
+            .expect("human-readable policy classifies the observation");
+        let music = core
+            .begin_record_music_observation(Arc::clone(lease))
+            .expect("history write stays admitted");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let receipt = loop {
+            match music.poll().unwrap() {
+                MobileRideMapMusicPollDto::Completed { result } => break result,
+                MobileRideMapMusicPollDto::Pending => {
+                    assert!(Instant::now() < deadline, "music write did not settle");
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        };
+        assert_eq!(receipt.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+        let _ = lifecycle.acknowledge_history_transition(decision.history_transition.unwrap().id);
     }
 
     fn test_music_snapshot() -> MobileMusicSnapshotDto {
