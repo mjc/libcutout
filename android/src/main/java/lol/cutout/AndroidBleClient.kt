@@ -954,13 +954,18 @@ class AndroidBleClient(
                         Log.w("CutoutBle", "Ride drain failed before identification retry", result.exceptionOrNull())
                     }
                     val schedule = {
-                        state.connectionLinkDown(retryToken)
+                        // connect, disconnect, and close during the drain store their
+                        // follow-up here. A retry must not replace that request.
+                        val replaced = pendingConnectId != null || restoreSuppressed
+                        if (replaced) state.disconnectConnectionAttempt() else state.connectionLinkDown(retryToken)
                         retire(invalidate = false)
                         connection = null
                         view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
                             telemetry = null, settings = null, bms = null, problem = true)
-                        scheduleRustRetry(retryDevice, retryToken)
+                        if (!replaced) scheduleRustRetry(retryDevice, retryToken)
                         publish()
+                        connectPendingOnOwner()
+                        runAfterDrainCallbacks()
                     }
                     if (diagnostics.hasWriter(retryToken)) {
                         if (captureLinkUp) diagnostics.linkDown(retryToken)
@@ -1073,12 +1078,19 @@ class AndroidBleClient(
             }
             publish()
             connectPendingOnOwner()
-            afterDrainCallbacks.toList().forEach { callback ->
-                try { callback() } catch (error: Exception) {
+            runAfterDrainCallbacks()
+        }
+
+        private fun runAfterDrainCallbacks() {
+            val callbacks = afterDrainCallbacks.toList()
+            afterDrainCallbacks.clear()
+            callbacks.forEach { callback ->
+                try {
+                    callback()
+                } catch (error: Exception) {
                     Log.w("CutoutBle", "Bluetooth shutdown callback failed", error)
                 }
             }
-            afterDrainCallbacks.clear()
         }
 
         fun retire(invalidate: Boolean = true) {
