@@ -574,26 +574,14 @@ final class MusicFeatureModel {
             appleMonitor.applySuspension(suspension)
         #endif
         spotifyProvider.applySuspension(suspension)
-        if suspension.observationGap {
-            let observedAtMs = monotonicNow()
-            let observation = MusicProviderObservation(
-                snapshot: MobileMusicSnapshotDto(
-                    provider: selectedProvider,
-                    sessionId: "music-observation-gap",
-                    state: .disconnected,
-                    item: coordinator.nowPlaying?.item,
-                    positionMilliseconds: nil,
-                    durationMilliseconds: nil,
-                    observedAtMs: observedAtMs,
-                    capabilities: .init(
-                        previous: false,
-                        play: false,
-                        pause: false,
-                        next: false,
-                        openProvider: true
-                    )
-                ))
-            submitObservation(observation)
+        if suspension.observationGap,
+            let snapshot = musicObservationGapSnapshot(
+                provider: selectedProvider,
+                item: coordinator.nowPlaying?.item,
+                observedAtMs: monotonicNow()
+            )
+        {
+            submitObservation(MusicProviderObservation(snapshot: snapshot))
         }
         stopProviderWork()
         if let nowPlaying = coordinator.nowPlaying {

@@ -464,16 +464,13 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(PevLiveActivityMetricRole.battery.accessibilitySortPriority(for: .reduceAcceleration), 0)
     }
 
-    func testDistanceValueConvertsRecordingDistanceToKilometresWhenSpeedUnitIsMetric() {
+    func testDistanceValueUsesMilesRegardlessOfSpeedSpelling() {
         XCTAssertEqual(
             LiveActivityRideSnapshot.distanceValue(rideDistance: Distance(value: 1_000_000), speedUnit: "km/h"),
-            .available(label: "Distance", value: "1.0", unit: "km", source: .appLifecycle))
-    }
-
-    func testDistanceValueTreatsKmhAsMetric() {
+            .available(label: "Distance", value: "0.6", unit: "mi", source: .appLifecycle))
         XCTAssertEqual(
             LiveActivityRideSnapshot.distanceValue(rideDistance: Distance(value: 1_000_000), speedUnit: "kmh"),
-            .available(label: "Distance", value: "1.0", unit: "km", source: .appLifecycle))
+            .available(label: "Distance", value: "0.6", unit: "mi", source: .appLifecycle))
     }
 
     func testWheelOdometerDoesNotPopulateRecordingDistanceOrDuration() {

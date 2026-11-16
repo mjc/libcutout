@@ -163,11 +163,16 @@ impl SpotifyPlayback {
     }
 
     /// Projects lifecycle freshness and provider restrictions into shared capabilities.
+    ///
+    /// `can_reconnect` adds Play for stopped, disconnected, stale, and unavailable
+    /// playback when the caller can still reach Spotify. That bit does not require
+    /// an active device or a provider allow-list entry.
     #[must_use]
     pub fn snapshot(
         &self,
         state: MusicPlaybackState,
         observed_at: MonotonicTimestamp,
+        can_reconnect: bool,
     ) -> MusicSnapshot {
         let controls = match state {
             MusicPlaybackState::Playing | MusicPlaybackState::Paused => {
@@ -199,6 +204,9 @@ impl SpotifyPlayback {
                     capabilities = capabilities.with(command);
                 }
             }
+        }
+        if crate::spotify_reconnect_grants_play(state, can_reconnect) {
+            capabilities = capabilities.with(MusicCommand::Play);
         }
         self.base
             .with_playback_observation(state, observed_at, capabilities)

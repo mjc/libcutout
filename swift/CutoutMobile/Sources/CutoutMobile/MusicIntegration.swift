@@ -964,22 +964,29 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 
     /// Projects a monitoring gap without recording a synthetic ride event.
-    /// Provider handoff remains available, but transport commands are disabled
-    /// until a fresh provider observation arrives.
+    /// Open-provider stays. Previous, pause, and next wait for a fresh observation.
+    /// Spotify play stays when that open-provider bit still means reconnect is possible.
     public var staleProjection: Self {
-        Self(
-            provider: provider,
-            state: .stale,
-            item: item,
-            positionMilliseconds: positionMilliseconds,
+        let projected = musicStaleProjection(
+            snapshot: MobileMusicSnapshotDto(
+                provider: provider,
+                sessionId: "music-stale-projection",
+                state: state,
+                item: item,
+                positionMilliseconds: positionMilliseconds,
+                durationMilliseconds: nil,
+                observedAtMs: 0,
+                capabilities: capabilities
+            ),
+            observedAtMs: 0
+        )
+        return Self(
+            provider: projected.provider,
+            state: projected.state,
+            item: projected.item,
+            positionMilliseconds: projected.positionMilliseconds,
             artwork: artwork,
-            capabilities: .init(
-                previous: false,
-                play: provider == .spotify && capabilities.openProvider,
-                pause: false,
-                next: false,
-                openProvider: capabilities.openProvider
-            )
+            capabilities: projected.capabilities
         )
     }
 
@@ -1173,27 +1180,8 @@ public struct MusicProviderObservation: Equatable, Sendable {
     }
 
     func staleProjection(observedAtMs: UInt64) -> Self {
-        let nextObservedAtMs = max(
-            observedAtMs,
-            snapshot.observedAtMs == .max ? .max : snapshot.observedAtMs + 1
-        )
-        return Self(
-            snapshot: MobileMusicSnapshotDto(
-                provider: snapshot.provider,
-                sessionId: snapshot.sessionId,
-                state: .stale,
-                item: snapshot.item,
-                positionMilliseconds: snapshot.positionMilliseconds,
-                durationMilliseconds: snapshot.durationMilliseconds,
-                observedAtMs: nextObservedAtMs,
-                capabilities: .init(
-                    previous: false,
-                    play: snapshot.provider == .spotify && snapshot.capabilities.openProvider,
-                    pause: false,
-                    next: false,
-                    openProvider: snapshot.capabilities.openProvider
-                )
-            ),
+        Self(
+            snapshot: musicStaleProjection(snapshot: snapshot, observedAtMs: observedAtMs),
             artwork: artwork
         )
     }

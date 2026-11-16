@@ -414,9 +414,23 @@ class RideMapRuntime internal constructor(context: Context, private val database
     }
 
     private fun publish(next: RideMapPresentation) {
-        presentation = next
-        val callbacks = synchronized(lock) { observers.toList() }
-        main.post { callbacks.forEach { it(next) } }
+        synchronized(lock) {
+            val current = presentation
+            val incoming = next.snapshot
+            val snapshot = if (incoming == null || shouldPublishRideSnapshot(
+                    current.snapshot?.rideId,
+                    incoming.rideId,
+                    current.snapshot?.revision ?: 0UL,
+                    incoming.revision,
+                )
+            ) incoming else current.snapshot
+            val admitted = if (snapshot == incoming) next else next.copy(snapshot = snapshot)
+            presentation = admitted
+            val callbacks = observers.toList()
+            // Queue while the assignment lock is held so a later snapshot cannot
+            // be enqueued ahead of this one. The callbacks still run on main.
+            main.post { callbacks.forEach { it(admitted) } }
+        }
     }
 
     override fun close() {

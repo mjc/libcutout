@@ -442,17 +442,14 @@ public final class DeviceDetectionSession {
     }
 
     func expireBegodeProbeResponses(
-        at now: MonotonicMilliseconds,
-        timeout: MonotonicMilliseconds
+        at now: MonotonicMilliseconds
     ) -> [DeviceDetectionPendingProbe] {
         guard let token = currentToken else {
-            return inner.expireBegodeProbeResponsesUnscoped(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+            return inner.expireBegodeProbeResponsesUnscoped(nowMs: now.rawValue)
                 .map(DeviceDetectionPendingProbe.init)
         }
-        return inner.expireBegodeProbeResponsesForAttempt(
-            token: token, nowMs: now.rawValue, timeoutMs: timeout.rawValue
-        )
-        .map(DeviceDetectionPendingProbe.init)
+        return inner.expireBegodeProbeResponsesForAttempt(token: token, nowMs: now.rawValue)
+            .map(DeviceDetectionPendingProbe.init)
     }
 
     func markBegodeProbeResponsesMissing() -> [DeviceDetectionPendingProbe] {
@@ -462,8 +459,8 @@ public final class DeviceDetectionSession {
         return inner.markBegodeProbeResponsesMissingForAttempt(token: token).map(DeviceDetectionPendingProbe.init)
     }
 
-    func nextBegodeProbeExpiry(timeout: MonotonicMilliseconds) -> MonotonicMilliseconds? {
-        inner.nextBegodeProbeExpiry(timeoutMs: timeout.rawValue).map(MonotonicMilliseconds.init)
+    func nextBegodeProbeExpiry() -> MonotonicMilliseconds? {
+        inner.nextBegodeProbeExpiry().map(MonotonicMilliseconds.init)
     }
 
     func reset() {
@@ -1989,11 +1986,25 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.lastUpdate = lastUpdate
     }
 
-    public init?(displayState: RideDisplayState, title: String?, identity: MobileDeviceIdentityDto? = nil) {
+    public init?(
+        displayState: RideDisplayState,
+        title: String?,
+        identity: MobileDeviceIdentityDto? = nil,
+        connectedPlatformIdentifier: String? = nil
+    ) {
         let telemetry = displayState.telemetry ?? TelemetrySnapshot()
         guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
         let recording = displayState.logicalRide
-        let statistics = recording?.liveActivityStatistics
+        let statistics = recording.flatMap {
+            (ride) -> MobileRideMapLiveActivityStatisticsDto? in
+            guard let connectedPlatformIdentifier,
+                recordingMatchesConnectedVehicle(
+                    associatedVehicle: ride.associatedVehicle,
+                    connectedPlatformId: connectedPlatformIdentifier
+                )
+            else { return nil }
+            return ride.liveActivityStatistics
+        }
         self.init(
             title: title ?? Self.defaultTitle,
             vehicleKind: identity?.vehicleKind ?? .unknown,

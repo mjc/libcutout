@@ -68,9 +68,7 @@ class PackPanel(context: Context) : ScrollView(context) {
             snapshot?.cellDelta != null,
             snapshot?.energyPercent != null,
             snapshot?.voltage != null,
-            snapshot?.current != null,
-            snapshot?.bmsPackCurrent0 != null,
-            snapshot?.bmsPackCurrent1 != null,
+            snapshot?.let { displayedPackCurrents(it.bmsPackCurrent0?.value, it.bmsPackCurrent1?.value, it.current?.value).map { reading -> reading.packIndex } },
             snapshot?.cellDelta != null,
             snapshot?.balancingSummary != null,
             snapshot?.faultSummary != null,
@@ -200,13 +198,17 @@ class PackPanel(context: Context) : ScrollView(context) {
     }
 
     private fun renderMeasurements(snapshot: MobileBmsSnapshotDto) {
-        if (snapshot.energyPercent == null && snapshot.voltage == null && snapshot.current == null && snapshot.bmsPackCurrent0 == null && snapshot.bmsPackCurrent1 == null) return
+        val currents = displayedPackCurrents(snapshot.bmsPackCurrent0?.value, snapshot.bmsPackCurrent1?.value, snapshot.current?.value)
+        if (snapshot.energyPercent == null && snapshot.voltage == null && currents.isEmpty()) return
         val card = card()
         metric(card, context.getString(R.string.battery)) { bms?.energyPercent?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + "${it.value.value} %" } }
         metric(card, context.getString(R.string.voltage)) { bms?.voltage?.value?.value?.let { number(it.toDouble() / 1000, 2) + " V" } }
-        metric(card, ui.label("bms.pack.current")) { bms?.current?.value?.let(::currentText) }
-        metric(card, context.getString(R.string.pack_current_1)) { bms?.bmsPackCurrent0?.value?.let(::currentText) }
-        metric(card, context.getString(R.string.pack_current_2)) { bms?.bmsPackCurrent1?.value?.let(::currentText) }
+        currents.forEachIndexed { index, reading ->
+            metric(card, packCurrentLabel(reading.packIndex)) {
+                bms?.let { displayedPackCurrents(it.bmsPackCurrent0?.value, it.bmsPackCurrent1?.value, it.current?.value) }
+                    ?.getOrNull(index)?.current?.let(::currentText)
+            }
+        }
         metric(card, context.getString(R.string.pack_delta)) { bms?.cellDelta?.value?.value?.let { "$it mV" } }
         metric(card, context.getString(R.string.pack_balancing)) { bms?.balancingSummary }
         metric(card, context.getString(R.string.pack_faults)) { bms?.faultSummary }
@@ -346,6 +348,12 @@ class PackPanel(context: Context) : ScrollView(context) {
     private fun groupVoltage(g: MobileBmsGroupSnapshotDto) = g.voltage?.value?.value?.let { number(it.toDouble() / 1000, 3) + " V" }
     private fun alertColor(level: MobileBmsAlertLevelDto) = when (level) { MobileBmsAlertLevelDto.CRITICAL -> ui.red; MobileBmsAlertLevelDto.WARNING -> ui.orange; else -> ui.foreground }
     private fun number(value: Double, places: Int) = String.format(Locale.getDefault(), "%.${places}f", value)
+    private fun packCurrentLabel(packIndex: UByte?): String = when (packIndex?.toInt()) {
+        1 -> context.getString(R.string.pack_current_1)
+        2 -> context.getString(R.string.pack_current_2)
+        else -> ui.label("bms.pack.current")
+    }
+
     private fun currentText(value: BatteryCurrent): String = TelemetryValueFormatting.current(context, value)
 }
 

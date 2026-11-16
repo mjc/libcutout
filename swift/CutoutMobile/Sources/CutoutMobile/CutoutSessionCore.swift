@@ -167,12 +167,10 @@ public enum CaptureEvent: Equatable, Sendable {
     }
 }
 
-struct BegodeProbeResponsePolicy {
-    static let timeoutAfter = MonotonicMilliseconds(2_000)
-}
-
 struct ProtocolDetectionResponsePolicy {
-    static let timeoutAfter = MonotonicMilliseconds(2_000)
+    static var timeoutAfter: MonotonicMilliseconds {
+        MonotonicMilliseconds(protocolDetectionResponseTimeoutMs())
+    }
 }
 
 struct IdentificationProbeTransportCoordinator {
@@ -184,6 +182,23 @@ struct IdentificationProbeTransportCoordinator {
 
     func subscribeVesc(using sink: any CoreBluetoothOperationSink) {
         sink.subscribe(channel: .vescNordicUartNotify)
+    }
+
+    /// Asks a silent VESC for the startup reads a verified session sends on link-up.
+    /// The reply is observed as a detection notification.
+    func requestVescIdentification(
+        at now: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes,
+        using sink: any CoreBluetoothOperationSink
+    ) {
+        let planner = CoreBluetoothTransportPlanner(writeLimit: writeLimit)
+        let outputs = vescIdentificationRequests(monotonicMs: now.dto, maxWriteLen: writeLimit.dto)
+        for output in outputs {
+            for operation in planner.plan(action: SessionAction(output)) {
+                guard case .writeWithoutResponse(let channel, let bytes) = operation else { continue }
+                _ = sink.writeWithoutResponse(channel: channel, bytes: bytes)
+            }
+        }
     }
 
     @discardableResult
@@ -200,27 +215,6 @@ struct IdentificationProbeTransportCoordinator {
 
     func observeNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
         return detectionSession.observeNotification(bytes: bytes)
-    }
-
-    func vescNotificationsEnabled(
-        at now: MonotonicMilliseconds,
-        using sink: any CoreBluetoothOperationSink
-    ) {
-        let session = VescReadOnlyTransportSession()
-        guard
-            let linkActions = try? session.linkUp(
-                at: now,
-                writeLimit: TransportWriteLimitBytes(512)
-            )
-        else {
-            return
-        }
-        linkActions
-            .filter { $0.kind == .write }
-            .forEach { action in
-                guard let channel = BluetoothUuid(action.channel) else { return }
-                _ = sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
-            }
     }
 }
 
@@ -3774,9 +3768,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 }
                 publishCaptureProgress()
                 if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
-                    deviceDetectionSession.nextBegodeProbeExpiry(
-                        timeout: BegodeProbeResponsePolicy.timeoutAfter
-                    ) == nil
+                    deviceDetectionSession.nextBegodeProbeExpiry() == nil
                 {
                     finishProtocolDetectionOrRecord(
                         detectionResolution,
@@ -3883,7 +3875,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         if isDetectingProtocol, channel == .vescNordicUartNotify, characteristic.isNotifying {
-            identificationProbeTransport.vescNotificationsEnabled(at: clock.now(), using: self)
+            requestVescIdentification(on: characteristic.service?.peripheral)
             return
         }
         liveOwner?.handleNotificationStateUpdate(
@@ -4102,10 +4094,7 @@ extension CutoutSessionCore {
 
     func expireOutstandingBegodeProbeResponses() {
         onBleQueue {
-            let expired = deviceDetectionSession.expireBegodeProbeResponses(
-                at: clock.now(),
-                timeout: BegodeProbeResponsePolicy.timeoutAfter
-            )
+            let expired = deviceDetectionSession.expireBegodeProbeResponses(at: clock.now())
             publishMissingBegodeProbeResponses(expired)
             advanceIdentificationQueries()
             scheduleBegodeProbeExpiry()
@@ -4241,6 +4230,16 @@ extension CutoutSessionCore {
         recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
     }
 
+    private func requestVescIdentification(on peripheral: CBPeripheral?) {
+        let reported = peripheral?.maximumWriteValueLength(for: .withoutResponse) ?? 20
+        let limit = TransportWriteLimitBytes(UInt16(clamping: max(reported, 20)))
+        identificationProbeTransport.requestVescIdentification(
+            at: clock.now(),
+            writeLimit: limit,
+            using: self
+        )
+    }
+
     private func beginProtocolDetection(on peripheral: CBPeripheral) {
         setPhase(.subscribing)
         var subscribed = false
@@ -4255,7 +4254,7 @@ extension CutoutSessionCore {
         if let characteristic = subscribedCharacteristics[.vescNordicUartNotify] {
             scheduleProtocolDetectionExpiry(on: peripheral)
             if characteristic.isNotifying {
-                identificationProbeTransport.vescNotificationsEnabled(at: clock.now(), using: self)
+                requestVescIdentification(on: peripheral)
             } else {
                 identificationProbeTransport.subscribeVesc(using: self)
             }
@@ -4322,9 +4321,7 @@ extension CutoutSessionCore {
     private func scheduleBegodeProbeExpiry() {
         begodeProbeExpiryWorkItem?.cancel()
         guard
-            let deadline = deviceDetectionSession.nextBegodeProbeExpiry(
-                timeout: BegodeProbeResponsePolicy.timeoutAfter
-            )
+            let deadline = deviceDetectionSession.nextBegodeProbeExpiry()
         else {
             begodeProbeExpiryWorkItem = nil
             return

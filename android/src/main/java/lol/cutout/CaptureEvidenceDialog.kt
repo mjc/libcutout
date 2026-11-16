@@ -303,13 +303,14 @@ internal class CaptureEvidenceDialog(
             }
             val options = BitmapFactory.Options().apply {
                 inSampleSize = 1
-                while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 2048) inSampleSize *= 2
+                val maxEdge = screenshotEvidenceMaxEdgePixels().toInt()
+                while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > maxEdge) inSampleSize *= 2
             }
             val bitmap = context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, options) }
                 ?: throw MobileCaptureSubmissionException.InvalidScreenshot()
             try {
                 ByteArrayOutputStream().use { output ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, screenshotEvidenceJpegQuality().toInt(), output)) {
                         throw MobileCaptureSubmissionException.InvalidScreenshot()
                     }
                     output.toByteArray()

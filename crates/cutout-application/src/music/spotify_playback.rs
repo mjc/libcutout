@@ -59,13 +59,17 @@ impl SpotifyPlayback {
     }
 
     /// Projects metadata with the current native playback state and timestamp.
+    ///
+    /// `can_reconnect` adds Play for stopped, disconnected, stale, and unavailable
+    /// playback when Spotify can still be reached.
     #[must_use]
     pub fn snapshot(
         &self,
         state: MusicPlaybackState,
         observed_at: MonotonicTimestamp,
+        can_reconnect: bool,
     ) -> MusicSnapshot {
-        self.inner.snapshot(state, observed_at)
+        self.inner.snapshot(state, observed_at, can_reconnect)
     }
 }
 

@@ -102,15 +102,20 @@ impl MobileSpotifyPlayback {
     }
 
     /// Applies shared lifecycle freshness and capability rules to the observation.
+    ///
+    /// `can_reconnect` adds Play for stopped, disconnected, stale, and unavailable
+    /// playback when the native client can still reach Spotify.
     #[must_use]
     pub fn snapshot(
         &self,
         state: MobileMusicPlaybackStateDto,
         observed_at_ms: u64,
+        can_reconnect: bool,
     ) -> MobileMusicSnapshotDto {
         (&self.inner.snapshot(
             CoreMusicPlaybackState::from(state),
             MonotonicTimestamp::new(observed_at_ms),
+            can_reconnect,
         ))
             .into()
     }
@@ -209,7 +214,7 @@ mod tests {
         let playback = MobileSpotifyPlayback::parse(br#"{"device":{"id":"phone"},"is_playing":true,"item":{"type":"track","uri":"spotify:track:abc","name":"Song"}}"#.to_vec()).expect("valid response");
         assert!(playback.is_playing());
         assert_eq!(playback.device_id().as_deref(), Some("phone"));
-        let snapshot = playback.snapshot(MobileMusicPlaybackStateDto::Playing, 10);
+        let snapshot = playback.snapshot(MobileMusicPlaybackStateDto::Playing, 10, false);
         assert!(snapshot.capabilities.pause);
         assert_eq!(
             snapshot.item.expect("known track").title.as_deref(),
@@ -219,9 +224,21 @@ mod tests {
         assert!(inactive.device_id().is_none());
         assert!(
             !inactive
-                .snapshot(MobileMusicPlaybackStateDto::Stopped, 20)
+                .snapshot(MobileMusicPlaybackStateDto::Stopped, 20, false)
                 .capabilities
                 .next
+        );
+        assert!(
+            inactive
+                .snapshot(MobileMusicPlaybackStateDto::Stopped, 21, true)
+                .capabilities
+                .play
+        );
+        assert!(
+            !inactive
+                .snapshot(MobileMusicPlaybackStateDto::Playing, 22, true)
+                .capabilities
+                .play
         );
         assert_eq!(
             inactive.item_identifier().as_deref(),

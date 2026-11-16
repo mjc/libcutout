@@ -6,7 +6,7 @@ pub use cutout_core::{
     AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
 };
 use cutout_core::{
-    BluetoothServiceUuid, CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry,
+    BluetoothServiceUuid, CutoutSessionState, GattFingerprint, ModelRegistryEntry,
     MonotonicTimestamp, ProtocolFamily,
 };
 
@@ -394,10 +394,7 @@ impl DeviceDetectionSession {
                 return IdentificationProbePlan::Unsupported;
             }
         }
-        if self
-            .next_probe_expiry(state, Duration::from_milliseconds(0))
-            .is_some()
-        {
+        if self.next_probe_expiry(state).is_some() {
             return IdentificationProbePlan::AlreadyPending;
         }
         let probes = crate::begode_identification_probes();
@@ -609,14 +606,13 @@ impl DeviceDetectionSession {
         self.resolution(state)
     }
 
-    /// Expires every outstanding probe older than the supplied timeout.
+    /// Expires every outstanding probe older than the probe response timeout.
     pub fn expire_pending_probes(
         &mut self,
         state: &mut CutoutSessionState,
         now: MonotonicTimestamp,
-        timeout: Duration,
     ) -> ArrayVec<PendingProbe, 3> {
-        state.identity_mut().expire_pending_probes(now, timeout)
+        state.identity_mut().expire_pending_probes(now)
     }
 
     /// Marks every outstanding probe as missing.
@@ -629,12 +625,8 @@ impl DeviceDetectionSession {
 
     /// Returns the next strict probe-expiration deadline.
     #[must_use]
-    pub fn next_probe_expiry(
-        &self,
-        state: &CutoutSessionState,
-        timeout: Duration,
-    ) -> Option<MonotonicTimestamp> {
-        state.identity().next_probe_expiry(timeout)
+    pub fn next_probe_expiry(&self, state: &CutoutSessionState) -> Option<MonotonicTimestamp> {
+        state.identity().next_probe_expiry()
     }
 
     /// Returns a detection resolution derived from the Rust-owned session root.
@@ -1290,7 +1282,7 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 #[allow(unused_qualifications)]
 mod tests {
     use cutout_core::{
-        Capabilities, Duration, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry,
+        Capabilities, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry,
         MonotonicTimestamp, ProtocolFamily, VerificationStatus,
     };
 
@@ -1455,25 +1447,16 @@ mod tests {
                 panic!("expected one query after preceding timeout")
             };
             assert_eq!(writes[0].payload.as_slice(), expected);
-            let timeout = Duration::from_milliseconds(2_000);
             assert!(
                 session
                     .detector
-                    .expire_pending_probes(
-                        &mut session.root,
-                        MonotonicTimestamp::new(at + 2_000),
-                        timeout
-                    )
+                    .expire_pending_probes(&mut session.root, MonotonicTimestamp::new(at + 2_000),)
                     .is_empty()
             );
             assert_eq!(
                 session
                     .detector
-                    .expire_pending_probes(
-                        &mut session.root,
-                        MonotonicTimestamp::new(at + 2_001),
-                        timeout
-                    )
+                    .expire_pending_probes(&mut session.root, MonotonicTimestamp::new(at + 2_001),)
                     .len(),
                 1
             );
@@ -1501,12 +1484,7 @@ mod tests {
                 .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(7_001)),
             crate::IdentificationProbePlan::Unsupported
         );
-        assert_eq!(
-            session
-                .detector
-                .next_probe_expiry(&session.root, Duration::from_milliseconds(2_000)),
-            None
-        );
+        assert_eq!(session.detector.next_probe_expiry(&session.root), None);
     }
 
     #[test]
@@ -1879,13 +1857,7 @@ mod tests {
                 .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(1)),
             crate::IdentificationProbePlan::Unsupported
         );
-        assert_eq!(
-            session
-                .root
-                .identity()
-                .next_probe_expiry(Duration::from_milliseconds(1)),
-            None
-        );
+        assert_eq!(session.root.identity().next_probe_expiry(), None);
     }
 
     #[test]
@@ -1894,26 +1866,14 @@ mod tests {
         let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
             probe: PendingProbe::BegodeName,
         });
-        assert!(
-            session
-                .root
-                .identity()
-                .next_probe_expiry(Duration::from_milliseconds(1))
-                .is_some()
-        );
+        assert!(session.root.identity().next_probe_expiry().is_some());
 
         let frame = synthetic_veteran_frame_with_model_id(43);
         let update = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
 
         assert_eq!(update.protocol, ProtocolFamilyState::VeteranLeaperkimNosfet);
         assert_eq!(update.missing_probe_response, None);
-        assert_eq!(
-            session
-                .root
-                .identity()
-                .next_probe_expiry(Duration::from_milliseconds(1)),
-            None
-        );
+        assert_eq!(session.root.identity().next_probe_expiry(), None);
     }
 
     #[test]
@@ -2364,8 +2324,6 @@ mod tests {
     fn queued_probe_responses_are_correlated_independently() {
         let mut root = cutout_core::CutoutSessionState::default();
         let mut detector = ProtocolDetectionSession::new();
-        let timeout = Duration::from_milliseconds(2_000);
-
         let _ = detector.observe_probe_write_at(
             &mut root,
             PendingProbe::BegodeName,
@@ -2388,8 +2346,7 @@ mod tests {
             },
         );
 
-        let expired =
-            detector.expire_pending_probes(&mut root, MonotonicTimestamp::new(3_003), timeout);
+        let expired = detector.expire_pending_probes(&mut root, MonotonicTimestamp::new(3_003));
 
         assert_eq!(
             expired.as_slice(),

@@ -1,5 +1,15 @@
 //! Native per-socket network selection for a Rust-owned RTSP preview.
 
+/// Maximum camera command response body, in bytes.
+pub const CAMERA_COMMAND_BODY_LIMIT_BYTES: u64 = 512 * 1_024;
+
+/// Camera command responses use the shared body limit.
+#[must_use]
+#[uniffi::export]
+pub fn camera_command_body_limit_bytes() -> u64 {
+    CAMERA_COMMAND_BODY_LIMIT_BYTES
+}
+
 use std::{net::SocketAddrV4, os::fd::AsRawFd, sync::Arc};
 
 use cutout_protocols::{RtspError, RtspPreviewSession};
@@ -82,6 +92,11 @@ mod tests {
         net::{Ipv4Addr, TcpListener},
         sync::atomic::{AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn display_policy_camera_command_body_limit_is_512_kib() {
+        assert_eq!(camera_command_body_limit_bytes(), 512 * 1_024);
+    }
 
     struct Binding {
         listener: TcpListener,

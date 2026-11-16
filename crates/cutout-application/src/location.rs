@@ -1,5 +1,10 @@
 //! Phone location normalization, receipt-time freshness and shared readback ownership.
 
+/// Minimum interval passed to the platform location provider, in milliseconds.
+///
+/// Zero does not add a native delivery filter. Canonical admission stays in Rust.
+pub const LOCATION_ACQUISITION_MINIMUM_INTERVAL_MILLISECONDS: u64 = 0;
+
 use cutout_core::{
     PevcapPhoneLocation, SpeedReadingDto, ValueQualityDto, ValueSourceDto, VerificationStatusDto,
     unix_milliseconds_from_seconds,
@@ -217,4 +222,14 @@ pub(crate) fn round_f64_to_i32(value: f64) -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_policy_location_acquisition_interval_is_unfiltered() {
+        assert_eq!(LOCATION_ACQUISITION_MINIMUM_INTERVAL_MILLISECONDS, 0);
+    }
 }

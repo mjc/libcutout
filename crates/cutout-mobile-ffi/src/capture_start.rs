@@ -72,6 +72,20 @@ pub struct MobileStartedCaptureWriterDto {
     pub path: String,
 }
 
+/// Longest screenshot-evidence edge, in pixels.
+#[must_use]
+#[uniffi::export]
+pub fn screenshot_evidence_max_edge_pixels() -> u32 {
+    application::SCREENSHOT_EVIDENCE_MAX_EDGE_PIXELS
+}
+
+/// JPEG quality for screenshot evidence, from 0 to 100.
+#[must_use]
+#[uniffi::export]
+pub fn screenshot_evidence_jpeg_quality() -> u8 {
+    application::SCREENSHOT_EVIDENCE_JPEG_QUALITY
+}
+
 /// Normalizes a native wall-clock observation without reading another clock.
 #[must_use]
 #[uniffi::export]
@@ -161,6 +175,12 @@ mod tests {
         path::{Path, PathBuf},
         thread,
     };
+
+    #[test]
+    fn display_policy_screenshot_evidence_uses_the_shared_resample() {
+        assert_eq!(screenshot_evidence_max_edge_pixels(), 2_048);
+        assert_eq!(screenshot_evidence_jpeg_quality(), 85);
+    }
 
     struct Directory(PathBuf);
     impl Directory {

@@ -340,7 +340,7 @@ func captureScreenshotJPEG(_ data: Data) throws -> Data {
             [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 2048,
+                kCGImageSourceThumbnailMaxPixelSize: ScreenshotEvidencePolicy.maxEdgePixels,
                 kCGImageSourceShouldCacheImmediately: true,
             ] as CFDictionary)
     else { throw MobileCaptureSubmissionError.InvalidScreenshot }
@@ -348,7 +348,11 @@ func captureScreenshotJPEG(_ data: Data) throws -> Data {
     guard let destination = CGImageDestinationCreateWithData(result, UTType.jpeg.identifier as CFString, 1, nil) else {
         throw MobileCaptureSubmissionError.InvalidScreenshot
     }
-    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+    CGImageDestinationAddImage(
+        destination,
+        image,
+        [kCGImageDestinationLossyCompressionQuality: ScreenshotEvidencePolicy.jpegQuality] as CFDictionary
+    )
     guard CGImageDestinationFinalize(destination) else { throw MobileCaptureSubmissionError.InvalidScreenshot }
     return result as Data
 }

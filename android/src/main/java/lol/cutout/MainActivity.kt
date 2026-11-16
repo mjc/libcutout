@@ -153,6 +153,7 @@ class MainActivity : Activity() {
         super.onResume(); resumed = true
         client.observe(::render)
         client.diagnostics.deduplicateManagedCaptureFiles()
+        app.music.sceneDidBecomeActive()
         app.music.refreshSessions()
         app.refreshPhoneAlarmAuthorization()
         app.locations.setAuthorizationEvidence(if (preferences.getBoolean("location.asked", false))
@@ -163,6 +164,7 @@ class MainActivity : Activity() {
     }
     override fun onPause() { resumed = false; map?.onHostPause(); super.onPause() }
     override fun onStop() {
+        app.music.sceneDidEnterBackground()
         client.observe(null); client.stopScan(); lighting?.setActive(false); camera?.setActive(false)
         if (page == R.string.devices) scanned = false
         hostStarted = false; map?.onHostStop(); super.onStop()

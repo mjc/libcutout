@@ -122,9 +122,17 @@ final class ChargingSpotEditorModel {
     }
 
     var hasIncompletePrice: Bool {
-        priceAmount.isEmpty && priceCurrency.isEmpty && priceBasis == nil
-            ? false
-            : parsedPrice == nil
+        if blankPriceIsAbsent { return false }
+        return parsedPrice == nil
+    }
+
+    /// A blank amount with the untouched USD default is not a price yet.
+    /// Payment terms do not turn that blank amount into a price.
+    private var blankPriceIsAbsent: Bool {
+        let amount = priceAmount.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currency = priceCurrency.trimmingCharacters(in: .whitespacesAndNewlines)
+        return amount.isEmpty && priceBasis == nil
+            && (currency.isEmpty || currency.uppercased() == "USD")
     }
 
     private var editorInput: MobileChargingInputDto {
@@ -324,11 +332,38 @@ final class ChargingSpotEditorModel {
     }
 
     func setOutletCount(_ count: Int) {
-        guard (1...10).contains(count) else { return }
+        guard let stored = UInt16(exactly: count) else {
+            errorKey = ChargingEditorValidationPresentation.messageKey(
+                for: MobileChargingFieldIssueDto(field: .supply, reason: .invalid, supplyIndex: 0))
+            return
+        }
+        if let issue = Self.outletCountConstructionIssue(stored) {
+            errorKey = ChargingEditorValidationPresentation.messageKey(for: issue)
+            return
+        }
         outletCount = count
         outletCountWasEdited = true
-        supplies.first?.setCompactOutletCount(UInt16(count))
+        supplies.first?.setCompactOutletCount(stored)
         errorKey = nil
+    }
+
+    /// Asks Rust to construct the count. Zero is the only `UInt16` `OutletCount` rejects.
+    private static func outletCountConstructionIssue(_ count: UInt16) -> MobileChargingFieldIssueDto? {
+        let probe = MobileChargingInputDto(
+            coordinate: MobileMapCoordinateDto(latitudeDegrees: 0, longitudeDegrees: 0),
+            accessNote: "Outlet",
+            cost: .free,
+            name: nil,
+            venue: nil,
+            hours: nil,
+            terms: nil,
+            price: nil,
+            supplies: [
+                MobileChargingSupplyDto(voltageVolts: nil, connectors: [], outletCount: count)
+            ]
+        )
+        guard case .invalid(let issue) = mobileChargingValidateEditor(input: probe) else { return nil }
+        return issue
     }
 
     func setSelectedPlug(_ connector: MobileChargingConnectorDto?) {
