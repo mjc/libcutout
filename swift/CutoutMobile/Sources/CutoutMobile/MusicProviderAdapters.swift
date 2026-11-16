@@ -1083,13 +1083,13 @@ struct SpotifyRenewalRetryPolicy {
                 return .accepted
             }
             let changeHandler = onChange ?? self.onChange
-            let canReconnect = session != nil && configuration != nil
             let webCanResume =
                 selectedPlaybackTransport == .webApi
+                && (lifecycleState == .playing || lifecycleState == .paused)
                 && webPlayback?.snapshot(
                     state: lifecycleState,
                     observedAtMs: connectionNowMs,
-                    canReconnect: canReconnect
+                    canReconnect: false
                 ).capabilities.play == true
             if command == .play,
                 !webCanResume,
