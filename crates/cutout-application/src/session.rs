@@ -1037,6 +1037,14 @@ impl ApplicationDeviceSession {
     pub fn phone_drive_availability(&self) -> cutout_core::PhoneDriveAvailability {
         self.protocol.phone_drive_availability()
     }
+
+    /// Drains phone-drive facts recorded by this session.
+    ///
+    /// Taking the facts leaves the gesture and grant as they are.
+    #[must_use]
+    pub fn take_phone_drive_evidence(&mut self) -> Vec<cutout_core::PhoneDriveEvidence> {
+        self.protocol.take_phone_drive_evidence()
+    }
 }
 
 #[cfg(test)]

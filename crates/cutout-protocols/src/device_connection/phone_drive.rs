@@ -3,9 +3,9 @@
 use cutout_core::{
     ApplicationQueryTransportStatus, ConnectionAttemptToken, MonotonicTimestamp, PhoneControlMode,
     PhoneDriveAction, PhoneDriveActivationId, PhoneDriveAvailability, PhoneDriveCancelReason,
-    PhoneDriveContacts, PhoneDriveInputPhase, PhoneDriveInputSnapshot, PhoneDriveLimits,
-    PhoneDriveUnavailableReason, PhoneDriveWrite, PhoneDriveWriteKind, ProtocolFamily,
-    SessionOutput, TransportAction, VehicleKind, WriteMode,
+    PhoneDriveContactId, PhoneDriveContacts, PhoneDriveEvidence, PhoneDriveInputPhase,
+    PhoneDriveInputSnapshot, PhoneDriveLimits, PhoneDriveUnavailableReason, PhoneDriveWrite,
+    PhoneDriveWriteKind, ProtocolFamily, SessionOutput, TransportAction, VehicleKind, WriteMode,
 };
 
 use super::{DeviceConnectionSession, DeviceConnectionStep};
@@ -68,9 +68,12 @@ struct Activation {
 struct PendingWrite {
     admission: PhoneDriveWrite,
     action: Option<PhoneDriveAction>,
+    contact: Option<PhoneDriveContactId>,
     milliamps: u32,
     issued_at: u64,
     emitted: bool,
+    /// This setpoint is the first admission of the current press.
+    records_receipt: bool,
 }
 
 #[derive(Debug, Default)]
@@ -80,6 +83,7 @@ pub(super) struct PhoneDriveControl {
     next_activation: u64,
     next_sequence: u64,
     controller_fault: bool,
+    evidence: Vec<PhoneDriveEvidence>,
 }
 
 impl DeviceConnectionSession {
@@ -260,6 +264,7 @@ impl DeviceConnectionSession {
                 .observe(generation, PhoneDriveContacts::Invalid);
             after = self.phone_drive_input_snapshot();
         }
+        self.note_new_phone_drive_intent(before.phase, after.phase, observed_at);
         if let Some(activation) = self.phone_drive_control.activation.as_mut() {
             activation.observed_at = Some(observed_at.get());
             match after.phase {
@@ -270,13 +275,13 @@ impl DeviceConnectionSession {
                             PhoneDriveAction::Throttle => limits.throttle_milliamps(),
                             PhoneDriveAction::Brake => limits.brake_milliamps(),
                         };
-                        self.prepare_phone_drive_write(Some(action), milliamps, at);
+                        self.prepare_phone_drive_write(Some(action), milliamps, at, true);
                     }
                 }
                 PhoneDriveInputPhase::Idle => {
                     activation.next_setpoint_at = None;
                     if let PhoneDriveInputPhase::Pressed(_) = before.phase {
-                        self.prepare_phone_drive_write(None, 0, at);
+                        self.prepare_phone_drive_write(None, 0, at, false);
                     }
                 }
                 PhoneDriveInputPhase::Cancelled(reason) => {
@@ -286,7 +291,7 @@ impl DeviceConnectionSession {
                             if !self.phone_drive_control.pending.is_some_and(|pending| {
                                 pending.admission.kind == PhoneDriveWriteKind::Release
                             }) {
-                                self.prepare_phone_drive_write(None, 0, at);
+                                self.prepare_phone_drive_write(None, 0, at, false);
                             }
                         } else {
                             self.cancel_phone_drive(reason);
@@ -329,7 +334,7 @@ impl DeviceConnectionSession {
                 PhoneDriveAction::Throttle => activation.limits.throttle_milliamps(),
                 PhoneDriveAction::Brake => activation.limits.brake_milliamps(),
             };
-            self.prepare_phone_drive_write(Some(action), milliamps, at);
+            self.prepare_phone_drive_write(Some(action), milliamps, at, false);
         }
         let mut step = self.phone_drive_step(token, at)?;
         self.append_phone_drive_write(&mut step, at, can_submit);
@@ -400,7 +405,21 @@ impl DeviceConnectionSession {
         }
         match status {
             ApplicationQueryTransportStatus::Queued => {}
-            ApplicationQueryTransportStatus::Submitted => self.phone_drive_control.pending = None,
+            ApplicationQueryTransportStatus::Submitted => {
+                let receipt = self.phone_drive_control.pending.and_then(|pending| {
+                    if pending.records_receipt {
+                        pending.action.zip(pending.contact)
+                    } else {
+                        None
+                    }
+                });
+                self.phone_drive_control.pending = None;
+                if let Some((action, contact)) = receipt {
+                    self.note_phone_drive_evidence(PhoneDriveEvidence::native_receipt(
+                        action, contact, at,
+                    ));
+                }
+            }
             ApplicationQueryTransportStatus::Rejected
             | ApplicationQueryTransportStatus::Cancelled
             | ApplicationQueryTransportStatus::SubmissionUnknown => {
@@ -426,6 +445,42 @@ impl DeviceConnectionSession {
     #[must_use]
     pub fn phone_drive_input_snapshot(&self) -> PhoneDriveInputSnapshot {
         self.state.phone_drive_input.snapshot()
+    }
+
+    /// Drains the phone-drive facts this session has recorded.
+    ///
+    /// A new press records rider intent. The first admitted setpoint for that
+    /// press records admission, and the native submission of that setpoint
+    /// records a receipt. Taking the facts leaves the gesture and grant as
+    /// they are. A controller effect is recorded only by a separate observation.
+    #[must_use]
+    pub fn take_phone_drive_evidence(&mut self) -> Vec<PhoneDriveEvidence> {
+        std::mem::take(&mut self.phone_drive_control.evidence)
+    }
+
+    fn note_phone_drive_evidence(&mut self, evidence: PhoneDriveEvidence) {
+        self.phone_drive_control.evidence.push(evidence);
+    }
+
+    fn note_new_phone_drive_intent(
+        &mut self,
+        before: PhoneDriveInputPhase,
+        after: PhoneDriveInputPhase,
+        observed_at: MonotonicTimestamp,
+    ) {
+        let PhoneDriveInputPhase::Pressed(action) = after else {
+            return;
+        };
+        if before == after {
+            return;
+        }
+        let Some((pressed, contact)) = self.state.phone_drive_input.pressed_contact() else {
+            return;
+        };
+        if pressed != action {
+            return;
+        }
+        self.note_phone_drive_evidence(PhoneDriveEvidence::intent(action, contact, observed_at));
     }
 
     /// Projects one recorded contact into gesture feedback.
@@ -467,6 +522,7 @@ impl DeviceConnectionSession {
             self.phone_drive_control.activation = None;
             self.phone_drive_control.pending = None;
             self.phone_drive_control.controller_fault = false;
+            self.phone_drive_control.evidence.clear();
             self.phone_drive_preferences_token = None;
             self.phone_drive_settings_presented_for = None;
             self.state
@@ -483,7 +539,7 @@ impl DeviceConnectionSession {
                 .pending
                 .is_some_and(|pending| pending.admission.kind == PhoneDriveWriteKind::Release)
             {
-                self.prepare_phone_drive_write(None, 0, self.last_input_at);
+                self.prepare_phone_drive_write(None, 0, self.last_input_at, false);
             }
             if gesture_local_cancel(reason) {
                 if let Some(activation) = self.phone_drive_control.activation.as_mut() {
@@ -664,6 +720,7 @@ impl DeviceConnectionSession {
         action: Option<PhoneDriveAction>,
         milliamps: u32,
         at: MonotonicTimestamp,
+        fresh_admission: bool,
     ) {
         let Some(activation) = self.phone_drive_control.activation else {
             return;
@@ -687,6 +744,19 @@ impl DeviceConnectionSession {
         let Some(generation) = self.phone_drive_input_snapshot().generation else {
             return;
         };
+        let contact = action.and_then(|expected| {
+            self.state
+                .phone_drive_input
+                .pressed_contact()
+                .and_then(|(pressed, contact)| {
+                    if pressed == expected {
+                        Some(contact)
+                    } else {
+                        None
+                    }
+                })
+        });
+        let records_receipt = fresh_admission && contact.is_some();
         self.phone_drive_control.next_sequence = sequence;
         self.phone_drive_control.pending = Some(PendingWrite {
             admission: PhoneDriveWrite {
@@ -699,10 +769,18 @@ impl DeviceConnectionSession {
                 }),
             },
             action,
+            contact,
             milliamps,
             issued_at: at.get(),
             emitted: false,
+            records_receipt,
         });
+        if records_receipt
+            && let Some(action) = action
+            && let Some(contact) = contact
+        {
+            self.note_phone_drive_evidence(PhoneDriveEvidence::admitted(action, contact, at));
+        }
         if let Some(activation) = self.phone_drive_control.activation.as_mut() {
             activation.next_setpoint_at = action.and_then(|_| at.get().checked_add(CADENCE_MS));
         }

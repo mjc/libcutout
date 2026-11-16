@@ -357,6 +357,20 @@ impl Default for PhoneDriveInputState {
 }
 
 impl PhoneDriveInputState {
+    /// Returns the contact held in its original region.
+    ///
+    /// The pair is gesture identity. It is not a motor-write admission.
+    #[must_use]
+    pub const fn pressed_contact(&self) -> Option<(PhoneDriveAction, PhoneDriveContactId)> {
+        match self.epoch {
+            InputEpoch::Current {
+                gesture: Gesture::Pressed { contact, action },
+                ..
+            } => Some((action, contact)),
+            InputEpoch::Current { .. } | InputEpoch::Exhausted => None,
+        }
+    }
+
     /// Returns feedback without granting control authority.
     #[must_use]
     pub const fn snapshot(&self) -> PhoneDriveInputSnapshot {

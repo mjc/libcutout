@@ -1,5 +1,12 @@
 //! Typed phone control facade; the shared Rust session owns admission and effects.
 
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread::Builder;
+#[cfg(test)]
+use std::time::{Duration, Instant};
+
 use crate::{CutoutSessionStateHandle, MobileConnectionAttemptTokenDto, MobileRideDatabaseError};
 use cutout_core as core;
 use libcutout_persistence as persistence;
@@ -475,7 +482,7 @@ fn load_phone_drive_preferences_with(
     let _ordering = handle
         .configuration_updates
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .unwrap_or_else(PoisonError::into_inner);
     let attempt: core::ConnectionAttemptToken = token.clone().into();
     {
         let owner = handle.lock_inner();
@@ -504,7 +511,7 @@ fn save_phone_drive_preferences_with(
     let _ordering = handle
         .configuration_updates
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .unwrap_or_else(PoisonError::into_inner);
     let attempt: core::ConnectionAttemptToken = token.clone().into();
     let expected_input_generation = {
         let mut owner = handle.lock_inner();
@@ -540,6 +547,230 @@ fn save_phone_drive_preferences_with(
         return Err(MobilePhoneControlError::DeviceChanged);
     }
     Ok(snapshot(&owner))
+}
+
+/// Newest facts retained while the ride database is behind one drive call.
+///
+/// A press records at most an intent, an admission, and a receipt.
+const PHONE_DRIVE_EVIDENCE_OUTBOX_LIMIT: usize = 32;
+
+fn current_phone_drive_identity(
+    owner: &cutout_application::session::ApplicationDeviceSession,
+) -> Option<String> {
+    owner
+        .snapshot()
+        .connection
+        .token
+        .as_ref()
+        .filter(|token| owner.phone_drive_preferences_are_current(token))
+        .map(|token| token.platform_identifier().to_owned())
+}
+
+struct PhoneDriveEvidenceHandoff {
+    database: persistence::RideDatabase,
+    device_identity: String,
+    evidence: Vec<core::PhoneDriveEvidence>,
+}
+
+/// Takes facts under the session lock and pairs them with the device that owns them now.
+///
+/// A session without a ride database keeps its facts. Facts with no current device are discarded
+/// so a later connection cannot store them under a different device.
+fn phone_drive_evidence_handoff(
+    handle: &CutoutSessionStateHandle,
+    owner: &mut cutout_application::session::ApplicationDeviceSession,
+) -> Option<PhoneDriveEvidenceHandoff> {
+    let database = handle.diagnostic_database.clone()?;
+    let Some(device_identity) = current_phone_drive_identity(owner) else {
+        let _unused = owner.take_phone_drive_evidence();
+        return None;
+    };
+    let evidence = owner.take_phone_drive_evidence();
+    if evidence.is_empty() {
+        return None;
+    }
+    Some(PhoneDriveEvidenceHandoff {
+        database,
+        device_identity,
+        evidence,
+    })
+}
+
+fn with_phone_drive_evidence_handoff<T>(
+    handle: &CutoutSessionStateHandle,
+    call: impl FnOnce(&mut cutout_application::session::ApplicationDeviceSession) -> T,
+) -> T {
+    let (value, handoff) = {
+        let mut owner = handle.lock_inner();
+        let value = call(&mut owner);
+        let handoff = phone_drive_evidence_handoff(handle, &mut owner);
+        (value, handoff)
+    };
+    if let Some(handoff) = handoff {
+        handle.phone_drive_evidence.store(
+            handoff.database,
+            &handoff.device_identity,
+            handoff.evidence,
+        );
+    } else if let Some(database) = handle.diagnostic_database.clone() {
+        handle.phone_drive_evidence.kick_pending(database);
+    }
+    value
+}
+
+#[derive(Clone, Debug)]
+struct PhoneDriveEvidenceWrite {
+    device_identity: String,
+    evidence: core::PhoneDriveEvidence,
+}
+
+/// Bounded handoff from a phone-drive call to the ride database.
+///
+/// The call returns after the facts are queued. A background store uses the device identity
+/// captured with each fact. When the queue is full, the oldest fact is dropped. A later
+/// observe, tick, or mark starts a waiting store even when that call records nothing.
+#[derive(Debug)]
+pub(crate) struct PhoneDriveEvidenceOutbox {
+    queue: Mutex<VecDeque<PhoneDriveEvidenceWrite>>,
+    flushing: AtomicBool,
+    idle: Condvar,
+}
+
+impl PhoneDriveEvidenceOutbox {
+    pub(crate) fn new() -> Self {
+        Self {
+            queue: Mutex::new(VecDeque::new()),
+            flushing: AtomicBool::new(false),
+            idle: Condvar::new(),
+        }
+    }
+
+    fn lock_queue(&self) -> MutexGuard<'_, VecDeque<PhoneDriveEvidenceWrite>> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn push(&self, device_identity: &str, evidence: Vec<core::PhoneDriveEvidence>) {
+        let mut queue = self.lock_queue();
+        for fact in evidence {
+            if queue.len() == PHONE_DRIVE_EVIDENCE_OUTBOX_LIMIT {
+                queue.pop_front();
+            }
+            queue.push_back(PhoneDriveEvidenceWrite {
+                device_identity: device_identity.to_owned(),
+                evidence: fact,
+            });
+        }
+    }
+
+    fn store(
+        self: &Arc<Self>,
+        database: persistence::RideDatabase,
+        device_identity: &str,
+        evidence: Vec<core::PhoneDriveEvidence>,
+    ) {
+        self.push(device_identity, evidence);
+        self.kick_store(database);
+    }
+
+    fn kick_pending(self: &Arc<Self>, database: persistence::RideDatabase) {
+        if self.lock_queue().is_empty() {
+            return;
+        }
+        self.kick_store(database);
+    }
+
+    fn kick_store(self: &Arc<Self>, database: persistence::RideDatabase) {
+        self.kick_with(move |identity, fact| {
+            database.record_phone_drive_evidence(identity, fact).is_ok()
+        });
+    }
+
+    fn kick_with<F>(self: &Arc<Self>, store: F)
+    where
+        F: Fn(&str, core::PhoneDriveEvidence) -> bool + Send + 'static,
+    {
+        if self
+            .flushing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let outbox = Arc::clone(self);
+        if Builder::new()
+            .name("phone-drive-evidence".into())
+            .spawn(move || outbox.flush_with(store))
+            .is_err()
+        {
+            let _queue = self.lock_queue();
+            self.flushing.store(false, Ordering::Release);
+            self.idle.notify_all();
+        }
+    }
+
+    fn flush_with<F>(&self, store: F)
+    where
+        F: Fn(&str, core::PhoneDriveEvidence) -> bool,
+    {
+        loop {
+            let next = {
+                let mut queue = self.lock_queue();
+                if let Some(next) = queue.pop_front() {
+                    next
+                } else {
+                    self.flushing.store(false, Ordering::Release);
+                    self.idle.notify_all();
+                    return;
+                }
+            };
+            if store(&next.device_identity, next.evidence) {
+                continue;
+            }
+            let mut queue = self.lock_queue();
+            if queue.len() < PHONE_DRIVE_EVIDENCE_OUTBOX_LIMIT {
+                queue.push_front(next);
+            }
+            self.flushing.store(false, Ordering::Release);
+            self.idle.notify_all();
+            return;
+        }
+    }
+
+    #[cfg(test)]
+    fn wait_until(&self, idle_queue: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut queue = self.lock_queue();
+        loop {
+            let busy = self.flushing.load(Ordering::Acquire) || (idle_queue && !queue.is_empty());
+            if !busy {
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                panic!("phone-drive evidence was still queued");
+            }
+            let (guard, wait) = self
+                .idle
+                .wait_timeout(queue, remaining)
+                .unwrap_or_else(PoisonError::into_inner);
+            queue = guard;
+            if wait.timed_out()
+                && (self.flushing.load(Ordering::Acquire) || (idle_queue && !queue.is_empty()))
+            {
+                panic!("phone-drive evidence was still queued");
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_until_idle(&self) {
+        self.wait_until(true);
+    }
+
+    #[cfg(test)]
+    fn queued(&self) -> Vec<PhoneDriveEvidenceWrite> {
+        self.lock_queue().iter().cloned().collect()
+    }
 }
 
 #[uniffi::export]
@@ -637,7 +868,7 @@ impl CutoutSessionStateHandle {
         let _ordering = self
             .configuration_updates
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner);
         let mut owner = self.lock_inner();
         let limits = owner.session_state().phone_drive_limits;
         owner
@@ -663,15 +894,17 @@ impl CutoutSessionStateHandle {
         observed_at_ms: u64,
         monotonic_ms: u64,
     ) -> Option<crate::MobileDeviceSessionStepDto> {
-        self.lock_inner()
-            .observe_phone_drive_contacts_at(
-                &token.into(),
-                generation,
-                contacts.into(),
-                core::MonotonicTimestamp::new(observed_at_ms),
-                core::MonotonicTimestamp::new(monotonic_ms),
-            )
-            .map(Into::into)
+        with_phone_drive_evidence_handoff(self, |owner| {
+            owner
+                .observe_phone_drive_contacts_at(
+                    &token.into(),
+                    generation,
+                    contacts.into(),
+                    core::MonotonicTimestamp::new(observed_at_ms),
+                    core::MonotonicTimestamp::new(monotonic_ms),
+                )
+                .map(Into::into)
+        })
     }
 
     /// Advances the shared drive deadline/cadence without renewing a contact heartbeat.
@@ -682,13 +915,15 @@ impl CutoutSessionStateHandle {
         monotonic_ms: u64,
         can_submit: bool,
     ) -> Option<crate::MobileDeviceSessionStepDto> {
-        self.lock_inner()
-            .tick_phone_drive(
-                &token.into(),
-                core::MonotonicTimestamp::new(monotonic_ms),
-                can_submit,
-            )
-            .map(Into::into)
+        with_phone_drive_evidence_handoff(self, |owner| {
+            owner
+                .tick_phone_drive(
+                    &token.into(),
+                    core::MonotonicTimestamp::new(monotonic_ms),
+                    can_submit,
+                )
+                .map(Into::into)
+        })
     }
 
     /// Rechecks exact intent identity immediately before the sole native writer submits.
@@ -719,14 +954,16 @@ impl CutoutSessionStateHandle {
         monotonic_ms: u64,
     ) -> bool {
         let Some(write) = write.checked() else {
-            return false;
+            return with_phone_drive_evidence_handoff(self, |_| false);
         };
-        self.lock_inner().mark_phone_drive_transport(
-            &token.into(),
-            write,
-            status.into(),
-            core::MonotonicTimestamp::new(monotonic_ms),
-        )
+        with_phone_drive_evidence_handoff(self, |owner| {
+            owner.mark_phone_drive_transport(
+                &token.into(),
+                write,
+                status.into(),
+                core::MonotonicTimestamp::new(monotonic_ms),
+            )
+        })
     }
 
     /// Retires semantic input without claiming a controller stopped or applied braking.

@@ -343,6 +343,330 @@ fn phone_drive_ffi_rejects_activation_after_the_requested_input_generation_is_ca
 }
 
 #[test]
+fn phone_drive_ffi_stores_an_unarmed_hold_and_clears_the_session() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token.clone(),
+                generation,
+                MobilePhoneDriveContactsDto::Released,
+                12_001,
+                12_001,
+            )
+            .is_some()
+    );
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token,
+                generation,
+                MobilePhoneDriveContactsDto::Single {
+                    contact_id: 1,
+                    region: Some(MobilePhoneDriveActionDto::Throttle),
+                },
+                12_002,
+                12_002,
+            )
+            .is_some()
+    );
+
+    handle.phone_drive_evidence.wait_until_idle();
+    let stored = database.inner.phone_drive_evidence("board-a").unwrap();
+    let remaining = handle.lock_inner().take_phone_drive_evidence();
+    let snapshot = handle.phone_drive_snapshot();
+    database.shutdown().unwrap();
+    assert_eq!(
+        stored,
+        vec![core::PhoneDriveEvidence::intent(
+            core::PhoneDriveAction::Throttle,
+            core::PhoneDriveContactId::new(1).unwrap(),
+            core::MonotonicTimestamp::new(12_002),
+        )]
+    );
+    assert_eq!(remaining, Vec::new());
+    assert!(matches!(
+        snapshot.availability,
+        MobilePhoneDriveAvailabilityDto::Ready
+    ));
+}
+
+#[test]
+fn phone_drive_ffi_returns_an_admitted_write_while_evidence_storage_is_locked() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path = std::env::temp_dir().join(format!(
+        "cutout-phone-drive-stall-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = crate::open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token.clone(),
+                generation,
+                MobilePhoneDriveContactsDto::Released,
+                12_000,
+                12_000,
+            )
+            .is_some()
+    );
+    handle
+        .activate_phone_drive(token.clone(), generation, 12_000)
+        .unwrap();
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token.clone(),
+                generation,
+                MobilePhoneDriveContactsDto::Released,
+                12_001,
+                12_001,
+            )
+            .is_some()
+    );
+    handle.phone_drive_evidence.wait_until_idle();
+
+    let gate = rusqlite::Connection::open(&path).unwrap();
+    gate.busy_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    gate.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let observer = std::sync::Arc::clone(&handle);
+    let press_token = token;
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let pressing = std::thread::spawn(move || {
+        let step = observer.observe_phone_drive_contacts_at(
+            press_token,
+            generation,
+            MobilePhoneDriveContactsDto::Single {
+                contact_id: 1,
+                region: Some(MobilePhoneDriveActionDto::Throttle),
+            },
+            12_002,
+            12_002,
+        );
+        done_tx.send(step).unwrap();
+    });
+    let step = done_rx
+        .recv_timeout(std::time::Duration::from_millis(200))
+        .unwrap_or_else(|error| {
+            gate.execute_batch("COMMIT").ok();
+            panic!("admitted phone-drive write waited on evidence storage: {error}");
+        });
+    assert_eq!(handle.lock_inner().take_phone_drive_evidence(), Vec::new());
+    assert!(
+        handle
+            .phone_drive_evidence
+            .flushing
+            .load(std::sync::atomic::Ordering::Acquire)
+            || !handle.phone_drive_evidence.queued().is_empty()
+    );
+    gate.execute_batch("COMMIT").unwrap();
+    pressing.join().unwrap();
+    handle.phone_drive_evidence.wait_until_idle();
+    let stored = database.inner.phone_drive_evidence("board-a").unwrap();
+    database.shutdown().unwrap();
+    let step = step.expect("armed press returns the drive step");
+    assert!(
+        step.result
+            .outputs
+            .iter()
+            .any(|output| output.phone_drive.is_some())
+    );
+    assert_eq!(
+        stored,
+        vec![
+            core::PhoneDriveEvidence::intent(
+                core::PhoneDriveAction::Throttle,
+                core::PhoneDriveContactId::new(1).unwrap(),
+                core::MonotonicTimestamp::new(12_002),
+            ),
+            core::PhoneDriveEvidence::admitted(
+                core::PhoneDriveAction::Throttle,
+                core::PhoneDriveContactId::new(1).unwrap(),
+                core::MonotonicTimestamp::new(12_002),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn phone_drive_ffi_retries_a_queued_fact_when_a_tick_records_nothing() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    handle
+        .phone_drive_evidence
+        .push("board-a", vec![phone_drive_intent_at(4)]);
+
+    let _ = handle.tick_phone_drive(token, 12_000, false);
+    handle.phone_drive_evidence.wait_until_idle();
+    let stored = database.inner.phone_drive_evidence("board-a").unwrap();
+    database.shutdown().unwrap();
+    assert_eq!(stored, vec![phone_drive_intent_at(4)]);
+}
+
+#[test]
+fn phone_drive_evidence_outbox_keeps_the_newest_facts_with_their_devices() {
+    let outbox = super::PhoneDriveEvidenceOutbox::new();
+    let limit = super::PHONE_DRIVE_EVIDENCE_OUTBOX_LIMIT;
+    let older = (0..limit)
+        .map(|index| phone_drive_intent_at(u64::try_from(index).unwrap()))
+        .collect();
+    outbox.push("board-a", older);
+    outbox.push("board-b", vec![phone_drive_intent_at(1_000)]);
+    let queued = outbox.queued();
+    assert_eq!(queued.len(), limit);
+    assert_eq!(queued[0].device_identity, "board-a");
+    assert_eq!(
+        queued[0].evidence.observed_at(),
+        core::MonotonicTimestamp::new(1)
+    );
+    assert_eq!(queued.last().unwrap().device_identity, "board-b");
+    assert_eq!(
+        queued.last().unwrap().evidence.observed_at(),
+        core::MonotonicTimestamp::new(1_000)
+    );
+}
+
+#[test]
+fn phone_drive_evidence_outbox_retries_a_failed_fact_for_its_original_device() {
+    let outbox = std::sync::Arc::new(super::PhoneDriveEvidenceOutbox::new());
+    outbox.push("board-a", vec![phone_drive_intent_at(5)]);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let first_seen = std::sync::Arc::clone(&seen);
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    outbox.kick_with(move |identity, _fact| {
+        first_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(identity.to_owned());
+        failed.swap(true, std::sync::atomic::Ordering::AcqRel)
+    });
+    outbox.wait_until(false);
+    assert_eq!(
+        seen.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_slice(),
+        ["board-a"]
+    );
+    assert_eq!(outbox.queued()[0].device_identity, "board-a");
+
+    let second_seen = std::sync::Arc::clone(&seen);
+    outbox.kick_with(move |identity, _fact| {
+        second_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(identity.to_owned());
+        true
+    });
+    outbox.wait_until_idle();
+    assert_eq!(
+        seen.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_slice(),
+        ["board-a", "board-a"]
+    );
+}
+
+#[test]
+fn phone_drive_evidence_outbox_returns_while_its_store_is_blocked() {
+    let outbox = std::sync::Arc::new(super::PhoneDriveEvidenceOutbox::new());
+    outbox.push("board-a", vec![phone_drive_intent_at(4)]);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (returned_tx, returned_rx) = std::sync::mpsc::channel();
+    let flushing = std::sync::Arc::clone(&outbox);
+    let kicked = std::thread::spawn(move || {
+        flushing.kick_with(move |identity, _fact| {
+            assert_eq!(identity, "board-a");
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            true
+        });
+        returned_tx.send(()).unwrap();
+    });
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("store started");
+    returned_rx
+        .recv_timeout(std::time::Duration::from_millis(200))
+        .expect("queueing returned while the store was blocked");
+    release_tx.send(()).unwrap();
+    kicked.join().unwrap();
+    outbox.wait_until_idle();
+    assert!(outbox.queued().is_empty());
+}
+
+fn phone_drive_intent_at(milliseconds: u64) -> core::PhoneDriveEvidence {
+    core::PhoneDriveEvidence::intent(
+        core::PhoneDriveAction::Throttle,
+        core::PhoneDriveContactId::new(1).unwrap(),
+        core::MonotonicTimestamp::new(milliseconds),
+    )
+}
+
+#[test]
 fn phone_drive_ffi_rejects_a_save_completion_after_same_attempt_cancellation() {
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()
