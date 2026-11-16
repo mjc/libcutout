@@ -13,55 +13,39 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-internal enum class CaptureHistorySendBadge { SENT, LOCAL_DELETED }
-
 internal fun projectReviewedCaptureCandidate(
     context: Context,
     value: MobileCaptureSubmissionBatchCandidateDto,
     sourceKind: (MobileCaptureSubmissionBatchSourceKindDto) -> String,
     eligibilityLabel: (MobileCaptureSubmissionBatchEligibilityDto) -> String,
 ): CaptureBatchCandidate {
-    val categories = value.categories?.let { categories -> buildList {
-        if (categories.deviceIdentifiers) add(context.getString(R.string.capture_batch_category_identifiers))
-        if (categories.location) add(context.getString(R.string.capture_batch_category_location))
-        if (categories.notes) add(context.getString(R.string.capture_batch_category_notes))
-        if (categories.annotations) add(context.getString(R.string.capture_batch_category_annotations))
-        if (categories.settingsObservations) add(context.getString(R.string.capture_batch_category_settings))
-    } } ?: emptyList()
-    val eligibility = value.skipReason ?: value.eligibility
+    val admission = captureBatchAdmission(value.eligibility, value.skipReason)
     return CaptureBatchCandidate(
         sourceArtifactId = value.sourceArtifactId,
         sourceKind = sourceKind(value.sourceKind),
         displayName = value.displayName.takeIf(String::isNotBlank),
-        eligible = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE,
-        skipReason = if (value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE) null else eligibilityLabel(eligibility),
+        eligible = admission.eligible,
+        skipReason = admission.skipReason?.let(eligibilityLabel),
         origin = captureSubmissionOriginLabel(context, value.origin),
         integrity = captureSubmissionIntegrityLabel(context, value.integrity),
         sourceBytes = value.sourceBytes,
         sourceSha256 = value.sourceSha256,
         transferBytes = value.transferBytes,
         transferSha256 = value.transferSha256,
-        categories = categories,
+        categories = value.categories?.let { includedCaptureCategories(it).map { category -> batchCategoryLabel(context, category) } } ?: emptyList(),
         noteBytes = value.evidence?.noteBytes?.toULong() ?: 0uL,
         screenshotCount = value.evidence?.screenshots ?: 0u,
         receipt = value.status?.receipt?.operationId,
-        checking = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.CHECKING,
+        checking = admission.checking,
     )
 }
 
-internal fun captureHistorySendBadge(status: MobileCaptureSubmissionStatusDto?): CaptureHistorySendBadge? {
-    if (status?.receipt == null) return null
-    return when (status.phase) {
-        MobileCaptureSubmissionPhaseDto.SENT,
-        MobileCaptureSubmissionPhaseDto.DELETING,
-        MobileCaptureSubmissionPhaseDto.DELETED ->
-            if (status.localPayloadState == MobileCaptureSubmissionLocalPayloadStateDto.REMOVED) {
-                CaptureHistorySendBadge.LOCAL_DELETED
-            } else {
-                CaptureHistorySendBadge.SENT
-            }
-        else -> null
-    }
+private fun batchCategoryLabel(context: Context, category: MobileCaptureDisclosureCategory): String = when (category) {
+    MobileCaptureDisclosureCategory.DEVICE_IDENTIFIERS -> context.getString(R.string.capture_batch_category_identifiers)
+    MobileCaptureDisclosureCategory.LOCATION -> context.getString(R.string.capture_batch_category_location)
+    MobileCaptureDisclosureCategory.NOTES -> context.getString(R.string.capture_batch_category_notes)
+    MobileCaptureDisclosureCategory.ANNOTATIONS -> context.getString(R.string.capture_batch_category_annotations)
+    MobileCaptureDisclosureCategory.SETTINGS_OBSERVATIONS -> context.getString(R.string.capture_batch_category_settings)
 }
 
 /** Android presentation for Rust-owned capture admission, recording lifecycle, and history. */
@@ -293,7 +277,7 @@ class DiagnosticCapturePanel(
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         val badge = captureHistorySendBadge(entry.submission.status)
         if (badge != null) {
-            val sentLabel = if (badge == CaptureHistorySendBadge.LOCAL_DELETED) {
+            val sentLabel = if (badge == MobileCaptureHistoryBadge.LOCAL_DELETED) {
                 R.string.capture_sent_local_deleted
             } else {
                 R.string.capture_sent_privately
@@ -433,7 +417,7 @@ internal data class CaptureBatchCandidate(
 
 internal data class CaptureBatchProgress(
     val sourceArtifactId: String,
-    val phase: String,
+    val phase: MobileCaptureSubmissionBatchItemPhaseDto,
     val message: String,
     val total: ULong,
     val sent: ULong,
@@ -485,14 +469,10 @@ internal class CaptureSubmissionBatchDialog(
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val ui = CutoutUi(context)
+    private val session = MobileCaptureBatchSession()
     private var candidates = emptyList<CaptureBatchCandidate>()
-    private val selected = linkedSetOf<String>()
     private val itemResults = linkedMapOf<String, String>()
-    private var failedIds = emptyList<String>()
     private var reviewError: String? = null
-    private var isReviewing = false
-    private var isSending = false
-    private var stopRequested = false
     private var reviewContent: LinearLayout? = null
     internal var reviewDialog: AlertDialog? = null
         private set
@@ -501,14 +481,6 @@ internal class CaptureSubmissionBatchDialog(
     private var progressText: String? = null
     private var summary: CaptureBatchSummary? = null
     private var receiptConfirmed = false
-    private var sendAttempt = 0L
-    private var requiresFreshReview = false
-    private var sendCompleted = false
-    private var pendingSendIds: List<String>? = null
-    private var awaitingCommittedSend = false
-    private var sendAllMissed = false
-    private var retrySelection: Set<String>? = null
-    private var userAdjustedSelection = false
     private var reviewHeader: LinearLayout? = null
     private var candidateAdapter: CaptureBatchCandidateAdapter? = null
     private val batchOperations by lazy {
@@ -518,7 +490,7 @@ internal class CaptureSubmissionBatchDialog(
     }
 
     internal val retainsReview: Boolean
-        get() = reviewDialog != null && !sendCompleted
+        get() = reviewDialog != null && !session.didFinish()
 
     fun abandon() {
         operations().requestCancel()
@@ -566,107 +538,66 @@ internal class CaptureSubmissionBatchDialog(
         beginReview()
     }
 
-    private fun beginReview() {
-        if (isReviewing || isSending) return
-        isReviewing = true
+    private fun beginReview(failedOnly: Boolean = false) {
+        if (!session.beginReview(failedOnly)) return
         reviewError = null
         candidates = emptyList()
-        selected.clear()
         progressText = null
         itemResults.clear()
         summary = null
-        userAdjustedSelection = false
         renderCurrent()
         operations().reviewIncremental({ row -> main.post { upsertCandidate(row) } }) { result -> main.post {
-            isReviewing = false
             result.onSuccess { rows ->
                 candidates = rows
-                val eligibleIds = rows.filter { it.eligible }.map { it.sourceArtifactId }.toSet()
-                val failedBeforeReview = retrySelection
-                if (!userAdjustedSelection) {
-                    selected.clear()
-                    rows.filter { it.eligible && (failedBeforeReview == null || it.sourceArtifactId in failedBeforeReview) }
-                        .forEach { selected += it.sourceArtifactId }
-                } else {
-                    selected.retainAll(eligibleIds)
-                }
-                val finished = rows.none { it.checking }
-                requiresFreshReview = !finished
-                if (finished && !awaitingCommittedSend) {
-                    stopRequested = false
-                    summary = null
-                    progressText = null
-                    itemResults.clear()
-                    failedIds = emptyList()
-                    retrySelection = null
-                    sendCompleted = false
-                }
+                session.finishReview(
+                    rows.map {
+                        MobileCaptureBatchRowDto(
+                            sourceArtifactId = it.sourceArtifactId,
+                            eligible = it.eligible,
+                            checking = it.checking,
+                        )
+                    },
+                    false,
+                )
             }.onFailure {
+                session.failReview()
                 reviewError = context.getString(R.string.capture_batch_review_failed)
-                isSending = false
             }
-            val queued = pendingSendIds
-            pendingSendIds = null
-            val committed = if (awaitingCommittedSend) operations().takeCommittedSummary() else null
-            val missed = sendAllMissed
-            awaitingCommittedSend = false
-            sendAllMissed = false
-            when {
-                committed != null -> showSummary(committed)
-                missed && reviewError == null -> {
-                    isSending = false
-                    val ready = candidates.filter { it.eligible }.map { it.sourceArtifactId }
-                    if (ready.isNotEmpty()) send(ready, acceptedPartialReview = true) else renderCurrent()
-                }
-                queued != null && reviewError == null -> {
-                    val ready = queued.filter { id -> candidates.any { it.sourceArtifactId == id && it.eligible } }
-                    if (ready.isNotEmpty()) send(ready, acceptedPartialReview = true) else renderCurrent()
-                }
-                else -> {
-                    isSending = false
-                    renderCurrent()
-                }
+            if (session.isAwaitingCommit()) {
+                val committed = operations().takeCommittedSummary()
+                if (committed != null) showSummary(committed, session.attempt())
+                else drive(session.commitSummaryMissing(session.attempt()))
+            } else {
+                drive(session.reviewSettled())
             }
         } }
     }
 
     private fun upsertCandidate(row: CaptureBatchCandidate) {
+        if (!session.observe(row.sourceArtifactId, row.eligible, row.checking)) return
         val index = candidates.indexOfFirst { it.sourceArtifactId == row.sourceArtifactId }
-        if (index >= 0) {
-            if (candidates[index].eligible && row.checking) return
-            candidates = candidates.toMutableList().also { it[index] = row }
+        candidates = if (index >= 0) {
+            candidates.toMutableList().also { it[index] = row }
         } else {
-            candidates = candidates + row
-        }
-        if (!row.eligible) {
-            selected -= row.sourceArtifactId
-        } else if (!userAdjustedSelection) {
-            val allowed = retrySelection?.contains(row.sourceArtifactId) ?: true
-            if (allowed) selected += row.sourceArtifactId
+            candidates + row
         }
         renderCurrent()
     }
 
-    private fun canSend(): Boolean {
-        if (pendingSendIds != null || isSending || sendCompleted || reviewError != null || selected.isEmpty()) {
-            return false
-        }
-        return isReviewing || !requiresFreshReview
-    }
+    private fun canSend(): Boolean = session.canSend()
 
     private fun confirm() {
         if (!canSend()) return
-        val ids = selected.toList()
-        val sendingAll = sendingEverythingFound(ids)
+        val prompt = session.prompt()
         confirmationDialog = AlertDialog.Builder(context)
             .setTitle(R.string.capture_batch_confirm_title)
             .setMessage(
-                if (isReviewing && sendingAll) context.getString(R.string.capture_batch_confirm_all)
-                else context.getString(R.string.capture_batch_confirm_message, ids.size),
+                if (prompt.confirmsPendingScan) context.getString(R.string.capture_batch_confirm_all)
+                else context.getString(R.string.capture_batch_confirm_message, session.selectedCount().toInt()),
             )
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(
-                if (sendingAll) R.string.capture_batch_send_local
+                if (prompt.coversEligible) R.string.capture_batch_send_local
                 else R.string.capture_batch_send_selected_local,
                 null,
             )
@@ -674,83 +605,63 @@ internal class CaptureSubmissionBatchDialog(
         confirmationDialog?.setOnShowListener {
             confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
                 confirmationDialog?.dismiss()
-                send(ids)
+                drive(session.requestSend())
             }
         }
         confirmationDialog?.show()
     }
 
-    private fun sendingEverythingFound(ids: List<String>): Boolean {
-        val eligible = candidates.filter { it.eligible }.map { it.sourceArtifactId }.toSet()
-        return eligible.isNotEmpty() && ids.toSet() == eligible
-    }
-
-    private fun send(ids: List<String>, acceptedPartialReview: Boolean = false) {
-        if (isReviewing) {
-            if (sendingEverythingFound(ids)) {
-                beginCommittedSend()
-                return
+    private fun drive(effect: MobileCaptureBatchEffect) {
+        when (effect) {
+            MobileCaptureBatchEffect.Idle,
+            MobileCaptureBatchEffect.WaitForReview -> renderCurrent()
+            MobileCaptureBatchEffect.CancelReview -> {
+                operations().requestCancel()
+                renderCurrent()
             }
-            pendingSendIds = ids
-            operations().requestCancel()
-            renderCurrent()
-            return
-        }
-        if (ids.isEmpty() || isSending || sendCompleted) return
-        if (!acceptedPartialReview && requiresFreshReview) return
-        val attempt = ++sendAttempt
-        isSending = true
-        reviewError = null
-        progressText = context.getString(R.string.capture_batch_starting)
-        failedIds = emptyList()
-        renderCurrent()
-        operations().sendSelected(ids, { event -> main.post { noteProgress(event, attempt) } }) { result ->
-            main.post {
-                if (sendAttempt != attempt) return@post
-                result.onSuccess(::showSummary).onFailure {
-                    isSending = false
-                    sendCompleted = true
-                    reviewError = it.message ?: context.getString(R.string.capture_batch_failed)
-                    failedIds = (failedIds + ids).distinct()
-                    progressText = context.getString(R.string.capture_batch_retained)
-                    onFinished(receiptConfirmed)
+            is MobileCaptureBatchEffect.CommitAll -> {
+                val attempt = effect.attempt
+                reviewError = null
+                progressText = context.getString(R.string.capture_batch_starting)
+                val accepted = operations().commitSendAll { event ->
+                    main.post { noteProgress(event, attempt) }
+                }
+                if (accepted) {
+                    session.noteCommitAccepted(attempt)
                     renderCurrent()
+                } else {
+                    drive(session.noteCommitRejected(attempt))
+                }
+            }
+            is MobileCaptureBatchEffect.Send -> {
+                val attempt = effect.attempt
+                val ids = effect.sourceArtifactIds
+                reviewError = null
+                progressText = context.getString(R.string.capture_batch_starting)
+                renderCurrent()
+                operations().sendSelected(ids, { event -> main.post { noteProgress(event, attempt) } }) { result ->
+                    main.post {
+                        result.onSuccess { showSummary(it, attempt) }.onFailure {
+                            if (session.noteSendFailure(ids, attempt)) {
+                                reviewError = (it as? MobileCaptureSubmissionException)
+                                    ?.let(::captureSubmissionErrorMessage)
+                                    ?: context.getString(R.string.capture_batch_failed)
+                                progressText = context.getString(R.string.capture_batch_retained)
+                                onFinished(receiptConfirmed)
+                            }
+                            renderCurrent()
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun beginCommittedSend() {
-        if (isSending) return
-        val attempt = ++sendAttempt
-        isSending = true
-        stopRequested = false
-        reviewError = null
-        progressText = context.getString(R.string.capture_batch_starting)
-        failedIds = emptyList()
-        awaitingCommittedSend = true
-        val accepted = operations().commitSendAll { event -> main.post { noteProgress(event, attempt) } }
-        if (!accepted) {
-            awaitingCommittedSend = false
-            if (isReviewing) {
-                sendAllMissed = true
-            } else {
-                isSending = false
-                val ready = candidates.filter { it.eligible }.map { it.sourceArtifactId }
-                if (ready.isNotEmpty()) {
-                    send(ready, acceptedPartialReview = true)
-                    return
-                }
-            }
-        }
-        renderCurrent()
-    }
-
-    private fun noteProgress(event: CaptureBatchProgress, attempt: Long) {
-        if (sendAttempt != attempt || !isSending) return
-        receiptConfirmed = receiptConfirmed || event.phase == "Sent" || event.phase == "Cleaned"
-        if (event.phase == "Failed") failedIds = (failedIds + event.sourceArtifactId).distinct()
-        else if (event.phase == "Sent" || event.phase == "Cleaned") failedIds = failedIds - event.sourceArtifactId
+    private fun noteProgress(event: CaptureBatchProgress, attempt: ULong) {
+        if (!session.noteItemPhase(event.sourceArtifactId, event.phase, attempt)) return
+        receiptConfirmed = receiptConfirmed ||
+            event.phase == MobileCaptureSubmissionBatchItemPhaseDto.SENT ||
+            event.phase == MobileCaptureSubmissionBatchItemPhaseDto.CLEANED
         progressText = context.getString(
             R.string.capture_batch_progress,
             event.current.toLong(), event.total.toLong(), event.sent.toLong(), event.cleaned.toLong(),
@@ -760,12 +671,9 @@ internal class CaptureSubmissionBatchDialog(
         renderCurrent()
     }
 
-    private fun showSummary(next: CaptureBatchSummary) {
-        isSending = false
-        sendCompleted = true
+    private fun showSummary(next: CaptureBatchSummary, attempt: ULong) {
+        if (!session.noteSummary(next.failedSourceArtifactIds, next.cancelled, attempt)) return
         summary = next
-        failedIds = next.failedSourceArtifactIds
-        requiresFreshReview = requiresFreshReview || next.cancelled > 0uL
         receiptConfirmed = receiptConfirmed || next.sent > 0uL || next.cleaned > 0uL
         progressText = context.getString(
             R.string.capture_batch_result,
@@ -791,53 +699,49 @@ internal class CaptureSubmissionBatchDialog(
         reviewDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = true
         reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
             isEnabled = canSend()
-            setText(if (selected.size == candidates.count { it.eligible }) R.string.capture_batch_send
+            setText(if (session.prompt().coversEligible) R.string.capture_batch_send
             else R.string.capture_batch_send_selected)
         }
         content.addView(ui.text(context.getString(R.string.capture_batch_explanation), 14f, color = ui.muted))
         content.addView(ui.space(10))
-        if (isReviewing) {
+        if (session.isReviewing()) {
             content.addView(ProgressBar(context).apply { isIndeterminate = true })
             content.addView(ui.text(context.getString(R.string.capture_batch_reviewing), 14f, color = ui.muted))
         }
         reviewError?.let { error ->
             content.addView(ui.text(error, 14f, color = ui.red))
-            if (!isSending) content.addView(ui.action(context.getString(
-                if (failedIds.isEmpty()) R.string.capture_batch_retry_review else R.string.capture_batch_retry_failed,
+            if (!session.isSending()) content.addView(ui.action(context.getString(
+                if (session.failedIds().isEmpty()) R.string.capture_batch_retry_review else R.string.capture_batch_retry_failed,
             )) {
-                if (failedIds.isEmpty()) beginReview() else retryFailedReview()
-            }.apply { tag = if (failedIds.isEmpty()) "captures.batch.retryReview" else "captures.batch.reviewFailedAgain" })
+                if (session.failedIds().isEmpty()) beginReview() else retryFailedReview()
+            }.apply { tag = if (session.failedIds().isEmpty()) "captures.batch.retryReview" else "captures.batch.reviewFailedAgain" })
         }
         content.addView(ui.text(context.getString(
             R.string.capture_batch_counts,
-            selected.size,
-            candidates.count { it.eligible },
-            candidates.count { !it.eligible && !it.checking },
+            session.selectedCount().toInt(),
+            session.eligibleCount().toInt(),
+            session.skippedCount().toInt(),
         ), 14f, true))
         progressText?.let { content.addView(ui.text(it, 14f, color = ui.muted)) }
-        if (isSending) {
+        if (session.isSending()) {
             content.addView(ui.space(8))
             content.addView(ui.action(context.getString(R.string.capture_batch_stop)) {
-                if (!stopRequested) {
-                    stopRequested = true
-                    requiresFreshReview = true
+                if (session.requestStop()) {
                     operations().requestCancel()
                     renderCurrent()
                 }
-            }.apply { isEnabled = !stopRequested; tag = "captures.batch.stop" })
-        } else if (summary != null && requiresFreshReview) {
+            }.apply { isEnabled = !session.didRequestStop(); tag = "captures.batch.stop" })
+        } else if (summary != null && session.requiresFreshReview()) {
             content.addView(ui.action(context.getString(R.string.capture_batch_review_again)) { beginReview() }
-                .apply { isEnabled = !isReviewing; tag = "captures.batch.reviewAgain" })
-        } else if (summary != null && failedIds.isNotEmpty()) {
+                .apply { isEnabled = !session.isReviewing(); tag = "captures.batch.reviewAgain" })
+        } else if (summary != null && session.failedIds().isNotEmpty()) {
             content.addView(ui.action(context.getString(R.string.capture_batch_retry_failed)) { retryFailedReview() }
                 .apply { tag = "captures.batch.reviewFailedAgain" })
         }
     }
 
     private fun retryFailedReview() {
-        if (!sendCompleted || failedIds.isEmpty()) return
-        retrySelection = failedIds.toSet()
-        beginReview()
+        beginReview(failedOnly = true)
     }
 
     private fun operations(): CaptureSubmissionBatchOperations = batchOperations
@@ -860,11 +764,10 @@ internal class CaptureSubmissionBatchDialog(
                     text = title
                     tag = "captures.batch.candidate.${candidate.sourceArtifactId}"
                     setOnCheckedChangeListener(null)
-                    isChecked = candidate.sourceArtifactId in selected
-                    isEnabled = !isSending && !sendCompleted
+                    isChecked = session.isSelected(candidate.sourceArtifactId)
+                    isEnabled = !session.isSending() && !session.didFinish()
                     setOnCheckedChangeListener { _, checked ->
-                        userAdjustedSelection = true
-                        if (checked) selected += candidate.sourceArtifactId else selected -= candidate.sourceArtifactId
+                        session.setSelected(candidate.sourceArtifactId, checked)
                         reviewHeader?.let(::render)
                     }
                 })
@@ -885,7 +788,10 @@ internal class CaptureSubmissionBatchDialog(
             if (candidate.categories.isNotEmpty()) row.addView(ui.text(context.getString(R.string.capture_batch_categories, candidate.categories.joinToString()), 12f, color = ui.muted))
             row.addView(ui.text(context.getString(R.string.capture_batch_evidence, candidate.noteBytes.toLong(), candidate.screenshotCount.toLong()), 12f, color = ui.muted))
             candidate.receipt?.let { row.addView(ui.text(context.getString(R.string.capture_sent_privately), 13f, color = ui.green)) }
-            itemResults[candidate.sourceArtifactId]?.let { row.addView(ui.text(it, 13f, color = if (candidate.sourceArtifactId in failedIds) ui.orange else ui.green)) }
+            itemResults[candidate.sourceArtifactId]?.let {
+                val failed = session.failedIds().contains(candidate.sourceArtifactId)
+                row.addView(ui.text(it, 13f, color = if (failed) ui.orange else ui.green))
+            }
             return row
         }
     }
@@ -1004,14 +910,6 @@ private class RustCaptureSubmissionBatchOperations(
         projectReviewedCaptureCandidate(context, value, this::sourceKindLabel, this::eligibilityLabel)
 
     private fun projectProgress(value: MobileCaptureSubmissionBatchProgressDto): CaptureBatchProgress {
-        val phase = when (value.phase) {
-            MobileCaptureSubmissionBatchItemPhaseDto.CURRENT -> "Current"
-            MobileCaptureSubmissionBatchItemPhaseDto.SENT -> "Sent"
-            MobileCaptureSubmissionBatchItemPhaseDto.CLEANED -> "Cleaned"
-            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> "Failed"
-            MobileCaptureSubmissionBatchItemPhaseDto.SKIPPED -> "Skipped"
-            MobileCaptureSubmissionBatchItemPhaseDto.CANCELLED -> "Cancelled"
-        }
         val reason = value.reason?.let(::eligibilityLabel)
         val message = when (value.phase) {
             MobileCaptureSubmissionBatchItemPhaseDto.CURRENT -> {
@@ -1025,15 +923,21 @@ private class RustCaptureSubmissionBatchOperations(
             }
             MobileCaptureSubmissionBatchItemPhaseDto.SENT -> context.getString(R.string.capture_batch_receipt_saved)
             MobileCaptureSubmissionBatchItemPhaseDto.CLEANED -> context.getString(R.string.capture_batch_cleaned)
-            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> reason?.let {
-                context.getString(R.string.capture_batch_failed_reason, it, context.getString(R.string.capture_batch_failed_retained))
-            } ?: context.getString(R.string.capture_batch_failed_retained)
+            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> {
+                val retained = context.getString(R.string.capture_batch_failed_retained)
+                val failure = value.status?.failure?.let { captureSubmissionFailureMessage(it) }
+                when {
+                    failure != null -> "$failure $retained"
+                    reason != null -> context.getString(R.string.capture_batch_failed_reason, reason, retained)
+                    else -> retained
+                }
+            }
             MobileCaptureSubmissionBatchItemPhaseDto.SKIPPED -> reason ?: context.getString(R.string.capture_batch_skipped)
             MobileCaptureSubmissionBatchItemPhaseDto.CANCELLED -> context.getString(R.string.capture_batch_cancelled_item)
         }
         return CaptureBatchProgress(
             sourceArtifactId = value.sourceArtifactId,
-            phase = phase,
+            phase = value.phase,
             message = message,
             total = value.total,
             sent = value.sent,

@@ -11,9 +11,6 @@ import android.widget.*
 import uniffi.cutout_mobile_ffi.*
 import java.io.ByteArrayOutputStream
 
-internal fun captureSubmissionEvidenceIsReviewable(loaded: Boolean, working: Boolean, dirty: Boolean): Boolean =
-    loaded && !working && !dirty
-
 internal fun captureSubmissionOriginLabel(context: Context, origin: MobileCaptureSubmissionOriginDto): String = when (origin) {
     MobileCaptureSubmissionOriginDto.AUTOMATIC -> context.getString(R.string.capture_send_origin_automatic)
     MobileCaptureSubmissionOriginDto.MANUAL -> context.getString(R.string.capture_send_origin_manual)
@@ -24,6 +21,13 @@ internal fun captureSubmissionIntegrityLabel(context: Context, integrity: Mobile
     MobileCaptureIntegrityDto.Complete -> context.getString(R.string.capture_complete)
     is MobileCaptureIntegrityDto.Incomplete -> context.getString(R.string.capture_incomplete)
     MobileCaptureIntegrityDto.Unknown -> context.getString(R.string.capture_integrity_unknown)
+}
+
+internal fun captureSubmissionThrowableMessage(error: Throwable): String = when (error) {
+    is MobileCaptureSubmissionException -> captureSubmissionErrorMessage(error)
+    is MobileChargingException.Unauthorized, is MobileChargingException.Unavailable ->
+        captureSubmissionErrorMessage(MobileCaptureSubmissionException.Unauthorized())
+    else -> captureSubmissionUnexpectedErrorMessage()
 }
 
 /** Native editing and image effects; Rust owns limits, persistence and immutable Send. */
@@ -50,7 +54,9 @@ internal class CaptureEvidenceDialog(
         inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         tag = "captures.evidence.note"
     }
-    private val count = ui.text("0 / 1024 bytes", 13f, color = ui.muted)
+    private var noteLimit = captureNoteLimitBytes().toInt()
+    private var screenshotLimit = captureScreenshotLimit().toInt()
+    private val count = ui.text("0 / $noteLimit bytes", 13f, color = ui.muted)
     private val images = ui.column()
     private val message = ui.text("", 14f, color = ui.muted).apply { tag = "captures.send.error" }
     private val sendProgress = CaptureSendProgressView(context)
@@ -60,8 +66,6 @@ internal class CaptureEvidenceDialog(
     private var dirty = false
     private var loaded = false
     private var dismissed = false
-    private var noteLimit = 1024
-    private var screenshotLimit = 4
     internal var currentDialog: AlertDialog? = null
         private set
     internal var confirmationDialog: AlertDialog? = null
@@ -101,11 +105,7 @@ internal class CaptureEvidenceDialog(
         refresh()
     }
 
-    private fun editable(): Boolean = when (status?.phase) {
-        null, MobileCaptureSubmissionPhaseDto.PREPARED, MobileCaptureSubmissionPhaseDto.CANCELLED,
-        MobileCaptureSubmissionPhaseDto.DELETED -> true
-        else -> false
-    }
+    private fun editable(): Boolean = captureEvidenceIsEditable(status?.phase)
 
     private fun update() {
         val bytes = note.text.toString().toByteArray(Charsets.UTF_8).size
@@ -116,16 +116,13 @@ internal class CaptureEvidenceDialog(
         save.isEnabled = loaded && !working && editable() && dirty && bytes <= noteLimit
         retryLoad.visibility = if (!loaded && !working) android.view.View.VISIBLE else android.view.View.GONE
         retryLoad.isEnabled = !working
-        send.isEnabled = captureSubmissionEvidenceIsReviewable(loaded, working, dirty) && status?.phase !in setOf(
-            MobileCaptureSubmissionPhaseDto.SENT, MobileCaptureSubmissionPhaseDto.DELETING,
-            MobileCaptureSubmissionPhaseDto.REJECTED, MobileCaptureSubmissionPhaseDto.CANCELLING,
-            MobileCaptureSubmissionPhaseDto.DELETED)
-        remove.visibility = if (status == null || status?.phase in setOf(
-            MobileCaptureSubmissionPhaseDto.SENT,
-            MobileCaptureSubmissionPhaseDto.DELETING,
-            MobileCaptureSubmissionPhaseDto.CANCELLED,
-            MobileCaptureSubmissionPhaseDto.DELETED,
-        )) android.view.View.GONE else android.view.View.VISIBLE
+        send.isEnabled = captureSubmissionEvidenceIsReviewable(loaded, working, dirty) &&
+            captureSubmissionSendOffered(status?.phase)
+        remove.visibility = if (captureSubmissionCancelOffered(status?.phase)) {
+            android.view.View.VISIBLE
+        } else {
+            android.view.View.GONE
+        }
         remove.text = "Cancel Send"
         remove.isEnabled = !working
     }
@@ -155,7 +152,7 @@ internal class CaptureEvidenceDialog(
         charging.withDatabase(operation) { result ->
             if (dismissed) return@withDatabase
             onFinished()
-            result.onSuccess(done).onFailure { message.text = it.message ?: "The recording could not be updated." }
+            result.onSuccess(done).onFailure { message.text = captureSubmissionThrowableMessage(it) }
             working = false; renderImages(); update()
         }
     }
@@ -180,7 +177,7 @@ internal class CaptureEvidenceDialog(
             MobileCaptureSubmissionLocalPayloadStateDto.REMOVED -> context.getString(R.string.capture_sent_local_deleted)
             else -> when (next?.phase) {
                 MobileCaptureSubmissionPhaseDto.SENT -> "Received privately · ${next.receipt?.operationId.orEmpty()}"
-                MobileCaptureSubmissionPhaseDto.CANCELLED -> "Send cancelled"
+                MobileCaptureSubmissionPhaseDto.CANCELLED -> captureRemovalResultMessage(MobileCaptureSubmissionPhaseDto.CANCELLED)
                 else -> ""
             }
         }
@@ -212,12 +209,7 @@ internal class CaptureEvidenceDialog(
         status = prepared
         val categories = buildList {
             add("raw Bluetooth evidence, event order and timing")
-            if (prepared.categories.location) add("location")
-            if (prepared.categories.deviceIdentifiers) add("device and platform identifiers")
-            if (prepared.categories.notes) add("descriptions and notes")
-            if (prepared.categories.annotations) add("annotations and label boundaries")
-            if (prepared.categories.settingsObservations) add("user-entered settings values")
-            if (screenshots.isNotEmpty()) add("${screenshots.size} selected screenshots")
+            addAll(captureDisclosurePhrases(prepared.categories, screenshots.size.toUInt()))
         }
         val confirmation = AlertDialog.Builder(context).setTitle("Send this capture privately?")
             .setMessage("Origin: ${captureSubmissionOriginLabel(context, prepared.origin)}. Integrity: ${captureSubmissionIntegrityLabel(context, prepared.integrity)}. Send ${categories.joinToString(", ")} to the CutOut maintainer for protocol support. Music is excluded. A matching receipt starts removal of the local capture payload.")
@@ -265,7 +257,9 @@ internal class CaptureEvidenceDialog(
     private fun <T> runTestOperation(operation: () -> T, onFinished: () -> Unit, done: (T) -> Unit) {
         if (working || dismissed) return
         working = true; update()
-        runCatching(operation).onSuccess(done).onFailure { message.text = it.message ?: "The recording could not be updated." }
+        runCatching(operation).onSuccess(done).onFailure {
+            message.text = captureSubmissionThrowableMessage(it)
+        }
         onFinished()
         working = false; renderImages(); update()
     }
@@ -277,7 +271,7 @@ internal class CaptureEvidenceDialog(
             runTestOperation({ testRemove(operation, deleting) }) { next ->
                 status = next
                 onStatusChanged()
-                message.text = if (next.phase == MobileCaptureSubmissionPhaseDto.DELETED) "Sent copy deleted" else if (next.phase == MobileCaptureSubmissionPhaseDto.CANCELLED) "Send cancelled" else "Removal is pending. Retry to confirm it."
+                message.text = captureRemovalResultMessage(next.phase)
             }
             return
         }
@@ -292,33 +286,37 @@ internal class CaptureEvidenceDialog(
         }) { next ->
             status = next
             onStatusChanged()
-            message.text = if (next.phase == MobileCaptureSubmissionPhaseDto.DELETED) "Sent copy deleted" else if (next.phase == MobileCaptureSubmissionPhaseDto.CANCELLED) "Send cancelled" else "Removal is pending. Retry to confirm it."
+            message.text = captureRemovalResultMessage(next.phase)
         }
     }
 
     private fun importImages(uris: List<Uri>) {
         if (uris.size > screenshotLimit - screenshots.size) {
-            message.text = "Choose up to four screenshots."
+            message.text = captureScreenshotLimitMessage()
             return
         }
         run({ _ -> uris.map { uri ->
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
-            require(bounds.outWidth > 0 && bounds.outHeight > 0) { "The screenshot could not be read." }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                throw MobileCaptureSubmissionException.InvalidScreenshot()
+            }
             val options = BitmapFactory.Options().apply {
                 inSampleSize = 1
                 while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 2048) inSampleSize *= 2
             }
             val bitmap = context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, options) }
-                ?: error("The screenshot could not be read.")
+                ?: throw MobileCaptureSubmissionException.InvalidScreenshot()
             try {
                 ByteArrayOutputStream().use { output ->
-                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) { "The screenshot could not be read." }
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
+                        throw MobileCaptureSubmissionException.InvalidScreenshot()
+                    }
                     output.toByteArray()
                 }
             } finally { bitmap.recycle() }
         } }) { imported ->
-            if (screenshots.size + imported.size > screenshotLimit) message.text = "Choose up to four screenshots."
+            if (screenshots.size + imported.size > screenshotLimit) message.text = captureScreenshotLimitMessage()
             else { screenshots += imported; dirty = true; message.text = "" }
         }
     }

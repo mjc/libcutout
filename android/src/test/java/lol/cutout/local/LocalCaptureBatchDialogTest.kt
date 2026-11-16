@@ -84,6 +84,61 @@ class LocalCaptureBatchDialogTest {
     }
 
     @Test
+    fun failedRetryReviewCanBeRetriedAgain() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val row = candidate("source-retry", eligible = true)
+        var reviews = 0
+        val operations = object : CaptureSubmissionBatchOperations {
+            override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
+                reviews += 1
+                if (reviews == 2) completed(Result.failure(IllegalStateException("retry review failed")))
+                else completed(Result.success(listOf(row)))
+            }
+
+            override fun sendSelected(
+                sourceArtifactIds: List<String>,
+                progress: (CaptureBatchProgress) -> Unit,
+                completed: (Result<CaptureBatchSummary>) -> Unit,
+            ) {
+                completed(Result.success(CaptureBatchSummary(
+                    sent = 0uL, cleaned = 0uL, failed = 1uL, skipped = 0uL, cancelled = 0uL,
+                    failedSourceArtifactIds = listOf(row.sourceArtifactId),
+                    pendingCleanupSourceArtifactIds = emptyList(),
+                )))
+            }
+
+            override fun requestCancel() = Unit
+        }
+        val dialog = CaptureSubmissionBatchDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            directories = emptyList(),
+            onFinished = {},
+            testOperations = operations,
+        )
+        try {
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            find(dialog.reviewDialog, "captures.batch.reviewFailedAgain").performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(2, reviews)
+            assertTrue(containsText(dialog.reviewDialog, "Could not review saved recordings."))
+            find(dialog.reviewDialog, "captures.batch.reviewFailedAgain").performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(3, reviews)
+        } finally {
+            dialog.confirmationDialog?.dismiss()
+            dialog.reviewDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun stopAfterCurrentRequestsOnlyBoundedRustAdmissionCancellation() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()
@@ -106,7 +161,7 @@ class LocalCaptureBatchDialogTest {
                 sends += 1
                 completeSend = completed
                 progress(CaptureBatchProgress(
-                    sourceArtifactId = row.sourceArtifactId, phase = "Current", message = "Sending",
+                    sourceArtifactId = row.sourceArtifactId, phase = uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchItemPhaseDto.CURRENT, message = "Sending",
                     total = 1uL, sent = 0uL, cleaned = 0uL, failed = 0uL, skipped = 0uL,
                     cancelled = 0uL, current = 1uL,
                 ))
@@ -175,7 +230,7 @@ class LocalCaptureBatchDialogTest {
                 calls += sourceArtifactIds
                 assertEquals(listOf(eligible.sourceArtifactId), sourceArtifactIds)
                 progress(CaptureBatchProgress(
-                    sourceArtifactId = eligible.sourceArtifactId, phase = "Failed",
+                    sourceArtifactId = eligible.sourceArtifactId, phase = uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchItemPhaseDto.FAILED,
                     message = "Network outcome is not confirmed; local capture retained.",
                     total = 2uL, sent = 0uL, cleaned = 0uL, failed = 1uL, skipped = 1uL, cancelled = 0uL, current = 0uL,
                 ))
@@ -267,12 +322,12 @@ class LocalCaptureBatchDialogTest {
                     )))
                 } else {
                     progress(CaptureBatchProgress(
-                        sourceArtifactId = row.sourceArtifactId, phase = "Sent", message = "current receipt",
+                        sourceArtifactId = row.sourceArtifactId, phase = uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchItemPhaseDto.SENT, message = "current receipt",
                         total = 1uL, sent = 1uL, cleaned = 0uL, failed = 0uL, skipped = 0uL,
                         cancelled = 0uL, current = 0uL,
                     ))
                     oldProgress?.invoke(CaptureBatchProgress(
-                        sourceArtifactId = row.sourceArtifactId, phase = "Failed", message = "stale failure",
+                        sourceArtifactId = row.sourceArtifactId, phase = uniffi.cutout_mobile_ffi.MobileCaptureSubmissionBatchItemPhaseDto.FAILED, message = "stale failure",
                         total = 1uL, sent = 0uL, cleaned = 0uL, failed = 1uL, skipped = 0uL,
                         cancelled = 0uL, current = 0uL,
                     ))

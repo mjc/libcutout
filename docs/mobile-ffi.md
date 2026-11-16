@@ -66,6 +66,17 @@ Keep this boundary when changing the app: a policy fix must be testable without
 an Apple runtime. Swift tests verify observation delivery, native effect
 ownership, and presentation; Rust tests verify the portable invariants.
 
+The capture batch sheet follows that split. `CaptureBatchSession` admits rows,
+rejects an eligible row that later arrives as still checking, keeps the
+selection, and decides whether confirmation arms Send all, cancels the scan,
+or uploads the selected sources. It also decides when the control says Send all,
+when that confirmation includes rows still being checked, and which progress
+marks a source failed, sent, or cleaned. The same Rust surface orders the
+disclosed categories, writes their confirmation phrases and the private-send
+error sentences, chooses the history badge, and decides when a phase offers
+Send or Cancel and when notes can be edited or reviewed. Swift and Kotlin
+localize the short batch labels and perform the effects.
+
 The charging editor uses Rust's power draft for suggested/manual provenance and
 explicit inclusion. Adding a suggested supply confirms that value; a country
 change that replaces it requires confirmation again. Manual observations survive

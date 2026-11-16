@@ -6,10 +6,6 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-func captureSubmissionEvidenceIsReviewable(loaded: Bool, working: Bool, dirty: Bool) -> Bool {
-    loaded && !working && !dirty
-}
-
 func captureSubmissionOriginLabel(_ origin: MobileCaptureSubmissionOriginDto) -> String {
     switch origin {
     case .automatic: localizedAppText("captures.automatic")
@@ -68,10 +64,7 @@ struct CaptureSubmissionSection: View {
     }
 
     private var evidenceEditable: Bool {
-        switch model.status?.phase {
-        case nil, .prepared, .cancelled, .deleted: true
-        default: false
-        }
+        captureEvidenceIsEditable(phase: model.status?.phase)
     }
 
     private var submissionSection: some View {
@@ -166,28 +159,30 @@ struct CaptureSubmissionSection: View {
 
     @ViewBuilder
     private func actions(_ status: MobileCaptureSubmissionStatusDto) -> some View {
-        switch status.phase {
-        case .prepared:
-            sendButton("Send privately")
+        phaseDetail(status)
+        if captureSubmissionSendOffered(phase: status.phase), status.phase != .sending || !model.isSending {
+            sendButton(status.phase == .prepared || status.phase == .cancelled ? "Send privately" : "Retry Send")
+        }
+        if captureSubmissionCancelOffered(phase: status.phase) {
             cancelButton
+        }
+    }
+
+    @ViewBuilder
+    private func phaseDetail(_ status: MobileCaptureSubmissionStatusDto) -> some View {
+        switch status.phase {
         case .sending:
             Text("The transfer has not received a durable receipt yet.")
-            if !model.isSending { sendButton("Retry Send") }
-            cancelButton
-        case .failed:
-            sendButton("Retry Send")
-            cancelButton
         case .rejected:
             Text("The service rejected this snapshot. This Send cannot be retried.")
-            cancelButton
         case .sent, .deleting, .deleted:
             sentOutcome(status)
         case .cancelling:
             Text("Cancellation is pending.")
-            cancelButton
         case .cancelled:
-            Label("Send cancelled", systemImage: "xmark.circle")
-            sendButton("Send privately")
+            Label(captureRemovalResultMessage(phase: .cancelled), systemImage: "xmark.circle")
+        case .prepared, .failed:
+            EmptyView()
         }
     }
 
@@ -239,14 +234,8 @@ struct CaptureSubmissionSection: View {
     }
 
     private func includedCategories(_ status: MobileCaptureSubmissionStatusDto) -> [String] {
-        var categories: [String] = []
-        if status.categories.deviceIdentifiers { categories.append("device and platform identifiers") }
-        if status.categories.location { categories.append("location") }
-        if status.categories.notes { categories.append("descriptions and notes") }
-        if !evidence.screenshots.isEmpty { categories.append("\(evidence.screenshots.count) selected screenshots") }
-        if status.categories.annotations { categories.append("annotations and label boundaries") }
-        if status.categories.settingsObservations { categories.append("user-entered settings values") }
-        return categories
+        captureDisclosurePhrases(
+            categories: status.categories, screenshotCount: UInt32(evidence.screenshots.count))
     }
 }
 
@@ -262,8 +251,8 @@ final class CaptureEvidenceEditorModel {
     private(set) var isWorking = false
     private(set) var isDirty = false
     private(set) var error: String?
-    private(set) var noteLimit = 1024
-    private(set) var screenshotLimit = 4
+    private(set) var noteLimit = Int(captureNoteLimitBytes())
+    private(set) var screenshotLimit = Int(captureScreenshotLimit())
     @ObservationIgnored private let loadEvidence: LoadEvidence
 
     init(source: MobileCaptureSubmissionSourceDto, loadEvidence: LoadEvidence? = nil) {

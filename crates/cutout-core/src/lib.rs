@@ -42,6 +42,8 @@ pub use capture_submission::*;
 mod capture_evidence;
 #[cfg(feature = "serde")]
 pub use capture_evidence::*;
+mod capture_batch;
+pub use capture_batch::*;
 mod battery_current;
 pub use battery_current::*;
 mod controller_battery;
