@@ -930,11 +930,10 @@ class AndroidBleClient(
             (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
                 postOnOwner {
                     if (retired || connection !== this) return@postOnOwner
+                    // The operation queue is already closed, so a failed ride drain cannot
+                    // leave this attempt connected. Finish the capture and release the link.
                     if (result.isFailure) {
-                        draining = false
-                        view = view.copy(problem = true)
-                        publish()
-                        return@postOnOwner
+                        Log.w("CutoutBle", "Ride drain failed before identification retry", result.exceptionOrNull())
                     }
                     val schedule = {
                         state.connectionLinkDown(retryToken)
