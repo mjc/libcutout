@@ -26,17 +26,24 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     private var queryGeneration = 0L
     private var selectionGeneration = 0L
     private var bounds: MobileGeoBoundsDto? = null
+    private var disposed = false
 
     fun currentBounds(): MobileGeoBoundsDto? = bounds
 
     fun close() {
+        if (disposed) return
+        disposed = true
+        queryGeneration += 1
+        selectionGeneration += 1
         reconciliation.close()
     }
 
     fun loadBlockedOperations() {
+        if (disposed) return
         state = state.copy(loadingBlockedOperations = true, error = null)
         notifyChanged()
         client.withDatabase({ it.listBlockedChargingOperations() }) { result ->
+            if (disposed) return@withDatabase
             result.fold(
                 onSuccess = { state = state.copy(blockedOperations = it, loadingBlockedOperations = false) },
                 onFailure = { state = state.copy(loadingBlockedOperations = false, error = it.message) },
@@ -50,11 +57,19 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         resolution: MobileChargingResolutionDto,
         completed: (Result<Unit>) -> Unit,
     ) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         state = state.copy(busySpotId = conflict.operationId, error = null)
         notifyChanged()
         client.withDatabase({ database ->
             database.resolveChargingOperation(conflict.operationId, conflict.localRevision, resolution)
         }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             if (result.isSuccess) loadBlockedOperations() else notifyChanged()
             completed(result)
@@ -66,11 +81,19 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         input: MobileChargingInputDto,
         completed: (Result<MobileChargingWriteReceiptDto>) -> Unit,
     ) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         state = state.copy(busySpotId = conflict.operationId, error = null)
         notifyChanged()
         client.withDatabase({ database ->
             database.replaceBlockedChargingOperation(conflict.operationId, conflict.localRevision, input)
         }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             if (result.isSuccess) {
                 loadBlockedOperations()
@@ -81,6 +104,7 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun load(bounds: MobileGeoBoundsDto, append: Boolean = false) {
+        if (disposed) return
         if (append && (state.cursor == null || state.loading || state.loadingMore || state.limitReached)) return
         val generation = queryGeneration + 1
         queryGeneration = generation
@@ -97,7 +121,7 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         client.withDatabase({ database ->
             database.chargingSpotsInBounds(bounds, requestFilter, cursor, PAGE_SIZE)
         }) { result ->
-            if (generation != queryGeneration) return@withDatabase
+            if (disposed || generation != queryGeneration) return@withDatabase
             result.fold(
                 onSuccess = { page -> applyPage(page, append, requestTicket) },
                 onFailure = { error ->
@@ -117,6 +141,7 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun select(id: String?) {
+        if (disposed) return
         val generation = ++selectionGeneration
         if (id == null) {
             state = state.copy(selected = null, error = null)
@@ -137,13 +162,13 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         notifyChanged()
         val requestTicket = reconciliation.beginObservation()
         client.withDatabase({ it.chargingSpot(id) }) { result ->
-            if (generation != selectionGeneration) return@withDatabase
+            if (disposed || generation != selectionGeneration) return@withDatabase
             result.fold(
                 onSuccess = { spot ->
                     if (spot == null) {
                         state = state.copy(selected = null, error = "Charging spot is unavailable.")
                     } else {
-                        applyReadback(requestTicket, spot)
+                        applyReadback(requestTicket, spot, establishSelection = true)
                     }
                 },
                 onFailure = { error -> state = state.copy(error = error.message) },
@@ -157,6 +182,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun vote(spot: MobileChargingSpotDto, selected: MobileChargingVoteDto, completed: (Result<MobileChargingSpotDto?>) -> Unit) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         if (reconciliation.isWithdrawn(spot.id)) {
             completed(Result.success(null))
             return
@@ -169,6 +198,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
             database.voteChargingSpot(spot.id, spot.localRevision, vote)
             database.chargingSpot(spot.id)
         }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             result.getOrNull()?.let { applyReadback(requestTicket, it) }
             notifyChanged()
@@ -177,6 +210,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun save(spot: MobileChargingSpotDto?, input: MobileChargingInputDto, completed: (Result<MobileChargingSpotDto?>) -> Unit) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         state = state.copy(busySpotId = spot?.id ?: NEW_SPOT, error = null)
         notifyChanged()
         val requestTicket = reconciliation.beginObservation()
@@ -185,6 +222,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
             else database.editChargingSpot(spot.id, spot.localRevision, input)
             database.chargingSpot(receipt.id)
         }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             result.getOrNull()?.let { applyReadback(requestTicket, it) }
             refreshCurrentViewport()
@@ -194,6 +235,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun withdraw(spot: MobileChargingSpotDto, completed: (Result<Unit>) -> Unit) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         if (reconciliation.isWithdrawn(spot.id)) {
             state = state.copy(
                 spots = state.spots.filterNot { it.id == spot.id },
@@ -206,6 +251,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         state = state.copy(busySpotId = spot.id, error = null)
         notifyChanged()
         client.withDatabase({ database -> database.withdrawChargingSpot(spot.id, spot.localRevision); Unit }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             if (result.isSuccess) {
                 reconciliation.recordWithdrawal(spot.id, spot.localRevision)
@@ -222,6 +271,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun verifyAccess(spot: MobileChargingSpotDto, completed: (Result<MobileChargingSpotDto?>) -> Unit) {
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
         state = state.copy(busySpotId = spot.id, error = null)
         notifyChanged()
         val requestTicket = reconciliation.beginObservation()
@@ -229,6 +282,10 @@ class ChargingMapController(private val client: AndroidChargingClient) {
             database.verifyChargingSpot(spot.id, spot.localRevision)
             database.chargingSpot(spot.id)
         }) { result ->
+            if (disposed) {
+                completed(result)
+                return@withDatabase
+            }
             state = state.copy(busySpotId = null, error = result.exceptionOrNull()?.message)
             result.getOrNull()?.let { applyReadback(requestTicket, it) }
             notifyChanged()
@@ -262,7 +319,11 @@ class ChargingMapController(private val client: AndroidChargingClient) {
         )
     }
 
-    private fun applyReadback(requestTicket: ULong, spot: MobileChargingSpotDto) {
+    private fun applyReadback(
+        requestTicket: ULong,
+        spot: MobileChargingSpotDto,
+        establishSelection: Boolean = false,
+    ) {
         val accepted = reconciliation.reconcileReadback(requestTicket, spot)
         if (accepted == null) {
             if (reconciliation.isWithdrawn(spot.id)) {
@@ -287,6 +348,7 @@ class ChargingMapController(private val client: AndroidChargingClient) {
             accepted.status == MobileChargingStatusDto.WITHDRAWN || accepted.status == MobileChargingStatusDto.REMOVED ->
                 state.selected?.takeUnless { it.id == accepted.id }
             state.selected?.id == accepted.id -> accepted
+            establishSelection && visible -> accepted
             else -> state.selected
         }
         state = state.copy(spots = spots, selected = selected)
