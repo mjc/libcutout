@@ -2,7 +2,7 @@ use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage, check_limit
 use crate::recording::RideMotionObservation;
 use cutout_core::{
     PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapRecord, PhoneControlMode,
-    PhoneDriveLimits,
+    PhoneDriveEvidence, PhoneDriveLimits,
 };
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
@@ -3797,6 +3797,47 @@ impl RideDatabase {
             Command::PhoneControl(phone_control::Command::SaveForDevice {
                 device_identity,
                 settings,
+                reply,
+            })
+        })
+    }
+
+    /// Appends one recorded phone-drive fact for a device.
+    ///
+    /// The row is the fact that was observed. Saving it leaves the saved input layout unchanged.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the identity is invalid or the database cannot store the row.
+    pub fn record_phone_drive_evidence(
+        &self,
+        device_identity: &str,
+        evidence: PhoneDriveEvidence,
+    ) -> Result<(), StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(|reply| {
+            Command::PhoneControl(phone_control::Command::RecordEvidence {
+                device_identity,
+                evidence,
+                reply,
+            })
+        })
+    }
+
+    /// Loads recorded phone-drive facts for one device, in insertion order.
+    ///
+    /// A device with no fact rows yields an empty list. This reads those rows and does not admit
+    /// a live throttle or brake write.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the identity is invalid or a stored fact is corrupt.
+    pub fn phone_drive_evidence(
+        &self,
+        device_identity: &str,
+    ) -> Result<Vec<PhoneDriveEvidence>, StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(|reply| {
+            Command::PhoneControl(phone_control::Command::LoadEvidence {
+                device_identity,
                 reply,
             })
         })

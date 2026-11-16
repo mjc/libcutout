@@ -185,6 +185,12 @@ impl PhoneDriveContactId {
             None => None,
         }
     }
+
+    /// Returns the native contact identity.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
 }
 
 /// Complete native contact observation; native owns framework touch objects only.
@@ -417,6 +423,9 @@ pub enum PhoneDriveUnavailableReason {
     /// The current route is not an e-skate phone-control candidate.
     VehicleUnsupported,
 }
+
+pub mod phone_drive_fact;
+pub use phone_drive_fact::{PhoneDriveEvidence, PhoneDriveFact, PhoneDriveFactPhase};
 
 #[cfg(test)]
 mod tests {

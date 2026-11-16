@@ -8,6 +8,9 @@ mod ride_session_marker_tests;
 #[path = "storage/phone_control_preferences_tests.rs"]
 mod phone_control_preferences_tests;
 
+#[path = "storage/phone_drive_evidence_tests.rs"]
+mod phone_drive_evidence_tests;
+
 use crate::{
     CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
 };
