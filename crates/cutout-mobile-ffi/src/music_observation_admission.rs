@@ -488,7 +488,7 @@ fn resolve_music_context(
     observed_at_ms: u64,
 ) -> Result<MobileMusicObservationContext, MobileRideMapCoreErrorDto> {
     use cutout_application::ride_recording::music::RideMusicContext;
-    state.require_ready()?;
+    state.require_ready_during_music_stop()?;
     let parsed = uuid::Uuid::parse_str(expected_ride_id)
         .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
     if parsed.to_string() != expected_ride_id {

@@ -11403,6 +11403,15 @@ impl MobileRideMapCoreInner {
     /// Verified packets for the current connection stay admissible while Stop waits on music.
     /// A different lifecycle command, a second admission, and a failed restore still block.
     fn require_verified_connection_ready(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        self.require_ready_during_music_stop()
+    }
+
+    /// Keeps covered work admissible while Stop waits on accepted music.
+    ///
+    /// That Stop command is itself the lifecycle barrier. The observation it
+    /// covers still resolves ride context and records. A different lifecycle
+    /// command, a second connection admission, and a failed restore still block.
+    fn require_ready_during_music_stop(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         if self.pending_connection_admission_id.is_some()
             || (self.pending_lifecycle_command_id.is_some()
                 && self.pending_music_stop_command_id.is_none())
@@ -13089,7 +13098,7 @@ impl MobileRideMapCoreInner {
         &self,
         expected: &MobileRideMapRecordingTokenDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
-        self.require_ready()?;
+        self.require_ready_during_music_stop()?;
         let parsed = Uuid::parse_str(&expected.ride_id)
             .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
         if parsed.to_string() != expected.ride_id {
@@ -13112,7 +13121,7 @@ impl MobileRideMapCoreInner {
         clock_uncertainty_ms: u64,
     ) -> Result<Arc<MobileRideMapMusicCommand>, MobileRideMapCoreErrorDto> {
         use cutout_application::ride_recording::music::RideMusicEventAdmission;
-        self.require_ready()?;
+        self.require_ready_during_music_stop()?;
         let observation = ride_music_observation(
             snapshot,
             kind,
@@ -28913,6 +28922,83 @@ mod tests {
         database.shutdown().unwrap();
         drop(connection);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn stop_waiting_on_music_still_resolves_that_observation() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-stop-music-context-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        let core = restored_database_core(database.clone());
+        let lifecycle = MobileMusicProviderLifecycle::new();
+        core.bind_music_observation_lifecycle(Arc::clone(&lifecycle))
+            .unwrap();
+        let active = core.start_gps_only(1_000).unwrap();
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .unwrap();
+        let request = lifecycle.begin_music_observation();
+        let MobileMusicObservationAdmission::Admitted { lease } = request.admission() else {
+            panic!("available observation admission");
+        };
+        let stop = core
+            .begin_lifecycle_command(
+                MobileRideEventDto::Stop,
+                active.command_token.unwrap(),
+                2_000,
+            )
+            .unwrap();
+        assert_eq!(stop.poll().unwrap(), MobileRideMapLifecyclePollDto::Pending);
+        let context = core
+            .music_observation_context_for_observation(
+                Arc::clone(&lease),
+                active.ride_id.clone(),
+                2_000,
+            )
+            .expect("stop waits for this observation, so ride context stays available");
+        let MobileMusicObservationContext::Ready { recording } = context else {
+            panic!("observation at the ride clock is in the active interval: {context:?}");
+        };
+        assert_eq!(stop.poll().unwrap(), MobileRideMapLifecyclePollDto::Pending);
+        let observation = test_music_snapshot();
+        let decision = lifecycle
+            .observe_admitted_music(
+                Arc::clone(&lease),
+                Some(recording),
+                observation,
+                1_700_000_002_000,
+                7,
+            )
+            .unwrap()
+            .expect("human-readable policy classifies the observation");
+        let music = core
+            .begin_record_music_observation(Arc::clone(&lease))
+            .expect("recording stays open while Stop waits for this observation");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let receipt = loop {
+            match music.poll().unwrap() {
+                MobileRideMapMusicPollDto::Completed { result } => break result,
+                MobileRideMapMusicPollDto::Pending => {
+                    assert!(Instant::now() < deadline, "music write did not settle");
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        };
+        assert_eq!(receipt.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+        let _ = lifecycle.acknowledge_history_transition(decision.history_transition.unwrap().id);
+        request.settle().unwrap();
+        let stopped = stop.wait_result().unwrap();
+        assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
+        assert_eq!(stopped.ride_id, active.ride_id);
+        let events = core.current_music_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title.as_deref(), Some("Song"));
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(path);
     }
 
     #[test]
