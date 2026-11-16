@@ -19,6 +19,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.os.SystemClock
 import android.widget.TextView
 import uniffi.cutout_mobile_ffi.*
 import java.util.Locale
@@ -127,18 +128,27 @@ class RideDashboardView(
         val voltage = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.PackVoltage>().firstOrNull()?.voltage
         val power = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.Power>().firstOrNull()?.power
         val thermal = metrics.filterIsInstance<MobileRiderDashboardMetricDescriptorDto.Thermal>().firstOrNull()?.readback
-        val headroom = projection?.takeIf { displayKind == DisplayKind.EUC || displayKind == DisplayKind.VESC }?.safetyMetrics.orEmpty()
+        val telemetryFresh = telemetrySampleIsFresh(
+            value.telemetry?.atMs?.milliseconds,
+            SystemClock.elapsedRealtime().toULong(),
+        )
+        val headroom = if (telemetryFresh) projection?.takeIf {
+            displayKind == DisplayKind.EUC || displayKind == DisplayKind.VESC
+        }?.safetyMetrics.orEmpty()
             .filterIsInstance<MobileRiderSafetyMetricDescriptorDto.PwmHeadroom>().firstOrNull()?.value
-        val speed = snapshot?.speed?.let { format(it.value.value.toDouble() * 0.0022369362920544, 1) }
-            ?: ui.label("ride.hero.value.unavailable")
+        else null
+        val speedQuantity = snapshot?.speed?.let { rideSpeedDisplay(it.value.value.toLong()) }
+        val speed = speedQuantity?.text ?: ui.label("ride.hero.value.unavailable")
         val batteryText = battery?.let { (if (it.source == MobileValueSourceDto.ESTIMATED) "≈" else "") + it.value.value }
             ?: context.getString(R.string.unavailable)
         // Swift deliberately shows no range because limp-home distance is not a pace estimate.
         val unavailable = context.getString(R.string.unavailable)
         val voltageText = voltage?.let { format(it.value.toDouble() / 1000, 1) + " V" } ?: unavailable
-        val powerText = power?.let { format(it.value.toDouble() / 1_000_000, 2) + " kW" } ?: unavailable
+        val powerText = power?.let { RideMetricFormatting.power(context, it.value) } ?: unavailable
         val thermalText = thermal?.maximum?.let { format(it.value.toDouble() / 1000, 0) + " °C" } ?: unavailable
-        val headroomText = (headroom as? MobileRiderHeadroomValueDto.Available)?.let { "${it.permille / 10U}%" } ?: unavailable
+        val headroomText = (headroom as? MobileRiderHeadroomValueDto.Available)?.let {
+            "${ridePermillePercentLabel(it.permille.toLong()).text}%"
+        } ?: unavailable
         val vescVoltageText = snapshot?.voltage?.value?.value?.let { format(it.toDouble() / 1000, 1) + " V" } ?: unavailable
         val motorCurrentText = snapshot?.motorCurrent?.value?.value?.let { format(it.toDouble() / 1000, 1) + " A" } ?: unavailable
         val boardAngleText = snapshot?.pitch?.value?.value?.let { format(it.toDouble() / 1000, 1) + "°" } ?: unavailable
@@ -146,7 +156,7 @@ class RideDashboardView(
         val footpadText = snapshot?.footpad?.let(::footpadText).orEmpty()
         details = buildList {
             add(context.getString(R.string.speed) to "$speed ${context.getString(R.string.speed_unit)}")
-            if (displayKind == DisplayKind.EUC || displayKind == DisplayKind.VESC) {
+            if (telemetryFresh && (displayKind == DisplayKind.EUC || displayKind == DisplayKind.VESC)) {
                 add(context.getString(R.string.pwm_headroom) to headroomText)
             }
             if (displayKind == DisplayKind.VESC) {
@@ -199,7 +209,7 @@ class RideDashboardView(
             surfaceKey = key
             createSurface(showInstruments, landscape)
         }
-        updateSurface(speed, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery,
+        updateSurface(speed, telemetryFresh, headroom, headroomText, batteryText, voltageText, powerText, thermalText, battery,
             vescVoltageText, motorCurrentText, boardAngleText, vescTemperatureText, footpadText)
         if (displayKind == DisplayKind.STANDARD_VESC) {
             energyLabelView?.text = if (battery == null) ui.label("vesc.metric.pack_voltage") else context.getString(R.string.battery)
@@ -232,7 +242,8 @@ class RideDashboardView(
 
     private fun recordingForThisVehicle(): MobileRideMapCoreSnapshotDto? {
         val connected = latestPresentation?.session?.connection?.token?.platformIdentifier ?: return null
-        return recordingSnapshot?.takeIf { it.associatedVehicle == connected }
+        val snapshot = recordingSnapshot ?: return null
+        return snapshot.takeIf { recordingMatchesConnectedVehicle(it.associatedVehicle, connected) }
     }
 
     private fun recordingTripText(): String {
@@ -805,7 +816,7 @@ class RideDashboardView(
         })
     }
 
-    private fun updateSurface(speed: String, headroom: MobileRiderHeadroomValueDto?, headroomText: String,
+    private fun updateSurface(speed: String, telemetryFresh: Boolean, headroom: MobileRiderHeadroomValueDto?, headroomText: String,
         battery: String, voltage: String, power: String, temperature: String, batteryReading: BatteryLevelReading?,
         vescVoltage: String, motorCurrent: String, boardAngle: String, vescTemperature: String, footpad: String) {
         headingView?.text = identityTitle
@@ -819,9 +830,11 @@ class RideDashboardView(
         }
         statusView?.contentDescription = statusText
         speedView?.text = speed
+        speedUnitView?.text = " ${RideMetricFormatting.speedUnit(context)}"
         val percent = (headroom as? MobileRiderHeadroomValueDto.Available)?.permille?.toInt()
-        gaugeView?.update(headroom, percent, headroomText)
-        readingValues["headroom"]?.text = headroomText
+        gaugeView?.visibility = if (telemetryFresh) View.VISIBLE else View.GONE
+        gaugeView?.update(if (telemetryFresh) headroom else null, if (telemetryFresh) percent else null, headroomText)
+        readingValues["headroom"]?.text = if (telemetryFresh) headroomText else context.getString(R.string.unavailable)
         val accessibleText = resources.configuration.fontScale >= 1.5f
         readingValues["range"]?.text = if (accessibleText) "${context.getString(R.string.unavailable)} ${context.getString(R.string.distance_unit)}"
             else context.getString(R.string.unavailable)
@@ -846,7 +859,7 @@ class RideDashboardView(
         val view = gpsSpeedView ?: return
         val readback = phoneSpeedReadback
         val reading = readback?.snapshot?.gpsSpeed
-        val value = reading?.let { format(it.value.value.toDouble() * 0.0022369362920544, 1) }
+        val value = reading?.let { RideMetricFormatting.speed(it.value.value.toLong()) }
             ?: ui.label("ride.hero.value.unavailable")
         view.text = "GPS $value"
         val detailKey = when (readback?.freshness) {
@@ -855,7 +868,7 @@ class RideDashboardView(
             else -> "gps.detail.unavailable"
         }
         val label = ui.label("euc.metric.gps_speed")
-        val unit = if (reading == null) "" else context.getString(R.string.speed_unit)
+        val unit = if (reading == null) "" else RideMetricFormatting.speedUnit(context)
         val valueText = if (reading == null) ui.label("metric.availability.unavailable")
             else "$value $unit, ${ui.label(detailKey)}"
         view.contentDescription = "$label: $valueText"

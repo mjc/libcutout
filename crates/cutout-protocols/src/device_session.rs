@@ -91,6 +91,43 @@ impl DeviceSessionIdentity {
     }
 }
 
+fn append_vesc_startup_reads(
+    session: &mut VescSettingsSession,
+    monotonic_ms: cutout_core::MonotonicMillisDto,
+    step: &mut DeviceSessionStep,
+) {
+    let firmware = session.ingest_typed(&SessionInputDto::CommandAt {
+        command: cutout_core::DeviceCommandDto::RequestFirmwareInfo,
+        monotonic_ms,
+    });
+    step.outputs.extend(firmware.outputs);
+    step.error = step.error.or(firmware.error);
+    let startup = session.ingest_typed(&SessionInputDto::CommandAt {
+        command: cutout_core::DeviceCommandDto::RequestTelemetry,
+        monotonic_ms,
+    });
+    step.outputs.extend(startup.outputs);
+    step.error = step.error.or(startup.error);
+}
+
+/// Startup reads a silent VESC needs before verification.
+///
+/// The writes match a verified VESC session's link-up. Detection transmits
+/// them and leaves capture link-up to the verified session.
+#[must_use]
+pub fn vesc_identification_requests(
+    monotonic_ms: cutout_core::MonotonicMillisDto,
+    max_write_len: Option<cutout_core::TransportWriteLimitDto>,
+) -> DeviceSessionStep {
+    let mut session = VescSettingsSession::new(None);
+    let mut step = session.ingest_typed(&SessionInputDto::LinkUp {
+        monotonic_ms,
+        max_write_len,
+    });
+    append_vesc_startup_reads(&mut session, monotonic_ms, &mut step);
+    step
+}
+
 /// One protocol-owned mobile device session.
 #[derive(Debug)]
 pub struct DeviceSession {
@@ -425,18 +462,7 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 let mut step = session.ingest_typed(input);
                 if let SessionInputDto::LinkUp { monotonic_ms, .. } = input {
-                    let firmware = session.ingest_typed(&SessionInputDto::CommandAt {
-                        command: cutout_core::DeviceCommandDto::RequestFirmwareInfo,
-                        monotonic_ms: *monotonic_ms,
-                    });
-                    step.outputs.extend(firmware.outputs);
-                    step.error = step.error.or(firmware.error);
-                    let startup = session.ingest_typed(&SessionInputDto::CommandAt {
-                        command: cutout_core::DeviceCommandDto::RequestTelemetry,
-                        monotonic_ms: *monotonic_ms,
-                    });
-                    step.outputs.extend(startup.outputs);
-                    step.error = step.error.or(startup.error);
+                    append_vesc_startup_reads(session, *monotonic_ms, &mut step);
                 }
                 step
             }
@@ -707,5 +733,49 @@ mod tests {
             entry.verification,
             cutout_core::VerificationStatus::SourceVerified
         );
+    }
+
+    #[test]
+    fn silent_vesc_identification_requests_match_verified_link_up() {
+        let monotonic_ms = cutout_core::MonotonicMillisDto { milliseconds: 1 };
+        let max_write_len = Some(cutout_core::TransportWriteLimitDto { bytes: 20 });
+        let identification = vesc_identification_requests(monotonic_ms, max_write_len);
+        let mut state = CutoutSessionState::default();
+        let mut detector = DeviceDetectionSession::default();
+        let frame = [
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+            0, 38, 208, 3,
+        ];
+        let resolution = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::Notification { bytes: &frame },
+        );
+        let mut session =
+            DeviceSession::from_detection(&resolution).expect("validated VESC is supported");
+        let verified = session.ingest_typed(&SessionInputDto::LinkUp {
+            monotonic_ms,
+            max_write_len,
+        });
+        assert_eq!(write_payloads(&identification), write_payloads(&verified));
+        assert_eq!(
+            write_payloads(&identification),
+            vec![
+                vec![2, 1, 157, 82, 20, 3],
+                vec![2, 5, 36, 101, 0, 2, 0, 2, 71, 3],
+                vec![2, 1, 4, 64, 132, 3],
+            ]
+        );
+    }
+
+    fn write_payloads(step: &DeviceSessionStep) -> Vec<Vec<u8>> {
+        step.outputs
+            .iter()
+            .filter_map(|output| match output {
+                SessionOutput::Transport(cutout_core::TransportAction::Write { bytes, .. }) => {
+                    Some(bytes.as_slice().to_vec())
+                }
+                _ => None,
+            })
+            .collect()
     }
 }

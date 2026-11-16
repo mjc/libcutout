@@ -212,3 +212,87 @@ pub enum PowerFlowDirection {
     /// Insufficient direction or operating-state evidence.
     Unknown,
 }
+
+/// One pack current chosen for display, with a one-based pack index when it is paired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DisplayedPackCurrent {
+    /// `Some(1)` or `Some(2)` for a page-specific pack. `None` is the legacy current.
+    pub pack_index: Option<u8>,
+    /// Physical current, including a measured zero.
+    pub current: BatteryCurrent,
+}
+
+/// Paired pack currents replace the legacy current whenever either pack value is present.
+#[must_use]
+pub fn displayed_pack_currents(
+    pack_0: Option<BatteryCurrent>,
+    pack_1: Option<BatteryCurrent>,
+    legacy: Option<BatteryCurrent>,
+) -> Vec<DisplayedPackCurrent> {
+    let mut paired = Vec::new();
+    if let Some(current) = pack_0 {
+        paired.push(DisplayedPackCurrent {
+            pack_index: Some(1),
+            current,
+        });
+    }
+    if let Some(current) = pack_1 {
+        paired.push(DisplayedPackCurrent {
+            pack_index: Some(2),
+            current,
+        });
+    }
+    if !paired.is_empty() {
+        return paired;
+    }
+    legacy
+        .map(|current| DisplayedPackCurrent {
+            pack_index: None,
+            current,
+        })
+        .into_iter()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_policy_prefers_any_paired_pack_current_over_legacy() {
+        let legacy = BatteryCurrent::current_out(10_000);
+        let paired = displayed_pack_currents(
+            Some(BatteryCurrent::current_out(5_000)),
+            Some(BatteryCurrent::current_in(5_000)),
+            Some(legacy),
+        );
+        assert_eq!(paired.len(), 2);
+        assert_eq!(paired[0].pack_index, Some(1));
+        assert_eq!(paired[0].current, BatteryCurrent::current_out(5_000));
+        assert_eq!(paired[1].pack_index, Some(2));
+        assert_eq!(paired[1].current, BatteryCurrent::current_in(5_000));
+
+        let zero_suppresses_legacy =
+            displayed_pack_currents(Some(BatteryCurrent::Zero), None, Some(legacy));
+        assert_eq!(
+            zero_suppresses_legacy,
+            vec![DisplayedPackCurrent {
+                pack_index: Some(1),
+                current: BatteryCurrent::Zero,
+            }]
+        );
+
+        let only_legacy = displayed_pack_currents(None, None, Some(legacy));
+        assert_eq!(
+            only_legacy,
+            vec![DisplayedPackCurrent {
+                pack_index: None,
+                current: legacy,
+            }]
+        );
+        assert_eq!(
+            displayed_pack_currents(None, None, None),
+            Vec::<DisplayedPackCurrent>::new()
+        );
+    }
+}

@@ -3796,10 +3796,11 @@ final class CutoutSessionCoreTests: XCTestCase {
                     rideID: "current-ride", state: statistics == nil ? .stopped : .active,
                     summary: MobileRideMapSummaryDto(
                         pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
-                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: "wheel"
                 )
             )
-            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: nil))
+            return try XCTUnwrap(
+                VescRideSnapshot(displayState: display, title: nil, connectedPlatformIdentifier: "wheel"))
         }
         let statistics = MobileRideMapLiveActivityStatisticsDto(
             durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
@@ -3829,7 +3830,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             vescApplicationQuery: nil,
             model: nil
         )
-        func snapshot(points: UInt64) throws -> VescRideSnapshot {
+        func snapshot(points: UInt64, associatedVehicle: String?) throws -> VescRideSnapshot {
             let statistics = MobileRideMapLiveActivityStatisticsDto(
                 durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
             let display = RideDisplayState(
@@ -3843,21 +3844,30 @@ final class CutoutSessionCoreTests: XCTestCase {
                     rideID: "current-ride", state: .active,
                     summary: MobileRideMapSummaryDto(
                         pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
-                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: associatedVehicle
                 )
             )
-            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: "Zealot", identity: identity))
+            return try XCTUnwrap(
+                VescRideSnapshot(
+                    displayState: display, title: "Zealot", identity: identity,
+                    connectedPlatformIdentifier: "board"))
         }
 
-        let recording = try snapshot(points: 2)
+        let recording = try snapshot(points: 2, associatedVehicle: "board")
         XCTAssertEqual(recording.tripDistance, Distance(value: 100_000))
         XCTAssertEqual(recording.odometer, Distance(value: 87_800_000))
         XCTAssertEqual(recording.rideDuration, MonotonicMilliseconds(522_000))
         XCTAssertFalse(recording.isVescProtocol)
 
-        let withoutRoute = try snapshot(points: 0)
+        let otherBoard = try snapshot(points: 2, associatedVehicle: nil)
+        XCTAssertEqual(otherBoard.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(otherBoard.odometer, Distance(value: 87_800_000))
+        XCTAssertNil(otherBoard.rideDuration)
+
+        let withoutRoute = try snapshot(points: 0, associatedVehicle: "board")
         XCTAssertEqual(withoutRoute.tripDistance, Distance(value: 100_000))
         XCTAssertEqual(withoutRoute.odometer, Distance(value: 87_800_000))
+        XCTAssertEqual(withoutRoute.rideDuration, MonotonicMilliseconds(522_000))
     }
 
     func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
@@ -6065,6 +6075,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
         XCTAssertNotNil(capturedUpdate)
         XCTAssertNotNil(rideMapUpdate)
+    }
+
+    func testVescIdentificationRequestAsksASilentDevice() {
+        let coordinator = IdentificationProbeTransportCoordinator(detectionSession: DeviceDetectionSession())
+        let sink = RecordingOperationSink()
+        coordinator.requestVescIdentification(
+            at: MonotonicMilliseconds(1),
+            writeLimit: TransportWriteLimitBytes(20),
+            using: sink
+        )
+
+        let writes = sink.writes
+        XCTAssertEqual(writes.count, 3)
+        guard writes.count == 3 else { return }
+        XCTAssertEqual(writes[0], Data([2, 1, 157, 82, 20, 3]))
+        XCTAssertTrue(isRefloatRequest(writes[1], command: 0))
+        XCTAssertEqual(writes[2], Data([2, 1, 4, 64, 132, 3]))
     }
 }
 

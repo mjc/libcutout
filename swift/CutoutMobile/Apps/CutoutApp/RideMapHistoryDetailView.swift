@@ -147,17 +147,12 @@ struct RideMapHistoryDetailView: View {
         guard let millimetresPerSecond else {
             return localizedAppText("ride_map.speed_unavailable")
         }
-        let metersPerSecond = Double(millimetresPerSecond) / 1_000
-        guard metersPerSecond.isFinite, metersPerSecond >= 0 else {
+        _ = locale
+        guard millimetresPerSecond <= UInt64(Int64.max) else {
             return localizedAppText("ride_map.speed_unavailable")
         }
-        let displayUnit: UnitSpeed =
-            locale.measurementSystem == .metric
-            ? .kilometersPerHour
-            : .milesPerHour
-        return Measurement(value: metersPerSecond, unit: UnitSpeed.metersPerSecond)
-            .converted(to: displayUnit)
-            .formatted(Measurement<UnitSpeed>.FormatStyle(width: .abbreviated).locale(locale))
+        let text = RideUnits.speedText(millimetresPerSecond: Int64(millimetresPerSecond))
+        return "\(text) \(RideUnits.speedUnit)"
     }
 
     static func mapHeight(for availableHeight: CGFloat) -> CGFloat {

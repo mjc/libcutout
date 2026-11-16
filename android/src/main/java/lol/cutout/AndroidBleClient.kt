@@ -187,14 +187,13 @@ class AndroidBleClient(
                 callbackCount.incrementAndGet()
                 resultCount.addAndGet(results.size)
                 // ScanResult payloads are native observations. Do not retain mutable callback buffers.
-                val observations = results.take(128).map(::androidBleScanObservation)
+                val observations = results.map(::androidBleScanObservation)
                 postOnOwner {
                     if (scanCallback !== this) return@postOnOwner
                     if (!hasPermissions()) return@postOnOwner
                     var forwardedNow = 0
                     observations.forEach { observation ->
                         val id = observation.platformIdentifier
-                        if (found.size >= 128 && id !in found) return@forEach
                         state.observeDiscovery(observation.toRustObservation())
                         found[id] = observation.device to observation.toNearbyPev(
                             context.getString(R.string.device_fallback),
@@ -632,6 +631,9 @@ class AndroidBleClient(
         private val callbackOverflow = AtomicBoolean()
         private var cancelWakeup: (() -> Unit)? = null
         private var cancelDeadline: (() -> Unit)? = null
+        private var cancelProbeExpiry: (() -> Unit)? = null
+        private var cancelDetectionSilence: (() -> Unit)? = null
+        private var protocolSilenceArmed = false
         private val characteristics = mutableListOf<BluetoothGattCharacteristic>()
         private val subscribed = mutableSetOf<UUID>()
         val session = PevSession(state, token, ::now, ::effect,
@@ -706,7 +708,6 @@ class AndroidBleClient(
                 if (status != BluetoothGatt.GATT_SUCCESS) { queue.complete("services", false); return@callback }
                 characteristics.clear()
                 characteristics.addAll(gatt.services.flatMap { it.characteristics })
-                if (characteristics.size > 64) { fail("Device has too many characteristics"); return@callback }
                 val inventory = characteristics.map { characteristic ->
                     val properties = characteristic.properties
                     val roles = mutableListOf<MobileGattRoleDto>()
@@ -734,6 +735,8 @@ class AndroidBleClient(
                 }
                 queue.complete("services", true)
                 session.identify()
+                armProtocolDetectionSilence()
+                armBegodeProbeExpiry()
                 reschedule()
                 publish()
             }
@@ -741,6 +744,7 @@ class AndroidBleClient(
                 if (status == BluetoothGatt.GATT_SUCCESS) subscribed += descriptor.characteristic.uuid
                 queue.complete(key("subscribe", descriptor.characteristic), status == BluetoothGatt.GATT_SUCCESS)
                 probe()
+                if (descriptor.characteristic.uuid == VESC_NOTIFY) requestVescIdentification()
                 reschedule()
             }
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) = callback(gatt) {
@@ -751,10 +755,12 @@ class AndroidBleClient(
                 value: ByteArray, status: Int) {
                 val owned = value.copyOf()
                 callback(gatt) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                    if (status == BluetoothGatt.GATT_SUCCESS &&
+                        state.connectionAttemptSnapshot().readiness == MobileConnectionReadinessDto.VERIFIED) {
                         session.notification(characteristic.uuid.wireBytes(), characteristic.service.uuid.wireBytes(), owned, capture = false)
                     }
                     // Protected/unreadable metadata is an observation gap, not a failed BLE link.
+                    // A discovery read is not identification evidence until the attempt is verified.
                     queue.complete(key("read", characteristic), true)
                     probe(); reschedule()
                 }
@@ -860,6 +866,23 @@ class AndroidBleClient(
             })
         }
 
+        private var vescIdentificationRequested = false
+
+        private fun requestVescIdentification() {
+            if (vescIdentificationRequested || !current()) return
+            if (state.connectionAttemptSnapshot().readiness != MobileConnectionReadinessDto.PENDING) return
+            if (VESC_NOTIFY !in subscribed) return
+            vescIdentificationRequested = true
+            vescIdentificationRequests(
+                MobileMonotonicMillisDto(now()),
+                MobileTransportWriteLimitDto(session.writeLimit),
+            ).forEach { output ->
+                if (output.kind != MobileSessionOutputKindDto.WRITE) return@forEach
+                // The live attempt does not admit this request's query id.
+                write(output.channel, output.bytes, null)
+            }
+        }
+
         private fun probe() {
             if (!current() || subscribed.isEmpty()) return
             when (val plan = state.beginIdentificationProbeForAttemptAt(token, now())) {
@@ -870,20 +893,127 @@ class AndroidBleClient(
                 }
                 else -> Unit
             }
+            armBegodeProbeExpiry()
+        }
+
+        private fun armBegodeProbeExpiry() {
+            cancelProbeExpiry?.invoke()
+            cancelProbeExpiry = null
+            if (!current()) return
+            val deadline = state.nextBegodeProbeExpiry() ?: return
+            cancelProbeExpiry = timers.after((deadline - minOf(deadline, now())).toLong()) {
+                if (!current()) return@after
+                val expired = state.expireBegodeProbeResponsesForAttempt(token, now())
+                probe()
+                if (expired.isNotEmpty() && state.nextBegodeProbeExpiry() == null) {
+                    finishProtocolDetectionSilence()
+                }
+            }
+        }
+
+        private fun armProtocolDetectionSilence() {
+            if (protocolSilenceArmed || !current()) return
+            if (state.connectionAttemptSnapshot().readiness != MobileConnectionReadinessDto.PENDING) return
+            if (characteristics.none { it.uuid == VESC_NOTIFY }) return
+            protocolSilenceArmed = true
+            cancelDetectionSilence = timers.after(protocolDetectionResponseTimeoutMs().toLong()) {
+                cancelDetectionSilence = null
+                finishProtocolDetectionSilence()
+            }
+        }
+
+        private fun finishProtocolDetectionSilence() {
+            if (!current()) return
+            if (state.connectionAttemptSnapshot().readiness != MobileConnectionReadinessDto.PENDING) return
+            if (state.resolution().awaitsPassiveEvidence) return
+            session.identify(true)
+            if (state.connectionAttemptSnapshot().readiness == MobileConnectionReadinessDto.VERIFIED) {
+                session.publish()
+                return
+            }
+            if (state.shouldRetryIdentification()) {
+                retryIdentification()
+                return
+            }
+            if (state.connectionAttemptSnapshot().readiness == MobileConnectionReadinessDto.PENDING) {
+                state.connectionTransportFailed(token)
+            }
+            session.identify(true)
+            session.publish()
+        }
+
+        private fun retryIdentification() {
+            if (!current() || draining) return
+            ending = true
+            draining = true
+            queue.close()
+            cancelWakeup?.invoke()
+            cancelDeadline?.invoke()
+            cancelIdentificationTimers()
+            val endedAt = now()
+            val retryDevice = device
+            val retryToken = token
+            (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
+                postOnOwner {
+                    if (retired || connection !== this) return@postOnOwner
+                    // The operation queue is already closed, so a failed ride drain cannot
+                    // leave this attempt connected. Finish the capture and release the link.
+                    if (result.isFailure) {
+                        Log.w("CutoutBle", "Ride drain failed before identification retry", result.exceptionOrNull())
+                    }
+                    val schedule = {
+                        // connect, disconnect, and close during the drain store their
+                        // follow-up here. A retry must not replace that request.
+                        val replaced = pendingConnectId != null || restoreSuppressed
+                        if (replaced) state.disconnectConnectionAttempt() else state.connectionLinkDown(retryToken)
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = true)
+                        if (!replaced) scheduleRustRetry(retryDevice, retryToken)
+                        publish()
+                        connectPendingOnOwner()
+                        runAfterDrainCallbacks()
+                    }
+                    if (diagnostics.hasWriter(retryToken)) {
+                        if (captureLinkUp) diagnostics.linkDown(retryToken)
+                        captureLinkUp = false
+                        diagnostics.finishAfterLinkDown(retryToken, schedule)
+                    } else {
+                        schedule()
+                    }
+                }
+            }
+        }
+
+        private fun cancelIdentificationTimers() {
+            cancelProbeExpiry?.invoke(); cancelProbeExpiry = null
+            cancelDetectionSilence?.invoke(); cancelDetectionSilence = null
         }
 
         fun armDeadline() {
             cancelDeadline?.invoke()
             state.connectionAttemptSnapshot().deadlineMs?.let { deadline ->
                 cancelDeadline = timers.after((deadline - minOf(deadline, now())).toLong()) {
-                    if (current()) {
-                        if (view.phase == NativePhase.CONNECTING) fail("Bluetooth connection timed out")
-                        else {
-                            state.expireConnectionAttempt(token, now())
-                            session.identify(true)
-                            session.publish()
-                        }
+                    if (!current()) return@after
+                    val established = view.phase != NativePhase.CONNECTING
+                    val expired = state.expireConnectionAttempt(token, now())
+                    if (expired.readiness != MobileConnectionReadinessDto.RECORD_ONLY) return@after
+                    if (state.shouldRetryIdentification()) {
+                        retryIdentification()
+                        return@after
                     }
+                    if (!established) {
+                        state.disconnectConnectionAttempt()
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = true)
+                        publish()
+                        return@after
+                    }
+                    session.identify(true)
+                    session.publish()
                 }
             }
         }
@@ -912,15 +1042,15 @@ class AndroidBleClient(
             draining = true
             queue.close()
             cancelWakeup?.invoke(); cancelDeadline?.invoke()
+            cancelIdentificationTimers()
             val endedAt = now()
             (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
                 postOnOwner {
                     if (retired || connection !== this) return@postOnOwner
+                    // Completion of the ride drain is the barrier. A failed drain still has
+                    // to finish the capture and release the link; the queue is already closed.
                     if (result.isFailure) {
-                        draining = false
-                        view = view.copy(problem = true)
-                        publish()
-                        return@postOnOwner
+                        Log.w("CutoutBle", "Ride drain failed before transport teardown", result.exceptionOrNull())
                     }
                     if (diagnostics.hasWriter(token)) {
                         if (captureLinkUp) diagnostics.linkDown(token)
@@ -956,12 +1086,19 @@ class AndroidBleClient(
             }
             publish()
             connectPendingOnOwner()
-            afterDrainCallbacks.toList().forEach { callback ->
-                try { callback() } catch (error: Exception) {
+            runAfterDrainCallbacks()
+        }
+
+        private fun runAfterDrainCallbacks() {
+            val callbacks = afterDrainCallbacks.toList()
+            afterDrainCallbacks.clear()
+            callbacks.forEach { callback ->
+                try {
+                    callback()
+                } catch (error: Exception) {
                     Log.w("CutoutBle", "Bluetooth shutdown callback failed", error)
                 }
             }
-            afterDrainCallbacks.clear()
         }
 
         fun retire(invalidate: Boolean = true) {
@@ -970,6 +1107,7 @@ class AndroidBleClient(
             if (invalidate) state.disconnectConnectionAttempt()
             retired = true
             cancelWakeup?.invoke(); cancelDeadline?.invoke()
+            cancelIdentificationTimers()
             try { gatt?.disconnect() } catch (_: SecurityException) { }
             gatt?.close(); gatt = null
         }
@@ -977,5 +1115,6 @@ class AndroidBleClient(
 
     companion object {
         private val secureRandom = SecureRandom()
+        private val VESC_NOTIFY: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
     }
 }

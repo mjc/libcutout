@@ -33,8 +33,12 @@ final class CutoutSessionRideMapPresentation {
         current: MobileRideMapSnapshotDto?,
         incoming: MobileRideMapSnapshotDto
     ) -> Bool {
-        guard let current else { return true }
-        return current.rideID != incoming.rideID || incoming.revision >= current.revision
+        shouldPublishRideSnapshot(
+            currentRide: current?.rideID,
+            incomingRide: incoming.rideID,
+            currentRevision: current?.revision ?? 0,
+            incomingRevision: incoming.revision
+        )
     }
 
     func publishDecision(

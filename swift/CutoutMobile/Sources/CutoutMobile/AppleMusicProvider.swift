@@ -98,13 +98,7 @@ import Foundation
                         MusicTimeConversion.milliseconds($0.playbackDuration)
                     },
                     observedAtMs: observedAtMs,
-                    capabilities: MobileMusicCapabilitiesDto(
-                        previous: item != nil,
-                        play: state == .paused || state == .stopped,
-                        pause: state == .playing,
-                        next: item != nil,
-                        openProvider: true
-                    )
+                    capabilities: appleMusicTransportCapabilities(itemPresent: item != nil, state: state)
                 ),
                 artwork: artwork
             )

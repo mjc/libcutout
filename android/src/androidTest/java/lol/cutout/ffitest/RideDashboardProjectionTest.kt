@@ -3,6 +3,7 @@ package lol.cutout.ffitest
 import android.app.Activity
 import android.content.res.Configuration
 import android.content.Intent
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ScrollView
@@ -220,7 +221,7 @@ open class RideDashboardProjectionTest {
 
     @Test
     fun resizeRebuildsGeometryAndImmediatelyReappliesLatestRustValues() = withActivity { activity ->
-        val presentation = productionReplayPresentation()
+        val presentation = productionReplayPresentation().withFreshTelemetry()
         val ride = RideDashboardView(activity, {}, {})
         activity.setContentView(ride)
         ride.render(presentation)
@@ -641,6 +642,12 @@ open class RideDashboardProjectionTest {
         liveActivityStatistics = MobileRideMapLiveActivityStatisticsDto(65_000UL, 1_609_344UL),
         liveSpeed = MobileRideMapSpeedDto(0, MobileRideMapSpeedSourceDto.UNAVAILABLE),
         segmentCount = 1UL, associatedVehicle = associatedVehicle, recordedBoundsAvailable = true,
+    )
+
+    private fun BlePresentation.withFreshTelemetry(): BlePresentation = copy(
+        telemetry = checkNotNull(telemetry).copy(
+            atMs = MobileMonotonicMillisDto(SystemClock.elapsedRealtime().toULong()),
+        ),
     )
 
     private fun BlePresentation.withTelemetry(operatingState: RideOperatingState): BlePresentation = copy(

@@ -303,6 +303,9 @@ pub struct DeviceIdentityState {
 }
 
 impl DeviceIdentityState {
+    /// How long an identity probe or protocol-detection subscription may stay silent.
+    pub const PROBE_RESPONSE_TIMEOUT: crate::Duration = crate::Duration::from_milliseconds(2_000);
+
     /// Clears response bookkeeping from the previous physical link.
     pub fn reset_link_probes(&mut self) {
         self.pending_probe_started_at.fill(None);
@@ -343,12 +346,12 @@ impl DeviceIdentityState {
         true
     }
 
-    /// Expires every probe strictly older than the response timeout.
+    /// Expires every probe strictly older than [`Self::PROBE_RESPONSE_TIMEOUT`].
     pub fn expire_pending_probes(
         &mut self,
         now: MonotonicTimestamp,
-        timeout: crate::Duration,
     ) -> ArrayVec<PendingProbe, { PendingProbe::COUNT }> {
+        let timeout = Self::PROBE_RESPONSE_TIMEOUT;
         let mut expired = ArrayVec::new();
         for probe in PendingProbe::ALL {
             let Some(started_at) = self.pending_probe_started_at[probe.index()] else {
@@ -377,8 +380,12 @@ impl DeviceIdentityState {
 
     /// Returns the next strict probe-expiration deadline.
     #[must_use]
-    pub fn next_probe_expiry(&self, timeout: crate::Duration) -> Option<MonotonicTimestamp> {
-        let delay = crate::Duration::from_milliseconds(timeout.as_milliseconds().saturating_add(1));
+    pub fn next_probe_expiry(&self) -> Option<MonotonicTimestamp> {
+        let delay = crate::Duration::from_milliseconds(
+            Self::PROBE_RESPONSE_TIMEOUT
+                .as_milliseconds()
+                .saturating_add(1),
+        );
         self.pending_probe_started_at
             .iter()
             .flatten()
@@ -1554,9 +1561,39 @@ mod tests {
         identity.observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(1_500));
 
         assert_eq!(
-            identity.next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
+            identity.next_probe_expiry(),
             Some(MonotonicTimestamp::new(3_001))
         );
+    }
+
+    #[test]
+    fn probe_expiry_uses_the_response_timeout_constant() {
+        let mut identity = DeviceIdentityState::default();
+        assert_eq!(
+            DeviceIdentityState::PROBE_RESPONSE_TIMEOUT.as_milliseconds(),
+            2_000
+        );
+        identity.observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(1_000));
+        identity.observe_probe_write(PendingProbe::BegodeFirmware, MonotonicTimestamp::new(1_000));
+
+        assert_eq!(
+            identity.next_probe_expiry(),
+            Some(MonotonicTimestamp::new(3_001))
+        );
+        assert!(
+            identity
+                .expire_pending_probes(MonotonicTimestamp::new(3_000))
+                .is_empty()
+        );
+        identity.observe_probe_response(PendingProbe::BegodeName);
+
+        let expired = identity.expire_pending_probes(MonotonicTimestamp::new(3_001));
+        assert_eq!(expired.as_slice(), &[PendingProbe::BegodeFirmware]);
+        assert_eq!(
+            identity.missing_probe_response,
+            Some(PendingProbe::BegodeFirmware)
+        );
+        assert_eq!(identity.next_probe_expiry(), None);
     }
 
     #[test]
@@ -1584,12 +1621,7 @@ mod tests {
         );
         assert_eq!(state.identity().protocol_family, None);
         assert_eq!(state.identity().model, None);
-        assert_eq!(
-            state
-                .identity()
-                .next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
-            None
-        );
+        assert_eq!(state.identity().next_probe_expiry(), None);
     }
 
     #[test]

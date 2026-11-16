@@ -1085,7 +1085,12 @@ struct SpotifyRenewalRetryPolicy {
             let changeHandler = onChange ?? self.onChange
             let webCanResume =
                 selectedPlaybackTransport == .webApi
-                && webPlayback?.snapshot(state: lifecycleState, observedAtMs: connectionNowMs).capabilities.play == true
+                && (lifecycleState == .playing || lifecycleState == .paused)
+                && webPlayback?.snapshot(
+                    state: lifecycleState,
+                    observedAtMs: connectionNowMs,
+                    canReconnect: false
+                ).capabilities.play == true
             if command == .play,
                 !webCanResume,
                 appRemote?.isConnected != true,
@@ -1148,34 +1153,16 @@ struct SpotifyRenewalRetryPolicy {
         }
 
         public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
+            let canReconnect = session != nil && configuration != nil
             if selectedPlaybackTransport == .webApi, let webPlayback {
-                var snapshot = webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs)
-                let canReconnect = session != nil && configuration != nil
-                if canReconnect,
-                    lifecycleState == .stopped || lifecycleState == .disconnected
-                        || lifecycleState == .stale || lifecycleState == .unavailable
-                {
-                    snapshot = MobileMusicSnapshotDto(
-                        provider: snapshot.provider,
-                        sessionId: snapshot.sessionId,
-                        state: snapshot.state,
-                        item: snapshot.item,
-                        positionMilliseconds: snapshot.positionMilliseconds,
-                        durationMilliseconds: snapshot.durationMilliseconds,
-                        observedAtMs: snapshot.observedAtMs,
-                        capabilities: .init(
-                            previous: snapshot.capabilities.previous,
-                            play: true,
-                            pause: snapshot.capabilities.pause,
-                            next: snapshot.capabilities.next,
-                            openProvider: snapshot.capabilities.openProvider
-                        )
-                    )
-                }
+                let snapshot = webPlayback.snapshot(
+                    state: lifecycleState,
+                    observedAtMs: observedAtMs,
+                    canReconnect: canReconnect
+                )
                 return MusicProviderObservation(snapshot: snapshot, artwork: artwork)
             }
             let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
-            let canReconnect = session != nil && configuration != nil
             let snapshot = MobileMusicSnapshotDto(
                 provider: .spotify,
                 sessionId: selectedPlaybackTransport == .webApi ? "spotify-web-api" : "spotify-app-remote",
@@ -1187,15 +1174,13 @@ struct SpotifyRenewalRetryPolicy {
                         artist: $0.track.artist.name
                     )
                 },
-                positionMilliseconds: playerState.flatMap { UInt64(exactly: max(0, $0.playbackPosition)) },
+                positionMilliseconds: playerState.flatMap { UInt64(exactly: $0.playbackPosition) },
                 durationMilliseconds: playerState.flatMap { UInt64(exactly: $0.track.duration) },
                 observedAtMs: observedAtMs,
                 capabilities: MobileMusicCapabilitiesDto(
                     previous: controlsAvailable && playerState?.playbackRestrictions.canSkipPrevious == true,
                     play: lifecycleState == .paused
-                        || (canReconnect
-                            && (lifecycleState == .stopped || lifecycleState == .disconnected
-                                || lifecycleState == .stale || lifecycleState == .unavailable)),
+                        || spotifyReconnectGrantsPlay(state: lifecycleState, canReconnect: canReconnect),
                     pause: lifecycleState == .playing,
                     next: controlsAvailable && playerState?.playbackRestrictions.canSkipNext == true,
                     openProvider: true

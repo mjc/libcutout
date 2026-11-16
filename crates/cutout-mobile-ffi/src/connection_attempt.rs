@@ -7,9 +7,9 @@ use cutout_core::{
 use std::sync::Arc;
 
 use crate::{
-    CutoutSessionStateHandle, MobileMusicHistoryPolicyDto, MobileRideMapConnectionAdmission,
-    MobileRideMapCore, MobileRideMapCoreErrorDto, MobileRideMapSpeedObservationDto,
-    MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
+    CutoutSessionStateHandle, MobileMusicHistoryPolicyDto, MobilePevcapWriteDispositionDto,
+    MobileRideMapConnectionAdmission, MobileRideMapCore, MobileRideMapCoreErrorDto,
+    MobileRideMapSpeedObservationDto, MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
 };
 #[cfg(test)]
 use crate::{MobileRideMapAdmissionPollDto, MobileRideMapCoreSnapshotDto};
@@ -368,9 +368,41 @@ impl CutoutSessionStateHandle {
     }
 }
 
+impl From<cutout_core::PevcapWriteDisposition> for MobilePevcapWriteDispositionDto {
+    fn from(disposition: cutout_core::PevcapWriteDisposition) -> Self {
+        match disposition {
+            cutout_core::PevcapWriteDisposition::Queued => Self::Queued,
+            cutout_core::PevcapWriteDisposition::Submitted => Self::Submitted,
+            cutout_core::PevcapWriteDisposition::Rejected => Self::Rejected,
+            cutout_core::PevcapWriteDisposition::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+/// Folds native chunk receipts with the shared transport disposition order.
+#[uniffi::export]
+#[must_use]
+pub fn aggregate_write_dispositions(
+    chunks: Vec<MobilePevcapWriteDispositionDto>,
+) -> MobilePevcapWriteDispositionDto {
+    let chunks = chunks
+        .into_iter()
+        .map(cutout_core::PevcapWriteDisposition::from)
+        .collect::<Vec<_>>();
+    cutout_core::PevcapWriteDisposition::aggregate(&chunks).into()
+}
+
+/// Milliseconds of silence before protocol detection evaluates its current evidence.
+#[uniffi::export]
+#[must_use]
+pub fn protocol_detection_response_timeout_ms() -> u64 {
+    cutout_core::DeviceIdentityState::PROBE_RESPONSE_TIMEOUT.as_milliseconds()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MobilePevcapWriteDispositionDto;
     use crate::{
         MobileRideEventDto, MobileRideMapLifecycleCommand, MobileRideMapLifecyclePollDto,
         MobileRideMapSpeedDto, MobileRideMapSpeedSourceDto,
@@ -823,5 +855,31 @@ mod tests {
         assert!(!handle.verified_connection_attempt_is_current(token.clone()));
         handle.disconnect_connection_attempt();
         assert!(!handle.connection_attempt_is_current(token));
+    }
+
+    #[test]
+    fn aggregate_write_dispositions_preserves_rejection_over_cancellation() {
+        assert_eq!(
+            aggregate_write_dispositions(vec![
+                MobilePevcapWriteDispositionDto::Cancelled,
+                MobilePevcapWriteDispositionDto::Rejected,
+            ]),
+            MobilePevcapWriteDispositionDto::Rejected
+        );
+        assert_eq!(
+            aggregate_write_dispositions(vec![
+                MobilePevcapWriteDispositionDto::Submitted,
+                MobilePevcapWriteDispositionDto::Cancelled,
+            ]),
+            MobilePevcapWriteDispositionDto::Rejected
+        );
+        assert_eq!(
+            aggregate_write_dispositions(vec![]),
+            MobilePevcapWriteDispositionDto::Rejected
+        );
+        assert_eq!(
+            protocol_detection_response_timeout_ms(),
+            cutout_core::DeviceIdentityState::PROBE_RESPONSE_TIMEOUT.as_milliseconds()
+        );
     }
 }

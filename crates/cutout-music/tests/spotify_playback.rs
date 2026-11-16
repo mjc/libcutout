@@ -7,7 +7,11 @@ const TRACK: &[u8] = br#"{"device":{"id":"phone","is_restricted":false},"is_play
 fn playback_retains_metadata_and_only_advertised_controls() {
     let playback = SpotifyPlayback::parse(TRACK).expect("valid playback");
     assert_eq!(playback.device_id(), Some("phone"));
-    let snapshot = playback.snapshot(MusicPlaybackState::Playing, MonotonicTimestamp::new(10));
+    let snapshot = playback.snapshot(
+        MusicPlaybackState::Playing,
+        MonotonicTimestamp::new(10),
+        false,
+    );
     let item = snapshot.item().expect("known track");
     assert_eq!(item.title(), Some("A track"));
     assert_eq!(item.artist(), Some("An artist"));
@@ -16,7 +20,11 @@ fn playback_retains_metadata_and_only_advertised_controls() {
     assert!(snapshot.capabilities().supports(MusicCommand::Next));
     assert!(snapshot.capabilities().supports(MusicCommand::Pause));
     assert!(!snapshot.capabilities().supports(MusicCommand::Play));
-    let stale = playback.snapshot(MusicPlaybackState::Stale, MonotonicTimestamp::new(20));
+    let stale = playback.snapshot(
+        MusicPlaybackState::Stale,
+        MonotonicTimestamp::new(20),
+        false,
+    );
     assert!(!stale.capabilities().supports(MusicCommand::Next));
     assert!(stale.capabilities().supports(MusicCommand::OpenProvider));
 }
@@ -28,7 +36,11 @@ fn no_active_device_preserves_metadata_without_transport() {
         .without_active_device();
     assert_eq!(playback.device_id(), None);
     assert!(!playback.is_playing());
-    let snapshot = playback.snapshot(MusicPlaybackState::Stopped, MonotonicTimestamp::new(30));
+    let snapshot = playback.snapshot(
+        MusicPlaybackState::Stopped,
+        MonotonicTimestamp::new(30),
+        false,
+    );
     assert_eq!(
         snapshot.item().expect("retained track").title(),
         Some("A track")
@@ -40,7 +52,11 @@ fn no_active_device_preserves_metadata_without_transport() {
 #[test]
 fn restricted_and_unknown_content_never_invents_track_or_transport() {
     let playback = SpotifyPlayback::parse(br#"{"device":{"id":"phone","is_restricted":true},"is_playing":true,"item":{"type":"ad","uri":"spotify:ad:abc","name":"Ad"}}"#).expect("ad state");
-    let snapshot = playback.snapshot(MusicPlaybackState::Playing, MonotonicTimestamp::new(0));
+    let snapshot = playback.snapshot(
+        MusicPlaybackState::Playing,
+        MonotonicTimestamp::new(0),
+        false,
+    );
     assert!(snapshot.item().is_none());
     assert!(!snapshot.capabilities().supports(MusicCommand::Pause));
 }
@@ -49,7 +65,11 @@ fn restricted_and_unknown_content_never_invents_track_or_transport() {
 fn episode_has_show_and_unknown_progress_and_validated_artwork() {
     let playback = SpotifyPlayback::parse(br#"{"device":{"id":"phone"},"is_playing":false,"progress_ms":null,"item":{"type":"episode","uri":"spotify:episode:abc","show":{"name":"Podcast"},"duration_ms":7200000,"images":[{"url":"https://images.example/large","width":640},{"url":"https://images.example/small","width":300}]}}"#).expect("episode");
     assert_eq!(playback.artwork_url(), Some("https://images.example/small"));
-    let snapshot = playback.snapshot(MusicPlaybackState::Paused, MonotonicTimestamp::new(0));
+    let snapshot = playback.snapshot(
+        MusicPlaybackState::Paused,
+        MonotonicTimestamp::new(0),
+        false,
+    );
     assert_eq!(snapshot.item().expect("episode").artist(), Some("Podcast"));
     assert_eq!(snapshot.duration_milliseconds(), Some(7_200_000));
     assert_eq!(snapshot.position_milliseconds(), None);
@@ -210,4 +230,64 @@ fn overlapping_rate_limits_cannot_shorten_an_existing_provider_deadline() {
     );
     assert!(session.playback_request(90_099).is_err());
     assert!(session.playback_request(90_100).is_ok());
+}
+
+#[test]
+fn reconnect_exposes_play_without_an_active_device_or_allow_list_entry() {
+    let playback = SpotifyPlayback::parse(TRACK)
+        .expect("valid playback")
+        .without_active_device();
+    for state in [
+        MusicPlaybackState::Stopped,
+        MusicPlaybackState::Disconnected,
+        MusicPlaybackState::Stale,
+        MusicPlaybackState::Unavailable,
+    ] {
+        let snapshot = playback.snapshot(state, MonotonicTimestamp::new(40), true);
+        assert!(
+            snapshot.capabilities().supports(MusicCommand::Play),
+            "{state:?}"
+        );
+        assert!(
+            !snapshot.capabilities().supports(MusicCommand::Pause),
+            "{state:?}"
+        );
+        assert!(
+            !snapshot.capabilities().supports(MusicCommand::Next),
+            "{state:?}"
+        );
+        assert!(snapshot.capabilities().supports(MusicCommand::OpenProvider));
+    }
+    for state in [
+        MusicPlaybackState::Playing,
+        MusicPlaybackState::Paused,
+        MusicPlaybackState::Buffering,
+        MusicPlaybackState::Interrupted,
+        MusicPlaybackState::Unauthorized,
+    ] {
+        let snapshot = playback.snapshot(state, MonotonicTimestamp::new(40), true);
+        assert!(
+            !snapshot.capabilities().supports(MusicCommand::Play),
+            "{state:?}"
+        );
+    }
+    let active = SpotifyPlayback::parse(TRACK).expect("valid playback");
+    let playing = active.snapshot(
+        MusicPlaybackState::Playing,
+        MonotonicTimestamp::new(40),
+        true,
+    );
+    assert!(!playing.capabilities().supports(MusicCommand::Play));
+    assert!(playing.capabilities().supports(MusicCommand::Pause));
+    let restricted = SpotifyPlayback::parse(
+        br#"{"device":{"id":"phone","is_restricted":true},"is_playing":true,"actions":{"disallows":{"pausing":false}},"item":{"type":"track","uri":"spotify:track:abc","name":"Song"}}"#,
+    )
+    .expect("restricted playback");
+    let restricted = restricted.snapshot(
+        MusicPlaybackState::Stopped,
+        MonotonicTimestamp::new(1),
+        true,
+    );
+    assert!(restricted.capabilities().supports(MusicCommand::Play));
+    assert!(!restricted.capabilities().supports(MusicCommand::Pause));
 }

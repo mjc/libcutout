@@ -1,20 +1,21 @@
 package lol.cutout
 
+import android.app.AlertDialog
 import android.content.Context
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ScrollView
-import android.widget.TextView
-import android.app.AlertDialog
 import uniffi.cutout_mobile_ffi.*
 import java.math.BigDecimal
 import java.util.Currency
 import java.util.Locale
 
-/** Native edit form. Rust normalizes and validates the exact payload submitted to storage. */
+/** Native edit form. Rust owns supply inclusion, connector order, and price construction. */
 class ChargingSpotEditorPanel(
     context: Context,
     private val spot: MobileChargingSpotDto?,
@@ -42,6 +43,8 @@ class ChargingSpotEditorPanel(
     private var venue = initialInput?.venue
     private var terms = initialInput?.terms
     private var priceBasis = initialInput?.price?.basis
+    private var countryCode: String? = null
+    private var orderedConnectorChoices: List<MobileChargingConnectorDto>? = null
     private val costButton = ui.action("", false) { toggleCost() }
 
     init {
@@ -58,7 +61,7 @@ class ChargingSpotEditorPanel(
         body.addView(venueButton, spaced())
         body.addView(ui.text(context.getString(R.string.charging_supply), 18f, true), spaced())
         body.addView(supplies, spaced())
-        body.addView(ui.action(context.getString(R.string.charging_add_supply)) { addSupply(null) }, spaced())
+        body.addView(ui.action(context.getString(R.string.charging_add_supply)) { addManualSupply() }, spaced())
         body.addView(ui.action(context.getString(R.string.charging_suggest_power)) { confirmSuggestedPower() }, spaced())
         body.addView(termsButton, spaced())
         body.addView(price, spaced())
@@ -72,12 +75,29 @@ class ChargingSpotEditorPanel(
         actions.addView(ui.action(context.getString(R.string.charging_save), true) { save() },
             LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply { leftMargin = ui.dp(8) })
         body.addView(actions, spaced())
-        initialInput?.supplies.orEmpty().forEach(::addSupply)
+        initialInput?.supplies.orEmpty().forEach(::addRestoredSupply)
         if (initialInput?.supplies.isNullOrEmpty()) {
             price.visibility = if (cost == MobileChargingCostDto.PAID) View.VISIBLE else View.GONE
         }
         updateCost()
         updateSelectors()
+    }
+
+    fun close() {
+        supplyRows.toList().forEach { it.close() }
+    }
+
+    /** GPS country. Manual rows survive; a replaced suggestion needs confirmation again. */
+    fun setCountryCode(value: String?) {
+        val normalized = normalizeCountry(value)
+        if (countryCode == normalized) return
+        countryCode = normalized
+        supplyRows.forEach { it.setCountry(normalized) }
+    }
+
+    /** Rust's already ordered connector projection. Null keeps the country catalogue. */
+    fun setConnectorChoices(choices: List<MobileChargingConnectorDto>?) {
+        orderedConnectorChoices = choices
     }
 
     private fun field(label: String, value: String, numeric: Boolean = false, multiline: Boolean = false) = EditText(context).apply {
@@ -126,8 +146,7 @@ class ChargingSpotEditorPanel(
     private fun showVenueMenu() {
         val popup = PopupMenu(context, venueButton)
         popup.menu.add(context.getString(R.string.charging_venue_none)).setOnMenuItemClickListener {
-            venue = null
-            updateSelectors()
+            selectVenue(null)
             true
         }
         val options: List<Pair<MobileChargingVenueDto, Int>> = listOf(
@@ -139,12 +158,27 @@ class ChargingSpotEditorPanel(
         )
         options.forEach { (value, label) ->
             popup.menu.add(context.getString(label)).setOnMenuItemClickListener {
-                venue = value
-                updateSelectors()
+                selectVenue(value)
                 true
             }
         }
         popup.show()
+    }
+
+    private fun selectVenue(value: MobileChargingVenueDto?) {
+        if (venue == value) return
+        venue = value
+        val ev = value == MobileChargingVenueDto.EV_CHARGING_STATION
+        supplyRows.toList().forEach { it.setEv(ev) }
+        if (ev) {
+            val dropped = supplyRows.filter { it.isSuggested() }
+            dropped.forEach { row ->
+                supplies.removeView(row.root)
+                supplyRows.remove(row)
+                row.close()
+            }
+        }
+        updateSelectors()
     }
 
     private fun showTermsMenu() {
@@ -182,27 +216,65 @@ class ChargingSpotEditorPanel(
         popup.show()
     }
 
-    private fun addSupply(value: MobileChargingSupplyDto?) {
+    private fun addManualSupply() {
         if (supplyRows.size >= 8) return
-        val row = SupplyRow(context, value)
+        val base = mobileChargingPowerDraft(countryCode, venue == MobileChargingVenueDto.EV_CHARGING_STATION)
+        val draft = base.edit(null)
+        base.close()
+        addPowerRow(draft, null)
+    }
+
+    private fun addRestoredSupply(supply: MobileChargingSupplyDto) {
+        val base = mobileChargingPowerDraft(countryCode, venue == MobileChargingVenueDto.EV_CHARGING_STATION)
+        val draft = base.edit(supply)
+        base.close()
+        val snapshot = draft.snapshot()
+        addPowerRow(draft, if (snapshot.includedSupply == null) supply else snapshot.selection)
+    }
+
+    private fun addPowerRow(draft: MobileChargingPowerDraft, display: MobileChargingSupplyDto?) {
+        if (supplyRows.size >= 8) {
+            draft.close()
+            return
+        }
+        val row = SupplyRow(draft, display)
         supplyRows += row
         supplies.addView(row.root, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) })
     }
 
     private fun confirmSuggestedPower() {
-        val suggestion = mobileChargingPowerSuggestion(countryCode = null, evStation = venue == MobileChargingVenueDto.EV_CHARGING_STATION)
-        val summary = listOfNotNull(
-            suggestion.voltageVolts?.let { "$it V" },
-            suggestion.connectors.joinToString(", ").takeIf(String::isNotBlank),
-            suggestion.outletCount?.let { "$it ${context.getString(R.string.charging_outlet_count)}" },
-        ).joinToString(" · ")
-        if (summary.isBlank()) return
-        AlertDialog.Builder(context)
+        if (venue == MobileChargingVenueDto.EV_CHARGING_STATION || supplyRows.size >= 8) return
+        val base = mobileChargingPowerDraft(countryCode, false)
+        val summary = suggestionSummary(base.snapshot().selection)
+        if (summary.isBlank()) {
+            base.close()
+            return
+        }
+        var consumed = false
+        val dialog = AlertDialog.Builder(context)
             .setTitle(R.string.charging_suggest_power)
             .setMessage(context.getString(R.string.charging_suggest_power_confirm, summary))
-            .setNegativeButton(R.string.charging_cancel, null)
-            .setPositiveButton(R.string.charging_suggest_use) { _, _ -> addSupply(suggestion) }
-            .show()
+            .setNegativeButton(R.string.charging_cancel) { _, _ ->
+                if (!consumed) {
+                    consumed = true
+                    base.close()
+                }
+            }
+            .setPositiveButton(R.string.charging_suggest_use) { _, _ ->
+                if (consumed) return@setPositiveButton
+                consumed = true
+                val confirmed = base.confirm()
+                base.close()
+                addPowerRow(confirmed, confirmed.snapshot().selection)
+            }
+            .create()
+        dialog.setOnCancelListener {
+            if (!consumed) {
+                consumed = true
+                base.close()
+            }
+        }
+        dialog.show()
     }
 
     private fun save() {
@@ -212,14 +284,28 @@ class ChargingSpotEditorPanel(
             showIssue("${context.getString(R.string.charging_latitude)} / ${context.getString(R.string.charging_longitude)}")
             return
         }
-        val priceDto = try { priceDto() } catch (error: Exception) {
-            showIssue(error.message ?: context.getString(R.string.charging_validation)); return
+        val priceDto = try {
+            priceDto()
+        } catch (error: Exception) {
+            showIssue(error.message ?: context.getString(R.string.charging_validation))
+            return
+        }
+        val included = mutableListOf<MobileChargingSupplyDto>()
+        for (row in supplyRows) {
+            when (val piece = row.prepareSave()) {
+                SupplySave.Skip -> Unit
+                is SupplySave.Include -> included += piece.supply
+                is SupplySave.Reject -> {
+                    showIssue(piece.message)
+                    return
+                }
+            }
         }
         val input = MobileChargingInputDto(
             MobileMapCoordinateDto(lat, lon), accessNote.text.toString(), cost,
             name.text.toString().trim().ifBlank { null }, venue,
             hours.text.toString().trim().ifBlank { null }, terms, priceDto,
-            supplyRows.mapNotNull(SupplyRow::value),
+            included,
         )
         when (val validation = mobileChargingValidateEditor(input)) {
             is MobileChargingValidationDto.Valid -> onSave(validation.input)
@@ -231,12 +317,26 @@ class ChargingSpotEditorPanel(
         if (cost == MobileChargingCostDto.FREE) return null
         val amount = price.text.toString().trim()
         val code = currency.text.toString().trim().uppercase(Locale.ROOT)
-        if (amount.isEmpty() && code == "USD" && terms == null && priceBasis == null) return null
-        require(amount.isNotEmpty() && terms != null && priceBasis != null) { context.getString(R.string.charging_validation) }
-        val exponent = Currency.getInstance(code).defaultFractionDigits
-        require(exponent in 0..9) { context.getString(R.string.charging_validation) }
-        val minor = BigDecimal(amount).movePointRight(exponent).toBigIntegerExact().toString().toULongOrNull()
-            ?: error(context.getString(R.string.charging_validation))
+        if (amount.isEmpty() && (code.isEmpty() || code == "USD") && terms == null && priceBasis == null) return null
+        val validation = context.getString(R.string.charging_validation)
+        if (amount.isEmpty() || terms == null || priceBasis == null) error(validation)
+        if (code.length != 3 || code.any { it !in 'A'..'Z' }) error(validation)
+        val exponent = try {
+            Currency.getInstance(code).defaultFractionDigits
+        } catch (_: IllegalArgumentException) {
+            Currency.getInstance(Locale.US).defaultFractionDigits
+        }
+        if (exponent !in 0..4) error(validation)
+        val minor = try {
+            val shifted = BigDecimal(amount).movePointRight(exponent).stripTrailingZeros()
+            if (shifted.scale() > 0) error(validation)
+            shifted.toBigIntegerExact().toString().toULongOrNull() ?: error(validation)
+        } catch (_: NumberFormatException) {
+            error(validation)
+        } catch (_: ArithmeticException) {
+            error(validation)
+        }
+        if (minor == 0UL || minor > 9_000_000_000_000_000UL) error(validation)
         return MobileChargingPriceDto(minor, code, exponent.toUByte(), checkNotNull(priceBasis))
     }
 
@@ -244,6 +344,21 @@ class ChargingSpotEditorPanel(
 
     private fun priceText(value: MobileChargingPriceDto): String =
         BigDecimal(value.amountMinor.toString()).movePointLeft(value.minorUnitExponent.toInt()).toPlainString()
+
+    private fun suggestionSummary(selection: MobileChargingSupplyDto): String = listOfNotNull(
+        selection.voltageVolts?.let { "$it V" },
+        selection.connectors.joinToString(", ", transform = ::connectorText).takeIf(String::isNotBlank),
+        selection.outletCount?.let { "$it ${context.getString(R.string.charging_outlet_count)}" },
+    ).joinToString(" · ")
+
+    private fun connectorChoices(): List<MobileChargingConnectorDto> =
+        orderedConnectorChoices ?: mobileChargingConnectorChoices(countryCode)
+
+    private fun normalizeCountry(value: String?): String? {
+        val code = value?.trim() ?: return null
+        if (code.length != 2 || code.any { it !in 'A'..'Z' && it !in 'a'..'z' }) return null
+        return code.uppercase(Locale.ROOT)
+    }
 
     private fun venueString(value: MobileChargingVenueDto?) = when (value) {
         null -> R.string.charging_venue_none
@@ -265,32 +380,182 @@ class ChargingSpotEditorPanel(
         MobileChargingPriceBasisDto.PURCHASE -> R.string.charging_basis_purchase
     }
 
-    private inner class SupplyRow(context: Context, value: MobileChargingSupplyDto?) {
-        private val voltage = field(context.getString(R.string.charging_voltage_v), value?.voltageVolts?.toString().orEmpty(), true)
-        private val outletCount = field(context.getString(R.string.charging_outlet_count), value?.outletCount?.toString().orEmpty(), true)
-        private val selectedConnectors = value?.connectors?.toMutableList() ?: mutableListOf()
+    private sealed interface SupplySave {
+        data object Skip : SupplySave
+        data class Include(val supply: MobileChargingSupplyDto) : SupplySave
+        data class Reject(val message: String) : SupplySave
+    }
+
+    private inner class SupplyRow(
+        initialDraft: MobileChargingPowerDraft,
+        display: MobileChargingSupplyDto?,
+    ) {
+        private var draft = initialDraft
+        private var open = true
+        private var applying = false
+        private val voltage = field(context.getString(R.string.charging_voltage_v), "", true)
+        private val outletCount = field(context.getString(R.string.charging_outlet_count), "", true)
+        private val selectedConnectors = mutableListOf<MobileChargingConnectorDto>()
         val root = ui.column()
         private val connectorButton = ui.action(context.getString(R.string.charging_choose_connector)) { chooseConnector() }
+        private val confirmButton = ui.action(context.getString(R.string.charging_suggest_use)) { confirmInclusion() }
+        private val watcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                if (!applying) syncManualEdit()
+            }
+        }
+
         init {
             root.background = ui.rounded(12)
             root.setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
             root.addView(voltage)
             root.addView(connectorButton, spaced())
             root.addView(outletCount, spaced())
-            root.addView(ui.action(context.getString(R.string.charging_delete)) { supplies.removeView(root); supplyRows.remove(this) }, spaced())
+            root.addView(confirmButton, spaced())
+            root.addView(ui.action(context.getString(R.string.charging_delete)) { remove() }, spaced())
+            if (display != null) loadSelection(display)
+            voltage.addTextChangedListener(watcher)
+            outletCount.addTextChangedListener(watcher)
+            refreshConfirm()
+        }
+
+        fun close() {
+            if (!open) return
+            open = false
+            draft.close()
+        }
+
+        fun isSuggested(): Boolean = draft.snapshot().origin == MobileChargingPowerDraftOriginDto.SUGGESTED
+
+        fun setCountry(code: String?) {
+            val next = draft.withCountry(code)
+            replaceDraft(next)
+            if (!hasIncompleteEdit() && !isEmpty()) loadSelection(draft.snapshot().selection)
+            refreshConfirm()
+        }
+
+        fun setEv(ev: Boolean) {
+            val next = draft.withKind(ev)
+            replaceDraft(next)
+            if (!hasIncompleteEdit() && !isEmpty()) loadSelection(draft.snapshot().selection)
+            refreshConfirm()
+        }
+
+        fun prepareSave(): SupplySave {
+            if (isEmpty()) return SupplySave.Skip
+            val validation = context.getString(R.string.charging_validation)
+            if (requiresConfirmation()) return SupplySave.Reject(validation)
+            val included = draft.snapshot().includedSupply
+            if (included != null && !hasInvalidVoltage() && !hasIncompleteEdit()) return SupplySave.Include(included)
+            val probe = rawProbe()
+            if (probe != null) {
+                val inspected = mobileChargingValidateEditor(probeInput(probe))
+                if (inspected is MobileChargingValidationDto.Invalid) {
+                    return SupplySave.Reject("${inspected.issue.field}: ${inspected.issue.reason}")
+                }
+            }
+            return SupplySave.Reject(validation)
+        }
+
+        private fun confirmInclusion() {
+            if (isEmpty() || hasInvalidVoltage() || hasIncompleteEdit()) return
+            replaceDraft(draft.confirm())
+            refreshConfirm()
+        }
+
+        private fun remove() {
+            supplies.removeView(root)
+            supplyRows.remove(this)
+            close()
+        }
+
+        private fun syncManualEdit() {
+            if (!open || applying) return
+            replaceDraft(draft.edit(currentSupply()))
+            refreshConfirm()
+        }
+
+        private fun replaceDraft(next: MobileChargingPowerDraft) {
+            val previous = draft
+            draft = next
+            if (open && previous !== next) previous.close()
+        }
+
+        private fun loadSelection(supply: MobileChargingSupplyDto) {
+            applying = true
+            voltage.setText(supply.voltageVolts?.toString().orEmpty())
+            outletCount.setText(supply.outletCount?.toString().orEmpty())
+            selectedConnectors.clear()
+            selectedConnectors += supply.connectors
             setConnectorLabel()
+            applying = false
         }
-        fun value(): MobileChargingSupplyDto? {
-            val volts = voltage.text.toString().trim().takeIf(String::isNotEmpty)?.toUShortOrNull()
-            val outlets = outletCount.text.toString().trim().takeIf(String::isNotEmpty)?.toUShortOrNull()
-            val empty = voltage.text.isNullOrBlank() && outletCount.text.isNullOrBlank() && selectedConnectors.isEmpty()
-            if (empty) return null
-            return MobileChargingSupplyDto(volts, selectedConnectors.toList(), outlets)
+
+        private fun currentSupply(): MobileChargingSupplyDto? {
+            val voltageText = voltage.text.toString().trim()
+            val volts = if (voltageText.isEmpty()) null else voltageText.toUShortOrNull() ?: return null
+            if (volts != null && !mobileChargingPowerVoltageIsValid(volts)) return null
+            val outletText = outletCount.text.toString().trim()
+            val outlets = if (outletText.isEmpty()) null else outletText.toUShortOrNull() ?: return null
+            if (outlets == 0.toUShort()) return null
+            val connectors = submittedConnectors()
+            if (volts == null && connectors.isEmpty() && outlets == null) return null
+            return MobileChargingSupplyDto(volts, connectors, outlets)
         }
+
+        private fun rawProbe(): MobileChargingSupplyDto? {
+            val voltageText = voltage.text.toString().trim()
+            val volts = if (voltageText.isEmpty()) null else voltageText.toUShortOrNull() ?: return null
+            val outletText = outletCount.text.toString().trim()
+            val outlets = if (outletText.isEmpty()) null else outletText.toUShortOrNull() ?: return null
+            return MobileChargingSupplyDto(volts, submittedConnectors(), outlets)
+        }
+
+        private fun probeInput(supply: MobileChargingSupplyDto) = MobileChargingInputDto(
+            MobileMapCoordinateDto(0.0, 0.0),
+            "Outlet",
+            MobileChargingCostDto.FREE,
+            null, null, null, null, null,
+            listOf(supply),
+        )
+
+        private fun submittedConnectors(): List<MobileChargingConnectorDto> =
+            if (MobileChargingConnectorDto.Unknown in selectedConnectors) listOf(MobileChargingConnectorDto.Unknown)
+            else selectedConnectors.toList()
+
+        private fun isEmpty(): Boolean =
+            voltage.text.isNullOrBlank() && outletCount.text.isNullOrBlank() && selectedConnectors.isEmpty()
+
+        private fun hasInvalidVoltage(): Boolean {
+            val text = voltage.text.toString().trim()
+            if (text.isEmpty()) return false
+            val volts = text.toUShortOrNull() ?: return true
+            return !mobileChargingPowerVoltageIsValid(volts)
+        }
+
+        private fun hasIncompleteEdit(): Boolean =
+            !isEmpty() && draft.snapshot().origin == MobileChargingPowerDraftOriginDto.MANUAL
+                && draft.snapshot().includedSupply == null
+
+        private fun requiresConfirmation(): Boolean =
+            isSuggested() && draft.snapshot().includedSupply == null && !hasIncompleteEdit()
+                && !hasInvalidVoltage() && !isEmpty()
+
+        private fun refreshConfirm() {
+            confirmButton.visibility = if (requiresConfirmation()) View.VISIBLE else View.GONE
+        }
+
         private fun chooseConnector() {
-            val options = ChargingConnectorArtwork.catalog + selectedConnectors.filterIsInstance<MobileChargingConnectorDto.Other>()
+            val catalogue = connectorChoices()
+            val extras = selectedConnectors.filterIsInstance<MobileChargingConnectorDto.Other>()
+                .filter { other -> catalogue.none { it == other } }
+            val options = catalogue + extras
             val labels = options.map(::connectorText) + root.context.getString(R.string.charging_other_connector)
-            val checked = BooleanArray(labels.size) { index -> options.getOrNull(index)?.let(selectedConnectors::contains) ?: false }
+            val checked = BooleanArray(labels.size) { index ->
+                options.getOrNull(index)?.let(selectedConnectors::contains) ?: false
+            }
             AlertDialog.Builder(root.context)
                 .setTitle(R.string.charging_choose_connector)
                 .setMultiChoiceItems(labels.toTypedArray(), checked) { _, which, isChecked ->
@@ -299,12 +564,14 @@ class ChargingSpotEditorPanel(
                         if (isChecked && item !in selectedConnectors) selectedConnectors += item
                         if (!isChecked) selectedConnectors.remove(item)
                         setConnectorLabel()
+                        syncManualEdit()
                     }
                 }
                 .setPositiveButton(R.string.charging_done, null)
                 .setNeutralButton(R.string.charging_other_connector) { _, _ -> askOtherConnector() }
                 .show()
         }
+
         private fun askOtherConnector() {
             val input = EditText(root.context).apply { hint = root.context.getString(R.string.charging_other_connector_name) }
             AlertDialog.Builder(root.context).setTitle(R.string.charging_other_connector).setView(input)
@@ -312,15 +579,20 @@ class ChargingSpotEditorPanel(
                 .setPositiveButton(R.string.charging_done) { _, _ ->
                     val label = input.text.toString().trim()
                     if (label.isNotEmpty()) {
-                        MobileChargingConnectorDto.Other(label).also { if (it !in selectedConnectors) selectedConnectors += it }
+                        selectedConnectors.remove(MobileChargingConnectorDto.Unknown)
+                        val other = MobileChargingConnectorDto.Other(label)
+                        if (other !in selectedConnectors) selectedConnectors += other
                         setConnectorLabel()
+                        syncManualEdit()
                     }
                 }.show()
         }
+
         private fun setConnectorLabel() {
-            connectorButton.text = selectedConnectors.takeIf { it.isNotEmpty() }?.joinToString(", ", transform = ::connectorText)
+            val shown = submittedConnectors()
+            connectorButton.text = shown.takeIf { it.isNotEmpty() }?.joinToString(", ", transform = ::connectorText)
                 ?: root.context.getString(R.string.charging_choose_connector)
-            val connector = selectedConnectors.firstOrNull { it != MobileChargingConnectorDto.Unknown }
+            val connector = shown.firstOrNull { it != MobileChargingConnectorDto.Unknown }
             val icon = connector?.let { item ->
                 root.context.getDrawable(ChargingConnectorArtwork.drawable(item))?.mutate()?.apply {
                     setTint(ui.brand)
@@ -333,5 +605,4 @@ class ChargingSpotEditorPanel(
     }
 
     private fun connectorText(value: MobileChargingConnectorDto): String = ChargingConnectorArtwork.label(ui, value)
-
 }

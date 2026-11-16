@@ -1,3 +1,5 @@
+import CutoutMobileFFI
+
 public struct BmsCurrentReading: Equatable, Hashable, Sendable {
     public let packIndex: Int?
     public let current: BatteryCurrent
@@ -11,10 +13,8 @@ public struct BmsCurrentReading: Equatable, Hashable, Sendable {
 extension BmsSnapshot {
     /// Prefer the source's paired pack-specific values over the ambiguous legacy pack current.
     public var currentReadings: [BmsCurrentReading] {
-        let paired = [bmsPackCurrent0, bmsPackCurrent1].enumerated().compactMap { index, current in
-            current.map { BmsCurrentReading(packIndex: index + 1, current: $0) }
+        displayedPackCurrents(pack0: bmsPackCurrent0, pack1: bmsPackCurrent1, legacy: current).map { reading in
+            BmsCurrentReading(packIndex: reading.packIndex.map(Int.init), current: reading.current)
         }
-        if !paired.isEmpty { return paired }
-        return current.map { [BmsCurrentReading(packIndex: nil, current: $0)] } ?? []
     }
 }

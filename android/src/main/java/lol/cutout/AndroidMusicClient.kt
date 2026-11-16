@@ -202,9 +202,6 @@ class AndroidMusicClient(
                     error = null,
                     spotifyDisconnectPending = true,
                     spotifyDisconnectError = null,
-                    history = latestPresentation.history?.copy(events = latestPresentation.history?.events.orEmpty().filter {
-                        it.provider != MobileMusicProviderDto.SPOTIFY
-                    }),
                 ))
             }
             acceptingObservations = false
@@ -388,6 +385,42 @@ class AndroidMusicClient(
         else main.post { acceptingObservations = true }
     }
 
+    /**
+     * Suspends provider work when the activity is no longer visible.
+     * An active session records the shared disconnected observation before the session detaches.
+     * Call [sceneDidBecomeActive] before [refreshSessions] once the activity is visible again.
+     */
+    fun sceneDidEnterBackground() {
+        val enter = {
+            if (!closed) {
+                val lastItem = latestPresentation.snapshot?.item
+                val suspension = lifecycle.suspend()
+                activeSessionListener?.let { listener ->
+                    runCatching { manager?.removeOnActiveSessionsChangedListener(listener) }
+                }
+                activeSessionListener = null
+                monitorGeneration = null
+                detachSession()
+                if (suspension.observationGap) {
+                    musicObservationGapSnapshot(
+                        selectedProvider,
+                        lastItem,
+                        SystemClock.elapsedRealtime().toULong(),
+                    )?.let { snapshot -> enqueueObservation(snapshot, null) }
+                }
+            }
+        }
+        if (Looper.myLooper() == main.looper) enter() else main.post(enter)
+    }
+
+    /** Restores foreground monitoring intent after the activity is visible again. */
+    fun sceneDidBecomeActive() {
+        val resumeScene = {
+            if (!closed) lifecycle.resume()
+        }
+        if (Looper.myLooper() == main.looper) resumeScene() else main.post(resumeScene)
+    }
+
     /** Called after the user enables access or returns from system Settings. */
     fun refreshSessions() {
         if (closed) return
@@ -491,6 +524,17 @@ class AndroidMusicClient(
         val snapshot = project(controller)
         val metadata = controller.metadata
         val immediateArtwork = boundedArtwork(metadata)
+        enqueueObservation(snapshot, immediateArtwork) {
+            if (immediateArtwork == null) loadArtworkUri(controller, metadata)
+        }
+    }
+
+    private fun enqueueObservation(
+        snapshot: MobileMusicSnapshotDto,
+        artwork: Bitmap?,
+        onAdmitted: () -> Unit = {},
+    ) {
+        if (closed || !acceptingObservations) return
         val wallClockAtMs = System.currentTimeMillis().toULong()
         val request = lifecycle.beginMusicObservation()
         when (val admission = request.admission()) {
@@ -499,7 +543,7 @@ class AndroidMusicClient(
                 try {
                     observationWorker.execute {
                         try {
-                            processObservation(request, admission.lease, snapshot, immediateArtwork, wallClockAtMs)
+                            processObservation(request, admission.lease, snapshot, artwork, wallClockAtMs)
                         } catch (error: Exception) {
                             request.failRequiredEffects()
                             main.post {
@@ -520,7 +564,7 @@ class AndroidMusicClient(
                     queuedObservations.decrementAndGet()
                     publish(latestPresentation.copy(error = appContext.getString(R.string.music_observation_failed)))
                 }
-                if (immediateArtwork == null) loadArtworkUri(controller, metadata)
+                onAdmitted()
             }
             MobileMusicObservationAdmission.Full -> {
                 request.close()
@@ -708,13 +752,7 @@ class AndroidMusicClient(
         val actions = playback?.actions ?: 0L
         val launchAvailable = appContext.packageManager.getLaunchIntentForPackage(controller.packageName) != null
         val provider = selectedProvider
-        val state = when (playback?.state) {
-            PlaybackState.STATE_PLAYING, PlaybackState.STATE_FAST_FORWARDING, PlaybackState.STATE_REWINDING -> MobileMusicPlaybackStateDto.PLAYING
-            PlaybackState.STATE_PAUSED -> MobileMusicPlaybackStateDto.PAUSED
-            PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> MobileMusicPlaybackStateDto.STOPPED
-            PlaybackState.STATE_BUFFERING, PlaybackState.STATE_CONNECTING -> MobileMusicPlaybackStateDto.BUFFERING
-            else -> MobileMusicPlaybackStateDto.UNAVAILABLE
-        }
+        val state = playback?.state?.let(::androidMediaPlaybackState) ?: MobileMusicPlaybackStateDto.UNAVAILABLE
         val itemId = metadata?.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
             ?: metadata?.description?.mediaUri?.toString()
         val item = itemId?.takeIf(String::isNotBlank)?.let { id ->

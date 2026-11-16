@@ -26,10 +26,20 @@ final class DeviceSessionTransport: @unchecked Sendable {
         }
 
         var disposition: CoreBluetoothWriteDisposition {
-            if chunks.isEmpty { return .rejected }
-            if chunks.contains(.cancelled) { return .cancelled }
-            if chunks.contains(.rejected) { return .rejected }
-            return chunks.contains(.queued) ? .queued : .submitted
+            let mapped = chunks.map { chunk -> MobilePevcapWriteDispositionDto in
+                switch chunk {
+                case .queued: return .queued
+                case .submitted: return .submitted
+                case .rejected: return .rejected
+                case .cancelled: return .cancelled
+                }
+            }
+            switch aggregateWriteDispositions(chunks: mapped) {
+            case .queued: return .queued
+            case .submitted: return .submitted
+            case .rejected: return .rejected
+            case .cancelled: return .cancelled
+            }
         }
     }
 
@@ -299,7 +309,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
         chargeEstimate = ChargeEstimateState(
             chargeEstimator.update(
                 input: MobileChargeEstimateInputDto(
-                    at: at.dto, snapshot: step.telemetry, freshness: MobileDurationDto(milliseconds: 30_000)
+                    at: at.dto, snapshot: step.telemetry,
+                    freshness: MobileDurationDto(milliseconds: chargeEstimateFreshnessMilliseconds())
                 )))
         persistVoltageSag()
         publishSettings(at: at, immediately: publishImmediately)

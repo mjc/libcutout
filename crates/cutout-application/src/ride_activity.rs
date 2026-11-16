@@ -1,5 +1,6 @@
 //! Bounded activity work, semantic fences and ordered terminal obligations.
 
+use cutout_ride_maps::{self as ride_maps, TelemetryFreshness};
 use std::sync::{Mutex, PoisonError};
 
 /// Identity used to fence activity work independently from payload presentation.
@@ -111,6 +112,42 @@ pub fn admits_telemetry<I>(snapshot: &ActivityObservation<I>, telemetry_at_ms: u
 #[must_use]
 pub fn may_clear_marker<I>(snapshot: &ActivityObservation<I>) -> bool {
     snapshot.phase == RidePhase::Ended
+}
+
+/// The sample is fresh only inside the shared telemetry window.
+///
+/// A missing observation and a receipt in the future are not fresh.
+#[must_use]
+pub fn telemetry_sample_is_fresh(observed_at_ms: Option<u64>, now_ms: u64) -> bool {
+    ride_maps::telemetry_freshness(
+        observed_at_ms.map(ride_maps::MonotonicMilliseconds::new),
+        ride_maps::MonotonicMilliseconds::new(now_ms),
+    ) == TelemetryFreshness::Fresh
+}
+
+/// Recording statistics belong on the connected dashboard only for that vehicle.
+#[must_use]
+pub fn recording_matches_connected_vehicle(
+    associated_vehicle: Option<&str>,
+    connected_platform_id: &str,
+) -> bool {
+    associated_vehicle.is_some_and(|vehicle| vehicle == connected_platform_id)
+}
+
+/// Publish a ride-map snapshot when there is no current ride, the ride changed,
+/// or the incoming revision is greater than or equal to the current revision.
+#[must_use]
+pub fn should_publish_ride_snapshot(
+    current_ride: Option<&str>,
+    incoming_ride: &str,
+    current_revision: u64,
+    incoming_revision: u64,
+) -> bool {
+    match current_ride {
+        None => true,
+        Some(current) if current != incoming_ride => true,
+        Some(_) => incoming_revision >= current_revision,
+    }
 }
 
 /// One platform operation admitted by Rust. platform snapshot payloads remain host-owned.
@@ -483,5 +520,45 @@ impl<I, R> Default for ActivityWorkQueue<I, R> {
         Self {
             state: Mutex::new(WorkState::default()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_policy_freshness_uses_the_shared_telemetry_window() {
+        let window = cutout_ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS;
+        let observed = 1_000;
+        assert!(telemetry_sample_is_fresh(Some(observed), observed + window));
+        assert!(!telemetry_sample_is_fresh(
+            Some(observed),
+            observed + window + 1
+        ));
+        assert!(!telemetry_sample_is_fresh(Some(observed + 1), observed));
+        assert!(!telemetry_sample_is_fresh(None, observed));
+    }
+
+    #[test]
+    fn display_policy_recording_matches_only_the_connected_vehicle() {
+        assert!(recording_matches_connected_vehicle(Some("wheel"), "wheel"));
+        assert!(!recording_matches_connected_vehicle(Some("other"), "wheel"));
+        assert!(!recording_matches_connected_vehicle(None, "wheel"));
+        assert!(!recording_matches_connected_vehicle(Some("wheel"), "Wheel"));
+    }
+
+    #[test]
+    fn display_policy_publishes_a_changed_ride_or_a_revision_that_is_not_older() {
+        assert!(should_publish_ride_snapshot(None, "ride-b", 9, 1));
+        assert!(should_publish_ride_snapshot(Some("ride-a"), "ride-b", 9, 1));
+        assert!(!should_publish_ride_snapshot(
+            Some("ride-a"),
+            "ride-a",
+            5,
+            4
+        ));
+        assert!(should_publish_ride_snapshot(Some("ride-a"), "ride-a", 5, 5));
+        assert!(should_publish_ride_snapshot(Some("ride-a"), "ride-a", 5, 6));
     }
 }

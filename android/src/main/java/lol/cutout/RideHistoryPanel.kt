@@ -1,9 +1,6 @@
 package lol.cutout
 
 import android.app.AlertDialog
-import android.icu.text.MeasureFormat
-import android.icu.util.Measure
-import android.icu.util.MeasureUnit
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -378,12 +375,9 @@ class RideHistoryPanel(
     })
 
     private fun averageSpeed(ride: MobileRideRecordDto): String {
-        val metresPerSecond = ride.summary.averageSpeedMillimetresPerSecond?.toDouble()?.div(1000.0) ?: return "--"
-        val country = Locale.getDefault().country
-        val imperial = country in setOf("US", "LR", "MM")
-        val amount = if (imperial) metresPerSecond * 2.2369362921 else metresPerSecond * 3.6
-        val unit = if (imperial) MeasureUnit.MILE_PER_HOUR else MeasureUnit.KILOMETER_PER_HOUR
-        return MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.SHORT).format(Measure(amount, unit))
+        val millimetres = ride.summary.averageSpeedMillimetresPerSecond ?: return "--"
+        if (millimetres > Long.MAX_VALUE.toULong()) return "--"
+        return "${RideMetricFormatting.speed(millimetres.toLong())} ${RideMetricFormatting.speedUnit(context)}"
     }
 
     private fun spaced() = LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(6) }

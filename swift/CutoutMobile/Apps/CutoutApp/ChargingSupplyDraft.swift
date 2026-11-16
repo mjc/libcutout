@@ -191,7 +191,6 @@ enum ChargingPriceDraft {
         let currency = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !amount.isEmpty, currency.count == 3,
             currency.unicodeScalars.allSatisfy({ (65...90).contains(Int($0.value)) }),
-            Locale.Currency.isoCurrencies.contains(where: { $0.identifier == currency }),
             let basis
         else { return nil }
         let formatter = NumberFormatter()

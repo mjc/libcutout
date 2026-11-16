@@ -48,3 +48,24 @@ pub const fn admit_command(command: MusicCommand) -> SoundCloudCommandAdmission 
 pub fn unavailable_snapshot(observed_at: MonotonicTimestamp) -> MusicSnapshot {
     MusicSnapshot::soundcloud_unavailable(observed_at)
 }
+
+/// Whether one `SoundCloud` HTTP 401 should invalidate authorization and retry.
+///
+/// Only attempt `0` retries. The platforms perform the request.
+#[must_use]
+pub const fn soundcloud_unauthorized_retry(attempt: u8) -> bool {
+    attempt == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::soundcloud_unauthorized_retry;
+
+    #[test]
+    fn unauthorized_http_retries_only_the_first_attempt() {
+        assert!(soundcloud_unauthorized_retry(0));
+        assert!(!soundcloud_unauthorized_retry(1));
+        assert!(!soundcloud_unauthorized_retry(2));
+        assert!(!soundcloud_unauthorized_retry(u8::MAX));
+    }
+}

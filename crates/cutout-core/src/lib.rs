@@ -66,6 +66,8 @@ mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod rider_dashboard;
 pub use rider_dashboard::*;
+mod ride_display;
+pub use ride_display::*;
 mod camera;
 pub use camera::*;
 mod energy_estimate;

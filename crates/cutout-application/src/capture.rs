@@ -1,5 +1,11 @@
 //! Capture startup admission and one-shot writer ownership.
 
+/// Longest edge of screenshot evidence after resampling, in pixels.
+pub const SCREENSHOT_EVIDENCE_MAX_EDGE_PIXELS: u32 = 2_048;
+
+/// JPEG quality used when encoding screenshot evidence, from 0 to 100.
+pub const SCREENSHOT_EVIDENCE_JPEG_QUALITY: u8 = 85;
+
 use std::{
     path::Path,
     sync::{Mutex, PoisonError},
@@ -327,5 +333,16 @@ impl<B: CaptureStartBackend> PreparedCaptureStart<B> {
             writer: prepared.writer,
             path: prepared.path,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_policy_screenshot_evidence_uses_the_shared_resample() {
+        assert_eq!(SCREENSHOT_EVIDENCE_MAX_EDGE_PIXELS, 2_048);
+        assert_eq!(SCREENSHOT_EVIDENCE_JPEG_QUALITY, 85);
     }
 }

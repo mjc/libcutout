@@ -10,17 +10,17 @@ final class RideUnitsTests: XCTestCase {
         XCTAssertEqual(readout.displayUnit, "mph")
     }
 
-    func testDistanceUnitFollowsMetricSpeedSpellings() {
-        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "km/h"), "km")
-        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "kmh"), "km")
-        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "kph"), "km")
+    func testDistanceUnitIsMilesForEverySpeedSpelling() {
+        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "km/h"), "mi")
+        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "kmh"), "mi")
+        XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "kph"), "mi")
         XCTAssertEqual(RideUnits.distanceUnit(forSpeedUnit: "mph"), "mi")
     }
 
-    func testDistanceTextConvertsForTheDisplayedUnit() {
-        XCTAssertEqual(RideUnits.distanceText(millimeters: 1_000_000, unit: "km"), "1.0")
+    func testDistanceTextUsesMiles() {
+        XCTAssertEqual(RideUnits.distanceText(millimeters: 1_000_000, unit: "km"), "0.6")
         XCTAssertEqual(RideUnits.distanceText(millimeters: 1_609_344, unit: "mi"), "1.0")
-        XCTAssertEqual(RideUnits.distanceText(millimetres: 1_000_000, unit: "km"), "1.0")
+        XCTAssertEqual(RideUnits.distanceText(millimetres: 1_000_000, unit: "km"), "0.6")
     }
 
     func testStandardMetricUnitsUseCanonicalSymbols() {

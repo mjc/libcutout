@@ -49,7 +49,10 @@ struct EucRideScreenView: View {
 
     private var currentTelemetry: Bool {
         guard let rideState, rideState.phase == .live else { return false }
-        return rideState.updateAge(at: now, staleAfter: RideTelemetryFreshnessPolicy.staleAfter).freshness == .fresh
+        return RideDisplayPolicy.telemetryIsFresh(
+            observedAt: rideState.telemetry?.at ?? rideState.displayState.lastUpdate,
+            now: now
+        )
     }
 
     var safetyBars: [PevSafetyBar] {

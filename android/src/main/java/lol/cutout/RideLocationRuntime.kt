@@ -120,8 +120,8 @@ class RideLocationRuntime(
         val receiptWallClock = System.currentTimeMillis().toULong()
         val samples = locations.map { location ->
             MobilePhoneLocationSampleDto(
-                wallClockUnixMs = receiptWallClock,
-                sourceTimestampUnixSeconds = location.time.takeIf { it > 0L }?.let { it / 1000.0 },
+                wallClockUnixMs = if (location.time > 0L) location.time.toULong() else 0UL,
+                sourceTimestampUnixSeconds = location.time.toDouble() / 1_000.0,
                 latitudeDegrees = location.latitude,
                 longitudeDegrees = location.longitude,
                 altitudeMeters = location.altitude,
@@ -184,11 +184,11 @@ class RideLocationRuntime(
             val manager = locationManager ?: throw IllegalArgumentException("Android location service is unavailable")
             var requested = fineGranted && locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
             if (requested) {
-                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, LOCATION_INTERVAL_MS, 0f, listener, thread.looper)
+                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, locationIntervalMs(), 0f, listener, thread.looper)
                 active = true
             }
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, LOCATION_INTERVAL_MS, 0f, listener, thread.looper)
+                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, locationIntervalMs(), 0f, listener, thread.looper)
                 requested = true
                 active = true
             }
@@ -251,7 +251,5 @@ class RideLocationRuntime(
         thread.quitSafely()
     }
 
-    companion object {
-        private const val LOCATION_INTERVAL_MS = 1_000L
-    }
+    private fun locationIntervalMs(): Long = locationAcquisitionMinimumIntervalMs().toLong()
 }

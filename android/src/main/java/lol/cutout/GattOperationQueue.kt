@@ -3,6 +3,8 @@ package lol.cutout
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
 import java.util.UUID
+import uniffi.cutout_mobile_ffi.MobilePevcapWriteDispositionDto
+import uniffi.cutout_mobile_ffi.aggregateWriteDispositions
 
 fun UUID.wireBytes(): ByteArray = ByteBuffer.allocate(16)
     .putLong(mostSignificantBits).putLong(leastSignificantBits).array()
@@ -135,13 +137,21 @@ class NativeWriteReceipt(
     private var last: NativeReceipt? = null
     fun observe(index: Int, receipt: NativeReceipt) {
         parts[index] = receipt
-        val aggregate = when {
-            parts.any { it == NativeReceipt.REJECTED } -> NativeReceipt.REJECTED
-            parts.any { it == NativeReceipt.CANCELLED } ->
-                if (parts.any { it == NativeReceipt.SUBMITTED }) NativeReceipt.REJECTED else NativeReceipt.CANCELLED
-            parts.all { it == NativeReceipt.SUBMITTED } -> NativeReceipt.SUBMITTED
-            else -> NativeReceipt.QUEUED
-        }
+        val aggregate = aggregateWriteDispositions(parts.map { it.toDisposition() }).toReceipt()
         if (last != aggregate) { last = aggregate; report(aggregate) }
+    }
+
+    private fun NativeReceipt.toDisposition(): MobilePevcapWriteDispositionDto = when (this) {
+        NativeReceipt.QUEUED -> MobilePevcapWriteDispositionDto.QUEUED
+        NativeReceipt.SUBMITTED -> MobilePevcapWriteDispositionDto.SUBMITTED
+        NativeReceipt.REJECTED -> MobilePevcapWriteDispositionDto.REJECTED
+        NativeReceipt.CANCELLED -> MobilePevcapWriteDispositionDto.CANCELLED
+    }
+
+    private fun MobilePevcapWriteDispositionDto.toReceipt(): NativeReceipt = when (this) {
+        MobilePevcapWriteDispositionDto.QUEUED -> NativeReceipt.QUEUED
+        MobilePevcapWriteDispositionDto.SUBMITTED -> NativeReceipt.SUBMITTED
+        MobilePevcapWriteDispositionDto.REJECTED -> NativeReceipt.REJECTED
+        MobilePevcapWriteDispositionDto.CANCELLED -> NativeReceipt.CANCELLED
     }
 }

@@ -910,6 +910,27 @@ impl CutoutSessionStateHandle {
     }
 }
 
+/// Startup reads for a VESC that has not yet produced a notification.
+///
+/// The bytes match a verified VESC session's link-up writes. Detection
+/// transmits them and leaves capture link-up to the verified session.
+#[uniffi::export]
+#[must_use]
+pub fn vesc_identification_requests(
+    monotonic_ms: crate::MobileMonotonicMillisDto,
+    max_write_len: Option<crate::MobileTransportWriteLimitDto>,
+) -> Vec<crate::MobileSessionOutputDto> {
+    cutout_protocols::vesc_identification_requests(
+        monotonic_ms.into_core_ffi(),
+        max_write_len.map(crate::MobileTransportWriteLimitDto::into_core_ffi),
+    )
+    .outputs
+    .into_iter()
+    .map(cutout_core::SessionOutputDto::from)
+    .map(crate::MobileSessionOutputDto::from)
+    .collect()
+}
+
 impl CutoutSessionStateHandle {
     #[cfg(test)]
     fn save_drivetrain_with_persistence(

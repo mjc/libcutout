@@ -1618,6 +1618,34 @@ pub enum PevcapWriteDisposition {
     Cancelled,
 }
 
+impl PevcapWriteDisposition {
+    /// Folds chunk receipts into one transport disposition.
+    ///
+    /// A sink rejection outranks every other chunk. A cancel mixed with a
+    /// submission is also a rejection: at least one fragment reached the
+    /// platform, so the write was not cancelled before submission. A cancel
+    /// with no submission stays cancelled. A queued chunk stays queued until
+    /// every chunk is submitted. An empty write is rejected.
+    #[must_use]
+    pub fn aggregate(chunks: &[Self]) -> Self {
+        if chunks.is_empty() || chunks.iter().any(|chunk| *chunk == Self::Rejected) {
+            return Self::Rejected;
+        }
+        let cancelled = chunks.iter().any(|chunk| *chunk == Self::Cancelled);
+        let submitted = chunks.iter().any(|chunk| *chunk == Self::Submitted);
+        if cancelled && submitted {
+            return Self::Rejected;
+        }
+        if cancelled {
+            return Self::Cancelled;
+        }
+        if chunks.iter().any(|chunk| *chunk == Self::Queued) {
+            return Self::Queued;
+        }
+        Self::Submitted
+    }
+}
+
 /// Fixed-size receipt metadata correlated with an outbound native write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -5317,6 +5345,34 @@ mod tests {
         assert_eq!(notification.service, Some(service));
         assert_eq!(notification.write_mode, None);
         assert_eq!(notification.bytes.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn write_disposition_aggregate_ranks_rejection_over_cancellation() {
+        use PevcapWriteDisposition::{Cancelled, Queued, Rejected, Submitted};
+
+        assert_eq!(PevcapWriteDisposition::aggregate(&[]), Rejected);
+        assert_eq!(
+            PevcapWriteDisposition::aggregate(&[Rejected, Cancelled, Submitted]),
+            Rejected
+        );
+        assert_eq!(
+            PevcapWriteDisposition::aggregate(&[Cancelled, Submitted]),
+            Rejected
+        );
+        assert_eq!(
+            PevcapWriteDisposition::aggregate(&[Cancelled, Queued]),
+            Cancelled
+        );
+        assert_eq!(
+            PevcapWriteDisposition::aggregate(&[Submitted, Queued]),
+            Queued
+        );
+        assert_eq!(
+            PevcapWriteDisposition::aggregate(&[Submitted, Submitted]),
+            Submitted
+        );
+        assert_eq!(PevcapWriteDisposition::aggregate(&[Queued]), Queued);
     }
 
     #[cfg(feature = "serde")]

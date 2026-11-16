@@ -731,6 +731,90 @@ mod tests {
     }
 
     #[test]
+    fn same_item_lower_position_after_skip_is_skip_and_absent_position_is_not() {
+        let mut tracker = MusicObservationTracker::new();
+        let _ = tracker.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("track"),
+                MusicPlaybackState::Playing,
+                Some(4_000),
+                100,
+            ),
+            timing(1_000),
+        );
+        let first_id = tracker
+            .current_history_transition()
+            .expect("first transition")
+            .id();
+        let _ = tracker.acknowledge_history_transition(first_id);
+        tracker.issue_skip(
+            TransportRequestId::from_raw(7),
+            MonotonicTimestamp::new(150),
+        );
+        tracker.finish_skip(
+            TransportRequestId::from_raw(7),
+            SkipCommandOutcome::Accepted,
+        );
+        let MusicObservationOutcome::Accepted(decision) = tracker.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("track"),
+                MusicPlaybackState::Playing,
+                Some(0),
+                200,
+            ),
+            timing(2_000),
+        ) else {
+            panic!("a lower position must be accepted");
+        };
+        assert_eq!(
+            decision
+                .history_transition()
+                .map(MusicHistoryTransition::kind),
+            Some(MusicRideEventKind::Skip)
+        );
+
+        let mut absent = MusicObservationTracker::new();
+        let _ = absent.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("track"),
+                MusicPlaybackState::Playing,
+                Some(4_000),
+                100,
+            ),
+            timing(1_000),
+        );
+        let first_id = absent
+            .current_history_transition()
+            .expect("first transition")
+            .id();
+        let _ = absent.acknowledge_history_transition(first_id);
+        absent.issue_skip(
+            TransportRequestId::from_raw(8),
+            MonotonicTimestamp::new(150),
+        );
+        absent.finish_skip(
+            TransportRequestId::from_raw(8),
+            SkipCommandOutcome::Accepted,
+        );
+        let MusicObservationOutcome::Accepted(decision) = absent.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("track"),
+                MusicPlaybackState::Playing,
+                None,
+                200,
+            ),
+            timing(2_000),
+        ) else {
+            panic!("an absent position must be accepted");
+        };
+        assert_eq!(decision.history_transition(), None);
+    }
+
+    #[test]
     fn observation_before_command_does_not_consume_skip() {
         let mut tracker = MusicObservationTracker::new();
         tracker.issue_skip(

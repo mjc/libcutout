@@ -351,6 +351,9 @@ pub enum MobileMusicObservationContext {
 impl MobileRideMapCore {
     /// Explicitly settles failed association ownership only after authoritative terminal proof.
     ///
+    /// A Stop fence waiting on this observation does not block the retirement.
+    /// The lifecycle call still requires this lease to own the FIFO head.
+    ///
     /// # Errors
     /// Returns stale lease ownership or unavailable Core state.
     #[allow(
@@ -363,7 +366,10 @@ impl MobileRideMapCore {
         lease: Arc<MobileMusicObservationLease>,
     ) -> Result<Option<MobileMusicHistoryTerminalFailure>, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
+        // Stop is waiting for this observation to finish. Retirement is part of
+        // that observation, and the lifecycle call below rejects a lease that
+        // is not the covered FIFO head.
+        state.require_ready_during_music_stop()?;
         let terminal = state.recording.music_history_terminal_context();
         let current = terminal
             .ride_id

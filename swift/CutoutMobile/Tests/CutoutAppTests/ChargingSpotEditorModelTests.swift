@@ -967,6 +967,69 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(model.errorKey, "charging.editor.error.access_note_too_long")
     }
 
+    func testOutletCountAcceptsAnyNonZeroRustCountAndSurfacesZero() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.setOutletCount(11)
+        XCTAssertEqual(model.outletCount, 11)
+        XCTAssertTrue(model.outletCountWasEdited)
+
+        model.setOutletCount(0)
+        XCTAssertEqual(model.outletCount, 11)
+        XCTAssertEqual(model.errorKey, "charging.editor.error.connectors")
+
+        model.setOutletCount(65535)
+        XCTAssertEqual(model.outletCount, 65535)
+        XCTAssertNil(model.errorKey)
+
+        model.setOutletCount(65536)
+        XCTAssertEqual(model.outletCount, 65535)
+        XCTAssertEqual(model.errorKey, "charging.editor.error.connectors")
+    }
+
+    func testPriceDraftAcceptsThreeLetterCurrencyWithoutAnIsoList() {
+        let price = ChargingPriceDraft.makePrice(
+            amount: "12.34", currency: "abc", basis: .perHour, locale: Locale(identifier: "en_US")
+        )
+        XCTAssertEqual(price?.currency, "ABC")
+        XCTAssertEqual(price?.amountMinor, 1_234)
+        XCTAssertEqual(price?.minorUnitExponent, 2)
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(amount: "", currency: "USD", basis: nil, locale: Locale(identifier: "en_US"))
+        )
+        XCTAssertNil(ChargingPriceDraft.makePrice(amount: "1", currency: "US", basis: .perHour))
+        XCTAssertNil(ChargingPriceDraft.makePrice(amount: "1", currency: "US1", basis: .perHour))
+    }
+
+    func testBlankUsdAmountIsNotAnIncompletePrice() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.chooseKind(.charging)
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        model.priceAmount = ""
+        model.priceCurrency = "USD"
+        model.terms = nil
+        model.priceBasis = nil
+
+        XCTAssertFalse(model.validationIssues.contains { $0.field == .payment })
+        XCTAssertTrue(model.canSave)
+    }
+
+    func testPaidTermsWithoutAPriceStaySavable() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.chooseKind(.charging)
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        model.priceAmount = ""
+        model.priceCurrency = "USD"
+        model.terms = .purchaseRequired
+        model.priceBasis = nil
+
+        XCTAssertFalse(model.validationIssues.contains { $0.field == .payment })
+        XCTAssertTrue(model.canSave)
+    }
+
     private func coordinate(latitude: Double = 1, longitude: Double = 2) -> MobileMapCoordinateDto {
         MobileMapCoordinateDto(latitudeDegrees: latitude, longitudeDegrees: longitude)
     }
