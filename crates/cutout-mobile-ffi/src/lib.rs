@@ -4020,6 +4020,34 @@ pub fn mobile_discovery_subscription_channels(
         .collect()
 }
 
+/// Whether discovery may read this characteristic before a frame arrives.
+///
+/// Backfire telemetry is excluded. A read of that UUID is not a pinned
+/// operation, and Android would admit it as a notification.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_read_permitted(fingerprint: MobileGattFingerprintDto) -> bool {
+    cutout_protocols::discovery_read_permitted(&GattFingerprint::from(fingerprint))
+}
+
+/// Whether the host must enable notify, rather than indication, for this channel.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_subscription_requires_notify(channel: Vec<u8>) -> bool {
+    let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+        return false;
+    };
+    cutout_protocols::subscription_requires_notify(&GattChannel::from_bytes(channel))
+}
+
 /// Transport service UUIDs to request from native Bluetooth scans.
 ///
 /// These are discovery hints; the device still requires protocol detection.

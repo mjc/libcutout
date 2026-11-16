@@ -724,7 +724,10 @@ class AndroidBleClient(
                 }
                 view = view.copy(phase = NativePhase.IDENTIFYING)
                 mobileDiscoverySubscriptionChannels(inventory).forEach { subscribe(it) }
-                characteristics.filter { it.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0 }.forEach { characteristic ->
+                characteristics.zip(inventory).filter { (characteristic, fingerprint) ->
+                    characteristic.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0
+                        && mobileDiscoveryReadPermitted(fingerprint)
+                }.forEach { (characteristic, _) ->
                     queue.enqueue(GattOperationQueue.Operation(key("read", characteristic), {
                         if (gatt.readCharacteristic(characteristic)) NativeStart.PENDING else NativeStart.COMPLETE
                     }))
@@ -793,10 +796,14 @@ class AndroidBleClient(
                 if (characteristic.uuid in subscribed) NativeStart.COMPLETE else {
                     val native = checkNotNull(gatt)
                     val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                    if (descriptor == null || !native.setCharacteristicNotification(characteristic, true)) NativeStart.REJECTED
+                    val notifies = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+                    val indicates = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+                    val permitIndication = indicates && !mobileSubscriptionRequiresNotify(channel)
+                    if (descriptor == null || (!notifies && !permitIndication)
+                        || !native.setCharacteristicNotification(characteristic, true)) NativeStart.REJECTED
                     else {
-                        val value = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
-                            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                        val value = if (notifies) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
                         if (native.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS)
                             NativeStart.PENDING else NativeStart.REJECTED
                     }

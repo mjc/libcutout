@@ -25,7 +25,9 @@ pub const BACKFIRE_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xf1, 0xf1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
 
-/// Notify and read characteristic `0000f1f2-0000-1000-8000-00805f9b34fb`.
+/// Telemetry characteristic `0000f1f2-0000-1000-8000-00805f9b34fb`.
+///
+/// The archived map marks it readable. Discovery observes it only through notify.
 pub const BACKFIRE_TELEMETRY_CHANNEL: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xf1, 0xf2, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
@@ -130,13 +132,15 @@ impl BackfireReport {
 
 /// Notify characteristics a host may subscribe to before any telemetry frame arrives.
 ///
-/// Only the telemetry characteristic with notify support is returned. The write
-/// characteristic is never selected.
+/// Only a notifying telemetry characteristic on the Backfire service is returned.
+/// The same characteristic UUID on another service is left alone, and indication
+/// is not accepted in place of notify.
 #[must_use]
 pub fn passive_observation_channels(fingerprints: &[GattFingerprint]) -> Vec<GattChannel> {
     let mut channels = Vec::new();
     for fingerprint in fingerprints {
-        if fingerprint.characteristic == BACKFIRE_TELEMETRY_CHANNEL
+        if fingerprint.service == BACKFIRE_SERVICE_CHANNEL
+            && fingerprint.characteristic == BACKFIRE_TELEMETRY_CHANNEL
             && fingerprint.roles.supports_notify()
             && !channels.contains(&fingerprint.characteristic)
         {
@@ -144,6 +148,24 @@ pub fn passive_observation_channels(fingerprints: &[GattFingerprint]) -> Vec<Gat
         }
     }
     channels
+}
+
+/// Whether a discovered characteristic may be read before a frame arrives.
+///
+/// The telemetry UUID is excluded on every service. Android admits Backfire from
+/// the characteristic UUID alone, so a read of that UUID would admit an
+/// indicate-only report.
+#[must_use]
+pub fn discovery_read_permitted(fingerprint: &GattFingerprint) -> bool {
+    fingerprint.characteristic != BACKFIRE_TELEMETRY_CHANNEL
+}
+
+/// Whether a subscription to this characteristic must use notify.
+///
+/// Backfire telemetry does not accept an indication as its subscription.
+#[must_use]
+pub fn subscription_requires_notify(channel: &GattChannel) -> bool {
+    *channel == BACKFIRE_TELEMETRY_CHANNEL
 }
 
 /// Characteristics a host may enable before a protocol frame arrives.
@@ -580,11 +602,44 @@ mod tests {
             BACKFIRE_SERVICE_CHANNEL,
             GattRoles::empty().with_notify(),
         );
+        let foreign = fingerprint(
+            bluetooth16(0x180f),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
         assert_eq!(
-            passive_observation_channels(&[telemetry, telemetry, write, indicate, other]),
+            passive_observation_channels(&[telemetry, telemetry, write, indicate, other, foreign]),
             vec![BACKFIRE_TELEMETRY_CHANNEL]
         );
-        assert_eq!(passive_observation_channels(&[write, indicate]), Vec::new());
+        assert_eq!(
+            passive_observation_channels(&[write, indicate, foreign]),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn discovery_does_not_read_or_indicate_backfire_telemetry() {
+        let telemetry = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_read().with_indicate(),
+        );
+        let foreign = fingerprint(
+            bluetooth16(0x180f),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_read().with_notify(),
+        );
+        let readable = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_WRITE_CHANNEL,
+            GattRoles::empty().with_read(),
+        );
+        assert!(!discovery_read_permitted(&telemetry));
+        assert!(!discovery_read_permitted(&foreign));
+        assert!(discovery_read_permitted(&readable));
+        assert!(subscription_requires_notify(&BACKFIRE_TELEMETRY_CHANNEL));
+        assert!(!subscription_requires_notify(&BACKFIRE_WRITE_CHANNEL));
+        assert!(!subscription_requires_notify(&bluetooth16(0xffe1)));
     }
 
     #[test]
@@ -603,8 +658,19 @@ mod tests {
             BACKFIRE_WRITE_CHANNEL,
             GattRoles::empty().with_notify(),
         );
+        let unrelated = fingerprint(
+            bluetooth16(0x180f),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
         assert_eq!(
-            discovery_subscription_channels(&[ffe1_notify, ffe1_read, indicate_only, other_notify]),
+            discovery_subscription_channels(&[
+                ffe1_notify,
+                ffe1_read,
+                indicate_only,
+                other_notify,
+                unrelated
+            ]),
             vec![ffe1]
         );
 

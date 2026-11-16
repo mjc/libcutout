@@ -3934,9 +3934,14 @@ extension CutoutSessionCore {
         var didSubscribe = false
         for channelBytes in mobilePassiveObservationChannels(fingerprints: fingerprints) {
             guard let channel = BluetoothUuid(channelBytes),
-                let characteristic = subscribedCharacteristics[channel],
-                characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate)
+                let characteristic = subscribedCharacteristics[channel]
             else { continue }
+            let requiresNotify = mobileSubscriptionRequiresNotify(channel: channel.bytes)
+            let properties = characteristic.properties
+            let subscribable =
+                properties.contains(.notify)
+                || (!requiresNotify && properties.contains(.indicate))
+            guard subscribable else { continue }
             if !characteristic.isNotifying {
                 peripheral.setNotifyValue(true, for: characteristic)
             }
@@ -3956,7 +3961,12 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
-        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+        let requiresNotify = mobileSubscriptionRequiresNotify(channel: channel.bytes)
+        let properties = characteristic.properties
+        guard
+            properties.contains(.notify)
+                || (!requiresNotify && properties.contains(.indicate))
+        else {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
