@@ -965,13 +965,24 @@ class AndroidBleClient(
             state.connectionAttemptSnapshot().deadlineMs?.let { deadline ->
                 cancelDeadline = timers.after((deadline - minOf(deadline, now())).toLong()) {
                     if (!current()) return@after
+                    val established = view.phase != NativePhase.CONNECTING
                     val expired = state.expireConnectionAttempt(token, now())
                     if (expired.readiness != MobileConnectionReadinessDto.RECORD_ONLY) return@after
-                    if (state.shouldRetryIdentification()) retryIdentification()
-                    else {
-                        session.identify(true)
-                        session.publish()
+                    if (state.shouldRetryIdentification()) {
+                        retryIdentification()
+                        return@after
                     }
+                    if (!established) {
+                        state.disconnectConnectionAttempt()
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = true)
+                        publish()
+                        return@after
+                    }
+                    session.identify(true)
+                    session.publish()
                 }
             }
         }
