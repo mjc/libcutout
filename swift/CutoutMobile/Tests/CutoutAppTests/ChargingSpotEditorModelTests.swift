@@ -1015,6 +1015,21 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertTrue(model.canSave)
     }
 
+    func testPaidTermsWithoutAPriceStaySavable() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.chooseKind(.charging)
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        model.priceAmount = ""
+        model.priceCurrency = "USD"
+        model.terms = .purchaseRequired
+        model.priceBasis = nil
+
+        XCTAssertFalse(model.validationIssues.contains { $0.field == .payment })
+        XCTAssertTrue(model.canSave)
+    }
+
     private func coordinate(latitude: Double = 1, longitude: Double = 2) -> MobileMapCoordinateDto {
         MobileMapCoordinateDto(latitudeDegrees: latitude, longitudeDegrees: longitude)
     }

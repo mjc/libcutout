@@ -127,10 +127,11 @@ final class ChargingSpotEditorModel {
     }
 
     /// A blank amount with the untouched USD default is not a price yet.
+    /// Payment terms do not turn that blank amount into a price.
     private var blankPriceIsAbsent: Bool {
         let amount = priceAmount.trimmingCharacters(in: .whitespacesAndNewlines)
         let currency = priceCurrency.trimmingCharacters(in: .whitespacesAndNewlines)
-        return amount.isEmpty && terms == nil && priceBasis == nil
+        return amount.isEmpty && priceBasis == nil
             && (currency.isEmpty || currency.uppercased() == "USD")
     }
 
