@@ -13,55 +13,39 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
-internal enum class CaptureHistorySendBadge { SENT, LOCAL_DELETED }
-
 internal fun projectReviewedCaptureCandidate(
     context: Context,
     value: MobileCaptureSubmissionBatchCandidateDto,
     sourceKind: (MobileCaptureSubmissionBatchSourceKindDto) -> String,
     eligibilityLabel: (MobileCaptureSubmissionBatchEligibilityDto) -> String,
 ): CaptureBatchCandidate {
-    val categories = value.categories?.let { categories -> buildList {
-        if (categories.deviceIdentifiers) add(context.getString(R.string.capture_batch_category_identifiers))
-        if (categories.location) add(context.getString(R.string.capture_batch_category_location))
-        if (categories.notes) add(context.getString(R.string.capture_batch_category_notes))
-        if (categories.annotations) add(context.getString(R.string.capture_batch_category_annotations))
-        if (categories.settingsObservations) add(context.getString(R.string.capture_batch_category_settings))
-    } } ?: emptyList()
-    val eligibility = value.skipReason ?: value.eligibility
+    val admission = captureBatchAdmission(value.eligibility, value.skipReason)
     return CaptureBatchCandidate(
         sourceArtifactId = value.sourceArtifactId,
         sourceKind = sourceKind(value.sourceKind),
         displayName = value.displayName.takeIf(String::isNotBlank),
-        eligible = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE,
-        skipReason = if (value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.ELIGIBLE) null else eligibilityLabel(eligibility),
+        eligible = admission.eligible,
+        skipReason = admission.skipReason?.let(eligibilityLabel),
         origin = captureSubmissionOriginLabel(context, value.origin),
         integrity = captureSubmissionIntegrityLabel(context, value.integrity),
         sourceBytes = value.sourceBytes,
         sourceSha256 = value.sourceSha256,
         transferBytes = value.transferBytes,
         transferSha256 = value.transferSha256,
-        categories = categories,
+        categories = value.categories?.let { includedCaptureCategories(it).map { category -> batchCategoryLabel(context, category) } } ?: emptyList(),
         noteBytes = value.evidence?.noteBytes?.toULong() ?: 0uL,
         screenshotCount = value.evidence?.screenshots ?: 0u,
         receipt = value.status?.receipt?.operationId,
-        checking = value.eligibility == MobileCaptureSubmissionBatchEligibilityDto.CHECKING,
+        checking = admission.checking,
     )
 }
 
-internal fun captureHistorySendBadge(status: MobileCaptureSubmissionStatusDto?): CaptureHistorySendBadge? {
-    if (status?.receipt == null) return null
-    return when (status.phase) {
-        MobileCaptureSubmissionPhaseDto.SENT,
-        MobileCaptureSubmissionPhaseDto.DELETING,
-        MobileCaptureSubmissionPhaseDto.DELETED ->
-            if (status.localPayloadState == MobileCaptureSubmissionLocalPayloadStateDto.REMOVED) {
-                CaptureHistorySendBadge.LOCAL_DELETED
-            } else {
-                CaptureHistorySendBadge.SENT
-            }
-        else -> null
-    }
+private fun batchCategoryLabel(context: Context, category: MobileCaptureDisclosureCategory): String = when (category) {
+    MobileCaptureDisclosureCategory.DEVICE_IDENTIFIERS -> context.getString(R.string.capture_batch_category_identifiers)
+    MobileCaptureDisclosureCategory.LOCATION -> context.getString(R.string.capture_batch_category_location)
+    MobileCaptureDisclosureCategory.NOTES -> context.getString(R.string.capture_batch_category_notes)
+    MobileCaptureDisclosureCategory.ANNOTATIONS -> context.getString(R.string.capture_batch_category_annotations)
+    MobileCaptureDisclosureCategory.SETTINGS_OBSERVATIONS -> context.getString(R.string.capture_batch_category_settings)
 }
 
 /** Android presentation for Rust-owned capture admission, recording lifecycle, and history. */
@@ -293,7 +277,7 @@ class DiagnosticCapturePanel(
         }.apply { tag = "captures.history.${entry.liveCaptureId}.share" })
         val badge = captureHistorySendBadge(entry.submission.status)
         if (badge != null) {
-            val sentLabel = if (badge == CaptureHistorySendBadge.LOCAL_DELETED) {
+            val sentLabel = if (badge == MobileCaptureHistoryBadge.LOCAL_DELETED) {
                 R.string.capture_sent_local_deleted
             } else {
                 R.string.capture_sent_privately
@@ -433,7 +417,7 @@ internal data class CaptureBatchCandidate(
 
 internal data class CaptureBatchProgress(
     val sourceArtifactId: String,
-    val phase: String,
+    val phase: MobileCaptureSubmissionBatchItemPhaseDto,
     val message: String,
     val total: ULong,
     val sent: ULong,
@@ -573,7 +557,7 @@ internal class CaptureSubmissionBatchDialog(
                             checking = it.checking,
                         )
                     },
-                    rows.none { it.checking },
+                    false,
                 )
             }.onFailure {
                 session.failReview()
@@ -604,17 +588,16 @@ internal class CaptureSubmissionBatchDialog(
 
     private fun confirm() {
         if (!canSend()) return
-        val ids = session.selectedIds()
-        val sendingAll = session.selectedCount() > 0uL && session.selectedCount() == session.eligibleCount()
+        val prompt = session.prompt()
         confirmationDialog = AlertDialog.Builder(context)
             .setTitle(R.string.capture_batch_confirm_title)
             .setMessage(
-                if (session.isReviewing() && sendingAll) context.getString(R.string.capture_batch_confirm_all)
-                else context.getString(R.string.capture_batch_confirm_message, ids.size),
+                if (prompt.confirmsPendingScan) context.getString(R.string.capture_batch_confirm_all)
+                else context.getString(R.string.capture_batch_confirm_message, session.selectedCount().toInt()),
             )
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(
-                if (sendingAll) R.string.capture_batch_send_local
+                if (prompt.coversEligible) R.string.capture_batch_send_local
                 else R.string.capture_batch_send_selected_local,
                 null,
             )
@@ -622,7 +605,7 @@ internal class CaptureSubmissionBatchDialog(
         confirmationDialog?.setOnShowListener {
             confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
                 confirmationDialog?.dismiss()
-                drive(session.requestSend(session.selectedIds()))
+                drive(session.requestSend())
             }
         }
         confirmationDialog?.show()
@@ -660,7 +643,8 @@ internal class CaptureSubmissionBatchDialog(
                     main.post {
                         result.onSuccess { showSummary(it, attempt) }.onFailure {
                             if (session.noteSendFailure(ids, attempt)) {
-                                reviewError = it.message ?: context.getString(R.string.capture_batch_failed)
+                                reviewError = captureSubmissionThrowableMessage(it)
+                                    ?: context.getString(R.string.capture_batch_failed)
                                 progressText = context.getString(R.string.capture_batch_retained)
                                 onFinished(receiptConfirmed)
                             }
@@ -673,14 +657,10 @@ internal class CaptureSubmissionBatchDialog(
     }
 
     private fun noteProgress(event: CaptureBatchProgress, attempt: ULong) {
-        val kind = when (event.phase) {
-            "Failed" -> MobileCaptureBatchProgressKind.FAILED
-            "Sent" -> MobileCaptureBatchProgressKind.SENT
-            "Cleaned" -> MobileCaptureBatchProgressKind.CLEANED
-            else -> MobileCaptureBatchProgressKind.OTHER
-        }
-        if (!session.noteProgress(event.sourceArtifactId, kind, attempt)) return
-        receiptConfirmed = receiptConfirmed || event.phase == "Sent" || event.phase == "Cleaned"
+        if (!session.noteItemPhase(event.sourceArtifactId, event.phase, attempt)) return
+        receiptConfirmed = receiptConfirmed ||
+            event.phase == MobileCaptureSubmissionBatchItemPhaseDto.SENT ||
+            event.phase == MobileCaptureSubmissionBatchItemPhaseDto.CLEANED
         progressText = context.getString(
             R.string.capture_batch_progress,
             event.current.toLong(), event.total.toLong(), event.sent.toLong(), event.cleaned.toLong(),
@@ -718,7 +698,7 @@ internal class CaptureSubmissionBatchDialog(
         reviewDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = true
         reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
             isEnabled = canSend()
-            setText(if (session.selectedCount() == session.eligibleCount()) R.string.capture_batch_send
+            setText(if (session.prompt().coversEligible) R.string.capture_batch_send
             else R.string.capture_batch_send_selected)
         }
         content.addView(ui.text(context.getString(R.string.capture_batch_explanation), 14f, color = ui.muted))
@@ -929,14 +909,6 @@ private class RustCaptureSubmissionBatchOperations(
         projectReviewedCaptureCandidate(context, value, this::sourceKindLabel, this::eligibilityLabel)
 
     private fun projectProgress(value: MobileCaptureSubmissionBatchProgressDto): CaptureBatchProgress {
-        val phase = when (value.phase) {
-            MobileCaptureSubmissionBatchItemPhaseDto.CURRENT -> "Current"
-            MobileCaptureSubmissionBatchItemPhaseDto.SENT -> "Sent"
-            MobileCaptureSubmissionBatchItemPhaseDto.CLEANED -> "Cleaned"
-            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> "Failed"
-            MobileCaptureSubmissionBatchItemPhaseDto.SKIPPED -> "Skipped"
-            MobileCaptureSubmissionBatchItemPhaseDto.CANCELLED -> "Cancelled"
-        }
         val reason = value.reason?.let(::eligibilityLabel)
         val message = when (value.phase) {
             MobileCaptureSubmissionBatchItemPhaseDto.CURRENT -> {
@@ -950,15 +922,21 @@ private class RustCaptureSubmissionBatchOperations(
             }
             MobileCaptureSubmissionBatchItemPhaseDto.SENT -> context.getString(R.string.capture_batch_receipt_saved)
             MobileCaptureSubmissionBatchItemPhaseDto.CLEANED -> context.getString(R.string.capture_batch_cleaned)
-            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> reason?.let {
-                context.getString(R.string.capture_batch_failed_reason, it, context.getString(R.string.capture_batch_failed_retained))
-            } ?: context.getString(R.string.capture_batch_failed_retained)
+            MobileCaptureSubmissionBatchItemPhaseDto.FAILED -> {
+                val retained = context.getString(R.string.capture_batch_failed_retained)
+                val failure = value.status?.failure?.let { captureSubmissionFailureMessage(it) }
+                when {
+                    failure != null -> "$failure $retained"
+                    reason != null -> context.getString(R.string.capture_batch_failed_reason, reason, retained)
+                    else -> retained
+                }
+            }
             MobileCaptureSubmissionBatchItemPhaseDto.SKIPPED -> reason ?: context.getString(R.string.capture_batch_skipped)
             MobileCaptureSubmissionBatchItemPhaseDto.CANCELLED -> context.getString(R.string.capture_batch_cancelled_item)
         }
         return CaptureBatchProgress(
             sourceArtifactId = value.sourceArtifactId,
-            phase = phase,
+            phase = value.phase,
             message = message,
             total = value.total,
             sent = value.sent,

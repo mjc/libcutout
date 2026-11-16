@@ -1,3 +1,4 @@
+use super::super::CaptureDisclosureCategory;
 use super::*;
 use crate::{
     CaptureOrigin, CaptureSubmissionIntegrity, CaptureSubmissionOrigin,
@@ -536,6 +537,13 @@ fn capture_submission_categories_read_legacy_persisted_status() {
     assert!(!categories.settings_observations);
     assert!(categories.device_identifiers);
     assert!(categories.annotations);
+    assert_eq!(
+        categories.included(),
+        vec![
+            CaptureDisclosureCategory::DeviceIdentifiers,
+            CaptureDisclosureCategory::Annotations,
+        ]
+    );
 }
 
 fn settings_count_submission(encoding: PevcapEncoding, count: usize) -> Vec<u8> {

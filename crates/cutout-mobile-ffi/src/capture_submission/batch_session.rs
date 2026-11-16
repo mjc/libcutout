@@ -2,8 +2,10 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::bulk::MobileCaptureSubmissionBatchItemPhaseDto;
 use cutout_core::{
-    CaptureBatchEffect, CaptureBatchProgressKind, CaptureBatchRow, CaptureBatchSession,
+    CaptureBatchEffect, CaptureBatchProgressKind, CaptureBatchPrompt, CaptureBatchRow,
+    CaptureBatchSession,
 };
 
 /// One reviewed source passed back into the shared sheet session.
@@ -38,6 +40,15 @@ pub enum MobileCaptureBatchEffect {
         /// Confirmation identity for progress from this attempt.
         attempt: u64,
     },
+}
+
+/// Send-control copy for the current selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureBatchPrompt {
+    /// Every sendable row is selected. An empty sheet is covered.
+    pub covers_eligible: bool,
+    /// Confirmation would send every row the running scan can still admit.
+    pub confirms_pending_scan: bool,
 }
 
 /// Progress class that can change the failed-source set.
@@ -87,7 +98,9 @@ impl MobileCaptureBatchSession {
     }
 
     /// Replaces the sheet with the review's final rows.
-    pub fn finish_review(&self, rows: Vec<MobileCaptureBatchRowDto>, scan_completed: bool) {
+    ///
+    /// A cancelled review, or a row that is still checking, leaves the sheet needing another review.
+    pub fn finish_review(&self, rows: Vec<MobileCaptureBatchRowDto>, cancelled: bool) {
         let rows = rows
             .into_iter()
             .map(|row| CaptureBatchRow {
@@ -96,7 +109,7 @@ impl MobileCaptureBatchSession {
                 checking: row.checking,
             })
             .collect::<Vec<_>>();
-        self.lock().finish_review(&rows, scan_completed);
+        self.lock().finish_review(&rows, cancelled);
     }
 
     /// Records a review that failed before returning rows.
@@ -115,10 +128,23 @@ impl MobileCaptureBatchSession {
         self.lock().set_selected(&id, selected)
     }
 
-    /// Chooses the next effect for this confirmation.
+    /// Chooses the next effect from the current selection.
     #[must_use]
-    pub fn request_send(&self, ids: Vec<String>) -> MobileCaptureBatchEffect {
-        effect(self.lock().request_send(&ids))
+    pub fn request_send(&self) -> MobileCaptureBatchEffect {
+        effect(self.lock().request_send())
+    }
+
+    /// Send-control copy for the current selection.
+    #[must_use]
+    pub fn prompt(&self) -> MobileCaptureBatchPrompt {
+        let CaptureBatchPrompt {
+            covers_eligible,
+            confirms_pending_scan,
+        } = self.lock().prompt();
+        MobileCaptureBatchPrompt {
+            covers_eligible,
+            confirms_pending_scan,
+        }
     }
 
     /// Records that the running review accepted Send all.
@@ -143,6 +169,31 @@ impl MobileCaptureBatchSession {
     #[must_use]
     pub fn commit_summary_missing(&self, attempt: u64) -> MobileCaptureBatchEffect {
         effect(self.lock().commit_summary_missing(attempt))
+    }
+
+    /// Records source progress for the current confirmation from the batch phase.
+    #[must_use]
+    pub fn note_item_phase(
+        &self,
+        id: String,
+        phase: MobileCaptureSubmissionBatchItemPhaseDto,
+        attempt: u64,
+    ) -> bool {
+        let kind = match phase {
+            MobileCaptureSubmissionBatchItemPhaseDto::Current
+            | MobileCaptureSubmissionBatchItemPhaseDto::Skipped
+            | MobileCaptureSubmissionBatchItemPhaseDto::Cancelled => {
+                MobileCaptureBatchProgressKind::Other
+            }
+            MobileCaptureSubmissionBatchItemPhaseDto::Sent => MobileCaptureBatchProgressKind::Sent,
+            MobileCaptureSubmissionBatchItemPhaseDto::Cleaned => {
+                MobileCaptureBatchProgressKind::Cleaned
+            }
+            MobileCaptureSubmissionBatchItemPhaseDto::Failed => {
+                MobileCaptureBatchProgressKind::Failed
+            }
+        };
+        self.note_progress(id, kind, attempt)
     }
 
     /// Records source progress for the current confirmation.

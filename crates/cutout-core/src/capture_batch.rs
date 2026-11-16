@@ -21,6 +21,15 @@ pub struct CaptureBatchRow {
     pub checking: bool,
 }
 
+/// Copy the send control should use. The sheet does not recompute this.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureBatchPrompt {
+    /// Every sendable row is selected. An empty sheet is covered.
+    pub covers_eligible: bool,
+    /// Confirmation would send every row the running scan can still admit.
+    pub confirms_pending_scan: bool,
+}
+
 /// What the native sheet should do next. It does not choose among these.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CaptureBatchEffect {
@@ -149,9 +158,11 @@ impl CaptureBatchSession {
 
     /// Replaces the sheet with the review's final rows.
     ///
-    /// `scan_completed` is false when the scan was cancelled or a row is still checking.
-    /// A completed scan selects every allowed eligible row unless the user changed the selection.
-    pub fn finish_review(&mut self, rows: &[CaptureBatchRow], scan_completed: bool) {
+    /// A cancelled review, or a row that is still checking, leaves the sheet needing
+    /// another review. A completed scan selects every allowed eligible row unless
+    /// the user changed the selection.
+    pub fn finish_review(&mut self, rows: &[CaptureBatchRow], cancelled: bool) {
+        let scan_completed = !cancelled && rows.iter().all(|row| !row.checking);
         self.rows.clear();
         self.index.clear();
         for row in rows {
@@ -220,17 +231,21 @@ impl CaptureBatchSession {
         true
     }
 
-    /// Chooses Send all, a narrowed send, or no send from this confirmation.
+    /// Chooses Send all, a narrowed send, or no send from the current selection.
     #[must_use]
-    pub fn request_send(&mut self, ids: &[String]) -> CaptureBatchEffect {
-        if self.waiting || self.sending || ids.is_empty() {
+    pub fn request_send(&mut self) -> CaptureBatchEffect {
+        if self.waiting || self.sending || self.selected.is_empty() {
             return CaptureBatchEffect::Idle;
         }
-        let requested = ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        let requested = self
+            .selected
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
         let sending_all = requested == self.eligible_set();
         if self.reviewing && sending_all {
             self.start_attempt();
-            self.pending_ids = ids.to_vec();
+            self.pending_ids.clone_from(&self.selected);
             self.resume_eligible = false;
             return CaptureBatchEffect::CommitAll {
                 attempt: self.attempt,
@@ -238,15 +253,26 @@ impl CaptureBatchSession {
         }
         if self.reviewing {
             self.waiting = true;
-            self.pending_ids = ids.to_vec();
+            self.pending_ids.clone_from(&self.selected);
             self.resume_eligible = false;
             return CaptureBatchEffect::CancelReview;
         }
         if self.finished || self.has_error || self.requires_fresh {
             return CaptureBatchEffect::Idle;
         }
-        self.pending_ids = ids.to_vec();
-        self.start_send(ids.to_vec())
+        let ids = self.selected.clone();
+        self.start_send(ids)
+    }
+
+    /// Whether the send control covers every sendable row, and whether that
+    /// confirmation would include rows the scan has not finished.
+    #[must_use]
+    pub fn prompt(&self) -> CaptureBatchPrompt {
+        let covers_eligible = self.selected_count() == self.eligible_count();
+        CaptureBatchPrompt {
+            covers_eligible,
+            confirms_pending_scan: self.reviewing && !self.selected.is_empty() && covers_eligible,
+        }
     }
 
     /// The running review accepted Send all.
@@ -641,7 +667,7 @@ mod tests {
         assert!(!session.can_send());
 
         assert!(session.observe("later", true, false));
-        session.finish_review(&[row("later", true, false)], true);
+        session.finish_review(&[row("later", true, false)], false);
 
         assert_eq!(session.selected_ids(), ["later"]);
         assert!(!session.requires_fresh_review());
@@ -665,8 +691,11 @@ mod tests {
         assert!(session.begin_review(false));
         assert!(session.observe("ready", true, false));
         assert!(session.observe("later", false, true));
+        let prompt = session.prompt();
+        assert!(prompt.covers_eligible);
+        assert!(prompt.confirms_pending_scan);
 
-        let effect = session.request_send(&["ready".to_owned()]);
+        let effect = session.request_send();
         let CaptureBatchEffect::CommitAll { attempt } = effect else {
             panic!("expected send all");
         };
@@ -674,15 +703,12 @@ mod tests {
         assert!(session.is_awaiting_commit());
         session.finish_review(
             &[row("ready", true, false), row("later", true, false)],
-            true,
+            false,
         );
         assert!(matches!(session.review_settled(), CaptureBatchEffect::Idle));
         assert!(session.note_summary(&[], 0, attempt));
         assert!(session.did_finish());
-        assert!(matches!(
-            session.request_send(&["ready".to_owned()]),
-            CaptureBatchEffect::Idle
-        ));
+        assert!(matches!(session.request_send(), CaptureBatchEffect::Idle));
     }
 
     #[test]
@@ -692,14 +718,17 @@ mod tests {
         assert!(session.observe("first", true, false));
         assert!(session.observe("second", true, false));
         assert!(session.set_selected("second", false));
+        let prompt = session.prompt();
+        assert!(!prompt.covers_eligible);
+        assert!(!prompt.confirms_pending_scan);
 
         assert!(matches!(
-            session.request_send(&["first".to_owned()]),
+            session.request_send(),
             CaptureBatchEffect::CancelReview
         ));
         session.finish_review(
             &[row("first", true, false), row("second", true, false)],
-            true,
+            false,
         );
         assert_eq!(send_ids(session.review_settled()), ["first".to_owned()]);
     }
@@ -709,7 +738,7 @@ mod tests {
         let mut session = CaptureBatchSession::new();
         assert!(session.begin_review(false));
         assert!(session.observe("ready", true, false));
-        let effect = session.request_send(&["ready".to_owned()]);
+        let effect = session.request_send();
         let CaptureBatchEffect::CommitAll { attempt } = effect else {
             panic!("expected send all");
         };
@@ -724,7 +753,7 @@ mod tests {
         assert!(session.observe("later", true, false));
         session.finish_review(
             &[row("ready", true, false), row("later", true, false)],
-            true,
+            false,
         );
         assert_eq!(
             send_ids(session.review_settled()),
@@ -737,8 +766,8 @@ mod tests {
         let mut session = CaptureBatchSession::new();
         assert!(session.begin_review(false));
         assert!(session.observe("source", true, false));
-        session.finish_review(&[row("source", true, false)], true);
-        let effect = session.request_send(&["source".to_owned()]);
+        session.finish_review(&[row("source", true, false)], false);
+        let effect = session.request_send();
         let CaptureBatchEffect::Send { attempt, .. } = effect else {
             panic!("expected send");
         };
@@ -752,11 +781,11 @@ mod tests {
         assert!(session.observe("other", true, false));
         session.finish_review(
             &[row("source", true, false), row("other", true, false)],
-            true,
+            false,
         );
         assert_eq!(session.selected_ids(), ["source"]);
 
-        let effect = session.request_send(&["source".to_owned()]);
+        let effect = session.request_send();
         let CaptureBatchEffect::Send { attempt: next, .. } = effect else {
             panic!("expected the retry send");
         };
@@ -773,8 +802,8 @@ mod tests {
         let mut session = CaptureBatchSession::new();
         assert!(session.begin_review(false));
         assert!(session.observe("source", true, false));
-        session.finish_review(&[row("source", true, false)], true);
-        let effect = session.request_send(&["source".to_owned()]);
+        session.finish_review(&[row("source", true, false)], false);
+        let effect = session.request_send();
         let CaptureBatchEffect::Send { attempt, .. } = effect else {
             panic!("expected send");
         };
@@ -782,14 +811,11 @@ mod tests {
         assert!(!session.request_stop());
         assert!(session.note_summary(&[], 1, attempt));
         assert!(session.requires_fresh_review());
-        assert!(matches!(
-            session.request_send(&["source".to_owned()]),
-            CaptureBatchEffect::Idle
-        ));
+        assert!(matches!(session.request_send(), CaptureBatchEffect::Idle));
 
         assert!(session.begin_review(false));
         assert!(session.observe("source", true, false));
-        session.finish_review(&[row("source", true, false)], true);
+        session.finish_review(&[row("source", true, false)], false);
         assert!(!session.requires_fresh_review());
         assert!(session.can_send());
         assert!(!session.is_sending());
@@ -809,10 +835,29 @@ mod tests {
                 row("second", true, false),
                 row("third", true, false),
             ],
-            true,
+            false,
         );
 
         assert_eq!(session.selected_ids(), ["first"]);
         assert!(session.can_send());
+    }
+
+    #[test]
+    fn cancelled_or_checking_review_stays_stale() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("ready", true, false));
+        session.finish_review(
+            &[row("ready", true, false), row("later", false, true)],
+            false,
+        );
+        assert!(session.requires_fresh_review());
+        assert!(matches!(session.request_send(), CaptureBatchEffect::Idle));
+
+        assert!(session.begin_review(false));
+        assert!(session.observe("ready", true, false));
+        session.finish_review(&[row("ready", true, false)], true);
+        assert!(session.requires_fresh_review());
+        assert!(!session.can_send());
     }
 }

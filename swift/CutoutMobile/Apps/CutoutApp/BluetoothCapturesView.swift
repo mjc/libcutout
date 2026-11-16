@@ -281,7 +281,7 @@ private struct CaptureSubmissionBatchReviewView: View {
                     } else if !model.didFinishSend {
                         Button(
                             localizedAppText(
-                                model.selectedCount == model.eligibleCount
+                                model.sendCoversEligible
                                     ? "capture.batch.send" : "capture.batch.send_selected")
                         ) { showsSendConfirmation = true }
                         .buttonStyle(.borderedProminent)
@@ -295,7 +295,7 @@ private struct CaptureSubmissionBatchReviewView: View {
                 .background(.bar)
             }
             .confirmationDialog(
-                model.isReviewing && model.selectedCount > 0 && model.selectedCount == model.eligibleCount
+                model.sendConfirmsPendingScan
                     ? localizedAppText("capture.batch.confirm_all")
                     : localizedAppText("capture.batch.confirm", model.selectedCount),
                 isPresented: $showsSendConfirmation,
@@ -303,7 +303,7 @@ private struct CaptureSubmissionBatchReviewView: View {
             ) {
                 Button(
                     localizedAppText(
-                        model.selectedCount == model.eligibleCount
+                        model.sendCoversEligible
                             ? "capture.batch.send_local" : "capture.batch.send_selected_local"), role: .destructive
                 ) {
                     model.beginSendSelected()
@@ -371,9 +371,8 @@ struct CaptureSubmissionBatchCandidate: Identifiable, Equatable, Sendable {
 }
 
 struct CaptureSubmissionBatchProgress: Equatable, Sendable {
-    enum Phase: Equatable, Sendable { case current, sent, cleaned, failed, skipped, cancelled }
     let sourceArtifactID: String
-    let phase: Phase
+    let phase: MobileCaptureSubmissionBatchItemPhaseDto
     let message: String
     let total: UInt64
     let sent: UInt64
@@ -514,25 +513,16 @@ extension CaptureSubmissionBatchFFIState {
     nonisolated fileprivate static func project(_ candidate: MobileCaptureSubmissionBatchCandidateDto)
         -> CaptureSubmissionBatchCandidate
     {
-        let categories: [String] =
-            candidate.categories.map { value in
-                var included: [String] = []
-                if value.deviceIdentifiers { included.append(localizedAppText("capture.batch.category_identifiers")) }
-                if value.location { included.append(localizedAppText("capture.batch.category_location")) }
-                if value.notes { included.append(localizedAppText("capture.batch.category_notes")) }
-                if value.annotations { included.append(localizedAppText("capture.batch.category_annotations")) }
-                if value.settingsObservations { included.append(localizedAppText("capture.batch.category_settings")) }
-                return included
-            } ?? []
-        let eligible = candidate.eligibility == .eligible
-        let checking = candidate.eligibility == .checking
+        let categories = categoryLabels(candidate.categories)
+        let admission = captureBatchAdmission(
+            eligibility: candidate.eligibility, skipReason: candidate.skipReason)
         return CaptureSubmissionBatchCandidate(
             sourceArtifactID: candidate.sourceArtifactId,
             sourceKind: sourceKindLabel(candidate.sourceKind),
             displayName: candidate.displayName.isEmpty ? nil : candidate.displayName,
-            isEligible: eligible,
-            isChecking: checking,
-            skipReason: eligible ? nil : eligibilityLabel(candidate.skipReason ?? candidate.eligibility),
+            isEligible: admission.eligible,
+            isChecking: admission.checking,
+            skipReason: admission.skipReason.map(eligibilityLabel),
             origin: captureSubmissionOriginLabel(candidate.origin),
             integrity: captureSubmissionIntegrityLabel(candidate.integrity),
             sourceBytes: candidate.sourceBytes,
@@ -544,6 +534,19 @@ extension CaptureSubmissionBatchFFIState {
             screenshotCount: UInt64(candidate.evidence?.screenshots ?? 0),
             receipt: candidate.status?.receipt?.operationId
         )
+    }
+
+    nonisolated private static func categoryLabels(_ categories: MobileCaptureSubmissionCategoriesDto?) -> [String] {
+        guard let categories else { return [] }
+        return includedCaptureCategories(categories: categories).map { category in
+            switch category {
+            case .deviceIdentifiers: localizedAppText("capture.batch.category_identifiers")
+            case .location: localizedAppText("capture.batch.category_location")
+            case .notes: localizedAppText("capture.batch.category_notes")
+            case .annotations: localizedAppText("capture.batch.category_annotations")
+            case .settingsObservations: localizedAppText("capture.batch.category_settings")
+            }
+        }
     }
 
     nonisolated private static func sourceKindLabel(_ kind: MobileCaptureSubmissionBatchSourceKindDto) -> String {
@@ -569,22 +572,6 @@ extension CaptureSubmissionBatchFFIState {
         }
     }
 
-    nonisolated fileprivate static func failureText(_ failure: MobileCaptureSubmissionFailureDto) -> String {
-        switch failure {
-        case .network: "The network failed. This capture is still on this phone."
-        case .unauthorized: "This account could not send the capture."
-        case .forbidden: "This account cannot send the capture."
-        case .conflict: "The server already has different information for this capture. It is still on this phone."
-        case .rejected: "The server rejected this capture. It is still on this phone."
-        case .throttled: "Waiting. The server asked to slow down."
-        case .unavailable: "The server is unavailable. This capture is still on this phone."
-        case .tooLarge: "This capture is too large to send."
-        case .invalidCapture: "This capture could not be read."
-        case .musicPresent: "This capture includes music and was not sent."
-        case .quotaExceeded: "The server has no room for more captures."
-        case .cancelled: "The send was cancelled."
-        }
-    }
 }
 
 private final class CaptureSubmissionBatchReviewListenerAdapter: MobileCaptureSubmissionBatchReviewListener,
@@ -616,29 +603,24 @@ private final class CaptureSubmissionBatchProgressListenerAdapter: MobileCapture
     nonisolated private static func project(_ progress: MobileCaptureSubmissionBatchProgressDto)
         -> CaptureSubmissionBatchProgress
     {
-        let phase: CaptureSubmissionBatchProgress.Phase
         let message: String
         switch progress.phase {
         case .current:
-            phase = .current
             if progress.status?.failure == .throttled {
-                message = CaptureSubmissionBatchFFIState.failureText(.throttled)
+                message = captureSubmissionFailureMessage(failure: .throttled)
             } else if let sent = progress.bytesSent, let total = progress.totalBytes {
                 message = localizedAppText("capture.batch.phase_bytes", sent.formatted(), total.formatted())
             } else {
                 message = localizedAppText("capture.batch.phase_current")
             }
         case .sent:
-            phase = .sent
             message = localizedAppText("capture.batch.phase_receipt")
         case .cleaned:
-            phase = .cleaned
             message = localizedAppText("capture.batch.phase_cleaned")
         case .failed:
-            phase = .failed
             let retained = localizedAppText("capture.batch.phase_failed")
             if let failure = progress.status?.failure {
-                message = "\(CaptureSubmissionBatchFFIState.failureText(failure)) \(retained)"
+                message = "\(captureSubmissionFailureMessage(failure: failure)) \(retained)"
             } else {
                 message =
                     progress.reason.map {
@@ -649,17 +631,15 @@ private final class CaptureSubmissionBatchProgressListenerAdapter: MobileCapture
                     } ?? retained
             }
         case .skipped:
-            phase = .skipped
             message =
                 progress.reason.map(CaptureSubmissionBatchFFIState.eligibilityLabel)
                 ?? localizedAppText("capture.batch.skipped")
         case .cancelled:
-            phase = .cancelled
             message = localizedAppText("capture.batch.phase_cancelled")
         }
         return CaptureSubmissionBatchProgress(
             sourceArtifactID: progress.sourceArtifactId,
-            phase: phase,
+            phase: progress.phase,
             message: message,
             total: progress.total,
             sent: progress.sent,
@@ -696,7 +676,6 @@ final class CaptureSubmissionBatchModel: Identifiable {
     @ObservationIgnored private var onTerminalUpdate: @MainActor () -> Void
 
     struct ItemProgress: Equatable, Sendable {
-        let phase: CaptureSubmissionBatchProgress.Phase
         let message: String
         let isFailure: Bool
     }
@@ -709,9 +688,11 @@ final class CaptureSubmissionBatchModel: Identifiable {
         self.onTerminalUpdate = onTerminalUpdate
     }
 
-    var eligibleCount: Int { candidates.filter(\.isEligible).count }
-    var skippedCount: Int { candidates.filter { !$0.isEligible && !$0.isChecking }.count }
-    var selectedCount: Int { selectedSourceArtifactIDs.count }
+    var eligibleCount: Int { Int(session.eligibleCount()) }
+    var skippedCount: Int { Int(session.skippedCount()) }
+    var selectedCount: Int { Int(session.selectedCount()) }
+    var sendCoversEligible: Bool { session.prompt().coversEligible }
+    var sendConfirmsPendingScan: Bool { session.prompt().confirmsPendingScan }
     var canSend: Bool { session.canSend() }
     func replaceTerminalUpdate(_ update: @escaping @MainActor () -> Void) {
         onTerminalUpdate = update
@@ -763,7 +744,7 @@ final class CaptureSubmissionBatchModel: Identifiable {
                         eligible: candidate.isEligible,
                         checking: candidate.isChecking)
                 },
-                scanCompleted: !Task.isCancelled && !reviewed.contains(where: \.isChecking))
+                cancelled: Task.isCancelled)
         } catch is CancellationError {
             session.noteReviewInterrupted()
         } catch {
@@ -796,25 +777,20 @@ final class CaptureSubmissionBatchModel: Identifiable {
     }
 
     func sendSelected() async {
-        await send(Array(selectedSourceArtifactIDs))
+        await drive(session.requestSend())
     }
 
     /// The sheet can close while this runs. The model keeps the send.
     func beginSendSelected() {
-        let ids = Array(selectedSourceArtifactIDs)
-        Task { await self.send(ids) }
+        Task { await self.sendSelected() }
     }
 
     private func applySendProgress(_ event: CaptureSubmissionBatchProgress, attempt: UInt64) {
         guard
-            session.noteProgress(
-                id: event.sourceArtifactID,
-                kind: Self.progressKind(event.phase),
-                attempt: attempt)
+            session.noteItemPhase(id: event.sourceArtifactID, phase: event.phase, attempt: attempt)
         else { return }
         progress = event
         itemProgress[event.sourceArtifactID] = ItemProgress(
-            phase: event.phase,
             message: event.message,
             isFailure: event.phase == .failed)
         publish()
@@ -831,10 +807,6 @@ final class CaptureSubmissionBatchModel: Identifiable {
         await withCheckedContinuation { continuation in
             reviewWaiters.append(continuation)
         }
-    }
-
-    private func send(_ sourceArtifactIDs: [String]) async {
-        await drive(session.requestSend(ids: sourceArtifactIDs))
     }
 
     private func drive(_ initial: MobileCaptureBatchEffect) async {
@@ -924,15 +896,6 @@ final class CaptureSubmissionBatchModel: Identifiable {
         didRequestStop = session.didRequestStop()
         requiresFreshReview = session.requiresFreshReview()
         failedSourceArtifactIDs = session.failedIds()
-    }
-
-    private static func progressKind(_ phase: CaptureSubmissionBatchProgress.Phase) -> MobileCaptureBatchProgressKind {
-        switch phase {
-        case .failed: .failed
-        case .sent: .sent
-        case .cleaned: .cleaned
-        case .current, .skipped, .cancelled: .other
-        }
     }
 }
 
@@ -1103,7 +1066,7 @@ private struct DatabaseCaptureRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if let badge = captureHistorySendBadge(capture.submission.status) {
+            if let badge = captureHistorySendBadge(status: capture.submission.status) {
                 Label(
                     badge == .localDeleted
                         ? localizedAppText("capture.history.local_deleted")
@@ -1113,21 +1076,6 @@ private struct DatabaseCaptureRow: View {
                 .accessibilityIdentifier("captures.history.\(capture.liveCaptureId).sent")
             }
         }.padding(.vertical, 4).accessibilityElement(children: .combine)
-    }
-}
-
-enum CaptureHistorySendBadge: Equatable {
-    case sent
-    case localDeleted
-}
-
-func captureHistorySendBadge(_ status: MobileCaptureSubmissionStatusDto?) -> CaptureHistorySendBadge? {
-    guard let status, status.receipt != nil else { return nil }
-    switch status.phase {
-    case .sent, .deleting, .deleted:
-        return status.localPayloadState == .removed ? .localDeleted : .sent
-    default:
-        return nil
     }
 }
 

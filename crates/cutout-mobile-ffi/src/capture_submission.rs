@@ -2,8 +2,10 @@
 
 mod batch_session;
 mod bulk;
+mod policy;
 pub use batch_session::*;
 pub use bulk::*;
+pub use policy::*;
 
 use crate::{RideDatabaseHandle, persistence};
 use cutout_application::capture_submission::HttpCaptureTransport;

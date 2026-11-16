@@ -152,50 +152,17 @@ final class CaptureSubmissionModel {
     }
 
     static func message(for error: Error) -> String {
-        guard let error = error as? MobileCaptureSubmissionError else {
-            if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
-                return "The account cannot authorize this transfer."
-            }
-            return "The private transfer could not be completed. Your original recording is still on this device."
+        if let error = error as? MobileCaptureSubmissionError {
+            return captureSubmissionErrorMessage(error: error)
         }
-        switch error {
-        case .NoteTooLong: return "The note must be 1,024 bytes or less."
-        case .TooManyScreenshots: return "Choose up to four screenshots."
-        case .ScreenshotTooLarge: return "Each screenshot must be 5 MiB or less."
-        case .InvalidScreenshot: return "The screenshot could not be read."
-        case .InvalidSource: return "This recording has no verified source for private Send."
-        case .NotReady: return "This recording is not ready for private Send."
-        case .Unavailable: return "Private Send is unavailable. Try again later."
-        case .Unauthorized:
-            return "The account cannot authorize this transfer."
-        case .RateLimited: return "Too many requests. Try again later."
-        case .QuotaExceeded: return "Private capture storage is full. Try again later."
-        case .InvalidCapture: return "The recording could not be validated for private Send."
-        case .StorageFailure:
-            return "The transfer status could not be saved. Your original recording is still on this device."
-        case .Cancelled: return "The transfer was cancelled."
-        case .ReceiptMismatch:
-            return "The server receipt did not match this snapshot. Receipt confirmation is still required."
+        if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
+            return captureSubmissionErrorMessage(error: .Unauthorized)
         }
+        return "The private transfer could not be completed. Your original recording is still on this device."
     }
 
     var failureMessage: String? {
-        switch status?.failure {
-        case .network: "The network failed. This capture is still on this phone."
-        case .unauthorized: "This account could not send the capture."
-        case .forbidden: "This account cannot send the capture."
-        case .conflict:
-            "The server already has different information for this capture. It is still on this phone."
-        case .rejected: "The server rejected this capture. It is still on this phone."
-        case .throttled: "Waiting. The server asked to slow down."
-        case .unavailable: "The server is unavailable. This capture is still on this phone."
-        case .tooLarge: "This capture is too large to send."
-        case .invalidCapture: "This capture could not be read."
-        case .musicPresent: "This capture includes music and was not sent."
-        case .quotaExceeded: "The server has no room for more captures."
-        case .cancelled: "The send was cancelled."
-        case nil: nil
-        }
+        status?.failure.map { captureSubmissionFailureMessage(failure: $0) }
     }
 
     private static func readStatus(_ source: MobileCaptureSubmissionSourceDto) async throws

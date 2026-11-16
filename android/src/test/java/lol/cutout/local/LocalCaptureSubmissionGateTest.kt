@@ -1,9 +1,8 @@
 package lol.cutout.local
 
-import lol.cutout.CaptureHistorySendBadge
-import lol.cutout.captureHistorySendBadge
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.cutout_mobile_ffi.MobileCaptureHistoryBadge
 import uniffi.cutout_mobile_ffi.MobileCaptureIntegrityDto
 import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionCategoriesDto
 import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionLocalPayloadStateDto
@@ -11,6 +10,7 @@ import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionOriginDto
 import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionPhaseDto
 import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionReceiptDto
 import uniffi.cutout_mobile_ffi.MobileCaptureSubmissionStatusDto
+import uniffi.cutout_mobile_ffi.captureHistorySendBadge
 
 class LocalCaptureSubmissionGateTest {
     @Test
@@ -22,17 +22,17 @@ class LocalCaptureSubmissionGateTest {
             bytes = 100uL,
             receivedAtMilliseconds = 1_700_000_000_000uL,
         )
-        assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, receipt)))
+        assertEquals(MobileCaptureHistoryBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, receipt)))
         assertEquals(
-            CaptureHistorySendBadge.LOCAL_DELETED,
+            MobileCaptureHistoryBadge.LOCAL_DELETED,
             captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.SENT, receipt, MobileCaptureSubmissionLocalPayloadStateDto.REMOVED)),
         )
-        assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt)))
+        assertEquals(MobileCaptureHistoryBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt)))
         assertEquals(
-            CaptureHistorySendBadge.LOCAL_DELETED,
+            MobileCaptureHistoryBadge.LOCAL_DELETED,
             captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETED, receipt, MobileCaptureSubmissionLocalPayloadStateDto.REMOVED)),
         )
-        assertEquals(CaptureHistorySendBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETING, receipt)))
+        assertEquals(MobileCaptureHistoryBadge.SENT, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.DELETING, receipt)))
         assertEquals(null, captureHistorySendBadge(status(MobileCaptureSubmissionPhaseDto.PREPARED, receipt)))
     }
 

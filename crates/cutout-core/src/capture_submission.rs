@@ -140,6 +140,41 @@ pub struct CaptureSubmissionCategories {
     pub settings_observations: bool,
 }
 
+/// One disclosed payload category, in display order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureDisclosureCategory {
+    /// Header device or platform identifiers.
+    DeviceIdentifiers,
+    /// Location observations.
+    Location,
+    /// User descriptions or notes.
+    Notes,
+    /// Header annotations, including physical-action labels.
+    Annotations,
+    /// User-entered settings values.
+    SettingsObservations,
+}
+
+impl CaptureSubmissionCategories {
+    /// Categories that are present, in disclosure order.
+    #[must_use]
+    pub fn included(self) -> Vec<CaptureDisclosureCategory> {
+        [
+            self.device_identifiers
+                .then_some(CaptureDisclosureCategory::DeviceIdentifiers),
+            self.location.then_some(CaptureDisclosureCategory::Location),
+            self.notes.then_some(CaptureDisclosureCategory::Notes),
+            self.annotations
+                .then_some(CaptureDisclosureCategory::Annotations),
+            self.settings_observations
+                .then_some(CaptureDisclosureCategory::SettingsObservations),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
 /// A full-stream check without replaying or executing captured writes.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CaptureSubmissionPayloadSummary {

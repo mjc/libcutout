@@ -68,24 +68,24 @@ final class CaptureSubmissionModelTests: XCTestCase {
     }
 
     func testHistoryBadgeRequiresDurableSendReceiptAndReportsLocalRemoval() {
-        XCTAssertNil(captureHistorySendBadge(status(.sent)))
+        XCTAssertNil(captureHistorySendBadge(status: status(.sent)))
         let receipt = MobileCaptureSubmissionReceiptDto(
             operationId: "fixed-operation", sha256: String(repeating: "a", count: 64),
             bytes: 100, receivedAtMilliseconds: 1_700_000_000_000
         )
-        XCTAssertEqual(captureHistorySendBadge(status(.sent, receipt: receipt)), .sent)
+        XCTAssertEqual(captureHistorySendBadge(status: status(.sent, receipt: receipt)), .sent)
         XCTAssertEqual(
-            captureHistorySendBadge(status(.sent, receipt: receipt, localPayloadState: .removed)),
+            captureHistorySendBadge(status: status(.sent, receipt: receipt, localPayloadState: .removed)),
             .localDeleted)
-        XCTAssertEqual(captureHistorySendBadge(status(.deleted, receipt: receipt)), .sent)
+        XCTAssertEqual(captureHistorySendBadge(status: status(.deleted, receipt: receipt)), .sent)
         XCTAssertEqual(
-            captureHistorySendBadge(status(.deleted, receipt: receipt, localPayloadState: .removed)),
+            captureHistorySendBadge(status: status(.deleted, receipt: receipt, localPayloadState: .removed)),
             .localDeleted)
         XCTAssertEqual(
-            captureHistorySendBadge(status(.sent, receipt: receipt, localPayloadState: .removalPending)),
+            captureHistorySendBadge(status: status(.sent, receipt: receipt, localPayloadState: .removalPending)),
             .sent)
-        XCTAssertEqual(captureHistorySendBadge(status(.deleting, receipt: receipt)), .sent)
-        XCTAssertNil(captureHistorySendBadge(status(.prepared, receipt: receipt)))
+        XCTAssertEqual(captureHistorySendBadge(status: status(.deleting, receipt: receipt)), .sent)
+        XCTAssertNil(captureHistorySendBadge(status: status(.prepared, receipt: receipt)))
     }
 
     func testBatchReviewIsLocalAndConfirmationDelegatesOneSharedSend() async {
