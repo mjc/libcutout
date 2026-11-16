@@ -109,7 +109,13 @@ struct PhoneDriveRideSurface<Content: View>: View {
                 .accessibilityHidden(true)
             }
         }
-        .accessibilityIdentifier("phone-control.buttons")
+        .background(alignment: .topLeading) {
+            // An identifier on this stack replaces each hold button's identifier.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("phone-control.buttons")
+                .allowsHitTesting(false)
+        }
     }
 
     private func holdButton(_ action: MobilePhoneDriveActionDto) -> some View {
@@ -209,6 +215,22 @@ struct PhoneDriveSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if model.settingsMode != .disabled, model.settingsLoaded {
+                    Section {
+                        // Form only exposes rows near the viewport. At the largest
+                        // text size the current fields fill that screen, so this
+                        // action stays above them.
+                        Button(localizedAppText("phone_control.arm")) {
+                            Task {
+                                if let request = await model.saveSettingsAndRequestActivation() {
+                                    requestActivation(request)
+                                }
+                            }
+                        }
+                        .disabled(model.settingsBusy)
+                        .accessibilityIdentifier("ride.phone-control.activate")
+                    }
+                }
                 Section {
                     Picker(
                         localizedAppText("phone_control.input_mode"),
@@ -244,17 +266,6 @@ struct PhoneDriveSettingsSheet: View {
                     }
                     .disabled(model.settingsBusy || !model.settingsLoaded)
                     .accessibilityIdentifier("ride.phone-control.save")
-                    if model.settingsMode != .disabled, model.settingsLoaded {
-                        Button(localizedAppText("phone_control.arm")) {
-                            Task {
-                                if let request = await model.saveSettingsAndRequestActivation() {
-                                    requestActivation(request)
-                                }
-                            }
-                        }
-                        .disabled(model.settingsBusy)
-                        .accessibilityIdentifier("ride.phone-control.activate")
-                    }
                     if model.activationError {
                         Text(localizedAppText("phone_control.activation_failed"))
                             .foregroundStyle(.red)

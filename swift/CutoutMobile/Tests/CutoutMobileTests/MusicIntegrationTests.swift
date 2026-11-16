@@ -122,10 +122,11 @@ final class MusicIntegrationTests: XCTestCase {
 
     @MainActor
     func testCompactPlayerRequiresContentAndRespectsDismissal() {
-        func inset(_ playing: MusicNowPlaying?, hidden: Bool = false) -> MusicCompactPlayerInset {
+        func inset(_ playing: MusicNowPlaying?, hidden: Bool = false) -> MusicCompactPlayerInset<EmptyView> {
             MusicCompactPlayerInset(
                 nowPlaying: playing, isHidden: hidden,
-                onCommand: { _ in }, onOpenDetails: {}, onOpenSettings: {}, onDismiss: {}
+                onCommand: { _ in }, onOpenDetails: {}, onOpenSettings: {}, onDismiss: {},
+                showsTrailingAccessory: false, trailingAccessory: EmptyView()
             )
         }
         XCTAssertFalse(inset(nil).showsPlayer, "A provider preference is not a player")

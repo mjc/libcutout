@@ -37,6 +37,7 @@ final class PhoneDriveModel {
     var brakeAmpsText = "3"
     private var settingsToken: MobileConnectionAttemptTokenDto?
     private var settingsPresentationID: UUID?
+    private(set) var navigationSettingsRequest = 0
     private var pendingActivationRequest: ActivationRequest?
     private var activationDismissalClaimed = false
     private var settingsOperationID: UUID?
@@ -110,6 +111,12 @@ final class PhoneDriveModel {
     func updateSettingsMode(_ mode: MobilePhoneControlModeDto) {
         guard settingsLoaded, !settingsBusy else { return }
         settingsMode = mode
+    }
+
+    func requestSettingsFromRideNavigation() -> Bool {
+        guard presentSettings() else { return false }
+        navigationSettingsRequest += 1
+        return true
     }
 
     func presentSettings(

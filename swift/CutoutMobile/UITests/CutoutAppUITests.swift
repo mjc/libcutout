@@ -9317,6 +9317,7 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             throw XCTSkip("Phone-control presentation acceptance is restricted to Simulator")
         #endif
         continueAfterFailure = false
+        executionTimeAllowance = 360
         phoneApp = XCUIApplication()
         XCUIDevice.shared.orientation = .portrait
     }
@@ -9685,6 +9686,11 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
             object: energy)
         XCTAssertEqual(XCTWaiter.wait(for: [estimated], timeout: 5), .completed, phoneApp.debugDescription)
         let speed = phoneElement("ride.hero.speed")
+        XCTAssertFalse(phoneApp.staticTexts["Phone control"].exists, phoneApp.debugDescription)
+        XCTAssertFalse(phoneApp.staticTexts["Active"].exists, phoneApp.debugDescription)
+        XCTAssertGreaterThan(
+            energy.frame.midY, speed.frame.maxY - 8,
+            "Board battery sits under speed on the e-skate Ride face")
         let speedValue = speed.value as? String ?? ""
         // Accessibility puts the localized numeric speed before comma-separated metadata.
         let primarySpeed = speedValue.split(separator: ",", maxSplits: 1).first?
@@ -9803,11 +9809,22 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(option.waitForExistence(timeout: 5), phoneApp.debugDescription)
         option.tap()
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label ENDSWITH %@", title), object: mode)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed, phoneApp.debugDescription)
+        if XCTWaiter.wait(for: [saved], timeout: 5) != .completed {
+            if !mode.label.hasSuffix(title) {
+                // The last menu row is taller than the space under the menu at the
+                // largest text size, and its default activation point misses the row.
+                let retry = phoneApp.buttons[title].firstMatch
+                XCTAssertTrue(retry.waitForExistence(timeout: 2), phoneApp.debugDescription)
+                retry.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+            }
+            let confirmed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label ENDSWITH %@", title), object: mode)
+            XCTAssertEqual(XCTWaiter.wait(for: [confirmed], timeout: 5), .completed, phoneApp.debugDescription)
+        }
         XCTAssertTrue(phoneApp.textFields["ride.phone-control.throttle-current"].exists)
         XCTAssertTrue(phoneApp.textFields["ride.phone-control.brake-current"].exists)
-        XCTAssertTrue(phoneApp.buttons["ride.phone-control.save"].isEnabled)
-        let save = phoneApp.buttons["ride.phone-control.save"]
+        let save = revealPhoneSettingsButton("ride.phone-control.save")
+        XCTAssertTrue(save.isEnabled, phoneApp.debugDescription)
         save.tap()
         try waitForPhoneSettingsSave(save)
         XCTAssertFalse(phoneElement("ride.phone-control.error").exists)
@@ -9837,13 +9854,28 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
 
     private func activatePhoneInput() throws {
         try openPhoneDriveSettings()
-        let activate = phoneApp.buttons["ride.phone-control.activate"]
+        let activate = revealPhoneSettingsButton("ride.phone-control.activate")
         XCTAssertTrue(activate.waitForExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertTrue(activate.isEnabled, phoneApp.debugDescription)
         activate.tap()
         let sheet = phoneElement("ride.phone-control.settings-sheet")
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertFalse(phoneElement("ride.phone-control.activation-error").exists)
+    }
+
+    /// Form materializes rows near the viewport. At the largest text size, Save
+    /// sits past that window until the sheet scrolls.
+    private func revealPhoneSettingsButton(_ identifier: String) -> XCUIElement {
+        let button = phoneApp.buttons[identifier]
+        let sheet = phoneElement("ride.phone-control.settings-sheet")
+        if button.waitForExistence(timeout: 1) { return button }
+        for _ in 0..<6 {
+            let start = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+            let end = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.48))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            if button.waitForExistence(timeout: 1) { return button }
+        }
+        return button
     }
 
     private func openPhoneDriveSettings() throws {

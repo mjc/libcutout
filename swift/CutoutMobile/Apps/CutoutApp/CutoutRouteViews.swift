@@ -132,16 +132,26 @@ struct AppMusicPlayerView: View {
 extension View {
     func appMusicCompactPlayer(
         model: CutoutAppModel,
+        showsRidePhoneSettings: Bool,
         onOpenDetails: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void
     ) -> some View {
-        musicCompactPlayer(
+        let showGear = showsRidePhoneSettings && model.phoneDrive.canPresentSettings
+        return musicCompactPlayer(
             nowPlaying: model.music.nowPlaying,
             isHidden: model.music.isPlayerHidden,
             onCommand: { command in Task { @MainActor in _ = await model.music.handleCommand(command) } },
             onOpenDetails: onOpenDetails,
             onOpenSettings: onOpenSettings,
-            onDismiss: model.music.dismissPlayer
+            onDismiss: model.music.dismissPlayer,
+            showsTrailingAccessory: showGear,
+            trailingAccessory: {
+                if showGear {
+                    RidePhoneSettingsGearButton {
+                        _ = model.phoneDrive.requestSettingsFromRideNavigation()
+                    }
+                }
+            }
         )
     }
 }
