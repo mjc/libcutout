@@ -22,6 +22,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Keeps the same immutable Rust operation alive across transport-unknown retries. */
 internal class ChargingReportOperationStore<T>(
@@ -97,8 +98,12 @@ class AndroidChargingClient(
             main.post { completed(Result.failure(IllegalStateException("Charging client is closed"))) }
             return
         }
+        val delivered = AtomicBoolean(false)
+        fun deliver(result: Result<T>) {
+            if (delivered.compareAndSet(false, true)) main.post { completed(result) }
+        }
         try {
-            scope.launch {
+            val job = scope.launch {
                 val result = try {
                     operationOrder.withLock {
                         check(!closed) { "Charging client is closed" }
@@ -109,10 +114,14 @@ class AndroidChargingClient(
                 } catch (error: Throwable) {
                     Result.failure(error)
                 }
-                main.post { completed(result) }
+                deliver(result)
+            }
+            // A full executor cancels the job inside dispatch, before this body runs.
+            job.invokeOnCompletion { cause ->
+                if (cause != null) deliver(Result.failure(cause))
             }
         } catch (error: RejectedExecutionException) {
-            main.post { completed(Result.failure(error)) }
+            deliver(Result.failure(error))
         }
     }
 
