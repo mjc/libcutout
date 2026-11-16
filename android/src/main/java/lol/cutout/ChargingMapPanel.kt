@@ -66,6 +66,7 @@ class ChargingMapPanel(
     private var mode = Mode.MAP
     private var directoryMode = Mode.MAP
     private var active = false
+    private var disposed = false
     private var lastViewport: MobileGeoBoundsDto? = null
     private var editorReturnMode = Mode.MAP
     private var editor: ChargingSpotEditorPanel? = null
@@ -120,6 +121,7 @@ class ChargingMapPanel(
     }
 
     fun dispose() {
+        disposed = true
         modalDialog?.dismiss()
         modalDialog = null
         releaseEditor()
@@ -194,6 +196,7 @@ class ChargingMapPanel(
     }
 
     private fun render() {
+        if (disposed) return
         if ((mode == Mode.MAP || mode == Mode.LIST) && modalDialog != null) clearSheet()
         updateAddButtonEnabled()
         modeSelector.selectMap(directoryMode == Mode.MAP)
@@ -735,6 +738,7 @@ class ChargingMapPanel(
     }
 
     private fun openEditor(spot: MobileChargingSpotDto?, coordinate: MobileMapCoordinateDto? = null) {
+        if (disposed) return
         val actual = coordinate ?: spot?.input?.coordinate ?: return
         editorStatus = null
         editorReturnMode = if (spot == null) directoryMode else Mode.DETAILS
