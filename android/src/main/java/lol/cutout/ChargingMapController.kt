@@ -178,7 +178,17 @@ class ChargingMapController(private val client: AndroidChargingClient) {
     }
 
     fun reloadSpot(id: String, completed: (Result<MobileChargingSpotDto?>) -> Unit = {}) {
-        client.withDatabase({ it.chargingSpot(id) }, completed)
+        if (disposed) {
+            completed(Result.failure(IllegalStateException("Charging map is closed")))
+            return
+        }
+        client.withDatabase({ it.chargingSpot(id) }) { result ->
+            if (disposed) {
+                completed(Result.failure(IllegalStateException("Charging map is closed")))
+                return@withDatabase
+            }
+            completed(result)
+        }
     }
 
     fun vote(spot: MobileChargingSpotDto, selected: MobileChargingVoteDto, completed: (Result<MobileChargingSpotDto?>) -> Unit) {
