@@ -2,8 +2,11 @@ package lol.cutout.local
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.net.Uri
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import lol.cutout.CaptureEvidenceDialog
 import lol.cutout.CutoutApplication
 import org.junit.Assert.assertEquals
@@ -17,6 +20,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import uniffi.cutout_mobile_ffi.*
+import java.io.ByteArrayInputStream
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = LocalTestApplication::class)
@@ -201,8 +206,65 @@ class LocalCaptureEvidenceDialogTest {
         }
     }
 
+    @Test
+    fun unreadableScreenshotUsesTheInvalidScreenshotSentence() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val uri = Uri.parse("content://lol.cutout/unreadable-screenshot")
+        shadowOf(activity.contentResolver).registerInputStream(uri, ByteArrayInputStream(ByteArray(0)))
+        val evidence = MobileCaptureEvidenceDto(
+            note = "", screenshots = emptyList(), noteLimitBytes = 1_024u,
+            screenshotLimit = 4u, screenshotLimitBytes = 5uL * 1_024uL * 1_024uL,
+        )
+        val dialog = CaptureEvidenceDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            source = MobileCaptureSubmissionSourceDto.LiveCapture("live-id"),
+            pickImages = { importImages -> importImages(listOf(uri)) },
+            testOperations = CaptureEvidenceDialog.TestOperations(
+                load = { null to evidence },
+                prepare = { error("This test does not prepare a transfer") },
+                send = { _, _ -> error("This test does not send") },
+            ),
+        )
+
+        try {
+            dialog.show()
+            val add = findText(dialog.currentDialog, "Add screenshots")
+            assertTrue(add.isEnabled)
+            assertTrue(add.performClick())
+            val message = find(dialog.currentDialog, "captures.send.error") as TextView
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (message.text.isEmpty() && System.nanoTime() < deadline) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
+            val expected = captureSubmissionErrorMessage(MobileCaptureSubmissionException.InvalidScreenshot())
+            assertEquals("The screenshot could not be read.", expected)
+            assertEquals(expected, message.text.toString())
+        } finally {
+            dialog.currentDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
     private fun find(dialog: AlertDialog?, tag: String): View {
         val root = checkNotNull(dialog?.window?.decorView)
         return checkNotNull(root.findViewWithTag(tag))
+    }
+
+    private fun findText(dialog: AlertDialog?, prefix: String): View {
+        val root = checkNotNull(dialog?.window?.decorView)
+        return checkNotNull(findText(root, prefix))
+    }
+
+    private fun findText(view: View, prefix: String): View? {
+        if (view is TextView && view.text?.startsWith(prefix) == true) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findText(view.getChildAt(index), prefix)?.let { return it }
+            }
+        }
+        return null
     }
 }

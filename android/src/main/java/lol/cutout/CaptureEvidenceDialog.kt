@@ -298,19 +298,19 @@ internal class CaptureEvidenceDialog(
         run({ _ -> uris.map { uri ->
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
-            require(bounds.outWidth > 0 && bounds.outHeight > 0) {
-                captureSubmissionErrorMessage(MobileCaptureSubmissionException.InvalidScreenshot())
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                throw MobileCaptureSubmissionException.InvalidScreenshot()
             }
             val options = BitmapFactory.Options().apply {
                 inSampleSize = 1
                 while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 2048) inSampleSize *= 2
             }
             val bitmap = context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, options) }
-                ?: error(captureSubmissionErrorMessage(MobileCaptureSubmissionException.InvalidScreenshot()))
+                ?: throw MobileCaptureSubmissionException.InvalidScreenshot()
             try {
                 ByteArrayOutputStream().use { output ->
-                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
-                        captureSubmissionErrorMessage(MobileCaptureSubmissionException.InvalidScreenshot())
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
+                        throw MobileCaptureSubmissionException.InvalidScreenshot()
                     }
                     output.toByteArray()
                 }
