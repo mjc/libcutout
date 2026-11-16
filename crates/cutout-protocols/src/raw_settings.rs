@@ -247,6 +247,7 @@ mod tests {
             .ingest(
                 token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL.as_bytes(),
                     bytes: bytes.to_vec(),
                     monotonic_ms: MonotonicMillisDto { milliseconds: at },

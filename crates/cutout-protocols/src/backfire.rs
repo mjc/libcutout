@@ -188,16 +188,20 @@ pub fn capture_subscription_permitted(fingerprint: &GattFingerprint) -> bool {
     }
 }
 
-/// Whether a notification on `channel` can admit Backfire.
+/// Whether this notification can admit Backfire.
 ///
-/// The frame must decode, and the stored inventory must contain a notifying F1F2 on F1F0.
+/// The callback's own service must be F1F0. An inventory that also contains a
+/// notifying F1F0/F1F2 does not make a frame from another service admissible.
+/// The frame must decode, and that F1F0 characteristic must notify.
 #[must_use]
 pub(crate) fn admits_from_notification(
     gatt: &[GattFingerprint],
+    service: Option<GattChannel>,
     channel: GattChannel,
     bytes: &[u8],
 ) -> bool {
-    channel == BACKFIRE_TELEMETRY_CHANNEL
+    service == Some(BACKFIRE_SERVICE_CHANNEL)
+        && channel == BACKFIRE_TELEMETRY_CHANNEL
         && BackfireReport::decode(bytes).is_some()
         && gatt.iter().any(|fingerprint| {
             fingerprint.service == BACKFIRE_SERVICE_CHANNEL
@@ -281,10 +285,13 @@ impl ProtocolSession for BackfireReactor {
             }
             SessionInput::Notification {
                 channel,
+                service,
                 bytes,
                 monotonic_ms,
             } => {
-                if channel != BACKFIRE_TELEMETRY_CHANNEL {
+                if channel != BACKFIRE_TELEMETRY_CHANNEL
+                    || service != Some(BACKFIRE_SERVICE_CHANNEL)
+                {
                     return;
                 }
                 let Some(report) = BackfireReport::decode(bytes) else {
@@ -405,6 +412,7 @@ mod tests {
             &mut state,
             DeviceDetectionEvent::NotificationOnChannel {
                 channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: Some(BACKFIRE_SERVICE_CHANNEL),
                 bytes,
             },
         )
@@ -597,6 +605,7 @@ mod tests {
 
         let write_channel = observe(DeviceDetectionEvent::NotificationOnChannel {
             channel: BACKFIRE_WRITE_CHANNEL,
+            service: Some(BACKFIRE_SERVICE_CHANNEL),
             bytes: &SCREENSHOT,
         });
         assert_ne!(write_channel.protocol, ProtocolFamilyState::Backfire);
@@ -627,11 +636,80 @@ mod tests {
             &mut state,
             DeviceDetectionEvent::NotificationOnChannel {
                 channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: Some(bluetooth16(0xffe0)),
                 bytes: &SCREENSHOT,
             },
         );
         assert_ne!(foreign_frame.protocol, ProtocolFamilyState::Backfire);
         assert!(DeviceSession::from_detection(&foreign_frame).is_none());
+    }
+
+    #[test]
+    fn a_foreign_f1f2_does_not_admit_or_update_when_f1f0_is_also_present() {
+        let mut state = CutoutSessionState::default();
+        let mut detector = DeviceDetectionSession::default();
+        let real = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        let foreign = fingerprint(
+            bluetooth16(0xffe0),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        let _ = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::Gatt {
+                gatt: &[real, foreign],
+            },
+        );
+        let foreign_frame = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: Some(bluetooth16(0xffe0)),
+                bytes: &SCREENSHOT,
+            },
+        );
+        assert_ne!(foreign_frame.protocol, ProtocolFamilyState::Backfire);
+        let missing_service = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: None,
+                bytes: &SCREENSHOT,
+            },
+        );
+        assert_ne!(missing_service.protocol, ProtocolFamilyState::Backfire);
+
+        let admitted = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: Some(BACKFIRE_SERVICE_CHANNEL),
+                bytes: &SCREENSHOT,
+            },
+        );
+        assert_eq!(admitted.protocol, ProtocolFamilyState::Backfire);
+        let mut session = DeviceSession::from_detection(&admitted).expect("admitted backfire");
+        let before = session.current_snapshot();
+        let _ = session.ingest_typed(&notification_on(
+            Some(bluetooth16(0xffe0)),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            &SCREENSHOT,
+        ));
+        let _ = session.ingest_typed(&notification_on(
+            None,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            &SCREENSHOT,
+        ));
+        assert_eq!(session.current_snapshot(), before);
+        let _ = session.ingest_typed(&notification(BACKFIRE_TELEMETRY_CHANNEL, &SCREENSHOT));
+        assert_eq!(
+            reading_percent(session.current_snapshot().battery_level_reported),
+            Some(70)
+        );
     }
 
     #[test]
@@ -651,6 +729,7 @@ mod tests {
             &mut state,
             DeviceDetectionEvent::NotificationOnChannel {
                 channel: BACKFIRE_TELEMETRY_CHANNEL,
+                service: Some(BACKFIRE_SERVICE_CHANNEL),
                 bytes: &SCREENSHOT,
             },
         );
@@ -812,8 +891,17 @@ mod tests {
     }
 
     fn notification(channel: GattChannel, bytes: &[u8]) -> SessionInputDto {
+        notification_on(Some(BACKFIRE_SERVICE_CHANNEL), channel, bytes)
+    }
+
+    fn notification_on(
+        service: Option<GattChannel>,
+        channel: GattChannel,
+        bytes: &[u8],
+    ) -> SessionInputDto {
         SessionInputDto::Notification {
             channel: channel.as_bytes(),
+            service: service.map(GattChannel::as_bytes),
             bytes: bytes.to_vec(),
             monotonic_ms: MonotonicMillisDto { milliseconds: 10 },
         }

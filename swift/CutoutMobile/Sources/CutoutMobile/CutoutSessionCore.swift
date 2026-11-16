@@ -32,6 +32,7 @@ enum ProtocolDetectionFinishDecision: Equatable {
 
 private struct AcceptedLiveNotificationIngress {
     let channel: BluetoothUuid
+    let service: Data
     let bytes: Data
     let receivedAt: MonotonicMilliseconds
 }
@@ -1724,6 +1725,7 @@ public final class CutoutSessionCore: NSObject {
                             let step = try ingestAcceptedLiveNotification(
                                 AcceptedLiveNotificationIngress(
                                     channel: channel,
+                                    service: Data(),
                                     bytes: bytes,
                                     receivedAt: receivedAt
                                 ),
@@ -1814,7 +1816,8 @@ public final class CutoutSessionCore: NSObject {
                         let at = self.clock.now()
                         self.applyNotificationStep(
                             try self.ingestAcceptedLiveNotification(
-                                AcceptedLiveNotificationIngress(channel: channel, bytes: bytes, receivedAt: at),
+                                AcceptedLiveNotificationIngress(
+                                    channel: channel, service: Data(), bytes: bytes, receivedAt: at),
                                 using: owner
                             ),
                             receivedAt: at
@@ -3738,7 +3741,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         service: CBUUID?, value: Data, notificationPeripheral: CBPeripheral?
     ) {
         let receivedAt = clock.now()
-        let detectionResolution = observeDetectionNotification(channel: channel, bytes: value, token: token)
+        let serviceBytes = service.flatMap { BluetoothUuid(coreBluetoothUuid: $0)?.bytes } ?? Data()
+        let detectionResolution = observeDetectionNotification(
+            channel: channel, service: serviceBytes, bytes: value, token: token)
         var detectionCaptureOutcomes: [MobileCaptureWriteOutcomeDto] = []
         if detectionResolution.protocolConflict,
             let outcome = captureFrame(
@@ -3798,7 +3803,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let receivedAt = clock.now()
             let ingestStartedAt = receivedAt
             let step = try ingestAcceptedLiveNotification(
-                AcceptedLiveNotificationIngress(channel: channel, bytes: value, receivedAt: receivedAt),
+                AcceptedLiveNotificationIngress(
+                    channel: channel, service: serviceBytes, bytes: value, receivedAt: receivedAt),
                 using: liveOwner
             )
             let ingestFinishedAt = clock.now()
@@ -3841,6 +3847,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         try owner.handleNotification(
             bytes: ingress.bytes,
             channel: ingress.channel,
+            service: ingress.service,
             at: ingress.receivedAt
         )
     }
@@ -4104,13 +4111,14 @@ extension CutoutSessionCore {
 
     @discardableResult
     func observeDetectionNotification(
-        channel: BluetoothUuid, bytes: Data, token capturedToken: ConnectionAttemptToken? = nil
+        channel: BluetoothUuid, service: Data = Data(), bytes: Data,
+        token capturedToken: ConnectionAttemptToken? = nil
     ) -> DeviceDetectionResolution {
         let previous = deviceDetectionSession.resolution
         let current: DeviceDetectionResolution
         if let token = capturedToken ?? connectionAttempt?.token,
             let resolution = rustSessionState.observeConnectionNotificationOnChannel(
-                token: token, channel: channel.bytes, bytes: bytes)
+                token: token, channel: channel.bytes, service: service, bytes: bytes)
         {
             current = DeviceDetectionResolution(resolution)
         } else if connectionAttempt == nil {

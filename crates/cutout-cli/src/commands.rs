@@ -4332,6 +4332,7 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::LinkDown));
                 }
                 SessionInput::Notification {
+                    service: _,
                     channel,
                     bytes,
                     monotonic_ms,

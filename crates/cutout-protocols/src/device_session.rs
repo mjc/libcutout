@@ -693,6 +693,7 @@ mod tests {
             max_write_len: None,
         });
         let _ = session.ingest_typed(&SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
@@ -705,6 +706,7 @@ mod tests {
         let checksum = crc32fast::hash(&settings[..54]);
         settings[54..].copy_from_slice(&checksum.to_be_bytes());
         let step = session.ingest_typed(&SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: settings,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },

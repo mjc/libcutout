@@ -916,6 +916,7 @@ mod tests {
         bytes: Vec<u8>,
     ) -> crate::MobileSessionInputDto {
         crate::MobileSessionInputDto {
+            service: Vec::new(),
             kind,
             monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
             max_write_len: None,
@@ -1510,6 +1511,7 @@ mod tests {
         let _ = handle.lock_inner().ingest(
             &token.clone().into(),
             &cutout_core::SessionInputDto::Notification {
+                service: None,
                 channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes(),
                 bytes: frame,
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },

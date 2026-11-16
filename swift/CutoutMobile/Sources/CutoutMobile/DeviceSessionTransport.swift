@@ -135,11 +135,11 @@ final class DeviceSessionTransport: @unchecked Sendable {
         return step
     }
 
-    func handleNotification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds) throws
-        -> CoreBluetoothSessionStep
-    {
+    func handleNotification(
+        bytes: Data, channel: BluetoothUuid, service: Data = Data(), at: MonotonicMilliseconds
+    ) throws -> CoreBluetoothSessionStep {
         record(.notification(channel: channel, byteCount: CoreBluetoothPayloadByteCount(bytes.count), at: at))
-        return try ingest(.notification, at: at, channel: channel.bytes, bytes: bytes)
+        return try ingest(.notification, at: at, channel: channel.bytes, service: service, bytes: bytes)
     }
 
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws
@@ -276,6 +276,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         at: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
         channel: Data = Data(),
+        service: Data = Data(),
         bytes: Data = Data()
     ) throws -> CoreBluetoothSessionStep {
         guard !invalidated else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
@@ -284,7 +285,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
                 token: token,
                 input: MobileSessionInputDto(
                     kind: kind, monotonicMs: at.dto, maxWriteLen: writeLimit?.dto,
-                    channel: channel, bytes: bytes
+                    channel: channel, bytes: bytes, service: service
                 ))
         else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable

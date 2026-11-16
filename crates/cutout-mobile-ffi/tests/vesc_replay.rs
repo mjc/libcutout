@@ -12,6 +12,7 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
     assert_eq!(fixture["version"], 1);
     let session = VescReadOnlySession::new();
     let link = session.ingest_checked(MobileSessionInputDto {
+        service: Vec::new(),
         kind: MobileSessionInputKindDto::LinkUp,
         monotonic_ms: MobileMonotonicMillisDto { milliseconds: 0 },
         max_write_len: Some(MobileTransportWriteLimitDto { bytes: 20 }),
@@ -31,6 +32,7 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
         assert!(bytes.len() <= 1024);
         let channel = byte_array(&notification["channel"]);
         let step = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::Notification,
             monotonic_ms: MobileMonotonicMillisDto { milliseconds: at },
             max_write_len: None,
@@ -127,6 +129,7 @@ fn complete_refloat_descriptor_survives_every_notification_split() {
     for split in 1..descriptor_bytes.len() {
         let session = VescReadOnlySession::new();
         let link = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: MobileMonotonicMillisDto { milliseconds: 0 },
             max_write_len: Some(MobileTransportWriteLimitDto { bytes: 20 }),
@@ -143,6 +146,7 @@ fn complete_refloat_descriptor_survives_every_notification_split() {
         .enumerate()
         {
             let step = session.ingest_checked(MobileSessionInputDto {
+                service: Vec::new(),
                 kind: MobileSessionInputKindDto::Notification,
                 monotonic_ms: MobileMonotonicMillisDto {
                     milliseconds: u64::try_from(index + 1).expect("small split index"),

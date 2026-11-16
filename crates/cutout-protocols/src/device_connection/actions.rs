@@ -175,6 +175,7 @@ mod tests {
         let checksum = crc32fast::hash(&frame[..71]);
         frame[71..].copy_from_slice(&checksum.to_be_bytes());
         SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
@@ -296,6 +297,7 @@ mod tests {
                         .ingest(
                             &token,
                             &SessionInputDto::Notification {
+                                service: None,
                                 channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                                 bytes: frame,
                                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 10 },
@@ -329,6 +331,7 @@ mod tests {
         let _ = owner.ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                 bytes: frame,
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },

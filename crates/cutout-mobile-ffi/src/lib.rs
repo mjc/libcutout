@@ -4817,6 +4817,12 @@ pub struct MobileSessionInputDto {
 
     /// Owned notification bytes.
     pub bytes: Vec<u8>,
+
+    /// GATT service that produced a notification, when the host reported one.
+    ///
+    /// Empty means the host did not report a service. Backfire ignores those frames.
+    #[uniffi(default)]
+    pub service: Vec<u8>,
 }
 
 /// Generic light state used by telemetry and light actions.
@@ -16018,6 +16024,7 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
                 channel: mobile_channel_bytes(&input.channel),
+                service: <[u8; 16]>::try_from(input.service).ok(),
                 bytes: input.bytes,
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
@@ -22011,6 +22018,7 @@ mod tests {
         bytes: &[u8],
     ) -> MobileSessionStepResultDto {
         let result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::Notification,
             monotonic_ms: ms(monotonic_ms),
             max_write_len: None,
@@ -22169,6 +22177,7 @@ mod tests {
     fn vesc_wrapper_current_snapshot_keeps_refloat_fields_after_values_frames() {
         let session = VescReadOnlySession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22268,6 +22277,7 @@ mod tests {
         assert_eq!(lifted, profile);
         let session = VescReadOnlySession::with_board_profile(lifted);
         session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22333,6 +22343,7 @@ mod tests {
     fn vesc_mobile_missing_geometry_retains_raw_erpm_without_physical_speed() {
         let session = VescReadOnlySession::new();
         session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22366,6 +22377,7 @@ mod tests {
         });
 
         let link_result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),

@@ -47,9 +47,11 @@ class PevSession(
     fun notification(channel: ByteArray, service: ByteArray, bytes: ByteArray, capture: Boolean = true) {
         if (!isCurrent) return
         val receivedAtMs = now()
-        state.observeConnectionNotificationOnChannel(token, channel, bytes)
+        state.observeConnectionNotificationOnChannel(token, channel, service, bytes)
         identify()
-        val step = if (protocolLinked) input(MobileSessionInputKindDto.NOTIFICATION, channel, bytes, receivedAtMs = receivedAtMs) else null
+        val step = if (protocolLinked) input(
+            MobileSessionInputKindDto.NOTIFICATION, channel, bytes, service = service, receivedAtMs = receivedAtMs,
+        ) else null
         if (capture) onCaptureNotification(
             channel.copyOf(), service.copyOf(), bytes.copyOf(), step?.telemetry,
             step?.captureNotificationEvidence ?: MobileCaptureNotificationEvidenceDto.UNCLASSIFIED,
@@ -157,9 +159,11 @@ class PevSession(
         bytes: ByteArray = byteArrayOf(),
         writeLimit: UShort? = null,
         receivedAtMs: ULong = now(),
+        service: ByteArray = byteArrayOf(),
     ): MobileDeviceSessionStepDto? {
         val step = state.ingestDeviceSession(token, MobileSessionInputDto(kind,
-            MobileMonotonicMillisDto(receivedAtMs), writeLimit?.let(::MobileTransportWriteLimitDto), channel, bytes))
+            MobileMonotonicMillisDto(receivedAtMs), writeLimit?.let(::MobileTransportWriteLimitDto), channel, bytes,
+            service))
         step?.let { process(it, receivedAtMs) }
         return step
     }

@@ -1435,6 +1435,7 @@ mod tests {
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
                     monotonic_ms: cutout_core::MonotonicMillisDto {
@@ -1694,6 +1695,7 @@ mod tests {
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
                     monotonic_ms: cutout_core::MonotonicMillisDto {
@@ -1724,6 +1726,7 @@ mod tests {
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: vec![2, 9, 50, 0, 0, 0, 128, 0, 0, 23, 112, 244, 198, 3],
                     monotonic_ms: cutout_core::MonotonicMillisDto {
@@ -1795,6 +1798,7 @@ mod tests {
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: frame.to_vec(),
                     monotonic_ms: cutout_core::MonotonicMillisDto {
@@ -1975,6 +1979,7 @@ mod tests {
         let mut frame = arrayvec::ArrayVec::new();
         crate::refloat_codec::encode_custom_app_frame(&payload, &mut frame).unwrap();
         let input = |bytes| SessionInputDto::Notification {
+            service: None,
             channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
@@ -2162,6 +2167,7 @@ mod tests {
                 .ingest(
                     token,
                     &SessionInputDto::Notification {
+                        service: None,
                         channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
                         bytes: vec![
                             2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255,
@@ -2344,6 +2350,7 @@ mod tests {
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
         SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
@@ -2359,6 +2366,7 @@ mod tests {
         let checksum = crc32fast::hash(&frame[..54]);
         frame[54..].copy_from_slice(&checksum.to_be_bytes());
         SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },

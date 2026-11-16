@@ -3002,6 +3002,7 @@ fn replay_pevcap_notification<S>(
     let result: Result<(), Infallible> = replay_pevcap_notification_chunks(record, mode, |bytes| {
         host.ingest(SessionInput::Notification {
             channel: record.characteristic,
+            service: None,
             bytes,
             monotonic_ms: record.monotonic_ms,
         });
@@ -3028,6 +3029,7 @@ where
     replay_pevcap_notification_chunks(record, mode, |bytes| {
         host.ingest(SessionInput::Notification {
             channel: record.characteristic,
+            service: None,
             bytes,
             monotonic_ms: record.monotonic_ms,
         });
@@ -4215,6 +4217,7 @@ mod tests {
                 }
                 SessionInput::LinkDown => output.push(SessionOutput::Event(DeviceEvent::LinkDown)),
                 SessionInput::Notification {
+                    service: _,
                     channel,
                     bytes,
                     monotonic_ms,

@@ -750,6 +750,7 @@ mod tests {
             .enumerate()
             {
                 let input = SessionInputDto::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL.as_bytes(),
                     bytes: frame.to_vec(),
                     monotonic_ms: ms(2 + u64::try_from(index).unwrap()),
@@ -1165,6 +1166,7 @@ mod tests {
              310e2e9e05e3ad"
         );
         let _ = session.ingest_checked(&SessionInputDto::Notification {
+            service: None,
             channel: VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame.to_vec(),
             monotonic_ms: ms(at),
@@ -1213,6 +1215,7 @@ mod tests {
         let crc = crc32fast::hash(&frame[..length]);
         frame[length..].copy_from_slice(&crc.to_be_bytes());
         let _ = session.ingest_checked(&SessionInputDto::Notification {
+            service: None,
             channel: VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame.to_vec(),
             monotonic_ms: ms(20),
@@ -1233,6 +1236,7 @@ mod tests {
         let mut ride = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
         ride[4..6].copy_from_slice(&[0, 0]);
         let _ = session.ingest_checked(&SessionInputDto::Notification {
+            service: None,
             channel: BEGODE_DATA_CHANNEL.as_bytes(),
             bytes: ride.to_vec(),
             monotonic_ms: ms(20),
@@ -1240,6 +1244,7 @@ mod tests {
         assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 20));
         let bms = hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a");
         let _ = session.ingest_checked(&SessionInputDto::Notification {
+            service: None,
             channel: BEGODE_DATA_CHANNEL.as_bytes(),
             bytes: bms.to_vec(),
             monotonic_ms: ms(60_000),
@@ -1312,6 +1317,7 @@ mod tests {
             242, 169, 202, 3,
         ];
         session.ingest(&SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes: values.clone(),
             monotonic_ms: ms(100),
@@ -1351,6 +1357,7 @@ mod tests {
             pending.battery_current_observed_at_ms
         );
         session.ingest(&SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes: values,
             monotonic_ms: ms(3_001),
@@ -1450,6 +1457,7 @@ mod tests {
         let _ = session.drain_outputs();
 
         session.ingest(&SessionInputDto::Notification {
+            service: None,
             channel,
             bytes: malformed.to_vec(),
             monotonic_ms: ms(42),
@@ -1478,6 +1486,7 @@ mod tests {
         let _ = session.drain_outputs();
 
         session.ingest(&SessionInputDto::Notification {
+            service: None,
             channel: BEGODE_DATA_CHANNEL.as_bytes(),
             bytes: hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a").to_vec(),
             monotonic_ms: ms(42),

@@ -296,6 +296,7 @@ impl CaptureResearchReadback {
                 }
                 self.session.handle(
                     SessionInput::Notification {
+                        service: None,
                         channel: record.characteristic,
                         bytes: &record.bytes,
                         monotonic_ms: record.monotonic_ms,

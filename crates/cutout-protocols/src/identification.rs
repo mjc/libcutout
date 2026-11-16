@@ -343,9 +343,12 @@ pub enum DeviceDetectionEvent<'a> {
     /// Notification evidence bound to the characteristic that produced it.
     ///
     /// Channel-less [`Self::Notification`] never admits a family that requires a characteristic.
+    /// A missing service does not admit a family that requires one.
     NotificationOnChannel {
         /// Characteristic that produced `bytes`.
         channel: GattChannel,
+        /// Service that produced `bytes`, when the host reported one.
+        service: Option<GattChannel>,
         /// Raw notification bytes.
         bytes: &'a [u8],
     },
@@ -452,9 +455,14 @@ impl DeviceDetectionSession {
             DeviceDetectionEvent::Notification { bytes } => {
                 self.observe_notification(state, bytes, &current);
             }
-            DeviceDetectionEvent::NotificationOnChannel { channel, bytes } => {
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel,
+                service,
+                bytes,
+            } => {
                 let admits = crate::backfire::admits_from_notification(
                     state.identity().gatt.as_slice(),
+                    service,
                     channel,
                     bytes,
                 );

@@ -886,6 +886,7 @@ where
     }
     session.handle(
         SessionInput::Notification {
+            service: None,
             channel: context.subscribe_channel,
             bytes: notification.as_raw_bytes(),
             monotonic_ms: monotonic_ms.into_core(),
