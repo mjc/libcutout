@@ -542,6 +542,47 @@ fn save_phone_drive_preferences_with(
     Ok(snapshot(&owner))
 }
 
+fn current_phone_drive_identity(
+    owner: &cutout_application::session::ApplicationDeviceSession,
+) -> Option<String> {
+    owner
+        .snapshot()
+        .connection
+        .token
+        .as_ref()
+        .filter(|token| owner.phone_drive_preferences_are_current(token))
+        .map(|token| token.platform_identifier().to_owned())
+}
+
+/// Stores facts from the latest phone-drive call when this attempt has a ride database.
+///
+/// Facts stay on the session until a current device identity and database are both available.
+/// A failed store returns the unwritten facts to the front of the session.
+fn store_recorded_phone_drive_evidence(handle: &CutoutSessionStateHandle) {
+    let Some(database) = handle.diagnostic_database.clone() else {
+        return;
+    };
+    let (identity, evidence) = {
+        let mut owner = handle.lock_inner();
+        let Some(identity) = current_phone_drive_identity(&owner) else {
+            return;
+        };
+        let evidence = owner.take_phone_drive_evidence();
+        (identity, evidence)
+    };
+    for (index, fact) in evidence.iter().enumerate() {
+        if database
+            .record_phone_drive_evidence(&identity, *fact)
+            .is_err()
+        {
+            handle
+                .lock_inner()
+                .restore_phone_drive_evidence(evidence[index..].to_vec());
+            return;
+        }
+    }
+}
+
 #[uniffi::export]
 #[allow(
     clippy::needless_pass_by_value,
@@ -663,7 +704,8 @@ impl CutoutSessionStateHandle {
         observed_at_ms: u64,
         monotonic_ms: u64,
     ) -> Option<crate::MobileDeviceSessionStepDto> {
-        self.lock_inner()
+        let step = self
+            .lock_inner()
             .observe_phone_drive_contacts_at(
                 &token.into(),
                 generation,
@@ -671,7 +713,9 @@ impl CutoutSessionStateHandle {
                 core::MonotonicTimestamp::new(observed_at_ms),
                 core::MonotonicTimestamp::new(monotonic_ms),
             )
-            .map(Into::into)
+            .map(Into::into);
+        store_recorded_phone_drive_evidence(self);
+        step
     }
 
     /// Advances the shared drive deadline/cadence without renewing a contact heartbeat.
@@ -682,13 +726,16 @@ impl CutoutSessionStateHandle {
         monotonic_ms: u64,
         can_submit: bool,
     ) -> Option<crate::MobileDeviceSessionStepDto> {
-        self.lock_inner()
+        let step = self
+            .lock_inner()
             .tick_phone_drive(
                 &token.into(),
                 core::MonotonicTimestamp::new(monotonic_ms),
                 can_submit,
             )
-            .map(Into::into)
+            .map(Into::into);
+        store_recorded_phone_drive_evidence(self);
+        step
     }
 
     /// Rechecks exact intent identity immediately before the sole native writer submits.
@@ -719,14 +766,17 @@ impl CutoutSessionStateHandle {
         monotonic_ms: u64,
     ) -> bool {
         let Some(write) = write.checked() else {
+            store_recorded_phone_drive_evidence(self);
             return false;
         };
-        self.lock_inner().mark_phone_drive_transport(
+        let recorded = self.lock_inner().mark_phone_drive_transport(
             &token.into(),
             write,
             status.into(),
             core::MonotonicTimestamp::new(monotonic_ms),
-        )
+        );
+        store_recorded_phone_drive_evidence(self);
+        recorded
     }
 
     /// Retires semantic input without claiming a controller stopped or applied braking.

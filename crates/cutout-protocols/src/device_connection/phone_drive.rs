@@ -458,6 +458,16 @@ impl DeviceConnectionSession {
         std::mem::take(&mut self.phone_drive_control.evidence)
     }
 
+    /// Puts facts that failed to store ahead of facts recorded after the take.
+    pub fn restore_phone_drive_evidence(&mut self, restored: Vec<PhoneDriveEvidence>) {
+        if restored.is_empty() {
+            return;
+        }
+        let recorded_since = std::mem::take(&mut self.phone_drive_control.evidence);
+        self.phone_drive_control.evidence = restored;
+        self.phone_drive_control.evidence.extend(recorded_since);
+    }
+
     fn note_phone_drive_evidence(&mut self, evidence: PhoneDriveEvidence) {
         self.phone_drive_control.evidence.push(evidence);
     }

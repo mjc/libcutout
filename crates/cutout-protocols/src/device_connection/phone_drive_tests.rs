@@ -1072,3 +1072,27 @@ fn phone_drive_records_intent_admission_and_native_receipt_without_a_controller_
     ));
     assert_eq!(owner.take_phone_drive_evidence(), Vec::new());
 }
+
+#[test]
+fn phone_drive_restores_unstored_facts_ahead_of_later_receipts() {
+    let contact = PhoneDriveContactId::new(1).unwrap();
+    let (mut owner, token, generation) = active();
+    let write = press(&mut owner, &token, generation);
+    let unstored = owner.take_phone_drive_evidence();
+    assert!(owner.mark_phone_drive_transport(
+        &token,
+        write,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_002)
+    ));
+    owner.restore_phone_drive_evidence(Vec::new());
+    owner.restore_phone_drive_evidence(unstored);
+    assert_eq!(
+        owner.take_phone_drive_evidence(),
+        vec![
+            PhoneDriveEvidence::intent(PhoneDriveAction::Throttle, contact, at(3_001)),
+            PhoneDriveEvidence::admitted(PhoneDriveAction::Throttle, contact, at(3_001)),
+            PhoneDriveEvidence::native_receipt(PhoneDriveAction::Throttle, contact, at(3_002)),
+        ]
+    );
+}

@@ -343,6 +343,76 @@ fn phone_drive_ffi_rejects_activation_after_the_requested_input_generation_is_ca
 }
 
 #[test]
+fn phone_drive_ffi_stores_an_unarmed_hold_and_clears_the_session() {
+    let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let database = database();
+    let handle = CutoutSessionStateHandle::with_database(database.clone());
+    let token = eligible_eskate_attempt(&handle, "board-a", 1_000);
+    handle
+        .set_phone_drive_settings_presented(token.clone(), true)
+        .unwrap();
+    handle.load_phone_drive_preferences(token.clone()).unwrap();
+    handle
+        .save_phone_drive_preferences(
+            token.clone(),
+            MobilePhoneControlModeDto::Buttons,
+            "7".into(),
+            "4".into(),
+        )
+        .unwrap();
+    handle
+        .set_phone_drive_settings_presented(token.clone(), false)
+        .unwrap();
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token.clone(),
+                generation,
+                MobilePhoneDriveContactsDto::Released,
+                12_001,
+                12_001,
+            )
+            .is_some()
+    );
+    let generation = handle.phone_drive_snapshot().generation.unwrap();
+    assert!(
+        handle
+            .observe_phone_drive_contacts_at(
+                token,
+                generation,
+                MobilePhoneDriveContactsDto::Single {
+                    contact_id: 1,
+                    region: Some(MobilePhoneDriveActionDto::Throttle),
+                },
+                12_002,
+                12_002,
+            )
+            .is_some()
+    );
+
+    let stored = database.inner.phone_drive_evidence("board-a").unwrap();
+    let remaining = handle.lock_inner().take_phone_drive_evidence();
+    let snapshot = handle.phone_drive_snapshot();
+    database.shutdown().unwrap();
+    assert_eq!(
+        stored,
+        vec![core::PhoneDriveEvidence::intent(
+            core::PhoneDriveAction::Throttle,
+            core::PhoneDriveContactId::new(1).unwrap(),
+            core::MonotonicTimestamp::new(12_002),
+        )]
+    );
+    assert_eq!(remaining, Vec::new());
+    assert!(matches!(
+        snapshot.availability,
+        MobilePhoneDriveAvailabilityDto::Ready
+    ));
+}
+
+#[test]
 fn phone_drive_ffi_rejects_a_save_completion_after_same_attempt_cancellation() {
     let _guard = crate::tests::RIDE_DATABASE_TEST_LOCK
         .lock()
