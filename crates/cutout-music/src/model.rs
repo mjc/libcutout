@@ -398,10 +398,18 @@ impl MusicSnapshot {
     /// pause, and next are cleared. Open-provider stays. Spotify play returns
     /// when that retained open-provider bit means reconnect is still possible.
     /// Item, position, duration, session, and provider stay.
+    ///
+    /// SoundCloud has no playback state. It stays `Unavailable` so the
+    /// projection still passes [`Self::new`].
     #[must_use]
     pub fn stale_projection(&self, observed_at: MonotonicTimestamp) -> Self {
+        let state = if self.provider == MusicProvider::SoundCloud {
+            MusicPlaybackState::Unavailable
+        } else {
+            MusicPlaybackState::Stale
+        };
         Self {
-            state: MusicPlaybackState::Stale,
+            state,
             observed_at: MonotonicTimestamp::new(advance_observed_at(
                 self.observed_at.as_milliseconds(),
                 observed_at.as_milliseconds(),
@@ -687,6 +695,37 @@ mod tests {
             playing(MusicProvider::Spotify, false).stale_projection(MonotonicTimestamp::new(10));
         assert!(!closed.capabilities().supports(MusicCommand::Play));
         assert!(!closed.capabilities().supports(MusicCommand::OpenProvider));
+
+        let soundcloud = MusicSnapshot::new(
+            MusicProvider::SoundCloud,
+            "soundcloud",
+            MusicPlaybackState::Unavailable,
+            None,
+            MusicPlaybackPosition::default(),
+            MonotonicTimestamp::new(10),
+            MusicCapabilities::new().with(MusicCommand::OpenProvider),
+        )
+        .expect("soundcloud");
+        let projected = soundcloud.stale_projection(MonotonicTimestamp::new(10));
+        assert_eq!(projected.state(), MusicPlaybackState::Unavailable);
+        assert_eq!(projected.observed_at(), MonotonicTimestamp::new(11));
+        let position = MusicPlaybackPosition::new(
+            projected.position_milliseconds(),
+            projected.duration_milliseconds(),
+        )
+        .expect("position");
+        assert!(
+            MusicSnapshot::new(
+                projected.provider(),
+                projected.session_id().as_str(),
+                projected.state(),
+                projected.item().cloned(),
+                position,
+                projected.observed_at(),
+                projected.capabilities(),
+            )
+            .is_ok()
+        );
     }
 
     #[test]
