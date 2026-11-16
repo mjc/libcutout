@@ -95,6 +95,7 @@ fn notification(
     if let Some(step) = owner.ingest(
         token,
         &SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes,
             monotonic_ms: MonotonicMillisDto { milliseconds: at },
@@ -440,6 +441,7 @@ fn firmware_configurations_keep_their_own_preflight_receipts_and_full_image_read
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: vesc_frame(&unrelated),
                     monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -452,6 +454,7 @@ fn firmware_configurations_keep_their_own_preflight_receipts_and_full_image_read
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: firmware_config_reply(get, baseline),
                     monotonic_ms: MonotonicMillisDto { milliseconds: 25 },
@@ -592,6 +595,7 @@ fn newly_observed_configuration_change_revokes_a_queued_whole_image_mutation() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -672,6 +676,7 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_controller_7_values_reply(),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 3 },
@@ -761,6 +766,7 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_firmware_reply(7, 0),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 106 },
@@ -827,6 +833,7 @@ fn automatic_motor_config_probe_is_owned_and_unlocks_later_supported_settings() 
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: firmware_config_reply(14, MOTOR_DEFAULT),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 113 },
@@ -878,6 +885,7 @@ fn initial_config_read_cancellation_releases_slot_but_submitted_read_waits_for_r
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_controller_7_values_reply(),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 14 },
@@ -962,6 +970,7 @@ fn submitted_procedure_read_timeout_keeps_config_slot_until_reply() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1052,6 +1061,7 @@ fn queued_initial_config_read_is_invalidated_by_controller_replacement() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_controller_7_values_reply(),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 14 },
@@ -1208,6 +1218,7 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1242,6 +1253,7 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&acknowledged),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 26 },
@@ -1264,6 +1276,7 @@ fn parked_setting_write_requires_preflight_and_matching_fresh_readback() {
     let _ = owner.ingest(
         &token,
         &SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes: vesc_frame(&readback),
             monotonic_ms: MonotonicMillisDto { milliseconds: 27 },
@@ -1401,6 +1414,7 @@ fn matching_config_before_all_host_receipts_does_not_retire_queued_writes() {
             .ingest(
                 &token,
                 &SessionInputDto::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                     bytes: vesc_frame(&response),
                     monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1472,6 +1486,7 @@ fn same_millisecond_preflight_readback_is_accepted_after_its_host_receipt() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1519,6 +1534,7 @@ fn same_timestamp_config_generation_accepts_new_identical_reply_once() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&fresh_config),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1557,6 +1573,7 @@ fn failed_final_read_receipt_preserves_submitted_mutation_and_fails_procedure() 
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1617,6 +1634,7 @@ fn tick_cancellation_after_mutation_preserves_submission() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1671,6 +1689,7 @@ fn protocol_tick_expiry_after_mutation_preserves_submission() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1734,6 +1753,7 @@ fn controller_replacement_after_mutation_preserves_submission() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1790,6 +1810,7 @@ fn queued_verification_read_wakeup_uses_operation_deadline_after_arm_expires() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1859,6 +1880,7 @@ fn complete_submission_survives_100ms_polling_until_readback() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -1956,6 +1978,7 @@ fn mode_change_after_preflight_submission_cancels_before_config_write() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 26 },
@@ -2002,6 +2025,7 @@ fn whole_config_mismatch_fails_even_when_requested_field_matches() {
     let _ = owner.ingest(
         &token,
         &SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes: vesc_frame(&preflight),
             monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -2032,6 +2056,7 @@ fn whole_config_mismatch_fails_even_when_requested_field_matches() {
     let _ = owner.ingest(
         &token,
         &SessionInputDto::Notification {
+            service: None,
             channel: VESC_NOTIFY_CHANNEL.as_bytes(),
             bytes: vesc_frame(&readback),
             monotonic_ms: MonotonicMillisDto { milliseconds: 26 },
@@ -2080,6 +2105,7 @@ fn preflight_transport_rejection_cancels_delayed_config_write() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&preflight),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },
@@ -2160,6 +2186,7 @@ fn changed_preflight_baseline_cancels_without_sending_a_config_write() {
         .ingest(
             &token,
             &SessionInputDto::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL.as_bytes(),
                 bytes: vesc_frame(&response),
                 monotonic_ms: MonotonicMillisDto { milliseconds: 24 },

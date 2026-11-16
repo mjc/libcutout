@@ -91,7 +91,7 @@ class RideDashboardView(
                 MobileVescApplicationDiscoveryDto.ABSENT -> DisplayKind.STANDARD_VESC
                 MobileVescApplicationDiscoveryDto.PENDING, null -> DisplayKind.UNKNOWN
             }
-            null -> DisplayKind.UNKNOWN
+            MobileProtocolFamilyDto.BACKFIRE, null -> DisplayKind.UNKNOWN
         }
         warningStatus = displayKind == DisplayKind.VESC && snapshot != null && vescWarningTitle(snapshot) != null
         statusText = when {
@@ -177,6 +177,10 @@ class RideDashboardView(
                 add(ui.label("vesc.metric.trip") to recordingTripText())
                 add(ui.label("vesc.metric.ride_time") to recordingDurationText())
             }
+            if (identity?.protocol == MobileProtocolFamilyDto.BACKFIRE) {
+                add(ui.label("vesc.metric.trip") to boardDistanceText(snapshot?.tripDistance))
+                add(ui.label("ride.metric.odometer") to boardDistanceText(snapshot?.distance))
+            }
             metrics.forEach { metric -> when (metric) {
                 is MobileRiderDashboardMetricDescriptorDto.BatteryLevel -> add(context.getString(R.string.battery) to "$batteryText%")
                 is MobileRiderDashboardMetricDescriptorDto.ChargeEstimate -> {
@@ -216,6 +220,10 @@ class RideDashboardView(
                 ?.let { format(it.toDouble() / 1000, 1) + " °C" } ?: unavailable)
             tuneView?.text = if (snapshot?.speed == null) ui.label("vesc.drivetrain.set") else context.getString(R.string.tune)
             updateRecordingReadings()
+        }
+        if (showsBoardDistances()) {
+            setBoardDistance("board_trip", snapshot?.tripDistance)
+            setBoardDistance("odometer", snapshot?.distance)
         }
     }
 
@@ -294,7 +302,7 @@ class RideDashboardView(
             resources.configuration.fontScale >= 1.2f -> "scaled-text"
             else -> "standard-text"
         }
-        return "${displayKind.name}:$showInstruments:$landscape:$sizeClass:$fontScaleClass:$geometryWidth:$geometryHeight:$classificationRequirement:$applicationDiscoveryFailed"
+        return "${displayKind.name}:$showInstruments:$landscape:$sizeClass:$fontScaleClass:$geometryWidth:$geometryHeight:$classificationRequirement:$applicationDiscoveryFailed:${showsBoardDistances()}"
     }
 
     private fun eucStatus(state: RideOperatingState): String = when (state) {
@@ -497,6 +505,10 @@ class RideDashboardView(
                     "power" to context.getString(R.string.power),
                     "temperature" to context.getString(R.string.temperature),
                 ).forEach { (key, label) -> addAccessibleMetric(parent, key, label, "—") }
+                if (showsBoardDistances()) {
+                    addAccessibleMetric(parent, "board_trip", ui.label("vesc.metric.trip"), "—")
+                    addAccessibleMetric(parent, "odometer", ui.label("ride.metric.odometer"), "—")
+                }
             }
         }
     }
@@ -739,6 +751,17 @@ class RideDashboardView(
         }
     }
 
+    private fun showsBoardDistances(): Boolean =
+        latestPresentation?.session?.identity?.protocol == MobileProtocolFamilyDto.BACKFIRE
+
+    private fun boardDistanceText(reading: DistanceReading?): String =
+        reading?.value?.value?.let { RideMetricFormatting.distance(context, it.toDouble() / 1_000.0) }
+            ?: context.getString(R.string.unavailable)
+
+    private fun setBoardDistance(key: String, reading: DistanceReading?) {
+        readingValues[key]?.text = boardDistanceText(reading)
+    }
+
     private fun metricGrid(): LinearLayout = ui.column().apply {
         listOf("battery" to context.getString(R.string.battery), "voltage" to context.getString(R.string.voltage),
             "power" to context.getString(R.string.power), "temperature" to context.getString(R.string.temperature))
@@ -746,6 +769,12 @@ class RideDashboardView(
                 addView(ui.row().apply { pair.forEach { (key, label) -> addInstrument(this, key, label, "—", "", 20f, 1f, carded = true) } },
                     LinearLayout.LayoutParams(-1, 0, 1f))
             }
+        if (showsBoardDistances()) {
+            addView(ui.row().apply {
+                addInstrument(this, "board_trip", ui.label("vesc.metric.trip"), "—", "", 20f, 1f, carded = true)
+                addInstrument(this, "odometer", ui.label("ride.metric.odometer"), "—", "", 20f, 1f, carded = true)
+            }, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
     }
 
     private fun vescMetricGrid(): LinearLayout = ui.column().apply {

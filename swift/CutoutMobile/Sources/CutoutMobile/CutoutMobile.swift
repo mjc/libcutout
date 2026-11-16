@@ -77,8 +77,9 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
     case veteranLeaperkimNosfet
     case begodeGotway
     case vesc
+    case backfire
 
-    fileprivate init(_ dto: MobileProtocolFamilyDto) {
+    init(_ dto: MobileProtocolFamilyDto) {
         switch dto {
         case .veteranLeaperkimNosfet:
             self = .veteranLeaperkimNosfet
@@ -86,6 +87,8 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             self = .begodeGotway
         case .vesc:
             self = .vesc
+        case .backfire:
+            self = .backfire
         }
     }
 
@@ -97,6 +100,8 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             .begodeGotway
         case .vesc:
             .vesc
+        case .backfire:
+            .backfire
         }
     }
 
@@ -104,7 +109,16 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
         switch self {
         case .veteranLeaperkimNosfet: .aero
         case .begodeGotway: .falcon
-        case .vesc: nil
+        case .vesc, .backfire: nil
+        }
+    }
+
+    var detectionAnnotation: String {
+        switch self {
+        case .veteranLeaperkimNosfet: "veteran_leaperkim_nosfet"
+        case .begodeGotway: "begode_gotway"
+        case .vesc: "vesc"
+        case .backfire: "backfire"
         }
     }
 }
@@ -1910,8 +1924,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let warning: VescRideWarning
     public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
-    /// Current logical ride route distance, not the controller odometer.
+    /// Trip shown on the ride screen. VESC uses the current logical ride route. Backfire uses the board's reported trip.
     public let tripDistance: Distance?
+    /// Board lifetime distance when the connected protocol publishes one.
+    public let odometer: Distance?
     /// Rust-owned recording duration, excluding pauses and interruptions.
     public let rideDuration: MonotonicMilliseconds?
     public let dutyCycle: DutyCycle?
@@ -1929,6 +1945,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let motorTemperature: Temperature?
     public let footpad: FootpadTelemetry?
     public let lastUpdate: MonotonicMilliseconds?
+    /// Phone-drive and drivetrain controls belong to a VESC controller.
+    public let isVescProtocol: Bool
 
     public init(
         title: String,
@@ -1941,6 +1959,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
         tripDistance: Distance? = nil,
+        odometer: Distance? = nil,
         rideDuration: MonotonicMilliseconds? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
@@ -1956,7 +1975,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         controllerTemperature: Temperature? = nil,
         motorTemperature: Temperature? = nil,
         footpad: FootpadTelemetry? = nil,
-        lastUpdate: MonotonicMilliseconds? = nil
+        lastUpdate: MonotonicMilliseconds? = nil,
+        isVescProtocol: Bool = true
     ) {
         self.title = title
         self.vehicleKind = vehicleKind
@@ -1968,6 +1988,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.stopReason = stopReason
         self.boardSpeed = boardSpeed
         self.tripDistance = tripDistance
+        self.odometer = odometer
         self.rideDuration = rideDuration
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
@@ -1984,6 +2005,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.motorTemperature = motorTemperature
         self.footpad = footpad
         self.lastUpdate = lastUpdate
+        self.isVescProtocol = isVescProtocol
     }
 
     public init?(
@@ -1993,7 +2015,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         connectedPlatformIdentifier: String? = nil
     ) {
         let telemetry = displayState.telemetry ?? TelemetrySnapshot()
-        guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
+        guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc || identity?.protocol == .backfire
+        else { return nil }
         let recording = displayState.logicalRide
         let statistics = recording.flatMap {
             (ride) -> MobileRideMapLiveActivityStatisticsDto? in
@@ -2005,19 +2028,22 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             else { return nil }
             return ride.liveActivityStatistics
         }
+        let routeDistance =
+            (recording?.summary.pointCount ?? 0) > 0
+            ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil
+        let boardDistances = identity?.protocol == .backfire
         self.init(
             title: title ?? Self.defaultTitle,
             vehicleKind: identity?.vehicleKind ?? .unknown,
-            application: identity?.vescApplication ?? .pending,
+            application: identity?.protocol == .backfire ? .absent : (identity?.vescApplication ?? .pending),
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
             operatingMode: telemetry.vescOperatingMode ?? .unknown,
             warning: telemetry.vescWarning ?? .unknown,
             stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,
-            // A recording without route points has no observed trip-distance source.
-            tripDistance: (recording?.summary.pointCount ?? 0) > 0
-                ? statistics.map { Distance(value: $0.distanceMillimetres) } : nil,
+            tripDistance: boardDistances ? telemetry.tripDistance : routeDistance,
+            odometer: boardDistances ? telemetry.distance : nil,
             rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
@@ -2033,7 +2059,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             controllerTemperature: telemetry.controllerTemperature,
             motorTemperature: telemetry.motorTemperature,
             footpad: telemetry.footpad,
-            lastUpdate: telemetry.at ?? displayState.lastUpdate
+            lastUpdate: telemetry.at ?? displayState.lastUpdate,
+            isVescProtocol: identity?.protocol != .backfire
         )
     }
 
@@ -4741,6 +4768,10 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
             0xe0, 0xa9,
             0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
         ]))!
+
+    public static let backfireService = bluetooth16(0xf1f0)
+
+    public static let backfireTelemetry = bluetooth16(0xf1f2)
 
     public static let vescNordicUartWrite = BluetoothUuid(
         Data([

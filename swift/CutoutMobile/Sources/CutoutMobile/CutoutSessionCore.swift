@@ -14,6 +14,8 @@ func protocolIdentityFallbackDisplayName(
         pevLocalizedText("protocol_identity.fallback.begode")
     case .vesc:
         pevLocalizedText("protocol_identity.fallback.vesc")
+    case .backfire:
+        pevLocalizedText("protocol_identity.fallback.backfire")
     case nil:
         pevLocalizedText("protocol_identity.fallback.unknown")
     }
@@ -30,6 +32,7 @@ enum ProtocolDetectionFinishDecision: Equatable {
 
 private struct AcceptedLiveNotificationIngress {
     let channel: BluetoothUuid
+    let service: Data
     let bytes: Data
     let receivedAt: MonotonicMilliseconds
 }
@@ -531,12 +534,23 @@ public final class CutoutSessionCore: NSObject {
     private var liveOwner: DeviceSessionTransport?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
+    private var selectedProtocol: DeviceDetectionProtocolFamily?
+    private var promotedLiveSession = false
     private var chargeEstimateProfile: ChargeEstimateProfile?
     private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
     // A retained route selects GATT services; each new attempt still needs wire evidence.
     var isDetectingProtocol: Bool {
         onBleQueue { !isRecordOnly && connectionSnapshot.readiness == .pending }
+    }
+    private var retainsLiveSession: Bool {
+        promotedLiveSession || selectedRoute != nil || isDetectingProtocol
+    }
+
+    private func clearPromotedConnection() {
+        selectedRoute = nil
+        selectedProtocol = nil
+        promotedLiveSession = false
     }
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private lazy var bluetoothWriteAdapter = CutoutSessionBluetoothWriteAdapter(
@@ -1616,11 +1630,14 @@ public final class CutoutSessionCore: NSObject {
             model: ElectricUnicycleModel? = nil
         ) -> Bool {
             guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-            let route: DevicePickerConnectionRoute
+            let route: DevicePickerConnectionRoute?
             let candidateModel: ElectricUnicycleModel?
+            let detectedProtocol = testScript.candidate.protocolFamily
             switch testScript.candidate.support {
             case .supported(let supportedRoute, let supportedModel):
-                guard let supportedRoute else { return false }
+                if supportedRoute == nil && detectedProtocol != .vesc && detectedProtocol != .backfire {
+                    return false
+                }
                 route = supportedRoute
                 candidateModel = supportedModel
             case .probeRecommended:
@@ -1641,6 +1658,8 @@ public final class CutoutSessionCore: NSObject {
             finishCaptureAfterLinkDown()
 
             self.selectedRoute = route
+            self.selectedProtocol = detectedProtocol
+            self.promotedLiveSession = true
             self.selectedModel = selectedModel
             testScriptWorkItem?.cancel()
             testScriptUpdateWorkItem?.cancel()
@@ -1722,6 +1741,7 @@ public final class CutoutSessionCore: NSObject {
                             let step = try ingestAcceptedLiveNotification(
                                 AcceptedLiveNotificationIngress(
                                     channel: channel,
+                                    service: Data(),
                                     bytes: bytes,
                                     receivedAt: receivedAt
                                 ),
@@ -1812,7 +1832,8 @@ public final class CutoutSessionCore: NSObject {
                         let at = self.clock.now()
                         self.applyNotificationStep(
                             try self.ingestAcceptedLiveNotification(
-                                AcceptedLiveNotificationIngress(channel: channel, bytes: bytes, receivedAt: at),
+                                AcceptedLiveNotificationIngress(
+                                    channel: channel, service: Data(), bytes: bytes, receivedAt: at),
                                 using: owner
                             ),
                             receivedAt: at
@@ -1954,7 +1975,7 @@ public final class CutoutSessionCore: NSObject {
         #endif
         isRecordOnly = false
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
@@ -2208,6 +2229,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishDeviceSessionSnapshot(_ snapshot: MobileDeviceSessionSnapshotDto) {
+        if promotedLiveSession, let route = DevicePickerConnectionRoute(vehicleKind: snapshot.identity?.vehicleKind) {
+            selectedRoute = route
+        }
         guard snapshot == rustSessionState.deviceSessionSnapshot() else { return }
         restoreVescDrivetrainIfNeeded(snapshot)
         if let outcome = updateCaptureIdentity() { _ = acceptCaptureWrite(outcome) }
@@ -2320,7 +2344,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -2365,7 +2389,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -2443,9 +2467,7 @@ public final class CutoutSessionCore: NSObject {
         switch selectedRoute {
         case .electricUnicycle:
             return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
-        case .vesc:
-            return nil
-        case nil:
+        case .onewheel, .eskate, .scooter, nil:
             return nil
         }
     }
@@ -3362,7 +3384,7 @@ extension CutoutSessionCore {
         prepareConnectionAttempt(to: restoredPeripheral)
         advertisement = restoredAdvertisement
         peripheral = restoredPeripheral
-        selectedRoute = nil
+        clearPromotedConnection()
         selectedModel = nil
         isRecordOnly = false
         suppressReconnect = false
@@ -3396,7 +3418,7 @@ extension CutoutSessionCore {
             cancelFailedConnectionAttempt()
             publishConnectionSnapshot()
             advertisement = nil
-            selectedRoute = nil
+            clearPromotedConnection()
             selectedModel = nil
         @unknown default:
             record("central_restore=unknown_peripheral_state")
@@ -3472,7 +3494,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         didResolveBluetoothRestoration = true
         let restoredPlatformIdentifier: String? =
             if let peripheral,
-                selectedRoute != nil || isDetectingProtocol,
+                retainsLiveSession,
                 peripheral.state == .connected || peripheral.state == .connecting
             {
                 peripheral.identifier.uuidString
@@ -3525,7 +3547,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
             return
         }
-        if let peripheral, selectedRoute != nil || isDetectingProtocol {
+        if let peripheral, retainsLiveSession {
             switch peripheral.state {
             case .connected:
                 if connectionSnapshot.transport != .connected, let advertisement {
@@ -3738,7 +3760,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         service: CBUUID?, value: Data, notificationPeripheral: CBPeripheral?
     ) {
         let receivedAt = clock.now()
-        let detectionResolution = observeDetectionNotification(channel: channel, bytes: value, token: token)
+        let serviceBytes = service.flatMap { BluetoothUuid(coreBluetoothUuid: $0)?.bytes } ?? Data()
+        let detectionResolution = observeDetectionNotification(
+            channel: channel, service: serviceBytes, bytes: value, token: token)
         var detectionCaptureOutcomes: [MobileCaptureWriteOutcomeDto] = []
         if detectionResolution.protocolConflict,
             let outcome = captureFrame(
@@ -3798,7 +3822,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let receivedAt = clock.now()
             let ingestStartedAt = receivedAt
             let step = try ingestAcceptedLiveNotification(
-                AcceptedLiveNotificationIngress(channel: channel, bytes: value, receivedAt: receivedAt),
+                AcceptedLiveNotificationIngress(
+                    channel: channel, service: serviceBytes, bytes: value, receivedAt: receivedAt),
                 using: liveOwner
             )
             let ingestFinishedAt = clock.now()
@@ -3841,6 +3866,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         try owner.handleNotification(
             bytes: ingress.bytes,
             channel: ingress.channel,
+            service: ingress.service,
             at: ingress.receivedAt
         )
     }
@@ -3892,7 +3918,13 @@ extension CutoutSessionCore {
             subscribedCharacteristics[channel] = characteristic
             return
         }
-        guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
+        if channel == .backfireTelemetry,
+            characteristic.service?.uuid == BluetoothUuid.backfireService.coreBluetoothUuid
+        {
+            subscribedCharacteristics[channel] = characteristic
+            return
+        }
+        guard preferredServiceUuid(for: selectedProtocol, route: selectedRoute) == characteristic.service?.uuid else {
             return
         }
         if existing.service?.uuid != characteristic.service?.uuid {
@@ -3900,15 +3932,56 @@ extension CutoutSessionCore {
         }
     }
 
-    fileprivate func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
-        switch route {
+    fileprivate func preferredServiceUuid(
+        for protocolFamily: DeviceDetectionProtocolFamily?,
+        route: DevicePickerConnectionRoute?
+    ) -> CBUUID? {
+        switch protocolFamily {
         case .vesc:
             return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
-        case .electricUnicycle:
+        case .veteranLeaperkimNosfet, .begodeGotway:
             return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
-        case nil:
+        case .backfire:
             return nil
+        case nil:
+            switch route {
+            case .electricUnicycle:
+                return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
+            case .onewheel, .eskate, .scooter, nil:
+                return nil
+            }
         }
+    }
+
+    private func subscribePassiveObservationChannels(on peripheral: CBPeripheral) -> Bool {
+        let fingerprints = subscribedCharacteristics.compactMap {
+            channel, characteristic -> MobileGattFingerprintDto? in
+            guard let serviceUuid = characteristic.service.flatMap({ BluetoothUuid(coreBluetoothUuid: $0.uuid) })
+            else { return nil }
+            return MobileGattFingerprintDto(
+                service: serviceUuid.bytes,
+                characteristic: channel.bytes,
+                roles: characteristic.mobileGattRoles,
+                verification: .sourceVerified
+            )
+        }
+        var didSubscribe = false
+        for channelBytes in mobilePassiveObservationChannels(fingerprints: fingerprints) {
+            guard let channel = BluetoothUuid(channelBytes),
+                let characteristic = subscribedCharacteristics[channel]
+            else { continue }
+            let requiresNotify = mobileSubscriptionRequiresNotify(channel: channel.bytes)
+            let properties = characteristic.properties
+            let subscribable =
+                properties.contains(.notify)
+                || (!requiresNotify && properties.contains(.indicate))
+            guard subscribable else { continue }
+            if !characteristic.isNotifying {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+            didSubscribe = true
+        }
+        return didSubscribe
     }
 
     fileprivate func assertOnBleQueue() {
@@ -3922,7 +3995,12 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
-        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+        let requiresNotify = mobileSubscriptionRequiresNotify(channel: channel.bytes)
+        let properties = characteristic.properties
+        guard
+            properties.contains(.notify)
+                || (!requiresNotify && properties.contains(.indicate))
+        else {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
@@ -4022,7 +4100,23 @@ extension CutoutSessionCore {
 
     func subscribeRecordOnlyCharacteristics(_ characteristics: [CBCharacteristic], on peripheral: CBPeripheral) {
         characteristics
-            .filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
+            .filter { characteristic in
+                guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid),
+                    let service = characteristic.service.flatMap({
+                        BluetoothUuid(coreBluetoothUuid: $0.uuid)
+                    })
+                else {
+                    return characteristic.properties.contains(.notify)
+                        || characteristic.properties.contains(.indicate)
+                }
+                return mobileCaptureSubscriptionPermitted(
+                    fingerprint: MobileGattFingerprintDto(
+                        service: service.bytes,
+                        characteristic: channel.bytes,
+                        roles: characteristic.mobileGattRoles,
+                        verification: .hardwareVerified
+                    ))
+            }
             .forEach { peripheral.setNotifyValue(true, for: $0) }
     }
 
@@ -4046,12 +4140,14 @@ extension CutoutSessionCore {
 
     @discardableResult
     func observeDetectionNotification(
-        channel: BluetoothUuid, bytes: Data, token capturedToken: ConnectionAttemptToken? = nil
+        channel: BluetoothUuid, service: Data = Data(), bytes: Data,
+        token capturedToken: ConnectionAttemptToken? = nil
     ) -> DeviceDetectionResolution {
         let previous = deviceDetectionSession.resolution
         let current: DeviceDetectionResolution
         if let token = capturedToken ?? connectionAttempt?.token,
-            let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
+            let resolution = rustSessionState.observeConnectionNotificationOnChannel(
+                token: token, channel: channel.bytes, service: service, bytes: bytes)
         {
             current = DeviceDetectionResolution(resolution)
         } else if connectionAttempt == nil {
@@ -4153,7 +4249,10 @@ extension CutoutSessionCore {
         )
         switch DevicePickerCandidateSupport(candidate) {
         case .supported(let route, let model):
-            guard let route else { return false }
+            let family = resolution.protocolFamily
+            if route == nil && family != .vesc && family != .backfire {
+                return false
+            }
             // The Rust candidate is the authoritative result of protocol detection. Resolve
             // the connection from that exact supported evidence before any family-specific
             // fallback probe can be sent. In particular, a Veteran model frame must promote
@@ -4170,8 +4269,15 @@ extension CutoutSessionCore {
             publishConnectionSnapshot()
             clearProtocolDetectionExpiry()
             selectedRoute = route
+            selectedProtocol = family
+            promotedLiveSession = true
             selectedModel = model
-            annotateDetection("protocol_detection_resolved=\(route.rawValue)")
+            if let family {
+                annotateDetection("protocol_detection_resolved=\(family.detectionAnnotation)")
+            }
+            if let route {
+                annotateDetection("route=\(route.rawValue)")
+            }
             buildOwner(for: peripheral)
             return liveOwner != nil
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
@@ -4260,6 +4366,9 @@ extension CutoutSessionCore {
             }
             subscribed = true
         }
+        if subscribePassiveObservationChannels(on: peripheral) {
+            subscribed = true
+        }
         if !subscribed {
             recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
         }
@@ -4306,7 +4415,7 @@ extension CutoutSessionCore {
         isRecordOnly = true
         clearProtocolDetectionExpiry()
         clearPendingBegodeProbeResponses()
-        selectedRoute = nil
+        clearPromotedConnection()
         selectedModel = nil
         liveOwner = nil
         annotateDetection("protocol_detection_unresolved=\(failure)")

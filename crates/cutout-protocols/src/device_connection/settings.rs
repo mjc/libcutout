@@ -569,6 +569,7 @@ mod tests {
                 .ingest(
                     token,
                     &cutout_core::SessionInputDto::Notification {
+                        service: None,
                         channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                         bytes: bytes.clone(),
                         monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
@@ -826,6 +827,7 @@ mod tests {
             .ingest(
                 &token,
                 &cutout_core::SessionInputDto::Notification {
+                    service: None,
                     monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
                     channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                     bytes: frame.to_vec(),
@@ -1211,6 +1213,7 @@ mod tests {
                         .ingest(
                             &token,
                             &cutout_core::SessionInputDto::Notification {
+                                service: None,
                                 channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                                 bytes: frame,
                                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 10 },
@@ -1343,6 +1346,7 @@ mod tests {
         let _ = owner.ingest(
             &token,
             &cutout_core::SessionInputDto::Notification {
+                service: None,
                 channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
                 bytes: frame,
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 10 },

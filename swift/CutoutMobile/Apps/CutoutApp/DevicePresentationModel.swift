@@ -100,7 +100,11 @@ final class DevicePresentationModel {
         {
             connectionState = connectionState.replacingSelection(
                 with: ConnectionSelection(
-                    platformIdentifier: identity, title: name, route: selection.route))
+                    platformIdentifier: identity,
+                    title: name,
+                    route: selection.route,
+                    protocolFamily: selection.protocolFamily
+                ))
         }
     }
 
@@ -108,7 +112,9 @@ final class DevicePresentationModel {
         await nameRestoreTask?.value
     }
 
-    var deviceSessionSnapshot: MobileDeviceSessionSnapshotDto?
+    var deviceSessionSnapshot: MobileDeviceSessionSnapshotDto? {
+        didSet { syncVehicleRoute() }
+    }
 
     /// Only a resolved user association has a vehicle-type edit control in Tune.
     var editableVehicleKindToken: ConnectionAttemptToken? {
@@ -201,20 +207,38 @@ final class DevicePresentationModel {
         let resolvedSelection = ConnectionSelection(
             platformIdentifier: selection.platformIdentifier,
             title: connectionState.selection?.title ?? selection.title,
-            route: selection.route
+            route: selection.route,
+            protocolFamily: selection.protocolFamily
         )
         connectionState = connectionState.replacingSelection(with: resolvedSelection)
         return true
     }
 
     static func connectionSelection(from candidate: DevicePickerDiscoveryCandidate?) -> ConnectionSelection? {
-        guard let candidate, candidate.support.isSupported, let route = candidate.support.connectionRoute else {
-            return nil
-        }
+        guard let candidate, candidate.support.isSupported else { return nil }
+        let route = candidate.support.connectionRoute
+        let protocolFamily = candidate.protocolFamily
+        guard route != nil || protocolFamily == .vesc || protocolFamily == .backfire else { return nil }
         return ConnectionSelection(
             platformIdentifier: candidate.platformIdentifier,
             title: candidate.displayName,
-            route: route
+            route: route,
+            protocolFamily: protocolFamily
+        )
+    }
+
+    private func syncVehicleRoute() {
+        guard let route = DevicePickerConnectionRoute(vehicleKind: deviceSessionSnapshot?.identity?.vehicleKind),
+            let selection = connectionState.selection,
+            selection.route != route
+        else { return }
+        connectionState = connectionState.replacingSelection(
+            with: ConnectionSelection(
+                platformIdentifier: selection.platformIdentifier,
+                title: selection.title,
+                route: route,
+                protocolFamily: selection.protocolFamily
+            )
         )
     }
 
@@ -246,7 +270,9 @@ final class DevicePresentationModel {
         let selection = ConnectionSelection(
             platformIdentifier: selectedRow.id,
             title: selectedRow.title,
-            route: selectedRow.connectionRoute ?? .electricUnicycle
+            route: selectedRow.connectionRoute
+                ?? (selectedRow.protocolFamily == nil ? .electricUnicycle : nil),
+            protocolFamily: selectedRow.protocolFamily
         )
         settings = nil
         protocolIdentityCandidate = nil
@@ -299,6 +325,7 @@ final class DevicePresentationModel {
     var selectedRideTitle: String? { connectionState.selection?.title }
     var selectedRideIdentifier: String? { connectionState.selection?.platformIdentifier }
     var selectedConnectionRoute: DevicePickerConnectionRoute? { connectionState.selection?.route }
+    var selectedProtocolFamily: DeviceDetectionProtocolFamily? { connectionState.selection?.protocolFamily }
     var speed: SpeedReadout { displayState.speed }
     var rideState: EucRideScreenState { EucRideScreenState(phase: phase, displayState: displayState) }
     var eucRidePresentationState: EucRideScreenState? {

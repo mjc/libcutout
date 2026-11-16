@@ -287,6 +287,7 @@ final class CutoutAppModel {
 
     var selectedRideIdentifier: String? { device.selectedRideIdentifier }
     var selectedConnectionRoute: DevicePickerConnectionRoute? { device.selectedConnectionRoute }
+    var selectedProtocolFamily: DeviceDetectionProtocolFamily? { device.selectedProtocolFamily }
     var speed: SpeedReadout { device.speed }
     var rideMapSpeed: SpeedReadout {
         SpeedReadout(millimetersPerSecond: liveRide.snapshot?.liveSpeed?.millimetresPerSecond)
@@ -1207,14 +1208,13 @@ final class CutoutAppModel {
             liveActivityIdentity = .model(model)
             liveActivityGlyph = .electricUnicycle
         }
-        guard let candidate,
-            candidate.support.isSupported,
-            candidate.support.connectionRoute != nil
-        else {
+        guard let candidate, candidate.support.isSupported else {
             syncLiveActivity()
             return
         }
-        if candidate.support.connectionRoute == .vesc {
+        if opensBoardRideShell(
+            route: candidate.support.connectionRoute, protocolFamily: candidate.protocolFamily)
+        {
             liveActivityIdentity = vescRideIdentity(using: candidate.displayName)
             liveActivityGlyph = LiveActivityRideGlyph(
                 vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
@@ -1317,7 +1317,8 @@ final class CutoutAppModel {
                     ConnectionSelection(
                         platformIdentifier: selection.platformIdentifier,
                         title: connectionState.selection?.title ?? selection.title,
-                        route: selection.route
+                        route: selection.route,
+                        protocolFamily: selection.protocolFamily
                     ))
             } else if let selection = connectionState.selection {
                 device.connectionState = .connected(selection)
@@ -1656,7 +1657,8 @@ final class CutoutAppModel {
         return liveActivityIdentity.map {
             LiveActivityRideSnapshot(
                 identity: $0,
-                glyph: selectedConnectionRoute == .vesc
+                glyph: opensBoardRideShell(
+                    route: selectedConnectionRoute, protocolFamily: device.selectedProtocolFamily)
                     ? LiveActivityRideGlyph(
                         vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
                     : liveActivityGlyph,
@@ -1674,10 +1676,13 @@ final class CutoutAppModel {
     }
 
     private func liveActivityIdentity(for selectedRow: DevicePickerRow?) -> LiveActivityRideIdentity? {
-        if selectedRow?.connectionRoute == .vesc {
+        if opensBoardRideShell(route: selectedRow?.connectionRoute, protocolFamily: selectedRow?.protocolFamily) {
             return vescRideIdentity(using: selectedRow?.title)
         }
-        if device.protocolIdentityCandidate?.support.connectionRoute == .vesc {
+        if opensBoardRideShell(
+            route: device.protocolIdentityCandidate?.support.connectionRoute,
+            protocolFamily: device.protocolIdentityCandidate?.protocolFamily
+        ) {
             return vescRideIdentity(using: device.protocolIdentityCandidate?.displayName)
         }
         if let model = selectedRow?.electricUnicycleModel
@@ -1690,8 +1695,11 @@ final class CutoutAppModel {
     }
 
     private func liveActivityGlyph(for selectedRow: DevicePickerRow?) -> LiveActivityRideGlyph {
-        if selectedRow?.connectionRoute == .vesc
-            || device.protocolIdentityCandidate?.support.connectionRoute == .vesc
+        if opensBoardRideShell(route: selectedRow?.connectionRoute, protocolFamily: selectedRow?.protocolFamily)
+            || opensBoardRideShell(
+                route: device.protocolIdentityCandidate?.support.connectionRoute,
+                protocolFamily: device.protocolIdentityCandidate?.protocolFamily
+            )
         {
             return LiveActivityRideGlyph(vehicleKind: device.deviceSessionSnapshot?.identity?.vehicleKind ?? .unknown)
         }

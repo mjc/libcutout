@@ -595,6 +595,37 @@ impl CutoutSessionStateHandle {
         self.observe_connection_event(token, DeviceDetectionEvent::Notification { bytes: &bytes })
     }
 
+    /// Observes one notification together with the service and characteristic that produced it.
+    ///
+    /// A channel that is not 16 bytes falls through to the channel-less detector.
+    /// A service that is not 16 bytes is absent, and an absent service cannot admit Backfire.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports own byte buffers."
+    )]
+    pub fn observe_connection_notification_on_channel(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        channel: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+            return self.observe_connection_notification(token, bytes);
+        };
+        let service = <[u8; 16]>::try_from(service)
+            .ok()
+            .map(cutout_core::GattChannel::from_bytes);
+        self.observe_connection_event(
+            token,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: cutout_core::GattChannel::from_bytes(channel),
+                service,
+                bytes: &bytes,
+            },
+        )
+    }
+
     /// Feeds one complete GATT inventory to the authoritative detector.
     pub fn observe_connection_gatt(
         &self,
@@ -1171,6 +1202,7 @@ mod tests {
                 .ingest_device_session(
                     token.clone(),
                     MobileSessionInputDto {
+                        service: Vec::new(),
                         kind,
                         monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds },
                         max_write_len: None,
@@ -1222,6 +1254,7 @@ mod tests {
             .ingest_device_session(
                 token,
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::Notification,
                     monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
                     max_write_len: None,
@@ -1758,6 +1791,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::Notification,
                     monotonic_ms: crate::MobileMonotonicMillisDto {
                         milliseconds: 3_001,
@@ -1833,6 +1867,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::Notification,
                     monotonic_ms: crate::MobileMonotonicMillisDto {
                         milliseconds: 3_002,
@@ -1884,6 +1919,7 @@ mod tests {
                 .ingest_device_session(
                     token.clone(),
                     MobileSessionInputDto {
+                        service: Vec::new(),
                         kind: crate::MobileSessionInputKindDto::Notification,
                         monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
                         max_write_len: None,
@@ -1910,6 +1946,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::Notification,
                     monotonic_ms: crate::MobileMonotonicMillisDto {
                         milliseconds: 3_001,
@@ -2201,6 +2238,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::LinkUp,
                     monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 1 },
                     max_write_len: None,
@@ -2220,6 +2258,7 @@ mod tests {
             .ingest_device_session(
                 token,
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: crate::MobileSessionInputKindDto::Notification,
                     monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 100 },
                     max_write_len: None,
@@ -2241,6 +2280,7 @@ mod tests {
             let mut bytes = frame.clone();
             bytes[6..8].copy_from_slice(&deci_kmh.to_be_bytes());
             let input = MobileSessionInputDto {
+                service: Vec::new(),
                 kind: crate::MobileSessionInputKindDto::Notification,
                 monotonic_ms: crate::MobileMonotonicMillisDto {
                     milliseconds: 100 + index as u64,
@@ -2270,6 +2310,7 @@ mod tests {
     fn capture_admission_rejects_stale_disconnected_or_ambiguous_evidence() {
         let (handle, token, frame) = connected_capture_session();
         let input = MobileSessionInputDto {
+            service: Vec::new(),
             kind: crate::MobileSessionInputKindDto::Notification,
             monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 100 },
             max_write_len: None,
@@ -2332,6 +2373,7 @@ mod tests {
     fn capture_admission_keeps_notifications_with_pending_parser_bytes() {
         let (handle, token, frame) = connected_capture_session();
         let notification = |at, bytes| MobileSessionInputDto {
+            service: Vec::new(),
             kind: crate::MobileSessionInputKindDto::Notification,
             monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
             max_write_len: None,

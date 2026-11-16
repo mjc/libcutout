@@ -2637,6 +2637,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec>(
             output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
         }
         SessionInput::Notification {
+            service: _,
             channel,
             bytes,
             monotonic_ms,
@@ -4299,6 +4300,7 @@ mod tests {
 
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
                 monotonic_ms: ms(42),
@@ -4325,6 +4327,7 @@ mod tests {
         for (index, bytes) in chunks.iter().enumerate() {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes,
                     monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
@@ -4350,6 +4353,7 @@ mod tests {
         for (index, bytes) in chunks.iter().enumerate() {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: BEGODE_DATA_CHANNEL,
                     bytes,
                     monotonic_ms: ms(42 + u64::try_from(index).expect("fixture index fits")),
@@ -4376,6 +4380,7 @@ mod tests {
         for (index, bytes) in chunks.iter().enumerate() {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL,
                     bytes,
                     monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
@@ -4426,6 +4431,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
                 monotonic_ms: ms(42),
@@ -4449,6 +4455,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
                 monotonic_ms: ms(42),
@@ -4501,6 +4508,7 @@ mod tests {
         malformed[20] = 0;
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &malformed,
                 monotonic_ms: ms(42),
@@ -4532,6 +4540,7 @@ mod tests {
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
+                service: None,
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
                 monotonic_ms: ms(11),
@@ -4562,6 +4571,7 @@ mod tests {
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
+                service: None,
                 channel: wrong_channel,
                 bytes: &[0x01, 0x02, 0x03, 0x04],
                 monotonic_ms: ms(12),
@@ -4590,6 +4600,7 @@ mod tests {
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
+                service: None,
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
                 monotonic_ms: ms(11),
@@ -4809,6 +4820,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
                 monotonic_ms: ms(42),
@@ -5785,6 +5797,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_info_frame().as_slice(),
                 monotonic_ms: ms(25),
@@ -5793,6 +5806,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
                 monotonic_ms: ms(50),
@@ -5853,6 +5867,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_info_frame().as_slice(),
                 monotonic_ms: ms(25),
@@ -5862,6 +5877,7 @@ mod tests {
         for at in [50, 75] {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL,
                     bytes: refloat_realtime_ids_frame().as_slice(),
                     monotonic_ms: ms(at),
@@ -5885,6 +5901,7 @@ mod tests {
         for at in [110, 120] {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VESC_NOTIFY_CHANNEL,
                     bytes: refloat_realtime_data_frame().as_slice(),
                     monotonic_ms: ms(at),
@@ -5965,6 +5982,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_info_frame().as_slice(),
                 monotonic_ms: ms(1),
@@ -5973,6 +5991,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_realtime_ids_frame().as_slice(),
                 monotonic_ms: ms(1),
@@ -6020,6 +6039,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_realtime_ids_frame().as_slice(),
                 monotonic_ms: ms(1),
@@ -6028,6 +6048,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: refloat_realtime_data_frame().as_slice(),
                 monotonic_ms: ms(2),
@@ -6057,6 +6078,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
                 monotonic_ms: ms(1_001),
@@ -6248,6 +6270,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
                 monotonic_ms: ms(42),
@@ -6297,6 +6320,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
                 monotonic_ms: ms(42),
@@ -6598,6 +6622,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_b,
                 monotonic_ms: ms(2),
@@ -6614,6 +6639,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
                 monotonic_ms: ms(4),
@@ -6711,6 +6737,7 @@ mod tests {
         );
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
                 monotonic_ms: ms(42),
@@ -7351,6 +7378,7 @@ mod tests {
         for at in [2, 3] {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes: &short_aero_frame(),
                     monotonic_ms: ms(at),
@@ -7397,6 +7425,7 @@ mod tests {
         for at in [2, 3] {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes: b"\xdc\x5a\x5c\x01\xaa",
                     monotonic_ms: ms(at),
@@ -7958,6 +7987,7 @@ mod tests {
         frame[length..].copy_from_slice(&crc.to_be_bytes());
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &frame,
                 monotonic_ms: ms(11),

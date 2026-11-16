@@ -311,6 +311,7 @@ mod tests {
         let _ = inner.ingest(
             &token.clone().into(),
             &cutout_core::SessionInputDto::Notification {
+                service: None,
                 channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes(),
                 bytes: frame,
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },

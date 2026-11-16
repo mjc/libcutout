@@ -438,6 +438,7 @@ mod tests {
             host,
         );
         host.ingest(SessionInput::Notification {
+            service: None,
             channel: record.characteristic,
             bytes: &record.bytes,
             monotonic_ms: record.monotonic_ms,

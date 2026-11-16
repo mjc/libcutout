@@ -71,6 +71,7 @@ impl ProtocolSession for NoOpSession {
                 output.push(SessionOutput::Event(cutout_core::DeviceEvent::LinkDown));
             }
             SessionInput::Notification {
+                service: _,
                 channel,
                 bytes,
                 monotonic_ms,

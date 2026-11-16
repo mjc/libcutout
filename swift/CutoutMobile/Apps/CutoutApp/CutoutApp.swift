@@ -118,8 +118,9 @@ struct CutoutApp: App {
                     navigationTabs: navigationTabs,
                     currentRoute: currentRoute,
                     connectionRoute: model.device.selectedConnectionRoute,
+                    protocolFamily: model.device.selectedProtocolFamily,
                     navigationPath: $navigationPath,
-                    canDisconnect: model.device.selectedConnectionRoute != nil,
+                    canDisconnect: model.device.connectionState.isConnected,
                     disconnect: {
                         Task { @MainActor in _ = await model.disconnectTransport() }
                     }
@@ -223,7 +224,10 @@ struct CutoutApp: App {
     }
 
     private var navigationTabs: [PevScreenTab] {
-        currentRoute.availableNavigationTabs(for: model?.selectedConnectionRoute)
+        currentRoute.availableNavigationTabs(
+            for: model?.selectedConnectionRoute,
+            protocolFamily: model?.selectedProtocolFamily
+        )
     }
 }
 
@@ -231,6 +235,7 @@ struct CutoutNavigationCommands: Commands {
     let navigationTabs: [PevScreenTab]
     let currentRoute: CutoutAppRoute
     let connectionRoute: DevicePickerConnectionRoute?
+    let protocolFamily: DeviceDetectionProtocolFamily?
     @Binding var navigationPath: [CutoutAppRoute]
     let canDisconnect: Bool
     let disconnect: () -> Void
@@ -269,7 +274,8 @@ struct CutoutNavigationCommands: Commands {
                         navigationPath = CutoutAppRoute.navigationPath(
                             for: currentRoute.destination(
                                 forNavigationTarget: target,
-                                connectionRoute: connectionRoute
+                                connectionRoute: connectionRoute,
+                                protocolFamily: protocolFamily
                             )
                         )
                     }

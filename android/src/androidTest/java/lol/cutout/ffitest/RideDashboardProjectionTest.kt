@@ -15,6 +15,7 @@ import lol.cutout.CutoutApplication
 import lol.cutout.CutoutUi
 import lol.cutout.MainActivity
 import lol.cutout.RideDashboardView
+import lol.cutout.RideMetricFormatting
 import org.junit.Test
 import java.util.Locale
 import uniffi.cutout_mobile_ffi.*
@@ -357,6 +358,50 @@ open class RideDashboardProjectionTest {
             val value = tagged<TextView>(ride, "ride.accessible.metric.$key").text.toString()
             check(value == values[key]) { "Resize discarded the latest Rust $key value" }
         }
+    }
+
+    @Test
+    fun backfireRideShowsBoardTripAndOdometerWhenARouteIsRecording() = withActivity { activity ->
+        val replay = productionReplayPresentation()
+        val session = checkNotNull(replay.session)
+        val identity = checkNotNull(session.identity).copy(
+            protocol = MobileProtocolFamilyDto.BACKFIRE,
+            vehicleKind = MobileVehicleKindDto.ESKATE,
+            classificationProvenance = MobileVehicleClassificationProvenanceDto.PROTOCOL,
+            classificationRequirement = MobileVehicleClassificationRequirementDto.RESOLVED,
+            vescApplication = null,
+            vescApplicationQuery = null,
+            model = null,
+        )
+        fun distance(millimetres: ULong) = DistanceReading(
+            Distance(millimetres), MobileValueSourceDto.REPORTED,
+            MobileValueQualityDto.KNOWN, MobileVerificationStatusDto.SOURCE_VERIFIED,
+        )
+        val ride = RideDashboardView(activity, {}, {})
+        val ui = CutoutUi(activity)
+        activity.setContentView(ride)
+        ride.render(replay.copy(
+            session = session.copy(identity = identity),
+            telemetry = checkNotNull(replay.telemetry).copy(
+                distance = distance(87_800_000UL),
+                tripDistance = distance(100_000UL),
+            ),
+        ))
+        val token = session.connection.token?.platformIdentifier
+        ride.renderRecording(recordingProjection(token))
+
+        val trip = RideMetricFormatting.distance(activity, 100.0)
+        val odometer = RideMetricFormatting.distance(activity, 87_800.0)
+        val route = RideMetricFormatting.distance(activity, 1_609.344)
+        check(tagged<TextView>(ride, "ride.metric.board_trip").text.toString() == trip) {
+            "Backfire trip should show the board trip"
+        }
+        check(tagged<TextView>(ride, "ride.metric.odometer").text.toString() == odometer) {
+            "Backfire odometer should show the board lifetime distance"
+        }
+        check(trip != route && odometer != route) { "Board distances collided with the recorded route" }
+        check(hasLocalizedText(ride, ui, activity, "vesc.metric.trip"))
+        check(hasLocalizedText(ride, ui, activity, "ride.metric.odometer"))
     }
 
     @Test

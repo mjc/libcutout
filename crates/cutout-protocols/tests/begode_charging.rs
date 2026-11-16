@@ -39,6 +39,7 @@ fn connected() -> Falcon {
 
 fn notify(host: &mut Falcon, bytes: &[u8], seconds: u64) {
     host.ingest(SessionInput::Notification {
+        service: None,
         channel: BEGODE_DATA_CHANNEL,
         bytes,
         monotonic_ms: MonotonicTimestamp::new(seconds * 1000),

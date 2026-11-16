@@ -429,6 +429,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
                 instrumentKind = deviceIdentity.vescApplication == .refloat ? .refloat : .unavailable
             case .veteranLeaperkimNosfet, .begodeGotway:
                 instrumentKind = .electricUnicycle
+            case .backfire:
+                instrumentKind = .unavailable
             }
         } else {
             // A typed EUC model remains valid evidence before the session identity arrives.

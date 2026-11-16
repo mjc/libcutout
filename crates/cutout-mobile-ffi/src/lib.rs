@@ -1498,14 +1498,20 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
-/// Mobile connection route for supported picker candidates.
+/// Vehicle class for a supported connection. Protocol family is a separate fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum DiscoveryConnectionRoute {
-    /// Electric unicycle read-only session route.
+    /// Electric unicycle.
     ElectricUnicycle,
 
-    /// Controller-neutral VESC read-only route.
-    Vesc,
+    /// Onewheel.
+    Onewheel,
+
+    /// Electric skateboard.
+    Eskate,
+
+    /// Scooter.
+    Scooter,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -1566,11 +1572,14 @@ pub struct DiscoveryCandidate {
     /// Picker section recommended by Rust-owned projection.
     pub section: DiscoveryCandidateSection,
 
-    /// Supported connection route, when connecting is allowed.
+    /// Vehicle class, when detection has established one.
     pub connection_route: Option<DiscoveryConnectionRoute>,
 
     /// Electric-unicycle session model to construct for the route.
     pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
+
+    /// Protocol family established by detection. Independent of the vehicle class.
+    pub protocol_family: Option<MobileProtocolFamilyDto>,
 
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
@@ -2446,6 +2455,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 .connection_route
                 .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
+            protocol_family: None,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
                 CoreDiscoveryCandidateSupport::ProbeRecommended
@@ -2484,7 +2494,9 @@ impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
     fn from(route: CoreDiscoveryConnectionRoute) -> Self {
         match route {
             CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
-            CoreDiscoveryConnectionRoute::Vesc => Self::Vesc,
+            CoreDiscoveryConnectionRoute::Onewheel => Self::Onewheel,
+            CoreDiscoveryConnectionRoute::Eskate => Self::Eskate,
+            CoreDiscoveryConnectionRoute::Scooter => Self::Scooter,
         }
     }
 }
@@ -3958,6 +3970,107 @@ impl CutoutSessionStateHandle {
     }
 }
 
+/// Notify characteristics a host may subscribe to before a protocol frame arrives.
+///
+/// The result is limited to characteristics the Rust session can observe passively.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_passive_observation_channels(
+    fingerprints: Vec<MobileGattFingerprintDto>,
+) -> Vec<Vec<u8>> {
+    let fingerprints = fingerprints
+        .into_iter()
+        .map(GattFingerprint::from)
+        .collect::<Vec<_>>();
+    cutout_protocols::passive_observation_channels(&fingerprints)
+        .into_iter()
+        .map(|channel| channel.as_bytes().to_vec())
+        .collect()
+}
+
+/// Characteristics Android may enable before a protocol frame arrives.
+///
+/// F1F0 is limited to a notifying F1F2. The older discovery services still
+/// contribute each notify or indicate characteristic.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_subscription_channels(
+    fingerprints: Vec<MobileGattFingerprintDto>,
+) -> Vec<Vec<u8>> {
+    let fingerprints = fingerprints
+        .into_iter()
+        .map(GattFingerprint::from)
+        .collect::<Vec<_>>();
+    cutout_protocols::discovery_subscription_channels(&fingerprints)
+        .into_iter()
+        .map(|channel| channel.as_bytes().to_vec())
+        .collect()
+}
+
+/// Whether discovery may read this characteristic before a frame arrives.
+///
+/// Backfire telemetry is excluded. A read of that UUID is not a pinned
+/// operation, and Android would admit it as a notification.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_read_permitted(fingerprint: MobileGattFingerprintDto) -> bool {
+    cutout_protocols::discovery_read_permitted(&GattFingerprint::from(fingerprint))
+}
+
+/// Whether the host must enable notify, rather than indication, for this channel.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_subscription_requires_notify(channel: Vec<u8>) -> bool {
+    let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+        return false;
+    };
+    cutout_protocols::subscription_requires_notify(&GattChannel::from_bytes(channel))
+}
+
+/// Service to bind when a channel UUID occurs under more than one service.
+///
+/// Backfire telemetry returns F1F0. Other channels return nothing.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_preferred_subscription_service(channel: Vec<u8>) -> Option<Vec<u8>> {
+    let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+        return None;
+    };
+    cutout_protocols::preferred_subscription_service(&GattChannel::from_bytes(channel))
+        .map(|service| service.as_bytes().to_vec())
+}
+
+/// Whether unresolved capture may enable this characteristic.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_capture_subscription_permitted(fingerprint: MobileGattFingerprintDto) -> bool {
+    cutout_protocols::capture_subscription_permitted(&GattFingerprint::from(fingerprint))
+}
+
 /// Transport service UUIDs to request from native Bluetooth scans.
 ///
 /// These are discovery hints; the device still requires protocol detection.
@@ -4011,6 +4124,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
         section: DiscoveryCandidateSupport::RejectedNoise.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Rejected noise".to_owned()),
     }
 }
@@ -4031,6 +4145,7 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
         section: DiscoveryCandidateSupport::ManualPlaceholder.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Capture flow later".to_owned()),
     }
 }
@@ -4075,6 +4190,7 @@ pub fn mobile_ambiguous_discovery_candidate(
         section: DiscoveryCandidateSupport::Ambiguous.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Needs user confirmation".to_owned()),
     }
 }
@@ -4099,6 +4215,7 @@ pub fn mobile_conflicting_discovery_candidate(
         section: DiscoveryCandidateSupport::Conflicting.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Conflicting identity evidence".to_owned()),
     }
 }
@@ -4152,6 +4269,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         section: support.picker_section(),
         connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
+        protocol_family: None,
         disabled_reason: mobile_begode_identity_probe_disabled_reason(
             support,
             reported_code_name,
@@ -4196,6 +4314,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::RejectedNoise.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Rejected noise".to_owned()),
         };
     }
@@ -4213,6 +4332,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::Conflicting.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Conflicting identity evidence".to_owned()),
         };
     }
@@ -4241,6 +4361,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     }
@@ -4254,13 +4375,35 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "VESC controller".to_owned(),
             evidence: "VESC protocol family".to_owned(),
-            detail: "VESC read-only route".to_owned(),
+            detail: "Vehicle type is still unknown.".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::Supported,
             recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
             section: DiscoveryCandidateSupport::Supported.picker_section(),
-            connection_route: Some(DiscoveryConnectionRoute::Vesc),
+            connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: Some(MobileProtocolFamilyDto::Vesc),
+            disabled_reason: None,
+        };
+    }
+
+    if match resolution.protocol_family.as_ref() {
+        Some(MobileProtocolFamilyDto::Backfire) => true,
+        _ => false,
+    } {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric skateboard".to_owned(),
+            evidence: "Backfire telemetry report".to_owned(),
+            detail: "Read-only battery, pack voltage, trip and odometer.".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::Supported,
+            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
+            section: DiscoveryCandidateSupport::Supported.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::Eskate),
+            electric_unicycle_model: None,
+            protocol_family: Some(MobileProtocolFamilyDto::Backfire),
             disabled_reason: None,
         };
     }
@@ -4284,6 +4427,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Begode/Gotway model identity probe required".to_owned()),
         };
     }
@@ -4371,7 +4515,7 @@ pub fn mobile_discovery_candidate_from_closest_detection_resolution(
         MobileProtocolFamilyDto::BegodeGotway => {
             ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
         }
-        MobileProtocolFamilyDto::Vesc => return detected,
+        MobileProtocolFamilyDto::Vesc | MobileProtocolFamilyDto::Backfire => return detected,
     };
     let protocol_model = resolution
         .veteran_protocol_model_id
@@ -4407,6 +4551,7 @@ pub fn mobile_discovery_candidate_from_closest_detection_resolution(
         section: DiscoveryCandidateSection::Supported,
         connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model: Some(model),
+        protocol_family: None,
         disabled_reason: None,
     }
 }
@@ -4432,6 +4577,7 @@ const fn family_label(family: MobileProtocolFamilyDto) -> &'static str {
         MobileProtocolFamilyDto::VeteranLeaperkimNosfet => "Veteran/NOSFET",
         MobileProtocolFamilyDto::BegodeGotway => "Begode/Gotway",
         MobileProtocolFamilyDto::Vesc => "VESC",
+        MobileProtocolFamilyDto::Backfire => "Backfire",
     }
 }
 
@@ -4486,6 +4632,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     };
@@ -4515,6 +4662,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         section: support.picker_section(),
         connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model,
+        protocol_family: None,
         disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
     }
 }
@@ -4691,6 +4839,12 @@ pub struct MobileSessionInputDto {
 
     /// Owned notification bytes.
     pub bytes: Vec<u8>,
+
+    /// GATT service that produced a notification, when the host reported one.
+    ///
+    /// Empty means the host did not report a service. Backfire ignores those frames.
+    #[uniffi(default)]
+    pub service: Vec<u8>,
 }
 
 /// Generic light state used by telemetry and light actions.
@@ -14358,6 +14512,9 @@ pub enum MobileProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+
+    /// Backfire telemetry family.
+    Backfire,
 }
 
 /// Mobile value source.
@@ -14594,6 +14751,7 @@ const fn mobile_protocol_family_from_detection(
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
         ProtocolFamilyState::Vesc => Some(MobileProtocolFamilyDto::Vesc),
+        ProtocolFamilyState::Backfire => Some(MobileProtocolFamilyDto::Backfire),
     }
 }
 
@@ -15560,6 +15718,7 @@ impl From<MobileProtocolFamilyDto> for ProtocolFamily {
             MobileProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             MobileProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             MobileProtocolFamilyDto::Vesc => Self::Vesc,
+            MobileProtocolFamilyDto::Backfire => Self::Backfire,
         }
     }
 }
@@ -15570,6 +15729,7 @@ impl From<ProtocolFamilyDto> for MobileProtocolFamilyDto {
             ProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             ProtocolFamilyDto::Vesc => Self::Vesc,
+            ProtocolFamilyDto::Backfire => Self::Backfire,
         }
     }
 }
@@ -15886,6 +16046,7 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
                 channel: mobile_channel_bytes(&input.channel),
+                service: <[u8; 16]>::try_from(input.service).ok(),
                 bytes: input.bytes,
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
@@ -20323,11 +20484,50 @@ mod tests {
 
         assert_eq!(candidate.product_category, "VESC controller");
         assert_eq!(candidate.evidence, "VESC protocol family");
-        assert_eq!(candidate.detail, "VESC read-only route");
+        assert_eq!(candidate.detail, "Vehicle type is still unknown.");
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(
+            candidate.protocol_family,
+            Some(MobileProtocolFamilyDto::Vesc)
+        );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_routes_backfire_family() {
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-backfire-family".to_owned(),
+            "Backfire stream".to_owned(),
+            DeviceDetectionResolutionRecord {
+                protocol_family: Some(MobileProtocolFamilyDto::Backfire),
+                awaits_passive_evidence: false,
+                protocol_conflict: false,
+                veteran_protocol_model_id: None,
+                advertised_name: None,
+                model_banner: None,
+                firmware_banner: None,
+                imu_banner: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(candidate.product_category, "Electric skateboard");
+        assert_eq!(candidate.evidence, "Backfire telemetry report");
+        assert_eq!(
+            candidate.detail,
+            "Read-only battery, pack voltage, trip and odometer."
+        );
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
-            Some(DiscoveryConnectionRoute::Vesc)
+            Some(DiscoveryConnectionRoute::Eskate)
+        );
+        assert_eq!(
+            candidate.protocol_family,
+            Some(MobileProtocolFamilyDto::Backfire)
         );
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(candidate.disabled_reason, None);
@@ -21845,6 +22045,7 @@ mod tests {
         bytes: &[u8],
     ) -> MobileSessionStepResultDto {
         let result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::Notification,
             monotonic_ms: ms(monotonic_ms),
             max_write_len: None,
@@ -22003,6 +22204,7 @@ mod tests {
     fn vesc_wrapper_current_snapshot_keeps_refloat_fields_after_values_frames() {
         let session = VescReadOnlySession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22102,6 +22304,7 @@ mod tests {
         assert_eq!(lifted, profile);
         let session = VescReadOnlySession::with_board_profile(lifted);
         session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22167,6 +22370,7 @@ mod tests {
     fn vesc_mobile_missing_geometry_retains_raw_erpm_without_physical_speed() {
         let session = VescReadOnlySession::new();
         session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),
@@ -22200,6 +22404,7 @@ mod tests {
         });
 
         let link_result = session.ingest_checked(MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
             max_write_len: Some(mobile_write_len(185)),

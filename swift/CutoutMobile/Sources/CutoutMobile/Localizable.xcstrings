@@ -762,6 +762,10 @@
       "comment" : "Device picker status after a Bluetooth scan finishes with no rideable device found.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } } }
     },
+    "protocol_identity.fallback.backfire" : {
+      "comment" : "Fallback picker name for a detected Backfire device before a model is identified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Backfire device" } } }
+    },
     "protocol_identity.fallback.begode" : {
       "comment" : "Fallback picker name for a detected Begode or GotWay device before its model is identified.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Begode device" } } }

@@ -2652,6 +2652,9 @@ pub enum SessionInputDto {
         /// Transport endpoint that produced the bytes.
         channel: [u8; 16],
 
+        /// GATT service that produced the bytes, when the host reported one.
+        service: Option<[u8; 16]>,
+
         /// Owned notification payload.
         bytes: Vec<u8>,
 
@@ -2688,10 +2691,12 @@ impl From<SessionInput<'_>> for SessionInputDto {
             SessionInput::LinkDown => Self::LinkDown,
             SessionInput::Notification {
                 channel,
+                service,
                 bytes,
                 monotonic_ms,
             } => Self::Notification {
                 channel: channel.as_bytes(),
+                service: service.map(crate::GattChannel::as_bytes),
                 bytes: bytes.to_vec(),
                 monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
@@ -2718,10 +2723,12 @@ impl SessionInputDto {
             Self::LinkDown => SessionInput::LinkDown,
             Self::Notification {
                 channel,
+                service,
                 bytes,
                 monotonic_ms,
             } => SessionInput::Notification {
                 channel: crate::GattChannel::from_bytes(*channel),
+                service: service.map(crate::GattChannel::from_bytes),
                 bytes: bytes.as_slice(),
                 monotonic_ms: (*monotonic_ms).into_core(),
             },
@@ -2959,6 +2966,9 @@ pub enum ProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+
+    /// Backfire telemetry family.
+    Backfire,
 }
 
 impl From<ProtocolFamily> for ProtocolFamilyDto {
@@ -2967,6 +2977,7 @@ impl From<ProtocolFamily> for ProtocolFamilyDto {
             ProtocolFamily::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamily::BegodeGotway => Self::BegodeGotway,
             ProtocolFamily::Vesc => Self::Vesc,
+            ProtocolFamily::Backfire => Self::Backfire,
         }
     }
 }
@@ -3941,6 +3952,7 @@ mod tests {
     fn session_input_dto_owns_notification_bytes_and_commands() {
         let notification = SessionInputDto::from(SessionInput::Notification {
             channel: GattChannel::from_bytes([0xA1; 16]),
+            service: Some(GattChannel::from_bytes([0xB2; 16])),
             bytes: &[0xde, 0xad, 0xbe, 0xef],
             monotonic_ms: MonotonicTimestamp::new(42),
         });
@@ -3953,6 +3965,7 @@ mod tests {
             notification,
             SessionInputDto::Notification {
                 channel: [0xA1; 16],
+                service: Some([0xB2; 16]),
                 bytes: vec![0xde, 0xad, 0xbe, 0xef],
                 monotonic_ms: ms(42),
             }
@@ -3967,6 +3980,7 @@ mod tests {
     fn session_input_dto_borrows_core_notification_input() {
         let dto = SessionInputDto::Notification {
             channel: [0xA1; 16],
+            service: Some([0xB2; 16]),
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
             monotonic_ms: ms(42),
         };
@@ -3975,6 +3989,7 @@ mod tests {
             dto.as_session_input(),
             SessionInput::Notification {
                 channel: GattChannel::from_bytes([0xA1; 16]),
+                service: Some(GattChannel::from_bytes([0xB2; 16])),
                 bytes: &[0xde, 0xad, 0xbe, 0xef],
                 monotonic_ms: MonotonicTimestamp::new(42),
             }

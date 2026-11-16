@@ -103,6 +103,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Veteran partial frame", || {
         veteran.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &LIVE_AERO_SELECTOR_0[..20],
                 monotonic_ms: ms(2),
@@ -116,6 +117,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Veteran complete frame", || {
         veteran.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &LIVE_AERO_SELECTOR_0,
                 monotonic_ms: ms(3),
@@ -128,6 +130,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
         for at in 4..36 {
             veteran.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes: &LIVE_AERO_SELECTOR_0,
                     monotonic_ms: ms(at),
@@ -144,6 +147,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Veteran reserved frame", || {
         veteran.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &reserved,
                 monotonic_ms: ms(4),
@@ -159,6 +163,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Veteran parser gap", || {
         veteran.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &gap,
                 monotonic_ms: ms(5),
@@ -179,6 +184,7 @@ fn fragmented_coalesced_aero_responses_do_not_allocate() {
         for iteration in 0..32 {
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes: &frame[..split],
                     monotonic_ms: ms(2 + iteration * 2),
@@ -188,6 +194,7 @@ fn fragmented_coalesced_aero_responses_do_not_allocate() {
             output.clear();
             session.handle(
                 SessionInput::Notification {
+                    service: None,
                     channel: VETERAN_DATA_CHANNEL,
                     bytes: &continuation,
                     monotonic_ms: ms(3 + iteration * 2),
@@ -223,6 +230,7 @@ fn begode_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Begode notification session", || {
         begode.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &BEGODE_LIVE_A,
                 monotonic_ms: ms(6),
@@ -246,6 +254,7 @@ fn vesc_parser_owned_results_do_not_allocate() {
     assert_no_allocations("VESC notification session", || {
         vesc.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &VESC_VALUES,
                 monotonic_ms: ms(7),
@@ -272,6 +281,7 @@ fn configured_sessions_do_not_allocate() {
     assert_no_allocations("configured VESC notification session", || {
         vesc.handle(
             SessionInput::Notification {
+                service: None,
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &VESC_VALUES,
                 monotonic_ms: ms(2),
@@ -297,6 +307,7 @@ fn configured_sessions_do_not_allocate() {
     assert_no_allocations("configured Begode notification session", || {
         begode.handle(
             SessionInput::Notification {
+                service: None,
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &BEGODE_LIVE_A,
                 monotonic_ms: ms(4),

@@ -15,6 +15,12 @@
 
 mod gatt;
 pub use gatt::*;
+mod backfire;
+pub use backfire::{
+    BACKFIRE_SERVICE_CHANNEL, BACKFIRE_TELEMETRY_CHANNEL, BACKFIRE_WRITE_CHANNEL,
+    capture_subscription_permitted, discovery_read_permitted, discovery_subscription_channels,
+    passive_observation_channels, preferred_subscription_service, subscription_requires_notify,
+};
 #[cfg(feature = "capture-replay")]
 mod vesc_capture_replay;
 #[cfg(feature = "capture-replay")]

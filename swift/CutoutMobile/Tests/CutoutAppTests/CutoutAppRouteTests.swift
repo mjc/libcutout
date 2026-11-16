@@ -35,7 +35,7 @@ final class CutoutAppRouteTests: XCTestCase {
     @MainActor
     func testTabAccentFollowsConnectedVehicleAcrossMap() {
         XCTAssertEqual(
-            ContentView.accentKind(selectedConnectionRoute: .vesc, route: .rideMap),
+            ContentView.accentKind(selectedConnectionRoute: .onewheel, route: .rideMap),
             .purple
         )
         XCTAssertEqual(
@@ -43,20 +43,21 @@ final class CutoutAppRouteTests: XCTestCase {
             .yellow
         )
         XCTAssertEqual(
-            ContentView.accentKind(selectedConnectionRoute: nil, route: .lighting(.vesc)),
-            .purple
+            ContentView.accentKind(selectedConnectionRoute: .eskate, route: .rideMap),
+            .yellow
         )
+        XCTAssertNil(ContentView.accentKind(selectedConnectionRoute: nil, route: .lighting(.vesc)))
     }
 
     @MainActor
     func testStandardVescVehicleClassKeepsApprovedAccentAcrossSharedRoutes() {
         for route in [CutoutAppRoute.vescRide, .rideMap, .tune, .more] {
             XCTAssertEqual(
-                ContentView.accentKind(selectedConnectionRoute: .vesc, route: route, vehicleKind: .eskate),
+                ContentView.accentKind(selectedConnectionRoute: nil, route: route, vehicleKind: .eskate),
                 .yellow
             )
             XCTAssertEqual(
-                ContentView.accentKind(selectedConnectionRoute: .vesc, route: route, vehicleKind: .onewheel),
+                ContentView.accentKind(selectedConnectionRoute: nil, route: route, vehicleKind: .onewheel),
                 .purple
             )
         }
@@ -215,7 +216,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.lighting(.euc).preservesNavigationOnConnectionLoss)
         XCTAssertTrue(CutoutAppRoute.lighting(.vesc).preservesNavigationOnConnectionLoss)
         XCTAssertEqual(
-            CutoutAppRoute.rideMap.destination(forNavigationTarget: .lighting, connectionRoute: .vesc),
+            CutoutAppRoute.rideMap.destination(
+                forNavigationTarget: .lighting, connectionRoute: nil, protocolFamily: .vesc),
             .lighting(.vesc)
         )
     }
@@ -278,8 +280,12 @@ final class CutoutAppRouteTests: XCTestCase {
 
     func testConnectionRoutesMatchRideSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.electricUnicycle), .eucRide)
-        XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.vesc), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.onewheel), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.eskate), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.scooter), .vescRide)
         XCTAssertEqual(CutoutAppRoute.route(for: nil), .devicePicker)
+        XCTAssertEqual(CutoutAppRoute.rideShell(for: nil), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.rideShell(for: .electricUnicycle), .eucRide)
     }
 
     func testNavigationPathKeepsPickerAtRootAndReplacesConnectedDestinations() {
@@ -300,7 +306,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     func testCameraKeepsRideAndMapTabsWithMoreSelectedForBothDeviceFamilies() throws {
-        for connectionRoute in [DevicePickerConnectionRoute.electricUnicycle, .vesc] {
+        for connectionRoute in [DevicePickerConnectionRoute.electricUnicycle, .onewheel, .eskate, .scooter] {
             let cameraTabs = CutoutAppRoute.camera.primaryNavigationTabs(for: connectionRoute)
             XCTAssertEqual(
                 cameraTabs.map(\.id),
@@ -346,16 +352,17 @@ final class CutoutAppRouteTests: XCTestCase {
             [.ride, .lighting, .pack, .camera, .map, .tune]
         )
         XCTAssertEqual(
-            CutoutAppRoute.vescRide.navigationTabs(for: .vesc).map(\.id),
+            CutoutAppRoute.vescRide.navigationTabs(for: nil, protocolFamily: .vesc).map(\.id),
             [.ride, .lighting, .debug, .camera, .map, .tune, .logs]
         )
-        let vescTabs = CutoutAppRoute.vescRide.availableNavigationTabs(for: .vesc)
+        let vescTabs = CutoutAppRoute.vescRide.availableNavigationTabs(for: nil, protocolFamily: .vesc)
         let tuneTab = try XCTUnwrap(vescTabs.first(where: { $0.id == .tune }))
         let diagnosticsTab = try XCTUnwrap(vescTabs.first(where: { $0.id == .debug }))
         XCTAssertEqual(
-            CutoutAppRoute.vescRide.destination(for: tuneTab, connectionRoute: .vesc), .tune)
+            CutoutAppRoute.vescRide.destination(for: tuneTab, connectionRoute: nil, protocolFamily: .vesc), .tune)
         XCTAssertEqual(
-            CutoutAppRoute.vescRide.destination(for: diagnosticsTab, connectionRoute: .vesc), .vescDebug)
+            CutoutAppRoute.vescRide.destination(for: diagnosticsTab, connectionRoute: nil, protocolFamily: .vesc),
+            .vescDebug)
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview)
                 .navigationTabs(for: .electricUnicycle)
@@ -368,7 +375,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertTrue(
             CutoutAppRoute.vescDebug
-                .navigationTabs(for: .vesc)
+                .navigationTabs(for: nil, protocolFamily: .vesc)
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
         XCTAssertEqual(
@@ -376,11 +383,12 @@ final class CutoutAppRouteTests: XCTestCase {
             [.tune]
         )
         XCTAssertEqual(
-            CutoutAppRoute.tune.navigationTabs(for: .vesc).filter(\.isSelected).map(\.id),
+            CutoutAppRoute.tune.navigationTabs(for: nil, protocolFamily: .vesc).filter(\.isSelected).map(\.id),
             [.tune]
         )
         XCTAssertEqual(
-            CutoutAppRoute.tune.navigationTabs(for: .vesc).first(where: { $0.id == .debug })?.isSelected,
+            CutoutAppRoute.tune.navigationTabs(for: nil, protocolFamily: .vesc).first(where: { $0.id == .debug })?
+                .isSelected,
             false
         )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
@@ -403,11 +411,11 @@ final class CutoutAppRouteTests: XCTestCase {
             [.ride, .map, .tune, .more]
         )
         XCTAssertEqual(
-            CutoutAppRoute.vescRide.primaryNavigationTabs(for: .vesc).map(\.id),
+            CutoutAppRoute.vescRide.primaryNavigationTabs(for: nil, protocolFamily: .vesc).map(\.id),
             [.ride, .map, .tune, .more]
         )
         XCTAssertEqual(
-            CutoutAppRoute.vescDebug.primaryNavigationTabs(for: .vesc).map(\.id),
+            CutoutAppRoute.vescDebug.primaryNavigationTabs(for: nil, protocolFamily: .vesc).map(\.id),
             [.ride, .map, .tune, .more]
         )
         XCTAssertEqual(CutoutAppRoute.devicePicker.primaryNavigationTabs(for: nil).map(\.id), [.devices, .map, .more])
@@ -418,7 +426,7 @@ final class CutoutAppRouteTests: XCTestCase {
             [.lighting, .pack, .camera]
         )
         XCTAssertEqual(
-            CutoutAppRoute.more.moreNavigationTabs(for: .vesc).map(\.id),
+            CutoutAppRoute.more.moreNavigationTabs(for: nil, protocolFamily: .vesc).map(\.id),
             [.lighting, .debug, .camera]
         )
         XCTAssertEqual(CutoutAppRoute.more.moreNavigationTabs(for: nil).map(\.id), [.camera, .lighting])
@@ -518,7 +526,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testConnectedMapRoutesUseTheDeviceFamilyAndSelectMap() {
         let eucTabs = CutoutAppRoute.rideMap.availableNavigationTabs(for: .electricUnicycle)
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
-            .availableNavigationTabs(for: .vesc)
+            .availableNavigationTabs(for: nil, protocolFamily: .vesc)
 
         XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .camera, .map, .tune])
         XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .camera, .map, .tune])
@@ -541,7 +549,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(nestedPackRoute.destination(for: mapTab), .rideMap)
         XCTAssertEqual(nestedPackRoute.destination(for: tuneTab), .tune)
         let debugTab = try XCTUnwrap(
-            CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vesc)
+            CutoutAppRoute.vescDebug.availableNavigationTabs(for: nil, protocolFamily: .vesc)
                 .first(where: { $0.id == .debug })
         )
         XCTAssertEqual(
@@ -552,7 +560,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
     func testUnavailableTabHasNoDestination() throws {
         let unavailableLogsTab = try XCTUnwrap(
-            CutoutAppRoute.vescRide.navigationTabs(for: .vesc)
+            CutoutAppRoute.vescRide.navigationTabs(for: nil, protocolFamily: .vesc)
                 .first(where: { $0.id == .logs })
         )
 
@@ -702,7 +710,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
             title: "VESC",
-            route: .vesc
+            route: nil, protocolFamily: .vesc
         )
         let retry = SessionConnectionRetry(
             platformIdentifier: selection.platformIdentifier,
@@ -723,7 +731,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
             title: "VESC",
-            route: .vesc
+            route: nil, protocolFamily: .vesc
         )
         let retry = SessionConnectionRetry(
             platformIdentifier: selection.platformIdentifier,

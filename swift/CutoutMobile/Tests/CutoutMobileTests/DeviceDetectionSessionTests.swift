@@ -445,10 +445,13 @@ final class DeviceDetectionSessionTests: XCTestCase {
             ))
 
         XCTAssertEqual(candidate.productCategory, "VESC controller")
-        XCTAssertEqual(candidate.support, .supported(connectionRoute: .vesc, electricUnicycleModel: nil))
+        XCTAssertEqual(candidate.detail, "Vehicle type is still unknown.")
+        XCTAssertEqual(candidate.support, .supported(connectionRoute: nil, electricUnicycleModel: nil))
+        XCTAssertEqual(candidate.protocolFamily, .vesc)
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.section, .supported)
-        XCTAssertEqual(candidate.pickerRow.connectionRoute, .vesc)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+        XCTAssertEqual(candidate.pickerRow.protocolFamily, .vesc)
     }
 
     func testMixedProtocolFamiliesProjectConflictingCandidate() {

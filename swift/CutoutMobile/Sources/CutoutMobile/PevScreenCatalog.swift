@@ -27,7 +27,33 @@ public enum PevNavigationTarget: Equatable, Hashable, Sendable {
 
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
-    case vesc = "vesc"
+    case onewheel = "onewheel"
+    case eskate = "eskate"
+    case scooter = "scooter"
+
+    public init?(vehicleKind: VehicleKind?) {
+        switch vehicleKind {
+        case .electricUnicycle: self = .electricUnicycle
+        case .onewheel: self = .onewheel
+        case .eskate: self = .eskate
+        case .scooter: self = .scooter
+        case .unknown, .ebike, .emoto, nil: return nil
+        }
+    }
+}
+
+public func opensBoardRideShell(
+    route: DevicePickerConnectionRoute?,
+    protocolFamily: DeviceDetectionProtocolFamily?
+) -> Bool {
+    switch route {
+    case .onewheel, .eskate, .scooter:
+        true
+    case .electricUnicycle:
+        false
+    case nil:
+        protocolFamily == .vesc || protocolFamily == .backfire
+    }
 }
 
 public typealias PevConnectionRoute = DevicePickerConnectionRoute
@@ -93,6 +119,7 @@ public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
     case motorCurrent
     case motorTemperature
     case tripDistance
+    case odometer
     case rideDuration
     case boardAngle
     case controller
@@ -516,6 +543,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let glyphKind: DevicePickerGlyphKind
     public let connectionRoute: DevicePickerConnectionRoute?
     public let electricUnicycleModel: ElectricUnicycleModel?
+    public let protocolFamily: DeviceDetectionProtocolFamily?
 
     public init(
         id: String? = nil,
@@ -528,7 +556,8 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         glyphKind: DevicePickerGlyphKind? = nil,
         connectionRoute: DevicePickerConnectionRoute? = nil,
         electricUnicycleModel: ElectricUnicycleModel? = nil,
-        advertisedName: String? = nil
+        advertisedName: String? = nil,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
     ) {
         self.id = id ?? title
         self.advertisedName = advertisedName
@@ -541,6 +570,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         self.glyphKind = glyphKind ?? DevicePickerGlyphKind(symbolName: symbolName)
         self.connectionRoute = connectionRoute
         self.electricUnicycleModel = electricUnicycleModel
+        self.protocolFamily = protocolFamily
     }
 }
 
@@ -709,8 +739,12 @@ extension DevicePickerConnectionRoute {
         switch route {
         case .electricUnicycle:
             self = .electricUnicycle
-        case .vesc:
-            self = .vesc
+        case .onewheel:
+            self = .onewheel
+        case .eskate:
+            self = .eskate
+        case .scooter:
+            self = .scooter
         }
     }
 }
@@ -727,6 +761,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let glyphKind: DevicePickerGlyphKind
     public let rowState: DevicePickerRowState
     public let section: DevicePickerRowSection
+    public let protocolFamily: DeviceDetectionProtocolFamily?
 
     public init(
         platformIdentifier: String,
@@ -739,7 +774,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         glyphKind: DevicePickerGlyphKind? = nil,
         rowState: DevicePickerRowState? = nil,
         section: DevicePickerRowSection? = nil,
-        advertisedName: String? = nil
+        advertisedName: String? = nil,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
     ) {
         let state = rowState ?? support.pickerRowState
         self.platformIdentifier = platformIdentifier
@@ -753,6 +789,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         self.glyphKind = glyphKind ?? DevicePickerGlyphKind(symbolName: symbolName)
         self.rowState = state
         self.section = section ?? DevicePickerRowSection(state: state)
+        self.protocolFamily = protocolFamily
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
@@ -776,7 +813,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             symbolName: support.isSupported ? "circle.hexagongrid.circle" : "questionmark.circle",
             rowState: DevicePickerRowState(action: candidate.recommendedAction),
             section: DevicePickerRowSection(section: candidate.section),
-            advertisedName: advertisedName
+            advertisedName: advertisedName,
+            protocolFamily: candidate.protocolFamily.map(DeviceDetectionProtocolFamily.init)
         )
     }
 
@@ -802,7 +840,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             glyphKind: glyphKind,
             connectionRoute: support.connectionRoute,
             electricUnicycleModel: support.electricUnicycleModel,
-            advertisedName: advertisedName
+            advertisedName: advertisedName,
+            protocolFamily: protocolFamily
         )
     }
 }

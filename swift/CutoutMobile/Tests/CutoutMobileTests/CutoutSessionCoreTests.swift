@@ -277,8 +277,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         let candidate = DevicePickerDiscoveryCandidate(
             platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
             evidence: "fixture", detail: "fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
         let core = CutoutSessionCore(
             clock: MonotonicClock(),
@@ -404,8 +405,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         let candidate = DevicePickerDiscoveryCandidate(
             platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
             evidence: "fixture", detail: "fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
         let core = CutoutSessionCore(
             clock: MonotonicClock { MonotonicMilliseconds(1) },
@@ -479,8 +481,9 @@ final class CutoutSessionCoreTests: XCTestCase {
             let candidate = DevicePickerDiscoveryCandidate(
                 platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
                 evidence: "fixture", detail: "fixture",
-                support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-                symbolName: "circle.hexagongrid.circle"
+                support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+                symbolName: "circle.hexagongrid.circle",
+                protocolFamily: .vesc
             )
             let queue = DispatchQueue(label: "cutout.delayed-vehicle-restore.test")
             let core = CutoutSessionCore(
@@ -1857,7 +1860,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testObservedAdvertisementsUpdatePickerScanState() {
         XCTAssertEqual(
             Set(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids),
-            Set([.eucSerialFfe0, .vescSerialFff0, .vescNordicUartService])
+            Set([.eucSerialFfe0, .vescSerialFff0, .vescNordicUartService, .backfireService])
         )
         let core = CutoutSessionCore()
         var observedStates: [DevicePickerScanState] = []
@@ -3724,6 +3727,41 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
         XCTAssertEqual(eskate.vehicleKind, .eskate)
         XCTAssertEqual(eskate.application, .absent)
+        XCTAssertTrue(eskate.isVescProtocol)
+    }
+
+    func testBackfireRideSnapshotUsesStandardInstrumentsWithoutVescControls() throws {
+        let identity = MobileDeviceIdentityDto(
+            protocol: .backfire,
+            vehicleKind: .eskate,
+            classificationProvenance: .protocol,
+            classificationRequirement: .resolved,
+            vescApplication: nil,
+            vescApplicationQuery: nil,
+            model: nil
+        )
+        let snapshot = try XCTUnwrap(
+            VescRideSnapshot(displayState: RideDisplayState(), title: "Zealot", identity: identity))
+        XCTAssertFalse(snapshot.isVescProtocol)
+        XCTAssertEqual(snapshot.application, .absent)
+        XCTAssertEqual(snapshot.vehicleKind, .eskate)
+
+        let controller = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(),
+                title: "Controller",
+                identity: MobileDeviceIdentityDto(
+                    protocol: .vesc,
+                    vehicleKind: .eskate,
+                    classificationProvenance: .userProvided,
+                    classificationRequirement: .resolved,
+                    vescApplication: .pending,
+                    vescApplicationQuery: .notRequested,
+                    model: nil
+                )
+            ))
+        XCTAssertTrue(controller.isVescProtocol)
+        XCTAssertEqual(controller.application, .pending)
     }
 
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
@@ -3772,6 +3810,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let recorded = try snapshot(points: 2, statistics: statistics)
         XCTAssertNil(recorded.boardSpeed)
         XCTAssertEqual(recorded.tripDistance, Distance(value: 1_609_344))
+        XCTAssertNil(recorded.odometer)
         XCTAssertEqual(recorded.rideDuration, MonotonicMilliseconds(522_000))
 
         let withoutRoute = try snapshot(points: 0, statistics: statistics)
@@ -3780,7 +3819,58 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         let stopped = try snapshot(points: 2, statistics: nil)
         XCTAssertNil(stopped.tripDistance)
+        XCTAssertNil(stopped.odometer)
         XCTAssertNil(stopped.rideDuration)
+    }
+
+    func testBackfireRideSnapshotShowsBoardTripAndOdometerWhenARouteIsRecording() throws {
+        let identity = MobileDeviceIdentityDto(
+            protocol: .backfire,
+            vehicleKind: .eskate,
+            classificationProvenance: .protocol,
+            classificationRequirement: .resolved,
+            vescApplication: nil,
+            vescApplicationQuery: nil,
+            model: nil
+        )
+        func snapshot(points: UInt64, associatedVehicle: String?) throws -> VescRideSnapshot {
+            let statistics = MobileRideMapLiveActivityStatisticsDto(
+                durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)
+            let display = RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(47_271),
+                    distance: Distance(value: 87_800_000),
+                    tripDistance: Distance(value: 100_000),
+                    batteryLevelReported: batteryLevelValue(70)
+                ),
+                logicalRide: MobileRideMapSnapshotDto(
+                    rideID: "current-ride", state: .active,
+                    summary: MobileRideMapSummaryDto(
+                        pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: associatedVehicle
+                )
+            )
+            return try XCTUnwrap(
+                VescRideSnapshot(
+                    displayState: display, title: "Zealot", identity: identity,
+                    connectedPlatformIdentifier: "board"))
+        }
+
+        let recording = try snapshot(points: 2, associatedVehicle: "board")
+        XCTAssertEqual(recording.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(recording.odometer, Distance(value: 87_800_000))
+        XCTAssertEqual(recording.rideDuration, MonotonicMilliseconds(522_000))
+        XCTAssertFalse(recording.isVescProtocol)
+
+        let otherBoard = try snapshot(points: 2, associatedVehicle: nil)
+        XCTAssertEqual(otherBoard.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(otherBoard.odometer, Distance(value: 87_800_000))
+        XCTAssertNil(otherBoard.rideDuration)
+
+        let withoutRoute = try snapshot(points: 0, associatedVehicle: "board")
+        XCTAssertEqual(withoutRoute.tripDistance, Distance(value: 100_000))
+        XCTAssertEqual(withoutRoute.odometer, Distance(value: 87_800_000))
+        XCTAssertEqual(withoutRoute.rideDuration, MonotonicMilliseconds(522_000))
     }
 
     func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
@@ -4512,6 +4602,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             (.veteranLeaperkimNosfet, "protocol_identity.fallback.veteran_nosfet", "Veteran/NOSFET device"),
             (.begodeGotway, "protocol_identity.fallback.begode", "Begode device"),
             (.vesc, "protocol_identity.fallback.vesc", "VESC device"),
+            (.backfire, "protocol_identity.fallback.backfire", "Backfire device"),
             (nil, "protocol_identity.fallback.unknown", "Detected rideable"),
         ]
 
@@ -5899,8 +5990,9 @@ final class CutoutSessionCoreTests: XCTestCase {
             productCategory: "VESC Onewheel",
             evidence: "test script",
             detail: "core callback fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
     }
 

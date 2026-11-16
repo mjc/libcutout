@@ -63,7 +63,8 @@ class LocalVescDrivetrainPanelTest {
         try {
             observeFixture()
             val candidate = state.connectionAdmissionCandidate(token.platformIdentifier, "VESC", false)
-            assertEquals(DiscoveryConnectionRoute.VESC, candidate.connectionRoute)
+            assertNull(candidate.connectionRoute)
+            assertEquals(MobileProtocolFamilyDto.VESC, candidate.protocolFamily)
             assertNull(candidate.electricUnicycleModel)
             clickNavigation(activity, R.string.ride)
             val choose = checkNotNull(activity.window.decorView.findViewWithTag<View>("ride.choose-vehicle-kind"))

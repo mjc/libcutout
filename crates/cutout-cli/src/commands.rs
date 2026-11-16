@@ -4329,6 +4329,7 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::LinkDown));
                 }
                 SessionInput::Notification {
+                    service: _,
                     channel,
                     bytes,
                     monotonic_ms,
@@ -6787,6 +6788,7 @@ mod tests {
                     "route=electric_unicycle",
                 ],
             ),
+            (Some(ProtocolFamily::Backfire), vec!["route=vesc"]),
         ] {
             capture
                 .header
@@ -6806,6 +6808,31 @@ mod tests {
             );
             assert_eq!(retained, bytes, "rejected replay must preserve the capture");
         }
+    }
+
+    #[test]
+    fn backfire_protocol_annotation_does_not_select_vesc_replay() {
+        let (mut capture, _, _) = public_vesc_auto_replay_fixture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::Backfire),
+            model: None,
+            firmware: None,
+        });
+        capture.header.annotations = ["protocol_detection_resolved=backfire", "route=eskate"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            !auto_pevcap_uses_vesc(&capture.header)
+                .expect("Backfire protocol and an e-skate route agree")
+        );
+
+        capture.header.annotations = ["route=vesc"].into_iter().map(str::to_owned).collect();
+        let error = auto_pevcap_uses_vesc(&capture.header).unwrap_err();
+        assert!(
+            error.to_string().contains("conflicting protocol"),
+            "{error}"
+        );
     }
 
     #[test]

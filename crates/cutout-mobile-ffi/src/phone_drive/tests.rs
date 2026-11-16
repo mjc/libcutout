@@ -33,6 +33,7 @@ fn eligible_eskate_attempt(
         .ingest_device_session(
             token.clone(),
             MobileSessionInputDto {
+                service: Vec::new(),
                 kind: MobileSessionInputKindDto::LinkUp,
                 monotonic_ms: crate::MobileMonotonicMillisDto {
                     milliseconds: at_ms + 2,
@@ -60,6 +61,7 @@ fn eligible_eskate_attempt(
     let _ = handle.ingest_device_session(
         token.clone(),
         MobileSessionInputDto {
+            service: Vec::new(),
             kind: MobileSessionInputKindDto::Tick,
             monotonic_ms: crate::MobileMonotonicMillisDto {
                 milliseconds: at_ms + 10_000,

@@ -6,7 +6,7 @@ pub use cutout_core::{
     AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
 };
 use cutout_core::{
-    BluetoothServiceUuid, CutoutSessionState, GattFingerprint, ModelRegistryEntry,
+    BluetoothServiceUuid, CutoutSessionState, GattChannel, GattFingerprint, ModelRegistryEntry,
     MonotonicTimestamp, ProtocolFamily,
 };
 
@@ -267,6 +267,9 @@ pub enum ProtocolFamilyState {
     /// A validated VESC UART reply has been confirmed.
     Vesc,
 
+    /// A CRC-valid Backfire telemetry report has been confirmed on its notify characteristic.
+    Backfire,
+
     /// Strong wire evidence reported incompatible protocol families.
     Conflict,
 }
@@ -310,6 +313,7 @@ impl DeviceDetectionResolution {
             ProtocolFamilyState::VeteranLeaperkimNosfet
             | ProtocolFamilyState::BegodeGotway
             | ProtocolFamilyState::Vesc
+            | ProtocolFamilyState::Backfire
             | ProtocolFamilyState::Conflict => false,
         }
     }
@@ -332,6 +336,19 @@ pub enum DeviceDetectionEvent<'a> {
 
     /// Notification evidence reported by the caller.
     Notification {
+        /// Raw notification bytes.
+        bytes: &'a [u8],
+    },
+
+    /// Notification evidence bound to the characteristic that produced it.
+    ///
+    /// Channel-less [`Self::Notification`] never admits a family that requires a characteristic.
+    /// A missing service does not admit a family that requires one.
+    NotificationOnChannel {
+        /// Characteristic that produced `bytes`.
+        channel: GattChannel,
+        /// Service that produced `bytes`, when the host reported one.
+        service: Option<GattChannel>,
         /// Raw notification bytes.
         bytes: &'a [u8],
     },
@@ -438,6 +455,23 @@ impl DeviceDetectionSession {
             DeviceDetectionEvent::Notification { bytes } => {
                 self.observe_notification(state, bytes, &current);
             }
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel,
+                service,
+                bytes,
+            } => {
+                let admits = crate::backfire::admits_from_notification(
+                    state.identity().gatt.as_slice(),
+                    service,
+                    channel,
+                    bytes,
+                );
+                if admits {
+                    self.observe_backfire(state, &current);
+                } else {
+                    self.observe_notification(state, bytes, &current);
+                }
+            }
             DeviceDetectionEvent::ProbeWrite { probe } => {
                 let _ = self.observe_probe_write_at(state, probe, MonotonicTimestamp::default());
             }
@@ -502,14 +536,7 @@ impl DeviceDetectionSession {
         .into_iter()
         .flatten()
         .fold(current.protocol, ProtocolFamilyState::merge_observed);
-        if match observed_protocol {
-            ProtocolFamilyState::VeteranLeaperkimNosfet
-            | ProtocolFamilyState::Vesc
-            | ProtocolFamilyState::Conflict => true,
-            _ => false,
-        } {
-            state.identity_mut().retire_pending_probes();
-        }
+        retire_probes(state, observed_protocol);
         let mut decision = NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
         decision.protocol = observed_protocol;
         if veteran_protocol_model != ProtocolModelIdentityEvidence::Missing {
@@ -519,6 +546,26 @@ impl DeviceDetectionSession {
             decision.protocol_model = ProtocolModelIdentityEvidence::Missing;
         }
         self.apply_notification_decision(state, bytes, current, decision);
+    }
+
+    fn observe_backfire(
+        &mut self,
+        state: &mut CutoutSessionState,
+        current: &DeviceDetectionResolution,
+    ) {
+        let observed = current
+            .protocol
+            .merge_observed(ProtocolFamilyState::Backfire);
+        retire_probes(state, observed);
+        let decision = NotificationDecision {
+            protocol: observed,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
+            firmware_banner: false,
+            imu_banner: false,
+            malformed_probe: None,
+        };
+        self.apply_notification_decision(state, &[], current, decision);
     }
 
     fn apply_notification_decision(
@@ -684,6 +731,7 @@ impl DeviceDetectionSession {
             }
             ProtocolFamilyState::BegodeGotway => Some(ProtocolFamily::BegodeGotway),
             ProtocolFamilyState::Vesc => Some(ProtocolFamily::Vesc),
+            ProtocolFamilyState::Backfire => Some(ProtocolFamily::Backfire),
             ProtocolFamilyState::Unknown | ProtocolFamilyState::Conflict => None,
         };
         let advertised_name = identity
@@ -733,6 +781,7 @@ fn protocol_state(
         Some(ProtocolFamily::VeteranLeaperkimNosfet) => ProtocolFamilyState::VeteranLeaperkimNosfet,
         Some(ProtocolFamily::BegodeGotway) => ProtocolFamilyState::BegodeGotway,
         Some(ProtocolFamily::Vesc) => ProtocolFamilyState::Vesc,
+        Some(ProtocolFamily::Backfire) => ProtocolFamilyState::Backfire,
         None => ProtocolFamilyState::Unknown,
     }
 }
@@ -749,10 +798,30 @@ fn resolve_staged_identity(
             evidence: IdentityEvidence::empty().with_passive_family_match(),
             protocol_model: ProtocolModelIdentityEvidence::Missing,
         },
+        ProtocolFamilyState::Backfire => StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::FamilyOnly,
+            confidence: IdentityConfidence::FamilyOnly,
+            evidence: IdentityEvidence::empty().with_passive_family_match(),
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
+        },
         ProtocolFamilyState::Unknown
         | ProtocolFamilyState::VeteranLeaperkimNosfet
         | ProtocolFamilyState::BegodeGotway
         | ProtocolFamilyState::Vesc => identify_known_model(input),
+    }
+}
+
+fn retire_probes(state: &mut CutoutSessionState, observed: ProtocolFamilyState) {
+    let retire = match observed {
+        ProtocolFamilyState::VeteranLeaperkimNosfet
+        | ProtocolFamilyState::Vesc
+        | ProtocolFamilyState::Backfire
+        | ProtocolFamilyState::Conflict => true,
+        ProtocolFamilyState::Unknown | ProtocolFamilyState::BegodeGotway => false,
+    };
+    if retire {
+        state.identity_mut().retire_pending_probes();
     }
 }
 
@@ -818,7 +887,8 @@ impl<'a> NotificationDecision<'a> {
             ProtocolFamilyState::Unknown
             | ProtocolFamilyState::VeteranLeaperkimNosfet
             | ProtocolFamilyState::BegodeGotway
-            | ProtocolFamilyState::Vesc => protocol_model,
+            | ProtocolFamilyState::Vesc
+            | ProtocolFamilyState::Backfire => protocol_model,
         };
 
         NotificationDecision {
@@ -855,8 +925,8 @@ impl ProtocolFamilyState {
             (Self::Unknown, observed) => observed,
             (current, observed) if current == observed => current,
             (
-                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc,
-                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc,
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc | Self::Backfire,
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc | Self::Backfire,
             ) => Self::Conflict,
         }
     }
@@ -867,7 +937,9 @@ impl ProtocolFamilyState {
                 ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
             }
             Self::BegodeGotway => ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-            Self::Unknown | Self::Conflict | Self::Vesc => ProtocolFamilyClassification::Pending,
+            Self::Unknown | Self::Conflict | Self::Vesc | Self::Backfire => {
+                ProtocolFamilyClassification::Pending
+            }
         }
     }
 }

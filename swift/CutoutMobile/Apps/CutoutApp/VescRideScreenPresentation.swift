@@ -137,24 +137,31 @@ struct VescRideScreenPresentation {
 
     var standardSummaryTiles: [PevDashboardTile] {
         let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit)
-        let distance = snapshot?.tripDistance.map {
-            RideUnits.distanceText(millimetres: $0.value, unit: distanceUnit)
+        func distanceTile(
+            _ kind: PevDashboardTileKind, _ labelKey: String, _ distance: Distance?
+        ) -> PevDashboardTile {
+            let text = distance.map { RideUnits.distanceText(millimetres: $0.value, unit: distanceUnit) }
+            return PevDashboardTile(
+                kind: kind, label: localizedAppText(labelKey),
+                metricValue: text.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
+                unit: distanceUnit, detail: "", accent: .cyan
+            )
+        }
+        var tiles = [distanceTile(.tripDistance, "vesc.metric.trip", snapshot?.tripDistance)]
+        if snapshot?.isVescProtocol == false {
+            tiles.append(distanceTile(.odometer, "ride.metric.odometer", snapshot?.odometer))
         }
         let duration = snapshot?.rideDuration.map {
             RideUnits.durationText(milliseconds: $0.rawValue)
         }
-        return [
-            PevDashboardTile(
-                kind: .tripDistance, label: localizedAppText("vesc.metric.trip"),
-                metricValue: distance.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
-                unit: distanceUnit, detail: "", accent: .cyan
-            ),
+        tiles.append(
             PevDashboardTile(
                 kind: .rideDuration, label: localizedAppText("vesc.metric.ride_time"),
                 metricValue: duration.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
                 unit: "", detail: "", accent: .cyan
-            ),
-        ]
+            )
+        )
+        return tiles
     }
 
     var standardSecondaryTiles: [PevDashboardTile] {

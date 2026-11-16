@@ -141,13 +141,16 @@ enum DeviceSessionEngine {
     Veteran(Box<ConcreteAeroBenignControlSession>),
     Begode(Box<ConcreteFalconBenignControlSession>),
     Vesc(Box<VescSettingsSession>),
+    Backfire(Box<crate::backfire::BackfireSession>),
 }
 
 impl DeviceSession {
     pub(crate) fn phone_drive_step(&self) -> Option<DeviceSessionStep> {
         match &self.engine {
             DeviceSessionEngine::Vesc(session) => Some(session.current_step()),
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => None,
         }
     }
 
@@ -196,7 +199,9 @@ impl DeviceSession {
     pub(crate) fn take_failed_setting_operation(&mut self) -> Option<u64> {
         match &mut self.engine {
             DeviceSessionEngine::Vesc(session) => session.take_failed_setting_operation(),
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => None,
         }
     }
     pub(crate) fn record_setting_transport(
@@ -218,7 +223,9 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 session.setting_read_transport_is_current(operation_id, at)
             }
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => false,
         }
     }
     pub(crate) fn record_setting_read_transport(
@@ -231,7 +238,9 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 session.record_setting_read_transport(operation_id, status, at)
             }
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => false,
         }
     }
     pub(crate) fn setting_mutation_submitted_at(
@@ -242,7 +251,9 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 session.setting_mutation_submitted_at(operation_id)
             }
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => None,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => None,
         }
     }
     pub(crate) fn next_tick_at(&self) -> Option<cutout_core::MonotonicTimestamp> {
@@ -250,6 +261,7 @@ impl DeviceSession {
             DeviceSessionEngine::Veteran(session) => session.next_tick_at(),
             DeviceSessionEngine::Begode(session) => session.next_tick_at(),
             DeviceSessionEngine::Vesc(session) => session.next_tick_at(),
+            DeviceSessionEngine::Backfire(_) => None,
         }
     }
 
@@ -267,15 +279,16 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 session.setting_authorization_expires_at(authorization)
             }
+            DeviceSessionEngine::Backfire(_) => None,
         }
     }
 
     pub(crate) fn notification_buffer_state(&self) -> crate::NotificationBufferState {
         match &self.engine {
             DeviceSessionEngine::Veteran(session) => session.notification_buffer_state(),
-            DeviceSessionEngine::Begode(_) | DeviceSessionEngine::Vesc(_) => {
-                crate::NotificationBufferState::Unknown
-            }
+            DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Vesc(_)
+            | DeviceSessionEngine::Backfire(_) => crate::NotificationBufferState::Unknown,
         }
     }
 
@@ -284,7 +297,9 @@ impl DeviceSession {
     pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
         match &self.engine {
             DeviceSessionEngine::Veteran(session) => session.raw_settings_pages(),
-            DeviceSessionEngine::Begode(_) | DeviceSessionEngine::Vesc(_) => &[],
+            DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Vesc(_)
+            | DeviceSessionEngine::Backfire(_) => &[],
         }
     }
 
@@ -314,6 +329,11 @@ impl DeviceSession {
                 ProtocolFamily::Vesc,
                 VehicleKind::Unknown,
                 DeviceSessionEngine::Vesc(Box::new(VescSettingsSession::new(vesc_board_profile))),
+            ),
+            ProtocolFamilyState::Backfire => (
+                ProtocolFamily::Backfire,
+                VehicleKind::Eskate,
+                DeviceSessionEngine::Backfire(Box::new(crate::backfire::BackfireSession::new())),
             ),
         };
         let model = resolution.staged.model.filter(|model| {
@@ -381,7 +401,9 @@ impl DeviceSession {
                 self.user_classification = Some(classification);
                 true
             }
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => false,
         }
     }
 
@@ -444,6 +466,7 @@ impl DeviceSession {
                 }
                 step
             }
+            DeviceSessionEngine::Backfire(session) => session.ingest_typed(input),
         }
     }
 
@@ -454,6 +477,7 @@ impl DeviceSession {
             DeviceSessionEngine::Veteran(session) => session.current_snapshot(),
             DeviceSessionEngine::Begode(session) => session.current_snapshot(),
             DeviceSessionEngine::Vesc(session) => session.current_snapshot(),
+            DeviceSessionEngine::Backfire(session) => session.current_snapshot(),
         }
     }
 
@@ -464,6 +488,7 @@ impl DeviceSession {
             DeviceSessionEngine::Veteran(session) => session.diagnostics(),
             DeviceSessionEngine::Begode(session) => session.diagnostics(),
             DeviceSessionEngine::Vesc(session) => session.diagnostics(),
+            DeviceSessionEngine::Backfire(session) => session.diagnostics(),
         }
     }
 
@@ -471,7 +496,9 @@ impl DeviceSession {
     pub(crate) fn settings_busy(&self) -> bool {
         match &self.engine {
             DeviceSessionEngine::Vesc(session) => session.settings_busy(),
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => false,
         }
     }
 
@@ -481,7 +508,9 @@ impl DeviceSession {
     ) -> bool {
         match &self.engine {
             DeviceSessionEngine::Vesc(session) => session.settings_read_requires_reconnect(at),
-            DeviceSessionEngine::Veteran(_) | DeviceSessionEngine::Begode(_) => false,
+            DeviceSessionEngine::Veteran(_)
+            | DeviceSessionEngine::Begode(_)
+            | DeviceSessionEngine::Backfire(_) => false,
         }
     }
 
@@ -494,6 +523,7 @@ impl DeviceSession {
             DeviceSessionEngine::Veteran(session) => session.bind_setting_operation(id),
             DeviceSessionEngine::Begode(session) => session.bind_setting_operation(id),
             DeviceSessionEngine::Vesc(session) => session.bind_setting_operation(id),
+            DeviceSessionEngine::Backfire(_) => (None, 0),
         }
     }
 
@@ -512,6 +542,7 @@ impl DeviceSession {
             DeviceSessionEngine::Vesc(session) => {
                 session.setting_write_is_current(authorization, at)
             }
+            DeviceSessionEngine::Backfire(_) => false,
         }
     }
 
@@ -533,6 +564,7 @@ impl DeviceSession {
                 session.arm_settings_writes(state, speed, at_ms)
             }
             DeviceSessionEngine::Vesc(session) => session.arm_settings_writes(state, speed, at_ms),
+            DeviceSessionEngine::Backfire(_) => false,
         }
     }
 }
@@ -661,6 +693,7 @@ mod tests {
             max_write_len: None,
         });
         let _ = session.ingest_typed(&SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: frame,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
@@ -673,6 +706,7 @@ mod tests {
         let checksum = crc32fast::hash(&settings[..54]);
         settings[54..].copy_from_slice(&checksum.to_be_bytes());
         let step = session.ingest_typed(&SessionInputDto::Notification {
+            service: None,
             channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
             bytes: settings,
             monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },

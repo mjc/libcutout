@@ -110,6 +110,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: MobileSessionInputKindDto::LinkUp,
                     monotonic_ms: MobileMonotonicMillisDto { milliseconds: 1 },
                     max_write_len: None,
@@ -122,6 +123,7 @@ mod tests {
             .ingest_device_session(
                 token.clone(),
                 MobileSessionInputDto {
+                    service: Vec::new(),
                     kind: MobileSessionInputKindDto::Notification,
                     channel: VETERAN_DATA_CHANNEL.as_bytes().to_vec(),
                     bytes: frame.clone(),

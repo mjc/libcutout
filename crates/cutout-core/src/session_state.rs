@@ -635,8 +635,23 @@ impl BluetoothServiceUuid {
         0x9e,
     ]);
 
+    /// Service advertised by Backfire boards and by unrelated Zydtech devices.
+    ///
+    /// A scan hit is a probe hint. It does not establish a ride route or a product class.
+    pub const BACKFIRE_F1F0: Self = Self::from_bluetooth16(0xf1f0);
+
     /// Service UUIDs native scanners request to find supported transports.
-    pub const DISCOVERY_TRANSPORT_SERVICES: [Self; 3] = [
+    pub const DISCOVERY_TRANSPORT_SERVICES: [Self; 4] = [
+        Self::EUC_SERIAL_FFE0,
+        Self::VESC_SERIAL_FFF0,
+        Self::VESC_NORDIC_UART,
+        Self::BACKFIRE_F1F0,
+    ];
+
+    /// Services whose notify or indicate characteristics may be enabled before a frame arrives.
+    ///
+    /// [`Self::BACKFIRE_F1F0`] is scanned, and it is absent here.
+    pub const DISCOVERY_NOTIFICATION_SERVICES: [Self; 3] = [
         Self::EUC_SERIAL_FFE0,
         Self::VESC_SERIAL_FFF0,
         Self::VESC_NORDIC_UART,
@@ -754,14 +769,20 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
-/// Picker connection route derived from typed discovery evidence.
+/// Vehicle class for a supported connection. Protocol family is a separate fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiscoveryConnectionRoute {
-    /// Electric unicycle read-only session route.
+    /// Electric unicycle.
     ElectricUnicycle,
 
-    /// VESC controller route; physical type and installed application are resolved separately.
-    Vesc,
+    /// Onewheel.
+    Onewheel,
+
+    /// Electric skateboard.
+    Eskate,
+
+    /// Scooter.
+    Scooter,
 }
 
 /// Purpose of a selected device connection, independent of the current link.
@@ -812,37 +833,35 @@ impl DiscoveryCandidateSnapshot {
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
 
-        match (
-            observation
-                .advertised_service_uuids
-                .contains(&BluetoothServiceUuid::EUC_SERIAL_FFE0),
-            observation.advertised_service_uuids.iter().any(|uuid| {
-                *uuid == BluetoothServiceUuid::VESC_SERIAL_FFF0
-                    || *uuid == BluetoothServiceUuid::VESC_NORDIC_UART
-            }),
-        ) {
-            (true, _) => Some(Self {
-                platform_identifier: observation.platform_identifier.clone(),
-                display_name: display_name.to_owned(),
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "FFE0/FFE1 transport hint".to_owned(),
-                detail: "Read-only protocol probe recommended".to_owned(),
-                support: DiscoveryCandidateSupport::ProbeRecommended,
-                connection_route: None,
-                electric_unicycle_model: None,
-            }),
-            (false, true) => Some(Self {
-                platform_identifier: observation.platform_identifier.clone(),
-                display_name: display_name.to_owned(),
-                product_category: "UART device".to_owned(),
-                evidence: "FFF0/Nordic UART transport hint".to_owned(),
-                detail: "Read-only protocol probe recommended".to_owned(),
-                support: DiscoveryCandidateSupport::ProbeRecommended,
-                connection_route: None,
-                electric_unicycle_model: None,
-            }),
-            (false, false) => None,
-        }
+        let ffe0 = observation
+            .advertised_service_uuids
+            .contains(&BluetoothServiceUuid::EUC_SERIAL_FFE0);
+        let uart = observation.advertised_service_uuids.iter().any(|uuid| {
+            *uuid == BluetoothServiceUuid::VESC_SERIAL_FFF0
+                || *uuid == BluetoothServiceUuid::VESC_NORDIC_UART
+        });
+        let backfire = observation
+            .advertised_service_uuids
+            .contains(&BluetoothServiceUuid::BACKFIRE_F1F0);
+        let (product_category, evidence) = if ffe0 {
+            ("Electric unicycle", "FFE0/FFE1 transport hint")
+        } else if uart {
+            ("UART device", "FFF0/Nordic UART transport hint")
+        } else if backfire {
+            ("Bluetooth device", "F1F0 transport hint")
+        } else {
+            return None;
+        };
+        Some(Self {
+            platform_identifier: observation.platform_identifier.clone(),
+            display_name: display_name.to_owned(),
+            product_category: product_category.to_owned(),
+            evidence: evidence.to_owned(),
+            detail: "Read-only protocol probe recommended".to_owned(),
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            connection_route: None,
+            electric_unicycle_model: None,
+        })
     }
 }
 
@@ -1734,6 +1753,52 @@ mod tests {
             assert_eq!(candidates[0].connection_route, None);
             assert_eq!(candidates[0].electric_unicycle_model, None);
         }
+    }
+
+    #[test]
+    fn backfire_service_is_scanned_and_not_blanket_subscribed() {
+        assert!(
+            BluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES
+                .contains(&BluetoothServiceUuid::BACKFIRE_F1F0)
+        );
+        assert!(
+            !BluetoothServiceUuid::DISCOVERY_NOTIFICATION_SERVICES
+                .contains(&BluetoothServiceUuid::BACKFIRE_F1F0)
+        );
+        for service in BluetoothServiceUuid::DISCOVERY_NOTIFICATION_SERVICES {
+            assert!(BluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES.contains(&service));
+        }
+    }
+
+    #[test]
+    fn f1f0_is_a_probe_hint_and_loses_to_ffe0() {
+        let mut state = CutoutSessionState::default();
+        state.observe_discovery(discovery_observation(
+            "f1f0",
+            b"BF_Zealot",
+            vec![BluetoothServiceUuid::BACKFIRE_F1F0],
+            -40,
+        ));
+        let candidates = state.discovery().picker_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].product_category, "Bluetooth device");
+        assert_eq!(candidates[0].evidence, "F1F0 transport hint");
+        assert_eq!(candidates[0].connection_route, None);
+
+        let mut both = CutoutSessionState::default();
+        both.observe_discovery(discovery_observation(
+            "both",
+            b"shared",
+            vec![
+                BluetoothServiceUuid::BACKFIRE_F1F0,
+                BluetoothServiceUuid::EUC_SERIAL_FFE0,
+            ],
+            -40,
+        ));
+        let candidates = both.discovery().picker_candidates();
+        assert_eq!(candidates[0].product_category, "Electric unicycle");
+        assert_eq!(candidates[0].evidence, "FFE0/FFE1 transport hint");
+        assert_eq!(candidates[0].connection_route, None);
     }
 
     #[test]

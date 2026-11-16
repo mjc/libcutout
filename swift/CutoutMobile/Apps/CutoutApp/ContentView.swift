@@ -132,9 +132,12 @@ struct ContentView: View {
                     navigate(to: .devicePicker)
                 case .returnToPicker:
                     break
-                case .openRide(let connectionRoute) where route == .devicePicker:
-                    navigate(to: CutoutAppRoute.route(for: connectionRoute))
-                case .stay, .openCapture, .openRide:
+                case .openRide(let connectionRoute):
+                    let shell = CutoutAppRoute.rideShell(for: connectionRoute)
+                    if route == .devicePicker || ((route == .eucRide || route == .vescRide) && route != shell) {
+                        navigate(to: shell)
+                    }
+                case .stay, .openCapture:
                     break
                 }
             }
@@ -287,7 +290,11 @@ struct ContentView: View {
 
     private func selectTarget(_ target: PevNavigationTarget) {
         navigate(
-            to: route.destination(forNavigationTarget: target, connectionRoute: model.device.selectedConnectionRoute))
+            to: route.destination(
+                forNavigationTarget: target,
+                connectionRoute: model.device.selectedConnectionRoute,
+                protocolFamily: model.device.selectedProtocolFamily
+            ))
     }
 
     private func openMusicPlayer() {
@@ -323,8 +330,11 @@ struct ContentView: View {
     private var primaryTabs: some View {
         let tabs = TabView(selection: tabSelection) {
             ForEach(availableTabs) { tab in
-                if let tabRoute = rootRoute.destination(for: tab, connectionRoute: model.device.selectedConnectionRoute)
-                {
+                if let tabRoute = rootRoute.destination(
+                    for: tab,
+                    connectionRoute: model.device.selectedConnectionRoute,
+                    protocolFamily: model.device.selectedProtocolFamily
+                ) {
                     Tab(value: tab.id) {
                         NavigationStack(path: stackNavigationPath(for: tabRoute)) {
                             destinationSurface(for: tabRoute)
@@ -384,7 +394,7 @@ struct ContentView: View {
         guard
             CutoutNavigationCommands.canDisconnect(
                 currentRoute: destination,
-                hasConnection: model.device.selectedConnectionRoute != nil
+                hasConnection: model.device.connectionState.isConnected
             )
         else { return nil }
         return { disconnectAndReturnToPicker() }
@@ -435,11 +445,19 @@ struct ContentView: View {
         switch destination {
         case .more:
             List {
-                ForEach(destination.moreNavigationTabs(for: model.device.selectedConnectionRoute)) { tab in
+                ForEach(
+                    destination.moreNavigationTabs(
+                        for: model.device.selectedConnectionRoute,
+                        protocolFamily: model.device.selectedProtocolFamily
+                    )
+                ) { tab in
                     if let target = tab.destinationTarget {
                         NavigationLink(
                             value: destination.destination(
-                                forNavigationTarget: target, connectionRoute: model.device.selectedConnectionRoute)
+                                forNavigationTarget: target,
+                                connectionRoute: model.device.selectedConnectionRoute,
+                                protocolFamily: model.device.selectedProtocolFamily
+                            )
                         ) {
                             HStack(spacing: 12) {
                                 Image(systemName: tab.id.systemImage)
@@ -575,7 +593,10 @@ struct ContentView: View {
     }
 
     private var availableTabs: [PevScreenTab] {
-        rootRoute.primaryNavigationTabs(for: model.device.selectedConnectionRoute)
+        rootRoute.primaryNavigationTabs(
+            for: model.device.selectedConnectionRoute,
+            protocolFamily: model.device.selectedProtocolFamily
+        )
     }
 
     private var tabSelection: Binding<PevScreenTabID> {
@@ -599,9 +620,9 @@ struct ContentView: View {
                 selectedConnectionRoute: model.device.selectedConnectionRoute, route: route,
                 vehicleKind: model.device.deviceSessionSnapshot?.identity?.vehicleKind
             ) {
-            case .purple:
+            case .purple?:
                 Color(uiColor: TabAccentColors.purple)
-            case .yellow:
+            case .yellow?:
                 Color(uiColor: TabAccentColors.yellow)
             default:
                 .primary
@@ -615,24 +636,19 @@ struct ContentView: View {
         selectedConnectionRoute: DevicePickerConnectionRoute?,
         route: CutoutAppRoute,
         vehicleKind: VehicleKind? = nil
-    ) -> PevAccent {
+    ) -> PevAccent? {
         switch vehicleKind {
         case .onewheel?: return .purple
         case .electricUnicycle?, .scooter?, .eskate?, .ebike?, .emoto?: return .yellow
         case .unknown?, nil: break
         }
-        return switch selectedConnectionRoute {
-        case .vesc:
-            .purple
-        case .electricUnicycle:
-            .yellow
+        switch selectedConnectionRoute {
+        case .onewheel:
+            return .purple
+        case .electricUnicycle, .eskate, .scooter:
+            return .yellow
         case nil:
-            switch route {
-            case .vescRide, .vescDebug, .lighting(.vesc):
-                .purple
-            default:
-                .yellow
-            }
+            return nil
         }
     }
 

@@ -1035,6 +1035,9 @@ pub enum ProtocolFamily {
 
     /// VESC UART/CAN-derived family used by Refloat-style controllers.
     Vesc,
+
+    /// Backfire telemetry family. A valid report does not identify an exact model.
+    Backfire,
 }
 
 /// Verification state for registry fields.
@@ -2409,6 +2412,7 @@ const fn protocol_family_code(family: ProtocolFamily) -> u8 {
         ProtocolFamily::VeteranLeaperkimNosfet => 1,
         ProtocolFamily::BegodeGotway => 2,
         ProtocolFamily::Vesc => 3,
+        ProtocolFamily::Backfire => 4,
     }
 }
 
@@ -7660,6 +7664,12 @@ pub enum SessionInput<'a> {
         /// Transport endpoint that produced the bytes.
         channel: GattChannel,
 
+        /// GATT service that produced the bytes, when the host reported one.
+        ///
+        /// Protocols that do not bind a service ignore this. Backfire accepts
+        /// telemetry only from its own service.
+        service: Option<GattChannel>,
+
         /// Borrowed notification payload for this reactor step.
         bytes: &'a [u8],
 
@@ -8080,6 +8090,7 @@ where
         let bytes = bytes.into_boxed_slice();
         self.handle(SessionInput::Notification {
             channel,
+            service: None,
             bytes: &bytes,
             monotonic_ms,
         });
@@ -8369,6 +8380,7 @@ pub fn replay_capture_into<S>(
                 monotonic_ms,
             } => host.ingest(SessionInput::Notification {
                 channel: *channel,
+                service: None,
                 bytes,
                 monotonic_ms: *monotonic_ms,
             }),
@@ -8407,6 +8419,7 @@ where
                 monotonic_ms,
             } => host.ingest(SessionInput::Notification {
                 channel: *channel,
+                service: None,
                 bytes,
                 monotonic_ms: *monotonic_ms,
             }),
@@ -8509,6 +8522,7 @@ where
                 monotonic_ms,
             } => host.ingest(SessionInput::Notification {
                 channel: *channel,
+                service: None,
                 bytes,
                 monotonic_ms: *monotonic_ms,
             }),
@@ -9382,6 +9396,7 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::LinkDown));
                 }
                 SessionInput::Notification {
+                    service: _,
                     bytes,
                     channel,
                     monotonic_ms,
@@ -9488,6 +9503,7 @@ mod tests {
 
         session.handle(
             SessionInput::Notification {
+                service: None,
                 channel,
                 bytes: &[0xdc, 0x5a, 0x5c],
                 monotonic_ms: ms(20),
@@ -12928,6 +12944,7 @@ mod tests {
         let bytes = [0xde, 0xad, 0xbe, 0xef];
 
         host.ingest(SessionInput::Notification {
+            service: None,
             channel,
             bytes: &bytes,
             monotonic_ms: ms(42),

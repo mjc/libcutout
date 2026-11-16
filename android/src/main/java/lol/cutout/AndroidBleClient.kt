@@ -724,11 +724,11 @@ class AndroidBleClient(
                     inventory.forEach { diagnostics.recordFingerprint(token, it) }
                 }
                 view = view.copy(phase = NativePhase.IDENTIFYING)
-                val detectionServices = mobileDiscoveryScanServiceUuids().map { wireUuid(it.bytes) }.toSet()
-                characteristics.filter { it.service.uuid in detectionServices }
-                    .filter { it.properties and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or
-                    BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0 }.forEach { subscribe(it.uuid.wireBytes()) }
-                characteristics.filter { it.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0 }.forEach { characteristic ->
+                mobileDiscoverySubscriptionChannels(inventory).forEach { subscribe(it) }
+                characteristics.zip(inventory).filter { (characteristic, fingerprint) ->
+                    characteristic.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0
+                        && mobileDiscoveryReadPermitted(fingerprint)
+                }.forEach { (characteristic, _) ->
                     queue.enqueue(GattOperationQueue.Operation(key("read", characteristic), {
                         if (gatt.readCharacteristic(characteristic)) NativeStart.PENDING else NativeStart.COMPLETE
                     }))
@@ -775,8 +775,12 @@ class AndroidBleClient(
             }
         }
 
-        private fun characteristic(channel: ByteArray): BluetoothGattCharacteristic? =
-            characteristics.filter { it.uuid == wireUuid(channel) }.singleOrNull()
+        private fun characteristic(channel: ByteArray): BluetoothGattCharacteristic? {
+            val matches = characteristics.filter { it.uuid == wireUuid(channel) }
+            val preferred = mobilePreferredSubscriptionService(channel)
+            if (preferred != null) return matches.singleOrNull { it.service.uuid == wireUuid(preferred) }
+            return matches.singleOrNull()
+        }
 
         private fun key(kind: String, characteristic: BluetoothGattCharacteristic): String =
             "$kind:${characteristic.service.uuid}:${characteristic.uuid}"
@@ -802,10 +806,14 @@ class AndroidBleClient(
                 if (characteristic.uuid in subscribed) NativeStart.COMPLETE else {
                     val native = checkNotNull(gatt)
                     val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-                    if (descriptor == null || !native.setCharacteristicNotification(characteristic, true)) NativeStart.REJECTED
+                    val notifies = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+                    val indicates = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+                    val permitIndication = indicates && !mobileSubscriptionRequiresNotify(channel)
+                    if (descriptor == null || (!notifies && !permitIndication)
+                        || !native.setCharacteristicNotification(characteristic, true)) NativeStart.REJECTED
                     else {
-                        val value = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
-                            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                        val value = if (notifies) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
                         if (native.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS)
                             NativeStart.PENDING else NativeStart.REJECTED
                     }

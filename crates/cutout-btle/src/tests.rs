@@ -3100,7 +3100,11 @@ impl ProtocolSession for BridgeSession {
                     mode: WriteMode::WithResponse,
                 }));
             }
-            SessionInput::Notification { channel, .. } => {
+            SessionInput::Notification {
+                service: _,
+                channel,
+                ..
+            } => {
                 *self
                     .notification_count
                     .lock()
@@ -3178,7 +3182,11 @@ impl ProtocolSession for SplitChannelSession {
                     mode: WriteMode::WithoutResponse,
                 }));
             }
-            SessionInput::Notification { channel, .. } => {
+            SessionInput::Notification {
+                service: _,
+                channel,
+                ..
+            } => {
                 *self
                     .last_notification_channel
                     .lock()
