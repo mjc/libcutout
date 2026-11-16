@@ -18,11 +18,11 @@ enum RideMapMetricFormatting {
 
     static func distanceText(for summary: MobileRideMapSummaryDto) -> String {
         let millimetres = (summary.distanceMeters * 1_000).rounded()
-        guard millimetres.isFinite, millimetres <= Double(Int64.max), millimetres >= Double(Int64.min) else {
+        guard let wholeMillimetres = Int64(exactly: millimetres) else {
             return "0.0 \(RideUnits.distanceUnitImperial)"
         }
         let text = RideUnits.distanceText(
-            millimetres: Int64(millimetres),
+            millimetres: wholeMillimetres,
             unit: RideUnits.distanceUnitImperial
         )
         return "\(text) \(RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit))"
