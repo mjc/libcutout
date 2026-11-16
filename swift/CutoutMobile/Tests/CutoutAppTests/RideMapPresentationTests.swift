@@ -387,11 +387,7 @@ final class RideMapPresentationTests: XCTestCase {
             durationMilliseconds: 61_000
         )
 
-        XCTAssertEqual(
-            RideMapMetricFormatting.distanceText(for: summary),
-            Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-                .formatted(.measurement(width: .abbreviated, usage: .road))
-        )
+        XCTAssertEqual(RideMapMetricFormatting.distanceText(for: summary), "0.8 mi")
         XCTAssertEqual(
             RideMapMetricFormatting.recordedAtText(for: 0),
             localizedAppText("ride_map.untitled_ride")
@@ -404,10 +400,8 @@ final class RideMapPresentationTests: XCTestCase {
                 pointCount: 2, distanceMeters: 10, durationMilliseconds: 999_000, movingTime: movingTime
             )
         }
-        let zero = Duration.seconds(0)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
-        let moving = Duration.seconds(61)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        let zero = "0:00"
+        let moving = "1:01"
         XCTAssertEqual(RideMapMetricFormatting.movingTimeText(for: summary(.unavailable)), "--")
         XCTAssertEqual(
             RideMapMetricFormatting.movingTimeSpokenValue(for: summary(.unavailable)),
@@ -446,10 +440,8 @@ final class RideMapPresentationTests: XCTestCase {
                 pointCount: 2, distanceMeters: 10, durationMilliseconds: 999_000, elapsedTime: elapsedTime
             )
         }
-        let zero = Duration.seconds(0)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
-        let elapsed = Duration.seconds(61)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        let zero = "0:00"
+        let elapsed = "1:01"
 
         XCTAssertEqual(RideMapMetricFormatting.elapsedTimeText(for: summary(.unavailable)), "--")
         XCTAssertEqual(
