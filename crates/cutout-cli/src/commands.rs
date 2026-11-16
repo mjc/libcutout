@@ -300,10 +300,7 @@ fn auto_pevcap_uses_vesc(header: &PevcapHeader) -> Result<bool> {
             _ => false,
         });
     let vesc = protocol == Some(ProtocolFamily::Vesc) || legacy_vesc;
-    let euc = protocol.is_some_and(|family| match family {
-        ProtocolFamily::VeteranLeaperkimNosfet | ProtocolFamily::BegodeGotway => true,
-        ProtocolFamily::Vesc | ProtocolFamily::Backfire => false,
-    }) || legacy_euc;
+    let euc = protocol.is_some_and(|family| family != ProtocolFamily::Vesc) || legacy_euc;
     if vesc && euc {
         bail!("PEVCAP replay --profile auto found conflicting protocol metadata");
     }
@@ -6791,6 +6788,7 @@ mod tests {
                     "route=electric_unicycle",
                 ],
             ),
+            (Some(ProtocolFamily::Backfire), vec!["route=vesc"]),
         ] {
             capture
                 .header
@@ -6810,6 +6808,31 @@ mod tests {
             );
             assert_eq!(retained, bytes, "rejected replay must preserve the capture");
         }
+    }
+
+    #[test]
+    fn backfire_protocol_annotation_does_not_select_vesc_replay() {
+        let (mut capture, _, _) = public_vesc_auto_replay_fixture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::Backfire),
+            model: None,
+            firmware: None,
+        });
+        capture.header.annotations = ["protocol_detection_resolved=backfire", "route=eskate"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            !auto_pevcap_uses_vesc(&capture.header)
+                .expect("Backfire protocol and an e-skate route agree")
+        );
+
+        capture.header.annotations = ["route=vesc"].into_iter().map(str::to_owned).collect();
+        let error = auto_pevcap_uses_vesc(&capture.header).unwrap_err();
+        assert!(
+            error.to_string().contains("conflicting protocol"),
+            "{error}"
+        );
     }
 
     #[test]

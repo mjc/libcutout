@@ -534,12 +534,23 @@ public final class CutoutSessionCore: NSObject {
     private var liveOwner: DeviceSessionTransport?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
+    private var selectedProtocol: DeviceDetectionProtocolFamily?
+    private var promotedLiveSession = false
     private var chargeEstimateProfile: ChargeEstimateProfile?
     private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
     // A retained route selects GATT services; each new attempt still needs wire evidence.
     var isDetectingProtocol: Bool {
         onBleQueue { !isRecordOnly && connectionSnapshot.readiness == .pending }
+    }
+    private var retainsLiveSession: Bool {
+        promotedLiveSession || selectedRoute != nil || isDetectingProtocol
+    }
+
+    private func clearPromotedConnection() {
+        selectedRoute = nil
+        selectedProtocol = nil
+        promotedLiveSession = false
     }
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private lazy var bluetoothWriteAdapter = CutoutSessionBluetoothWriteAdapter(
@@ -1619,11 +1630,14 @@ public final class CutoutSessionCore: NSObject {
             model: ElectricUnicycleModel? = nil
         ) -> Bool {
             guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-            let route: DevicePickerConnectionRoute
+            let route: DevicePickerConnectionRoute?
             let candidateModel: ElectricUnicycleModel?
+            let detectedProtocol = testScript.candidate.protocolFamily
             switch testScript.candidate.support {
             case .supported(let supportedRoute, let supportedModel):
-                guard let supportedRoute else { return false }
+                if supportedRoute == nil && detectedProtocol != .vesc && detectedProtocol != .backfire {
+                    return false
+                }
                 route = supportedRoute
                 candidateModel = supportedModel
             case .probeRecommended:
@@ -1644,6 +1658,8 @@ public final class CutoutSessionCore: NSObject {
             finishCaptureAfterLinkDown()
 
             self.selectedRoute = route
+            self.selectedProtocol = detectedProtocol
+            self.promotedLiveSession = true
             self.selectedModel = selectedModel
             testScriptWorkItem?.cancel()
             testScriptUpdateWorkItem?.cancel()
@@ -1959,7 +1975,7 @@ public final class CutoutSessionCore: NSObject {
         #endif
         isRecordOnly = false
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
@@ -2213,6 +2229,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishDeviceSessionSnapshot(_ snapshot: MobileDeviceSessionSnapshotDto) {
+        if promotedLiveSession, let route = DevicePickerConnectionRoute(vehicleKind: snapshot.identity?.vehicleKind) {
+            selectedRoute = route
+        }
         guard snapshot == rustSessionState.deviceSessionSnapshot() else { return }
         restoreVescDrivetrainIfNeeded(snapshot)
         if let outcome = updateCaptureIdentity() { _ = acceptCaptureWrite(outcome) }
@@ -2325,7 +2344,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -2370,7 +2389,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = nil
-        selectedRoute = nil
+        clearPromotedConnection()
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -2448,7 +2467,7 @@ public final class CutoutSessionCore: NSObject {
         switch selectedRoute {
         case .electricUnicycle:
             return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
-        case .vesc, .eskate, nil:
+        case .onewheel, .eskate, .scooter, nil:
             return nil
         }
     }
@@ -3365,7 +3384,7 @@ extension CutoutSessionCore {
         prepareConnectionAttempt(to: restoredPeripheral)
         advertisement = restoredAdvertisement
         peripheral = restoredPeripheral
-        selectedRoute = nil
+        clearPromotedConnection()
         selectedModel = nil
         isRecordOnly = false
         suppressReconnect = false
@@ -3399,7 +3418,7 @@ extension CutoutSessionCore {
             cancelFailedConnectionAttempt()
             publishConnectionSnapshot()
             advertisement = nil
-            selectedRoute = nil
+            clearPromotedConnection()
             selectedModel = nil
         @unknown default:
             record("central_restore=unknown_peripheral_state")
@@ -3475,7 +3494,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         didResolveBluetoothRestoration = true
         let restoredPlatformIdentifier: String? =
             if let peripheral,
-                selectedRoute != nil || isDetectingProtocol,
+                retainsLiveSession,
                 peripheral.state == .connected || peripheral.state == .connecting
             {
                 peripheral.identifier.uuidString
@@ -3528,7 +3547,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
             return
         }
-        if let peripheral, selectedRoute != nil || isDetectingProtocol {
+        if let peripheral, retainsLiveSession {
             switch peripheral.state {
             case .connected:
                 if connectionSnapshot.transport != .connected, let advertisement {
@@ -3905,7 +3924,7 @@ extension CutoutSessionCore {
             subscribedCharacteristics[channel] = characteristic
             return
         }
-        guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
+        guard preferredServiceUuid(for: selectedProtocol, route: selectedRoute) == characteristic.service?.uuid else {
             return
         }
         if existing.service?.uuid != characteristic.service?.uuid {
@@ -3913,14 +3932,24 @@ extension CutoutSessionCore {
         }
     }
 
-    fileprivate func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
-        switch route {
+    fileprivate func preferredServiceUuid(
+        for protocolFamily: DeviceDetectionProtocolFamily?,
+        route: DevicePickerConnectionRoute?
+    ) -> CBUUID? {
+        switch protocolFamily {
         case .vesc:
             return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
-        case .electricUnicycle:
+        case .veteranLeaperkimNosfet, .begodeGotway:
             return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
-        case .eskate, nil:
+        case .backfire:
             return nil
+        case nil:
+            switch route {
+            case .electricUnicycle:
+                return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
+            case .onewheel, .eskate, .scooter, nil:
+                return nil
+            }
         }
     }
 
@@ -4220,7 +4249,10 @@ extension CutoutSessionCore {
         )
         switch DevicePickerCandidateSupport(candidate) {
         case .supported(let route, let model):
-            guard let route else { return false }
+            let family = resolution.protocolFamily
+            if route == nil && family != .vesc && family != .backfire {
+                return false
+            }
             // The Rust candidate is the authoritative result of protocol detection. Resolve
             // the connection from that exact supported evidence before any family-specific
             // fallback probe can be sent. In particular, a Veteran model frame must promote
@@ -4237,8 +4269,15 @@ extension CutoutSessionCore {
             publishConnectionSnapshot()
             clearProtocolDetectionExpiry()
             selectedRoute = route
+            selectedProtocol = family
+            promotedLiveSession = true
             selectedModel = model
-            annotateDetection("protocol_detection_resolved=\(route.rawValue)")
+            if let family {
+                annotateDetection("protocol_detection_resolved=\(family.detectionAnnotation)")
+            }
+            if let route {
+                annotateDetection("route=\(route.rawValue)")
+            }
             buildOwner(for: peripheral)
             return liveOwner != nil
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
@@ -4376,7 +4415,7 @@ extension CutoutSessionCore {
         isRecordOnly = true
         clearProtocolDetectionExpiry()
         clearPendingBegodeProbeResponses()
-        selectedRoute = nil
+        clearPromotedConnection()
         selectedModel = nil
         liveOwner = nil
         annotateDetection("protocol_detection_unresolved=\(failure)")

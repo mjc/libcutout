@@ -66,7 +66,8 @@ final class DevicePresentationModelTests: XCTestCase {
         model.displayState = RideDisplayState()
         model.connectionState = .connected(
             ConnectionSelection(
-                platformIdentifier: "same-device", title: "Floatwheel skateboard bike", route: .vesc))
+                platformIdentifier: "same-device", title: "Floatwheel skateboard bike", route: nil,
+                protocolFamily: .vesc))
         let state = CutoutSessionStateHandle()
         let connection = state.connectionAttemptSnapshot()
         for kind in userSelectableVehicleKinds() {
@@ -138,7 +139,7 @@ final class DevicePresentationModelTests: XCTestCase {
         guard case .accepted = outcome else { return XCTFail("Expected the new attempt to be accepted") }
         XCTAssertEqual(model.protocolIdentityCandidate, candidate)
         XCTAssertEqual(model.selectedRideIdentifier, row.id)
-        XCTAssertEqual(model.selectedConnectionRoute, .vesc)
+        XCTAssertEqual(model.selectedConnectionRoute, nil)
         await model.waitForProtocolNamePersistence()
     }
 
@@ -146,12 +147,12 @@ final class DevicePresentationModelTests: XCTestCase {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
             title: "VESC",
-            route: .vesc
+            route: nil, protocolFamily: .vesc
         )
 
         XCTAssertEqual(
             ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: false),
-            .openRide(.vesc)
+            .openRide(nil)
         )
         XCTAssertEqual(
             ConnectionState.retrying(
@@ -183,7 +184,7 @@ final class DevicePresentationModelTests: XCTestCase {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
             title: "VESC",
-            route: .vesc
+            route: nil, protocolFamily: .vesc
         )
         let failure = SessionConnectionFailure.connectFailed("timed out")
 
@@ -286,14 +287,16 @@ final class DevicePresentationModelTests: XCTestCase {
             productCategory: "VESC Onewheel",
             evidence: "protocol reply",
             detail: "VESC device",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
 
         model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
 
         XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
-        XCTAssertEqual(model.selectedConnectionRoute, .vesc)
+        XCTAssertNil(model.selectedConnectionRoute)
+        XCTAssertEqual(model.selectedProtocolFamily, .vesc)
     }
 
     @MainActor
@@ -311,8 +314,9 @@ final class DevicePresentationModelTests: XCTestCase {
             productCategory: "Electric unicycle",
             evidence: "protocol reply",
             detail: "Other device",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
 
         model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)

@@ -1498,17 +1498,20 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
-/// Mobile connection route for supported picker candidates.
+/// Vehicle class for a supported connection. Protocol family is a separate fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum DiscoveryConnectionRoute {
-    /// Electric unicycle read-only session route.
+    /// Electric unicycle.
     ElectricUnicycle,
 
-    /// Controller-neutral VESC read-only route.
-    Vesc,
+    /// Onewheel.
+    Onewheel,
 
-    /// Electric skateboard route opened after a decoded protocol family.
+    /// Electric skateboard.
     Eskate,
+
+    /// Scooter.
+    Scooter,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -1569,11 +1572,14 @@ pub struct DiscoveryCandidate {
     /// Picker section recommended by Rust-owned projection.
     pub section: DiscoveryCandidateSection,
 
-    /// Supported connection route, when connecting is allowed.
+    /// Vehicle class, when detection has established one.
     pub connection_route: Option<DiscoveryConnectionRoute>,
 
     /// Electric-unicycle session model to construct for the route.
     pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
+
+    /// Protocol family established by detection. Independent of the vehicle class.
+    pub protocol_family: Option<MobileProtocolFamilyDto>,
 
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
@@ -2449,6 +2455,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 .connection_route
                 .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
+            protocol_family: None,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
                 CoreDiscoveryCandidateSupport::ProbeRecommended
@@ -2487,8 +2494,9 @@ impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
     fn from(route: CoreDiscoveryConnectionRoute) -> Self {
         match route {
             CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
-            CoreDiscoveryConnectionRoute::Vesc => Self::Vesc,
+            CoreDiscoveryConnectionRoute::Onewheel => Self::Onewheel,
             CoreDiscoveryConnectionRoute::Eskate => Self::Eskate,
+            CoreDiscoveryConnectionRoute::Scooter => Self::Scooter,
         }
     }
 }
@@ -4116,6 +4124,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
         section: DiscoveryCandidateSupport::RejectedNoise.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Rejected noise".to_owned()),
     }
 }
@@ -4136,6 +4145,7 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
         section: DiscoveryCandidateSupport::ManualPlaceholder.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Capture flow later".to_owned()),
     }
 }
@@ -4180,6 +4190,7 @@ pub fn mobile_ambiguous_discovery_candidate(
         section: DiscoveryCandidateSupport::Ambiguous.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Needs user confirmation".to_owned()),
     }
 }
@@ -4204,6 +4215,7 @@ pub fn mobile_conflicting_discovery_candidate(
         section: DiscoveryCandidateSupport::Conflicting.picker_section(),
         connection_route: None,
         electric_unicycle_model: None,
+        protocol_family: None,
         disabled_reason: Some("Conflicting identity evidence".to_owned()),
     }
 }
@@ -4257,6 +4269,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         section: support.picker_section(),
         connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
+        protocol_family: None,
         disabled_reason: mobile_begode_identity_probe_disabled_reason(
             support,
             reported_code_name,
@@ -4301,6 +4314,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::RejectedNoise.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Rejected noise".to_owned()),
         };
     }
@@ -4318,6 +4332,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::Conflicting.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Conflicting identity evidence".to_owned()),
         };
     }
@@ -4346,6 +4361,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     }
@@ -4359,13 +4375,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "VESC controller".to_owned(),
             evidence: "VESC protocol family".to_owned(),
-            detail: "VESC read-only route".to_owned(),
+            detail: "Vehicle type is still unknown.".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::Supported,
             recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
             section: DiscoveryCandidateSupport::Supported.picker_section(),
-            connection_route: Some(DiscoveryConnectionRoute::Vesc),
+            connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: Some(MobileProtocolFamilyDto::Vesc),
             disabled_reason: None,
         };
     }
@@ -4386,6 +4403,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::Supported.picker_section(),
             connection_route: Some(DiscoveryConnectionRoute::Eskate),
             electric_unicycle_model: None,
+            protocol_family: Some(MobileProtocolFamilyDto::Backfire),
             disabled_reason: None,
         };
     }
@@ -4409,6 +4427,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Begode/Gotway model identity probe required".to_owned()),
         };
     }
@@ -4532,6 +4551,7 @@ pub fn mobile_discovery_candidate_from_closest_detection_resolution(
         section: DiscoveryCandidateSection::Supported,
         connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model: Some(model),
+        protocol_family: None,
         disabled_reason: None,
     }
 }
@@ -4612,6 +4632,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
+            protocol_family: None,
             disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     };
@@ -4641,6 +4662,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         section: support.picker_section(),
         connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model,
+        protocol_family: None,
         disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
     }
 }
@@ -20462,11 +20484,12 @@ mod tests {
 
         assert_eq!(candidate.product_category, "VESC controller");
         assert_eq!(candidate.evidence, "VESC protocol family");
-        assert_eq!(candidate.detail, "VESC read-only route");
+        assert_eq!(candidate.detail, "Vehicle type is still unknown.");
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(candidate.connection_route, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::Vesc)
+            candidate.protocol_family,
+            Some(MobileProtocolFamilyDto::Vesc)
         );
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(candidate.disabled_reason, None);
@@ -20501,6 +20524,10 @@ mod tests {
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::Eskate)
+        );
+        assert_eq!(
+            candidate.protocol_family,
+            Some(MobileProtocolFamilyDto::Backfire)
         );
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(candidate.disabled_reason, None);

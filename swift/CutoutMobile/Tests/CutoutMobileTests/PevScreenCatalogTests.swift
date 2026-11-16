@@ -15,6 +15,7 @@ final class PevScreenCatalogTests: XCTestCase {
                 detail: "Confirmed by reported model Falcon", isPickerCandidate: true,
                 support: .supported, recommendedAction: .use, section: .supported,
                 connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon,
+                protocolFamily: nil,
                 disabledReason: nil
             )
         }

@@ -79,7 +79,7 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
     case vesc
     case backfire
 
-    fileprivate init(_ dto: MobileProtocolFamilyDto) {
+    init(_ dto: MobileProtocolFamilyDto) {
         switch dto {
         case .veteranLeaperkimNosfet:
             self = .veteranLeaperkimNosfet
@@ -110,6 +110,15 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
         case .veteranLeaperkimNosfet: .aero
         case .begodeGotway: .falcon
         case .vesc, .backfire: nil
+        }
+    }
+
+    var detectionAnnotation: String {
+        switch self {
+        case .veteranLeaperkimNosfet: "veteran_leaperkim_nosfet"
+        case .begodeGotway: "begode_gotway"
+        case .vesc: "vesc"
+        case .backfire: "backfire"
         }
     }
 }

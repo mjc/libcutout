@@ -769,17 +769,20 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
-/// Picker connection route derived from typed discovery evidence.
+/// Vehicle class for a supported connection. Protocol family is a separate fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiscoveryConnectionRoute {
-    /// Electric unicycle read-only session route.
+    /// Electric unicycle.
     ElectricUnicycle,
 
-    /// VESC controller route; physical type and installed application are resolved separately.
-    Vesc,
+    /// Onewheel.
+    Onewheel,
 
-    /// Electric skateboard route. The protocol family still has to be established separately.
+    /// Electric skateboard.
     Eskate,
+
+    /// Scooter.
+    Scooter,
 }
 
 /// Purpose of a selected device connection, independent of the current link.

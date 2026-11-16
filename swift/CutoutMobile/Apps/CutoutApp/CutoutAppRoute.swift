@@ -78,10 +78,19 @@ enum CutoutAppRoute: Hashable {
         switch connectionRoute {
         case .electricUnicycle?:
             .eucRide
-        case .vesc?, .eskate?:
+        case .onewheel?, .eskate?, .scooter?:
             .vescRide
         case nil:
             .devicePicker
+        }
+    }
+
+    static func rideShell(for connectionRoute: DevicePickerConnectionRoute?) -> CutoutAppRoute {
+        switch connectionRoute {
+        case .electricUnicycle?:
+            .eucRide
+        case .onewheel?, .eskate?, .scooter?, nil:
+            .vescRide
         }
     }
 
@@ -161,42 +170,48 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
-    private func routeTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+    private func routeTabs(
+        for connectionRoute: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> [PevScreenTab] {
+        let board = opensBoardRideShell(route: connectionRoute, protocolFamily: protocolFamily)
         switch self {
         case .devicePicker, .capture, .camera, .rideMap, .rideMapDetail, .more:
-            []
+            return []
         case .eucRide:
-            PevRideTabs.eucRideTabs(selected: .eucRide)
+            return PevRideTabs.eucRideTabs(selected: .eucRide)
         case .lighting(let context):
             switch context {
             case .euc:
-                PevRideTabs.eucRideTabs(lightingSelected: true)
+                return PevRideTabs.eucRideTabs(lightingSelected: true)
             case .vesc:
-                PevRideTabs.vescRideTabs(lightingSelected: true)
+                return PevRideTabs.vescRideTabs(lightingSelected: true)
             }
         case .eucPack(let screen):
-            PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
+            return PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
         case .tune:
-            switch connectionRoute {
-            case .electricUnicycle?, nil:
-                PevRideTabs.eucRideTabs(isTuneSelected: true)
-            case .vesc?, .eskate?:
-                PevRideTabs.vescRideTabs(isTuneSelected: true)
+            if board {
+                return PevRideTabs.vescRideTabs(isTuneSelected: true)
             }
+            return PevRideTabs.eucRideTabs(isTuneSelected: true)
         case .vescRide:
-            PevRideTabs.vescRideTabs(selected: .vescRide)
+            return PevRideTabs.vescRideTabs(selected: .vescRide)
         case .vescDebug:
-            PevRideTabs.vescRideTabs(selected: .vescDebug)
+            return PevRideTabs.vescRideTabs(selected: .vescDebug)
         }
     }
 
-    func navigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+    func navigationTabs(
+        for connectionRoute: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> [PevScreenTab] {
         let cameraTab = PevScreenTab(
             id: .camera, title: localizedAppText("navigation.section.camera"),
             isSelected: self == .camera, destinationTarget: .camera
         )
+        let board = opensBoardRideShell(route: connectionRoute, protocolFamily: protocolFamily)
         if self == .devicePicker
-            || (connectionRoute == nil
+            || (!board && connectionRoute == nil
                 && (self == .camera || self == .more || self == .rideMap || isRideMapDetail || isMoreDestination))
         {
             return [
@@ -218,7 +233,7 @@ enum CutoutAppRoute: Hashable {
         let tabs: [PevScreenTab]
         switch self {
         case .camera, .rideMap, .rideMapDetail, .more:
-            guard let connectionRoute else {
+            guard connectionRoute != nil || board else {
                 return [
                     PevScreenTab(
                         id: .map,
@@ -228,11 +243,7 @@ enum CutoutAppRoute: Hashable {
                     )
                 ]
             }
-            let connectedTabs =
-                switch connectionRoute {
-                case .electricUnicycle: PevRideTabs.eucRideTabs()
-                case .vesc, .eskate: PevRideTabs.vescRideTabs()
-                }
+            let connectedTabs = board ? PevRideTabs.vescRideTabs() : PevRideTabs.eucRideTabs()
             tabs = connectedTabs.map { tab in
                 PevScreenTab(
                     id: tab.id,
@@ -244,7 +255,7 @@ enum CutoutAppRoute: Hashable {
                 )
             }
         default:
-            tabs = routeTabs(for: connectionRoute)
+            tabs = routeTabs(for: connectionRoute, protocolFamily: protocolFamily)
         }
         guard !tabs.isEmpty else { return tabs }
         var result = tabs
@@ -255,14 +266,22 @@ enum CutoutAppRoute: Hashable {
         return result
     }
 
-    func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
-        navigationTabs(for: connectionRoute).filter { $0.isEnabled && $0.destinationTarget != nil }
+    func availableNavigationTabs(
+        for connectionRoute: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> [PevScreenTab] {
+        navigationTabs(for: connectionRoute, protocolFamily: protocolFamily).filter {
+            $0.isEnabled && $0.destinationTarget != nil
+        }
     }
 
-    func primaryNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
-        let destinations = availableNavigationTabs(for: connectionRoute)
+    func primaryNavigationTabs(
+        for connectionRoute: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> [PevScreenTab] {
+        let destinations = availableNavigationTabs(for: connectionRoute, protocolFamily: protocolFamily)
         let primary = destinations.filter { $0.id == .ride || $0.id == .map || $0.id == .tune || $0.id == .devices }
-        let secondary = moreNavigationTabs(for: connectionRoute)
+        let secondary = moreNavigationTabs(for: connectionRoute, protocolFamily: protocolFamily)
         guard !secondary.isEmpty else { return primary }
         return primary + [
             PevScreenTab(
@@ -273,8 +292,11 @@ enum CutoutAppRoute: Hashable {
         ]
     }
 
-    func moreNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
-        availableNavigationTabs(for: connectionRoute).filter {
+    func moreNavigationTabs(
+        for connectionRoute: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> [PevScreenTab] {
+        availableNavigationTabs(for: connectionRoute, protocolFamily: protocolFamily).filter {
             $0.id != .ride && $0.id != .map && $0.id != .tune && $0.id != .devices
         }
     }
@@ -291,18 +313,28 @@ enum CutoutAppRoute: Hashable {
         return false
     }
 
-    func destination(for tab: PevScreenTab, connectionRoute: DevicePickerConnectionRoute? = nil) -> CutoutAppRoute? {
+    func destination(
+        for tab: PevScreenTab,
+        connectionRoute: DevicePickerConnectionRoute? = nil,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) -> CutoutAppRoute? {
         guard let target = tab.destinationTarget else { return nil }
         if tab.id == .more, isMoreDestination { return self }
         if tab.id == .pack, case .eucPack = self { return self }
-        return destination(forNavigationTarget: target, connectionRoute: connectionRoute)
+        return destination(
+            forNavigationTarget: target, connectionRoute: connectionRoute, protocolFamily: protocolFamily)
     }
 
     func destination(
         forNavigationTarget target: PevNavigationTarget,
-        connectionRoute: DevicePickerConnectionRoute? = nil
+        connectionRoute: DevicePickerConnectionRoute? = nil,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
     ) -> CutoutAppRoute {
-        let source = lightingContext == nil ? Self.route(for: connectionRoute) : self
+        let connectedSource =
+            opensBoardRideShell(route: connectionRoute, protocolFamily: protocolFamily)
+            ? CutoutAppRoute.vescRide
+            : Self.route(for: connectionRoute)
+        let source = lightingContext == nil ? connectedSource : self
         return Self.route(forNavigationTarget: target, from: source)
     }
 

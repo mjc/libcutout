@@ -171,8 +171,9 @@ import Foundation
                     productCategory: "VESC controller",
                     evidence: "UI test fixture",
                     detail: "Standard VESC telemetry; physical type requires a user choice",
-                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-                    symbolName: "questionmark.circle"
+                    support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+                    symbolName: "questionmark.circle",
+                    protocolFamily: .vesc
                 )
             case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc,
                 .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc,
@@ -184,8 +185,9 @@ import Foundation
                     productCategory: "VESC Onewheel",
                     evidence: "UI test fixture",
                     detail: "Deterministic accessibility test device",
-                    support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-                    symbolName: "circle.hexagongrid.circle"
+                    support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+                    symbolName: "circle.hexagongrid.circle",
+                    protocolFamily: .vesc
                 )
             }
         }

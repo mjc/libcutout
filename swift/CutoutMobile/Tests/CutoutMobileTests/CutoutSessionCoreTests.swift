@@ -277,8 +277,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         let candidate = DevicePickerDiscoveryCandidate(
             platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
             evidence: "fixture", detail: "fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
         let core = CutoutSessionCore(
             clock: MonotonicClock(),
@@ -404,8 +405,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         let candidate = DevicePickerDiscoveryCandidate(
             platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
             evidence: "fixture", detail: "fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
         let core = CutoutSessionCore(
             clock: MonotonicClock { MonotonicMilliseconds(1) },
@@ -479,8 +481,9 @@ final class CutoutSessionCoreTests: XCTestCase {
             let candidate = DevicePickerDiscoveryCandidate(
                 platformIdentifier: identifier, displayName: "Controller", productCategory: "VESC",
                 evidence: "fixture", detail: "fixture",
-                support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-                symbolName: "circle.hexagongrid.circle"
+                support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+                symbolName: "circle.hexagongrid.circle",
+                protocolFamily: .vesc
             )
             let queue = DispatchQueue(label: "cutout.delayed-vehicle-restore.test")
             let core = CutoutSessionCore(
@@ -5987,8 +5990,9 @@ final class CutoutSessionCoreTests: XCTestCase {
             productCategory: "VESC Onewheel",
             evidence: "test script",
             detail: "core callback fixture",
-            support: .supported(connectionRoute: .vesc, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
+            support: .supported(connectionRoute: nil, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle",
+            protocolFamily: .vesc
         )
     }
 

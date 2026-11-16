@@ -104,7 +104,20 @@ enum CaptureStatus: Equatable {
 struct ConnectionSelection: Equatable {
     let platformIdentifier: String
     let title: String
-    let route: DevicePickerConnectionRoute
+    let route: DevicePickerConnectionRoute?
+    let protocolFamily: DeviceDetectionProtocolFamily?
+
+    init(
+        platformIdentifier: String,
+        title: String,
+        route: DevicePickerConnectionRoute?,
+        protocolFamily: DeviceDetectionProtocolFamily? = nil
+    ) {
+        self.platformIdentifier = platformIdentifier
+        self.title = title
+        self.route = route
+        self.protocolFamily = protocolFamily
+    }
 }
 
 enum ConnectionState: Equatable {
@@ -155,6 +168,10 @@ enum ConnectionState: Equatable {
         }
     }
 
+    var isConnected: Bool {
+        if case .connected = self { true } else { false }
+    }
+
     func navigationIntent(isRecordOnlyCapture: Bool) -> PhaseNavigationIntent {
         guard !isRecordOnlyCapture else { return .openCapture }
 
@@ -172,6 +189,6 @@ enum ConnectionState: Equatable {
 enum PhaseNavigationIntent: Equatable {
     case stay
     case openCapture
-    case openRide(DevicePickerConnectionRoute)
+    case openRide(DevicePickerConnectionRoute?)
     case returnToPicker
 }
