@@ -192,6 +192,9 @@ impl CaptureBatchSession {
         }
         self.reviewing = false;
         self.requires_fresh = !scan_completed;
+        if !scan_completed {
+            self.restore_finished_failure_set();
+        }
         if scan_completed && !self.awaiting_commit {
             self.stop_requested = false;
             self.failed.clear();
@@ -830,12 +833,21 @@ mod tests {
         session.note_review_interrupted();
         assert!(session.did_finish());
         assert!(session.begin_review(true));
+        session.finish_review(&[row("source", true, false)], true);
 
         let mut fresh = CaptureBatchSession::new();
         assert!(fresh.begin_review(false));
         fresh.fail_review();
         assert!(!fresh.did_finish());
         assert!(!fresh.begin_review(true));
+
+        assert!(session.did_finish());
+        assert_eq!(session.failed_ids(), ["source"]);
+        assert!(session.begin_review(true));
+        session.finish_review(&[row("source", true, true)], false);
+        assert!(session.did_finish());
+        assert_eq!(session.failed_ids(), ["source"]);
+        assert!(session.begin_review(true));
     }
 
     #[test]
