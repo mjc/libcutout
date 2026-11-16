@@ -86,6 +86,8 @@ pub struct CaptureBatchSession {
     filter: Option<BTreeSet<String>>,
     pending_ids: Vec<String>,
     failed: Vec<String>,
+    /// Failure set displaced by Send all before that confirmation uploads.
+    carried_failures: Vec<String>,
     attempt: u64,
     commit_tries: u8,
     user_adjusted: bool,
@@ -127,6 +129,7 @@ impl CaptureBatchSession {
         self.index.clear();
         self.selected.clear();
         self.pending_ids.clear();
+        self.carried_failures.clear();
         self.user_adjusted = false;
         self.reviewing = true;
         self.waiting = false;
@@ -199,6 +202,7 @@ impl CaptureBatchSession {
         if scan_completed && !self.awaiting_commit {
             self.stop_requested = false;
             self.failed.clear();
+            self.carried_failures.clear();
             self.filter = None;
         }
     }
@@ -257,6 +261,7 @@ impl CaptureBatchSession {
             .collect::<BTreeSet<_>>();
         let sending_all = requested == self.eligible_set();
         if self.reviewing && sending_all {
+            self.carry_failures();
             self.start_attempt();
             self.pending_ids.clone_from(&self.selected);
             self.resume_eligible = false;
@@ -368,6 +373,7 @@ impl CaptureBatchSession {
             CaptureBatchProgressKind::Failed => self.remember_failure(id),
             CaptureBatchProgressKind::Sent | CaptureBatchProgressKind::Cleaned => {
                 self.failed.retain(|failed| failed != id);
+                self.carried_failures.retain(|failed| failed != id);
             }
             CaptureBatchProgressKind::Other => {}
         }
@@ -381,6 +387,7 @@ impl CaptureBatchSession {
             return false;
         }
         self.failed = failed.to_vec();
+        self.carried_failures.clear();
         if cancelled > 0 {
             self.requires_fresh = true;
         }
@@ -540,6 +547,7 @@ impl CaptureBatchSession {
         if self.sending || self.finished || self.has_error || ids.is_empty() {
             return CaptureBatchEffect::Idle;
         }
+        self.carried_failures.clear();
         self.pending_ids.clone_from(&ids);
         self.start_attempt();
         CaptureBatchEffect::Send {
@@ -562,7 +570,18 @@ impl CaptureBatchSession {
         self.sending || self.waiting || self.resume_eligible || self.awaiting_commit
     }
 
+    /// Remembers the current failure set so a Send all that never uploads can restore it.
+    fn carry_failures(&mut self) {
+        if self.carried_failures.is_empty() {
+            self.carried_failures.clone_from(&self.failed);
+        }
+    }
+
     fn restore_finished_failure_set(&mut self) {
+        let carried = std::mem::take(&mut self.carried_failures);
+        for id in carried {
+            self.remember_failure(&id);
+        }
         if !self.failed.is_empty() {
             self.finished = true;
         }
@@ -574,6 +593,10 @@ impl CaptureBatchSession {
         }
         for id in ids {
             self.remember_failure(id);
+        }
+        let carried = std::mem::take(&mut self.carried_failures);
+        for id in carried {
+            self.remember_failure(&id);
         }
         self.has_error = true;
         self.finished = true;
@@ -976,6 +999,49 @@ mod tests {
             send_ids(session.review_settled()),
             ["source".to_owned(), "other".to_owned()]
         );
+    }
+
+    #[test]
+    fn rejected_send_all_with_nothing_left_to_send_keeps_the_failure_set_retryable() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, false)],
+            false,
+        );
+        let effect = session.request_send();
+        let CaptureBatchEffect::Send { attempt, .. } = effect else {
+            panic!("expected send");
+        };
+        assert!(session.note_summary(&["source".to_owned(), "other".to_owned()], 0, attempt));
+
+        assert!(session.begin_review(true));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        let effect = session.request_send();
+        let CaptureBatchEffect::CommitAll { attempt } = effect else {
+            panic!("expected send all");
+        };
+        assert!(session.note_progress("source", CaptureBatchProgressKind::Sent, attempt));
+        let mut effect = CaptureBatchEffect::CommitAll { attempt };
+        for _ in 0..5 {
+            let CaptureBatchEffect::CommitAll { attempt } = effect else {
+                panic!("expected another commit");
+            };
+            effect = session.note_commit_rejected(attempt);
+        }
+        assert!(matches!(effect, CaptureBatchEffect::WaitForReview));
+        session.finish_review(
+            &[row("source", false, true), row("other", false, true)],
+            false,
+        );
+
+        assert!(matches!(session.review_settled(), CaptureBatchEffect::Idle));
+        assert!(session.did_finish());
+        assert_eq!(session.failed_ids(), ["other"]);
+        assert!(session.begin_review(true));
     }
 
     #[test]
