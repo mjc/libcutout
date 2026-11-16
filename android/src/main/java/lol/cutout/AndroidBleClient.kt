@@ -744,6 +744,7 @@ class AndroidBleClient(
                 if (status == BluetoothGatt.GATT_SUCCESS) subscribed += descriptor.characteristic.uuid
                 queue.complete(key("subscribe", descriptor.characteristic), status == BluetoothGatt.GATT_SUCCESS)
                 probe()
+                if (descriptor.characteristic.uuid == VESC_NOTIFY) requestVescIdentification()
                 reschedule()
             }
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) = callback(gatt) {
@@ -855,6 +856,23 @@ class AndroidBleClient(
                     diagnostics.writeReceipt(token, channel, bytes, captureId, disposition, now())
                 }
             })
+        }
+
+        private var vescIdentificationRequested = false
+
+        private fun requestVescIdentification() {
+            if (vescIdentificationRequested || !current()) return
+            if (state.connectionAttemptSnapshot().readiness != MobileConnectionReadinessDto.PENDING) return
+            if (VESC_NOTIFY !in subscribed) return
+            vescIdentificationRequested = true
+            vescIdentificationRequests(
+                MobileMonotonicMillisDto(now()),
+                MobileTransportWriteLimitDto(session.writeLimit),
+            ).forEach { output ->
+                if (output.kind != MobileSessionOutputKindDto.WRITE) return@forEach
+                // The live attempt does not admit this request's query id.
+                write(output.channel, output.bytes, null)
+            }
         }
 
         private fun probe() {

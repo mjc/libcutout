@@ -184,6 +184,23 @@ struct IdentificationProbeTransportCoordinator {
         sink.subscribe(channel: .vescNordicUartNotify)
     }
 
+    /// Asks a silent VESC for the startup reads a verified session sends on link-up.
+    /// The reply is observed as a detection notification.
+    func requestVescIdentification(
+        at now: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes,
+        using sink: any CoreBluetoothOperationSink
+    ) {
+        let planner = CoreBluetoothTransportPlanner(writeLimit: writeLimit)
+        let outputs = vescIdentificationRequests(monotonicMs: now.dto, maxWriteLen: writeLimit.dto)
+        for output in outputs {
+            for operation in planner.plan(action: SessionAction(output)) {
+                guard case .writeWithoutResponse(let channel, let bytes) = operation else { continue }
+                _ = sink.writeWithoutResponse(channel: channel, bytes: bytes)
+            }
+        }
+    }
+
     @discardableResult
     func notificationsEnabled(
         at now: MonotonicMilliseconds,
@@ -3857,6 +3874,10 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             startEucProtocolDetection(on: characteristic.service?.peripheral)
             return
         }
+        if isDetectingProtocol, channel == .vescNordicUartNotify, characteristic.isNotifying {
+            requestVescIdentification(on: characteristic.service?.peripheral)
+            return
+        }
         liveOwner?.handleNotificationStateUpdate(
             channel: channel,
             isNotifying: characteristic.isNotifying,
@@ -4209,6 +4230,16 @@ extension CutoutSessionCore {
         recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
     }
 
+    private func requestVescIdentification(on peripheral: CBPeripheral?) {
+        let reported = peripheral?.maximumWriteValueLength(for: .withoutResponse) ?? 20
+        let limit = TransportWriteLimitBytes(UInt16(clamping: max(reported, 20)))
+        identificationProbeTransport.requestVescIdentification(
+            at: clock.now(),
+            writeLimit: limit,
+            using: self
+        )
+    }
+
     private func beginProtocolDetection(on peripheral: CBPeripheral) {
         setPhase(.subscribing)
         var subscribed = false
@@ -4222,7 +4253,9 @@ extension CutoutSessionCore {
         }
         if let characteristic = subscribedCharacteristics[.vescNordicUartNotify] {
             scheduleProtocolDetectionExpiry(on: peripheral)
-            if !characteristic.isNotifying {
+            if characteristic.isNotifying {
+                requestVescIdentification(on: peripheral)
+            } else {
                 identificationProbeTransport.subscribeVesc(using: self)
             }
             subscribed = true

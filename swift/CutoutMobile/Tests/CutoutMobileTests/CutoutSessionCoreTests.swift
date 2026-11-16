@@ -5988,6 +5988,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNotNil(capturedUpdate)
         XCTAssertNotNil(rideMapUpdate)
     }
+
+    func testVescIdentificationRequestAsksASilentDevice() {
+        let coordinator = IdentificationProbeTransportCoordinator(detectionSession: DeviceDetectionSession())
+        let sink = RecordingOperationSink()
+        coordinator.requestVescIdentification(
+            at: MonotonicMilliseconds(1),
+            writeLimit: TransportWriteLimitBytes(20),
+            using: sink
+        )
+
+        let writes = sink.writes
+        XCTAssertEqual(writes.count, 3)
+        guard writes.count == 3 else { return }
+        XCTAssertEqual(writes[0], Data([2, 1, 157, 82, 20, 3]))
+        XCTAssertTrue(isRefloatRequest(writes[1], command: 0))
+        XCTAssertEqual(writes[2], Data([2, 1, 4, 64, 132, 3]))
+    }
 }
 
 private func assertVescTelemetryRequests(
