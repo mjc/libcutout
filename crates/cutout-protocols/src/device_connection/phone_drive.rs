@@ -14,6 +14,9 @@ const CADENCE_MS: u64 = 50;
 const INPUT_MAX_AGE_MS: u64 = 150;
 const SUBMISSION_WINDOW_MS: u64 = 50;
 
+#[path = "phone_drive_replay.rs"]
+mod replay;
+
 #[cfg(test)]
 #[path = "phone_drive_tests.rs"]
 mod tests;
@@ -423,6 +426,18 @@ impl DeviceConnectionSession {
     #[must_use]
     pub fn phone_drive_input_snapshot(&self) -> PhoneDriveInputSnapshot {
         self.state.phone_drive_input.snapshot()
+    }
+
+    /// Projects one recorded contact into gesture feedback.
+    ///
+    /// Replay reads the saved layout and leaves this session's gesture and
+    /// grant untouched. The result contains no throttle or brake write.
+    #[must_use]
+    pub fn replay_phone_drive_contact(
+        &self,
+        contacts: PhoneDriveContacts,
+    ) -> PhoneDriveInputSnapshot {
+        replay::PhoneDriveReplay::replay(self.phone_drive_input_snapshot().mode, contacts)
     }
 
     /// Updates contact feedback without renewing live-control input age.

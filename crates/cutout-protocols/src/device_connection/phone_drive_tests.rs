@@ -6,6 +6,25 @@ fn at(value: u64) -> MonotonicTimestamp {
     MonotonicTimestamp::new(value)
 }
 
+fn ready_unarmed() -> (DeviceConnectionSession, ConnectionAttemptToken) {
+    let mut owner = DeviceConnectionSession::default();
+    let token = begin(&mut owner, "phone-board");
+    assert!(owner.configure_vehicle_kind(&token, VehicleKind::Eskate));
+    identify_vesc(&mut owner, &token);
+    let _ = drivetrain_tick(&mut owner, &token, 3_000);
+    assert!(owner.apply_phone_drive_preferences(
+        &token,
+        PhoneControlMode::Buttons,
+        PhoneDriveLimits::new(3_000, 3_000).unwrap(),
+    ));
+    assert_eq!(owner.phone_drive_activation(), None);
+    assert_eq!(
+        owner.phone_drive_availability(),
+        PhoneDriveAvailability::Ready
+    );
+    (owner, token)
+}
+
 fn active() -> (DeviceConnectionSession, ConnectionAttemptToken, u64) {
     let mut owner = DeviceConnectionSession::default();
     let token = begin(&mut owner, "phone-board");
@@ -874,6 +893,61 @@ fn phone_drive_backpressure_tick_emits_no_ordinary_polling_writes() {
             SessionOutput::Transport(TransportAction::Write { .. })
         )),
         "backpressure deadline processing must not schedule ordinary telemetry writes"
+    );
+}
+
+#[test]
+fn replay_of_a_held_phone_drive_contact_does_not_arm_or_write() {
+    let (mut owner, token) = ready_unarmed();
+    let before = owner.phone_drive_input_snapshot();
+    assert_eq!(owner.phone_drive_activation(), None);
+
+    for action in [PhoneDriveAction::Throttle, PhoneDriveAction::Brake] {
+        let replayed: PhoneDriveInputSnapshot = owner.replay_phone_drive_contact(held(action));
+        assert_eq!(
+            replayed.phase,
+            PhoneDriveInputPhase::Pressed(action),
+            "a recorded hold is gesture feedback only"
+        );
+        assert_eq!(replayed.mode, before.mode);
+        assert_ne!(replayed.phase, before.phase);
+        assert_eq!(owner.phone_drive_input_snapshot(), before);
+        assert_eq!(owner.phone_drive_activation(), None);
+        assert_eq!(
+            owner.phone_drive_availability(),
+            PhoneDriveAvailability::Ready
+        );
+    }
+
+    let step = owner.tick_phone_drive(&token, at(3_000), true).unwrap();
+    assert!(
+        drives(&step).is_empty(),
+        "replaying a held contact must not emit throttle or brake"
+    );
+    assert_eq!(owner.phone_drive_activation(), None);
+    assert_eq!(owner.phone_drive_input_snapshot(), before);
+
+    let generation = before
+        .generation
+        .expect("unarmed input still has a generation");
+    let live_hold = owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            generation,
+            held(PhoneDriveAction::Throttle),
+            at(3_001),
+            at(3_001),
+        )
+        .unwrap();
+    assert!(
+        drives(&live_hold).is_empty(),
+        "a recorded hold must not restore a grant for a later live contact"
+    );
+    assert_eq!(owner.phone_drive_activation(), None);
+    assert_eq!(
+        owner.phone_drive_input_snapshot().phase,
+        before.phase,
+        "the recorded hold must not replace the live gesture"
     );
 }
 
