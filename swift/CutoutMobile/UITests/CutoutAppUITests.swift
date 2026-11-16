@@ -9538,6 +9538,29 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(phoneApp.buttons["ride.phone-control.settings"].isHittable)
     }
 
+    func testPhoneSettingsLimitFailureStaysVisibleAtAccessibilityDynamicType() throws {
+        launchPhoneFixture(preview: true, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        try openPhoneRide()
+        try selectPhoneMode("Buttons")
+        try openPhoneDriveSettings()
+        let throttleLimit = phoneApp.textFields["ride.phone-control.throttle-current"]
+        XCTAssertTrue(throttleLimit.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        throttleLimit.tap()
+        throttleLimit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "0")
+        let save = revealPhoneSettingsButton("ride.phone-control.save")
+        XCTAssertTrue(save.isEnabled, phoneApp.debugDescription)
+        save.tap()
+        let failure = phoneElement("ride.phone-control.limits-error")
+        XCTAssertTrue(failure.waitForExistence(timeout: 5), phoneApp.debugDescription)
+        XCTAssertTrue(failure.isHittable, phoneApp.debugDescription)
+        let sheet = phoneElement("ride.phone-control.settings-sheet")
+        XCTAssertGreaterThanOrEqual(failure.frame.minY, sheet.frame.minY - 1)
+        XCTAssertLessThanOrEqual(failure.frame.maxY, sheet.frame.maxY + 1)
+        XCTAssertLessThan(
+            failure.frame.midY, sheet.frame.minY + sheet.frame.height * 0.55,
+            "A rejected current limit stays in the first screen of the settings sheet")
+    }
+
     func testPhoneAreaPreservesHeaderLowerBoundsTabsAndPlayerAtAccessibilityDynamicType() throws {
         launchPhoneFixture(
             preview: true, pausedMusic: true, contentSize: "UICTContentSizeCategoryAccessibilityXXXL")
