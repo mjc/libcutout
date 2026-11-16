@@ -2,7 +2,7 @@ import CutoutMobileFFI
 import SwiftUI
 
 enum ChargingSpotEditorField: Hashable {
-    case latitude, longitude, accessNote, name, hours, amount, currency
+    case latitude, longitude, accessNote, name, hours, amount, currency, outletCount
     case supplyVoltage(UUID)
     case supplyConnector(UUID)
 }
@@ -286,21 +286,25 @@ struct ChargingSpotEditorView: View {
     }
 
     @ViewBuilder private var optionalDetails: some View {
-        Picker(
-            localizedAppText("charging.editor.outlet_count"),
-            selection: Binding(
-                get: { model.outletCount },
-                set: model.setOutletCount
+        LabeledContent(localizedAppText("charging.editor.outlet_count")) {
+            TextField(
+                "",
+                text: Binding(
+                    get: { String(model.outletCount) },
+                    set: { text in
+                        guard let count = Int(text) else { return }
+                        model.setOutletCount(count)
+                    }
+                )
             )
-        ) {
-            if !(1...10).contains(model.outletCount) {
-                Text(String(model.outletCount)).tag(model.outletCount)
-            }
-            ForEach(1...10, id: \.self) { count in
-                Text(String(count)).tag(count)
-            }
+            #if os(iOS)
+                .keyboardType(.numberPad)
+            #endif
+            .focused($focusedField, equals: .outletCount)
+            .multilineTextAlignment(.trailing)
+            .accessibilityLabel(localizedAppText("charging.editor.outlet_count"))
+            .accessibilityIdentifier("charging.editor.outlet-count")
         }
-        .accessibilityIdentifier("charging.editor.outlet-count")
 
         if model.supplies.isEmpty {
             ChargingConnectorPicker(
