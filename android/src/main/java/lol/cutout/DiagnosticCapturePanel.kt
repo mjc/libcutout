@@ -643,7 +643,8 @@ internal class CaptureSubmissionBatchDialog(
                     main.post {
                         result.onSuccess { showSummary(it, attempt) }.onFailure {
                             if (session.noteSendFailure(ids, attempt)) {
-                                reviewError = captureSubmissionThrowableMessage(it)
+                                reviewError = (it as? MobileCaptureSubmissionException)
+                                    ?.let(::captureSubmissionErrorMessage)
                                     ?: context.getString(R.string.capture_batch_failed)
                                 progressText = context.getString(R.string.capture_batch_retained)
                                 onFinished(receiptConfirmed)

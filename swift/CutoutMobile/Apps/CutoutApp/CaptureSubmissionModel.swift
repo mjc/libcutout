@@ -158,7 +158,7 @@ final class CaptureSubmissionModel {
         if error as? MobileChargingError == .Unauthorized || error as? MobileChargingError == .Unavailable {
             return captureSubmissionErrorMessage(error: .Unauthorized)
         }
-        return "The private transfer could not be completed. Your original recording is still on this device."
+        return captureSubmissionUnexpectedErrorMessage()
     }
 
     var failureMessage: String? {

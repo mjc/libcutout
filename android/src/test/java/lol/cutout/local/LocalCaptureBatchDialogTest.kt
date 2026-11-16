@@ -84,6 +84,61 @@ class LocalCaptureBatchDialogTest {
     }
 
     @Test
+    fun failedRetryReviewCanBeRetriedAgain() {
+        val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        val activity = host.get()
+        val row = candidate("source-retry", eligible = true)
+        var reviews = 0
+        val operations = object : CaptureSubmissionBatchOperations {
+            override fun review(completed: (Result<List<CaptureBatchCandidate>>) -> Unit) {
+                reviews += 1
+                if (reviews == 2) completed(Result.failure(IllegalStateException("retry review failed")))
+                else completed(Result.success(listOf(row)))
+            }
+
+            override fun sendSelected(
+                sourceArtifactIds: List<String>,
+                progress: (CaptureBatchProgress) -> Unit,
+                completed: (Result<CaptureBatchSummary>) -> Unit,
+            ) {
+                completed(Result.success(CaptureBatchSummary(
+                    sent = 0uL, cleaned = 0uL, failed = 1uL, skipped = 0uL, cancelled = 0uL,
+                    failedSourceArtifactIds = listOf(row.sourceArtifactId),
+                    pendingCleanupSourceArtifactIds = emptyList(),
+                )))
+            }
+
+            override fun requestCancel() = Unit
+        }
+        val dialog = CaptureSubmissionBatchDialog(
+            context = activity,
+            charging = (activity.application as CutoutApplication).charging,
+            directories = emptyList(),
+            onFinished = {},
+            testOperations = operations,
+        )
+        try {
+            dialog.show()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.reviewDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            dialog.confirmationDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            find(dialog.reviewDialog, "captures.batch.reviewFailedAgain").performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(2, reviews)
+            assertTrue(containsText(dialog.reviewDialog, "Could not review saved recordings."))
+            find(dialog.reviewDialog, "captures.batch.reviewFailedAgain").performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(3, reviews)
+        } finally {
+            dialog.confirmationDialog?.dismiss()
+            dialog.reviewDialog?.dismiss()
+            host.pause().stop().destroy()
+        }
+    }
+
+    @Test
     fun stopAfterCurrentRequestsOnlyBoundedRustAdmissionCancellation() {
         val host = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = host.get()

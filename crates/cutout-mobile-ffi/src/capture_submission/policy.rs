@@ -236,6 +236,14 @@ pub fn capture_screenshot_limit_message() -> String {
     MobileCaptureSubmissionError::TooManyScreenshots.to_string()
 }
 
+/// Sentence shown when private Send fails for a reason outside the classified errors.
+#[must_use]
+#[uniffi::export]
+pub fn capture_submission_unexpected_error_message() -> String {
+    "The private transfer could not be completed. Your original recording is still on this device."
+        .to_owned()
+}
+
 /// Sentence shown when private Send cannot save or admit the recording.
 #[must_use]
 #[uniffi::export]
@@ -376,7 +384,8 @@ mod tests {
         capture_evidence_is_editable, capture_history_send_badge, capture_removal_result_message,
         capture_submission_cancel_offered, capture_submission_error_message,
         capture_submission_evidence_is_reviewable, capture_submission_failure_message,
-        capture_submission_send_offered, included_capture_categories,
+        capture_submission_send_offered, capture_submission_unexpected_error_message,
+        included_capture_categories,
     };
     use crate::MobileCaptureIntegrityDto;
 
@@ -505,6 +514,10 @@ mod tests {
 
     #[test]
     fn sheet_copy_and_phase_gates_follow_one_decision() {
+        assert_eq!(
+            capture_submission_unexpected_error_message(),
+            "The private transfer could not be completed. Your original recording is still on this device."
+        );
         assert_eq!(
             capture_submission_error_message(MobileCaptureSubmissionError::Unauthorized),
             "The account cannot authorize this transfer."

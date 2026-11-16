@@ -200,6 +200,8 @@ impl CaptureBatchSession {
     }
 
     /// The review failed before it could return rows.
+    ///
+    /// A previous confirmation's failure set stays retryable.
     pub fn fail_review(&mut self) {
         self.reviewing = false;
         self.waiting = false;
@@ -208,12 +210,16 @@ impl CaptureBatchSession {
         self.resume_eligible = false;
         self.requires_fresh = true;
         self.has_error = true;
+        self.restore_finished_failure_set();
     }
 
     /// The review task ended without a row list and without a storage error.
+    ///
+    /// A previous confirmation's failure set stays retryable.
     pub fn note_review_interrupted(&mut self) {
         self.reviewing = false;
         self.requires_fresh = true;
+        self.restore_finished_failure_set();
     }
 
     /// Applies one checkbox change. Ineligible rows and a busy send do not change.
@@ -535,6 +541,12 @@ impl CaptureBatchSession {
         }
     }
 
+    fn restore_finished_failure_set(&mut self) {
+        if !self.failed.is_empty() {
+            self.finished = true;
+        }
+    }
+
     fn fail_attempt(&mut self, attempt: u64, ids: &[String]) -> bool {
         if attempt != self.attempt || (!self.sending && !self.awaiting_commit) {
             return false;
@@ -795,6 +807,35 @@ mod tests {
         assert_eq!(session.failed_ids(), Vec::<String>::new());
         assert!(session.note_summary(&[], 0, next));
         assert_eq!(session.failed_ids(), [] as [String; 0]);
+    }
+
+    #[test]
+    fn failed_only_review_remains_retryable_after_the_review_fails() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("source", true, false));
+        session.finish_review(&[row("source", true, false)], false);
+        let effect = session.request_send();
+        let CaptureBatchEffect::Send { attempt, .. } = effect else {
+            panic!("expected send");
+        };
+        assert!(session.note_summary(&["source".to_owned()], 0, attempt));
+
+        assert!(session.begin_review(true));
+        session.fail_review();
+        assert!(session.did_finish());
+        assert_eq!(session.failed_ids(), ["source"]);
+        assert!(session.has_error());
+        assert!(session.begin_review(true));
+        session.note_review_interrupted();
+        assert!(session.did_finish());
+        assert!(session.begin_review(true));
+
+        let mut fresh = CaptureBatchSession::new();
+        assert!(fresh.begin_review(false));
+        fresh.fail_review();
+        assert!(!fresh.did_finish());
+        assert!(!fresh.begin_review(true));
     }
 
     #[test]

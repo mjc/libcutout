@@ -23,9 +23,12 @@ internal fun captureSubmissionIntegrityLabel(context: Context, integrity: Mobile
     MobileCaptureIntegrityDto.Unknown -> context.getString(R.string.capture_integrity_unknown)
 }
 
-internal fun captureSubmissionThrowableMessage(error: Throwable): String? =
-    (error as? MobileCaptureSubmissionException)?.let { captureSubmissionErrorMessage(it) }
-        ?: error.message?.takeIf { it.isNotEmpty() }
+internal fun captureSubmissionThrowableMessage(error: Throwable): String = when (error) {
+    is MobileCaptureSubmissionException -> captureSubmissionErrorMessage(error)
+    is MobileChargingException.Unauthorized, is MobileChargingException.Unavailable ->
+        captureSubmissionErrorMessage(MobileCaptureSubmissionException.Unauthorized())
+    else -> captureSubmissionUnexpectedErrorMessage()
+}
 
 /** Native editing and image effects; Rust owns limits, persistence and immutable Send. */
 internal class CaptureEvidenceDialog(
@@ -149,7 +152,7 @@ internal class CaptureEvidenceDialog(
         charging.withDatabase(operation) { result ->
             if (dismissed) return@withDatabase
             onFinished()
-            result.onSuccess(done).onFailure { message.text = captureSubmissionThrowableMessage(it) ?: "The recording could not be updated." }
+            result.onSuccess(done).onFailure { message.text = captureSubmissionThrowableMessage(it) }
             working = false; renderImages(); update()
         }
     }
@@ -255,7 +258,7 @@ internal class CaptureEvidenceDialog(
         if (working || dismissed) return
         working = true; update()
         runCatching(operation).onSuccess(done).onFailure {
-            message.text = captureSubmissionThrowableMessage(it) ?: "The recording could not be updated."
+            message.text = captureSubmissionThrowableMessage(it)
         }
         onFinished()
         working = false; renderImages(); update()
