@@ -1,5 +1,8 @@
 use super::{Reply, StorageError};
-use cutout_core::{PhoneControlMode, PhoneDriveLimits};
+use cutout_core::{
+    MonotonicTimestamp, PhoneControlMode, PhoneDriveAction, PhoneDriveContactId,
+    PhoneDriveEvidence, PhoneDriveLimits,
+};
 use rusqlite::Connection;
 
 pub(super) const SCHEMA_V55: &str = "
@@ -22,16 +25,58 @@ pub(super) const DEVICE_SCHEMA: &str = "
         brake_milliamps INTEGER NOT NULL CHECK (brake_milliamps BETWEEN 1 AND 500000)
     );";
 
+pub(super) const EVIDENCE_SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS phone_drive_evidence (
+        device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+        sequence INTEGER NOT NULL CHECK (sequence > 0),
+        phase TEXT NOT NULL CHECK (phase IN ('intent', 'admitted', 'native_receipt', 'observed_effect')),
+        action TEXT NOT NULL CHECK (action IN ('throttle', 'brake')),
+        contact_id INTEGER NOT NULL CHECK (contact_id > 0),
+        observed_at_ms INTEGER NOT NULL CHECK (observed_at_ms >= 0),
+        PRIMARY KEY (device_identity, sequence)
+    );";
+
 pub(super) fn create_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(SCHEMA_V55)?;
     connection.execute_batch(BUDGET_MIGRATION)?;
     connection.execute_batch(DEVICE_SCHEMA)?;
+    ensure_evidence_schema(connection)
+}
+
+pub(super) fn ensure_evidence_schema(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute_batch(EVIDENCE_SCHEMA)?;
     Ok(())
 }
 
 pub(super) fn verify_schema(connection: &Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     verify_device_schema(connection)
+}
+
+pub(super) fn verify_evidence_schema(connection: &Connection) -> Result<(), StorageError> {
+    let mut statement = connection.prepare("PRAGMA table_info(phone_drive_evidence)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = [
+        ("device_identity".to_owned(), "TEXT".to_owned(), 1, 1),
+        ("sequence".to_owned(), "INTEGER".to_owned(), 1, 2),
+        ("phase".to_owned(), "TEXT".to_owned(), 1, 0),
+        ("action".to_owned(), "TEXT".to_owned(), 1, 0),
+        ("contact_id".to_owned(), "INTEGER".to_owned(), 1, 0),
+        ("observed_at_ms".to_owned(), "INTEGER".to_owned(), 1, 0),
+    ];
+    if columns != expected {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    Ok(())
 }
 
 pub(super) fn verify_legacy_schema(connection: &Connection) -> Result<(), StorageError> {
@@ -92,9 +137,18 @@ pub(super) enum Command {
         settings: super::PhoneDriveSettingsRecord,
         reply: Reply<()>,
     },
+    RecordEvidence {
+        device_identity: String,
+        evidence: PhoneDriveEvidence,
+        reply: Reply<()>,
+    },
+    LoadEvidence {
+        device_identity: String,
+        reply: Reply<Vec<PhoneDriveEvidence>>,
+    },
 }
 
-pub(super) fn dispatch(connection: &Connection, command: Command) {
+pub(super) fn dispatch(connection: &mut Connection, command: Command) {
     match command {
         Command::LoadForDevice {
             device_identity,
@@ -132,6 +186,19 @@ pub(super) fn dispatch(connection: &Connection, command: Command) {
                     }
                 });
             let _ = reply.send(result);
+        }
+        Command::RecordEvidence {
+            device_identity,
+            evidence,
+            reply,
+        } => {
+            let _ = reply.send(record_evidence(connection, &device_identity, evidence));
+        }
+        Command::LoadEvidence {
+            device_identity,
+            reply,
+        } => {
+            let _ = reply.send(load_evidence(connection, &device_identity));
         }
     }
 }
@@ -192,4 +259,170 @@ fn decode_mode(value: String) -> Result<PhoneControlMode, StorageError> {
             value,
         }),
     }
+}
+
+fn record_evidence(
+    connection: &mut Connection,
+    device_identity: &str,
+    evidence: PhoneDriveEvidence,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    let sequence = next_sequence(&transaction, device_identity)?;
+    let affected = transaction
+        .execute(
+            "INSERT INTO phone_drive_evidence
+                (device_identity, sequence, phase, action, contact_id, observed_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                device_identity,
+                sequence,
+                phase_label(evidence),
+                encode_action(evidence.action()),
+                stored_contact(evidence.contact_id())?,
+                stored_observed_at(evidence.observed_at())?,
+            ],
+        )
+        .map_err(StorageError::from)?;
+    if affected != 1 {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn load_evidence(
+    connection: &Connection,
+    device_identity: &str,
+) -> Result<Vec<PhoneDriveEvidence>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT phase, action, contact_id, observed_at_ms
+           FROM phone_drive_evidence
+          WHERE device_identity = ?1
+          ORDER BY sequence ASC",
+    )?;
+    let rows = statement
+        .query_map([device_identity], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(phase, action, contact_id, observed_at_ms)| {
+            decode_evidence(phase, action, contact_id, observed_at_ms)
+        })
+        .collect()
+}
+
+fn next_sequence(connection: &Connection, device_identity: &str) -> Result<i64, StorageError> {
+    let current: i64 = connection.query_row(
+        "SELECT COALESCE(MAX(sequence), 0)
+           FROM phone_drive_evidence
+          WHERE device_identity = ?1",
+        [device_identity],
+        |row| row.get(0),
+    )?;
+    current
+        .checked_add(1)
+        .filter(|sequence| *sequence > 0)
+        .ok_or_else(|| StorageError::InvalidStoredValue {
+            field: "phone drive evidence sequence",
+            value: current.to_string(),
+        })
+}
+
+fn phase_label(evidence: PhoneDriveEvidence) -> &'static str {
+    match evidence {
+        PhoneDriveEvidence::Intent(_) => "intent",
+        PhoneDriveEvidence::Admitted(_) => "admitted",
+        PhoneDriveEvidence::NativeReceipt(_) => "native_receipt",
+        PhoneDriveEvidence::ObservedEffect(_) => "observed_effect",
+    }
+}
+
+fn encode_action(action: PhoneDriveAction) -> &'static str {
+    match action {
+        PhoneDriveAction::Brake => "brake",
+        PhoneDriveAction::Throttle => "throttle",
+    }
+}
+
+fn stored_contact(contact_id: PhoneDriveContactId) -> Result<i64, StorageError> {
+    i64::try_from(contact_id.get()).map_err(|_| StorageError::InvalidStoredValue {
+        field: "phone drive evidence contact",
+        value: contact_id.get().to_string(),
+    })
+}
+
+fn stored_observed_at(observed_at: MonotonicTimestamp) -> Result<i64, StorageError> {
+    i64::try_from(observed_at.get()).map_err(|_| StorageError::InvalidStoredValue {
+        field: "phone drive evidence time",
+        value: observed_at.get().to_string(),
+    })
+}
+
+fn decode_evidence(
+    phase: String,
+    action: String,
+    contact_id: i64,
+    observed_at_ms: i64,
+) -> Result<PhoneDriveEvidence, StorageError> {
+    let action = decode_action(action)?;
+    let contact_id = contact_from_row(contact_id)?;
+    let observed_at = timestamp_from_row(observed_at_ms)?;
+    match phase.as_str() {
+        "intent" => Ok(PhoneDriveEvidence::intent(action, contact_id, observed_at)),
+        "admitted" => Ok(PhoneDriveEvidence::admitted(
+            action,
+            contact_id,
+            observed_at,
+        )),
+        "native_receipt" => Ok(PhoneDriveEvidence::native_receipt(
+            action,
+            contact_id,
+            observed_at,
+        )),
+        "observed_effect" => Ok(PhoneDriveEvidence::observed_effect(
+            action,
+            contact_id,
+            observed_at,
+        )),
+        _ => Err(StorageError::InvalidStoredValue {
+            field: "phone drive evidence phase",
+            value: phase,
+        }),
+    }
+}
+
+fn decode_action(value: String) -> Result<PhoneDriveAction, StorageError> {
+    match value.as_str() {
+        "brake" => Ok(PhoneDriveAction::Brake),
+        "throttle" => Ok(PhoneDriveAction::Throttle),
+        _ => Err(StorageError::InvalidStoredValue {
+            field: "phone drive evidence action",
+            value,
+        }),
+    }
+}
+
+fn contact_from_row(value: i64) -> Result<PhoneDriveContactId, StorageError> {
+    let raw = u64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field: "phone drive evidence contact",
+        value: value.to_string(),
+    })?;
+    PhoneDriveContactId::new(raw).ok_or_else(|| StorageError::InvalidStoredValue {
+        field: "phone drive evidence contact",
+        value: value.to_string(),
+    })
+}
+
+fn timestamp_from_row(value: i64) -> Result<MonotonicTimestamp, StorageError> {
+    let raw = u64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field: "phone drive evidence time",
+        value: value.to_string(),
+    })?;
+    Ok(MonotonicTimestamp::new(raw))
 }

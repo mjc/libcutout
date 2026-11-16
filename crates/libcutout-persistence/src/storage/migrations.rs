@@ -103,6 +103,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         backfill_capture_submission_source_aliases(connection)?;
     }
     raise_capture_byte_ceiling(connection)?;
+    super::phone_control::ensure_evidence_schema(connection)?;
     Ok(())
 }
 
@@ -2076,6 +2077,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     super::device_vehicle::verify_schema(connection)?;
     super::device_drivetrain::verify_schema(connection)?;
     super::phone_control::verify_schema(connection)?;
+    super::phone_control::verify_evidence_schema(connection)?;
     verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
@@ -2094,6 +2096,7 @@ fn verify_required_tables(connection: &Connection) -> Result<(), StorageError> {
         "phone_alarm_preferences",
         "phone_control_preferences",
         "phone_drive_preferences",
+        "phone_drive_evidence",
         "ride_recording_preferences",
         "diagnostic_recording_preferences",
         "capture_submissions",
