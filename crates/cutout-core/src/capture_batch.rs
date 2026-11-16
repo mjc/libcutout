@@ -159,8 +159,9 @@ impl CaptureBatchSession {
     /// Replaces the sheet with the review's final rows.
     ///
     /// A cancelled review, or a row that is still checking, leaves the sheet needing
-    /// another review. A completed scan selects every allowed eligible row unless
-    /// the user changed the selection.
+    /// another review. A previous failure set stays retryable unless a confirmed send
+    /// is already waiting to start. A completed scan selects every allowed eligible
+    /// row unless the user changed the selection.
     pub fn finish_review(&mut self, rows: &[CaptureBatchRow], cancelled: bool) {
         let scan_completed = !cancelled && rows.iter().all(|row| !row.checking);
         self.rows.clear();
@@ -192,7 +193,7 @@ impl CaptureBatchSession {
         }
         self.reviewing = false;
         self.requires_fresh = !scan_completed;
-        if !scan_completed {
+        if !scan_completed && !self.confirmed_send_is_pending() {
             self.restore_finished_failure_set();
         }
         if scan_completed && !self.awaiting_commit {
@@ -218,11 +219,14 @@ impl CaptureBatchSession {
 
     /// The review task ended without a row list and without a storage error.
     ///
-    /// A previous confirmation's failure set stays retryable.
+    /// A previous failure set stays retryable. A send that was already confirmed
+    /// still starts from the rows observed so far.
     pub fn note_review_interrupted(&mut self) {
         self.reviewing = false;
         self.requires_fresh = true;
-        self.restore_finished_failure_set();
+        if !self.confirmed_send_is_pending() {
+            self.restore_finished_failure_set();
+        }
     }
 
     /// Applies one checkbox change. Ineligible rows and a busy send do not change.
@@ -312,7 +316,7 @@ impl CaptureBatchSession {
             self.resume_eligible = true;
             return CaptureBatchEffect::WaitForReview;
         }
-        self.start_send(self.eligible_ids())
+        self.start_confirmed_send(self.eligible_ids())
     }
 
     /// Continues a send that was waiting for the review task to leave.
@@ -325,11 +329,11 @@ impl CaptureBatchSession {
         if self.waiting {
             self.waiting = false;
             let ids = self.eligible_ids_in(&self.pending_ids);
-            return self.start_send(ids);
+            return self.start_confirmed_send(ids);
         }
         if self.resume_eligible {
             self.resume_eligible = false;
-            return self.start_send(self.eligible_ids());
+            return self.start_confirmed_send(self.eligible_ids());
         }
         CaptureBatchEffect::Idle
     }
@@ -346,7 +350,7 @@ impl CaptureBatchSession {
             self.resume_eligible = true;
             return CaptureBatchEffect::WaitForReview;
         }
-        self.start_send(self.eligible_ids())
+        self.start_confirmed_send(self.eligible_ids())
     }
 
     /// Records source progress for the current confirmation only.
@@ -542,6 +546,20 @@ impl CaptureBatchSession {
             source_artifact_ids: ids,
             attempt: self.attempt,
         }
+    }
+
+    /// Starts a send the user already confirmed. If that send cannot start, the
+    /// previous failure set stays available for another failed-only review.
+    fn start_confirmed_send(&mut self, ids: Vec<String>) -> CaptureBatchEffect {
+        let effect = self.start_send(ids);
+        if !self.sending {
+            self.restore_finished_failure_set();
+        }
+        effect
+    }
+
+    const fn confirmed_send_is_pending(&self) -> bool {
+        self.sending || self.waiting || self.resume_eligible || self.awaiting_commit
     }
 
     fn restore_finished_failure_set(&mut self) {
@@ -848,6 +866,116 @@ mod tests {
         assert!(session.did_finish());
         assert_eq!(session.failed_ids(), ["source"]);
         assert!(session.begin_review(true));
+    }
+
+    #[test]
+    fn narrowed_send_during_failed_only_review_survives_a_checking_row() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, false)],
+            false,
+        );
+        let effect = session.request_send();
+        let CaptureBatchEffect::Send { attempt, .. } = effect else {
+            panic!("expected send");
+        };
+        assert!(session.note_summary(&["source".to_owned(), "other".to_owned()], 0, attempt,));
+
+        assert!(session.begin_review(true));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        assert!(session.set_selected("other", false));
+        assert!(matches!(
+            session.request_send(),
+            CaptureBatchEffect::CancelReview
+        ));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, true)],
+            false,
+        );
+
+        assert_eq!(send_ids(session.review_settled()), ["source".to_owned()]);
+    }
+
+    #[test]
+    fn vanished_narrowed_send_keeps_the_failure_set_retryable() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, false)],
+            false,
+        );
+        let effect = session.request_send();
+        let CaptureBatchEffect::Send { attempt, .. } = effect else {
+            panic!("expected send");
+        };
+        assert!(session.note_summary(&["source".to_owned(), "other".to_owned()], 0, attempt,));
+
+        assert!(session.begin_review(true));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        assert!(session.set_selected("other", false));
+        assert!(matches!(
+            session.request_send(),
+            CaptureBatchEffect::CancelReview
+        ));
+        session.finish_review(
+            &[row("source", false, false), row("other", true, true)],
+            false,
+        );
+
+        assert!(matches!(session.review_settled(), CaptureBatchEffect::Idle));
+        assert!(session.did_finish());
+        assert_eq!(session.failed_ids(), ["source", "other"]);
+        assert!(session.begin_review(true));
+    }
+
+    #[test]
+    fn rejected_send_all_during_failed_only_review_survives_a_checking_row() {
+        let mut session = CaptureBatchSession::new();
+        assert!(session.begin_review(false));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, false)],
+            false,
+        );
+        let effect = session.request_send();
+        let CaptureBatchEffect::Send { attempt, .. } = effect else {
+            panic!("expected send");
+        };
+        assert!(session.note_summary(&["source".to_owned(), "other".to_owned()], 0, attempt,));
+
+        assert!(session.begin_review(true));
+        assert!(session.observe("source", true, false));
+        assert!(session.observe("other", true, false));
+        let effect = session.request_send();
+        let CaptureBatchEffect::CommitAll { attempt } = effect else {
+            panic!("expected send all");
+        };
+        assert!(session.note_progress("source", CaptureBatchProgressKind::Failed, attempt,));
+        let mut effect = CaptureBatchEffect::CommitAll { attempt };
+        for _ in 0..5 {
+            let CaptureBatchEffect::CommitAll { attempt } = effect else {
+                panic!("expected another commit");
+            };
+            effect = session.note_commit_rejected(attempt);
+        }
+        assert!(matches!(effect, CaptureBatchEffect::WaitForReview));
+        session.finish_review(
+            &[row("source", true, false), row("other", true, true)],
+            false,
+        );
+
+        assert_eq!(
+            send_ids(session.review_settled()),
+            ["source".to_owned(), "other".to_owned()]
+        );
     }
 
     #[test]
