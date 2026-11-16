@@ -122,11 +122,12 @@ class AndroidCameraClient(
             connection = if (preserveConnection) CameraConnectionState.CONNECTED else CameraConnectionState.DISCOVERING))
         try {
             val origin = mobileNovatekR3ProOrigin()
-            val firmware = request(origin, MobileNovatekReadCommandDto.FIRMWARE_VERSION, 4 * 1024)
-            val liveView = request(origin, MobileNovatekReadCommandDto.LIVE_VIEW_FORMAT, 4 * 1024)
-            val configuration = request(origin, MobileNovatekReadCommandDto.CONFIGURATION, 4 * 1024)
-            val storage = request(origin, MobileNovatekReadCommandDto.STORAGE_PRESENT, 4 * 1024)
-            val media = if (includeMedia) request(origin, MobileNovatekReadCommandDto.MEDIA_LIST, 512 * 1024) else null
+            val bodyLimit = cameraCommandBodyLimitBytes().toInt()
+            val firmware = request(origin, MobileNovatekReadCommandDto.FIRMWARE_VERSION, bodyLimit)
+            val liveView = request(origin, MobileNovatekReadCommandDto.LIVE_VIEW_FORMAT, bodyLimit)
+            val configuration = request(origin, MobileNovatekReadCommandDto.CONFIGURATION, bodyLimit)
+            val storage = request(origin, MobileNovatekReadCommandDto.STORAGE_PRESENT, bodyLimit)
+            val media = if (includeMedia) request(origin, MobileNovatekReadCommandDto.MEDIA_LIST, bodyLimit) else null
             if (generation != readingGeneration || !state.cameraSessionTokenIsCurrent(sessionToken) ||
                 !state.cameraDiscoveryTokenIsCurrent(discoveryToken)) return@enqueue
             val evidence = if (media != null) {
@@ -179,7 +180,7 @@ class AndroidCameraClient(
         update(if (recording) view.copy(recordingRequest = CameraRequestState.IN_FLIGHT, operationError = null)
             else view.copy(stillRequest = CameraRequestState.IN_FLIGHT, operationError = null))
         try {
-            val body = fetch(origin, request.target, 4 * 1024)
+            val body = fetch(origin, request.target, cameraCommandBodyLimitBytes().toInt())
             if (!state.cameraSessionTokenIsCurrent(token)) throw StaleCameraWork()
             val outcome = try { state.completeNovatekCommand(request, body) } catch (_: Exception) { MobileNovatekCommandOutcomeDto.UNKNOWN }
             val result = when (outcome) {

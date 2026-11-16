@@ -32,7 +32,7 @@ public enum CameraCommandRequestError: Error, Equatable, Sendable {
 public typealias CameraReadOnlyFetcher = @Sendable (URL) async throws -> Data
 
 private let maximumCameraThumbnailBytes = 2 * 1024 * 1024
-private let maximumCameraReadResponseBytes = 512 * 1024
+private let maximumCameraReadResponseBytes = Int(cameraCommandBodyLimitBytes())
 private let cameraReadTimeoutSeconds: TimeInterval = 10
 
 private final class CameraURLSessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDownloadDelegate {

@@ -390,6 +390,29 @@ impl MusicSnapshot {
     pub const fn capabilities(&self) -> MusicCapabilities {
         self.capabilities
     }
+
+    /// Projects this observation as stale.
+    ///
+    /// The clock moves forward by one millisecond, unless it is already
+    /// `u64::MAX`. A later caller clock replaces that step. Previous, play,
+    /// pause, and next are cleared. Open-provider stays. Spotify play returns
+    /// when that retained open-provider bit means reconnect is still possible.
+    /// Item, position, duration, session, and provider stay.
+    #[must_use]
+    pub fn stale_projection(&self, observed_at: MonotonicTimestamp) -> Self {
+        Self {
+            state: MusicPlaybackState::Stale,
+            observed_at: MonotonicTimestamp::new(advance_observed_at(
+                self.observed_at.as_milliseconds(),
+                observed_at.as_milliseconds(),
+            )),
+            capabilities: stale_observation_capabilities(
+                self.provider,
+                self.capabilities.supports(MusicCommand::OpenProvider),
+            ),
+            ..self.clone()
+        }
+    }
 }
 
 /// Validation failures at the music/provider boundary.
@@ -413,4 +436,347 @@ pub enum MusicValidationError {
     /// A transition kind does not match the provider playback state.
     #[error("music event kind does not match playback state")]
     EventKindStateMismatch,
+}
+
+/// Whether Spotify may expose Play so the listener can reconnect.
+///
+/// Stopped, disconnected, stale, and unavailable qualify when `can_reconnect`
+/// is set. Playing, paused, buffering, interrupted, and unauthorized keep the
+/// ordinary transport rules.
+#[must_use]
+pub const fn spotify_reconnect_grants_play(state: MusicPlaybackState, can_reconnect: bool) -> bool {
+    if !can_reconnect {
+        return false;
+    }
+    match state {
+        MusicPlaybackState::Stopped
+        | MusicPlaybackState::Disconnected
+        | MusicPlaybackState::Stale
+        | MusicPlaybackState::Unavailable => true,
+        MusicPlaybackState::Playing
+        | MusicPlaybackState::Paused
+        | MusicPlaybackState::Buffering
+        | MusicPlaybackState::Interrupted
+        | MusicPlaybackState::Unauthorized => false,
+    }
+}
+
+/// Moves an observation clock forward by one millisecond.
+///
+/// `u64::MAX` stays at the top of the clock. A later caller clock replaces
+/// the one-millisecond step.
+#[must_use]
+pub const fn advance_observed_at(previous_ms: u64, requested_ms: u64) -> u64 {
+    let advanced = if previous_ms == u64::MAX {
+        u64::MAX
+    } else {
+        previous_ms + 1
+    };
+    if requested_ms > advanced {
+        requested_ms
+    } else {
+        advanced
+    }
+}
+
+/// Capabilities for a stale observation.
+///
+/// Open-provider is retained when the source observation had it. Spotify play
+/// is restored only when reconnect is still possible for that retained bit.
+#[must_use]
+pub const fn stale_observation_capabilities(
+    provider: MusicProvider,
+    open_provider: bool,
+) -> MusicCapabilities {
+    let capabilities = if open_provider {
+        MusicCapabilities::new().with(MusicCommand::OpenProvider)
+    } else {
+        MusicCapabilities::new()
+    };
+    let reconnect = match provider {
+        MusicProvider::Spotify => {
+            spotify_reconnect_grants_play(MusicPlaybackState::Stale, open_provider)
+        }
+        MusicProvider::AppleMusic | MusicProvider::SoundCloud => false,
+    };
+    if reconnect {
+        capabilities.with(MusicCommand::Play)
+    } else {
+        capabilities
+    }
+}
+
+/// Disconnected observation recorded when the app leaves the foreground.
+///
+/// The session id is `music-observation-gap`. Position and duration are absent.
+/// The only capability is open-provider. A caller-supplied item is retained.
+///
+/// # Errors
+///
+/// Returns [`MusicValidationError::ProviderObservationUnsupported`] for
+/// `SoundCloud`, which can only carry an unavailable open-provider snapshot.
+pub fn observation_gap_snapshot(
+    provider: MusicProvider,
+    item: Option<MusicItem>,
+    observed_at: MonotonicTimestamp,
+) -> Result<MusicSnapshot, MusicValidationError> {
+    MusicSnapshot::new(
+        provider,
+        "music-observation-gap",
+        MusicPlaybackState::Disconnected,
+        item,
+        MusicPlaybackPosition::default(),
+        observed_at,
+        MusicCapabilities::new().with(MusicCommand::OpenProvider),
+    )
+}
+
+/// Apple Music transport capabilities for one system-player observation.
+///
+/// Previous and next require an item. Play is available while paused or
+/// stopped. Pause is available while playing. Open-provider is always available.
+#[must_use]
+pub const fn apple_music_transport_capabilities(
+    item_present: bool,
+    state: MusicPlaybackState,
+) -> MusicCapabilities {
+    let mut capabilities = MusicCapabilities::new().with(MusicCommand::OpenProvider);
+    if item_present {
+        capabilities = capabilities
+            .with(MusicCommand::Previous)
+            .with(MusicCommand::Next);
+    }
+    match state {
+        MusicPlaybackState::Paused | MusicPlaybackState::Stopped => {
+            capabilities.with(MusicCommand::Play)
+        }
+        MusicPlaybackState::Playing => capabilities.with(MusicCommand::Pause),
+        MusicPlaybackState::Buffering
+        | MusicPlaybackState::Interrupted
+        | MusicPlaybackState::Unauthorized
+        | MusicPlaybackState::Unavailable
+        | MusicPlaybackState::Disconnected
+        | MusicPlaybackState::Stale => capabilities,
+    }
+}
+
+/// Maps an Android `PlaybackState` integer onto the shared playback state.
+///
+/// The platform constants are none `0`, stopped `1`, paused `2`, playing `3`,
+/// fast-forwarding `4`, rewinding `5`, buffering `6`, and connecting `8`.
+/// Playing, fast-forwarding, and rewinding are playing. Buffering and
+/// connecting are buffering. Stopped and none are stopped. Every other value,
+/// including error `7`, is unavailable.
+#[must_use]
+pub const fn android_media_playback_state(state: i32) -> MusicPlaybackState {
+    match state {
+        3..=5 => MusicPlaybackState::Playing,
+        2 => MusicPlaybackState::Paused,
+        6 | 8 => MusicPlaybackState::Buffering,
+        0..=1 => MusicPlaybackState::Stopped,
+        _ => MusicPlaybackState::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MusicCapabilities, MusicCommand, MusicItem, MusicPlaybackPosition, MusicPlaybackState,
+        MusicProvider, MusicSnapshot, MusicValidationError, advance_observed_at,
+        android_media_playback_state, apple_music_transport_capabilities, observation_gap_snapshot,
+        spotify_reconnect_grants_play,
+    };
+    use cutout_core::MonotonicTimestamp;
+
+    fn playing(provider: MusicProvider, open_provider: bool) -> MusicSnapshot {
+        let mut capabilities = MusicCapabilities::new()
+            .with(MusicCommand::Previous)
+            .with(MusicCommand::Pause)
+            .with(MusicCommand::Next);
+        if open_provider {
+            capabilities = capabilities.with(MusicCommand::OpenProvider);
+        }
+        MusicSnapshot::new(
+            provider,
+            "session",
+            MusicPlaybackState::Playing,
+            Some(
+                MusicItem::new("track", Some("Song".to_owned()), Some("Artist".to_owned()))
+                    .expect("item"),
+            ),
+            MusicPlaybackPosition::new(Some(10), Some(100)).expect("position"),
+            MonotonicTimestamp::new(10),
+            capabilities,
+        )
+        .expect("snapshot")
+    }
+
+    #[test]
+    fn spotify_reconnect_play_is_limited_to_four_states() {
+        for state in [
+            MusicPlaybackState::Stopped,
+            MusicPlaybackState::Disconnected,
+            MusicPlaybackState::Stale,
+            MusicPlaybackState::Unavailable,
+        ] {
+            assert!(spotify_reconnect_grants_play(state, true), "{state:?}");
+            assert!(!spotify_reconnect_grants_play(state, false), "{state:?}");
+        }
+        for state in [
+            MusicPlaybackState::Playing,
+            MusicPlaybackState::Paused,
+            MusicPlaybackState::Buffering,
+            MusicPlaybackState::Interrupted,
+            MusicPlaybackState::Unauthorized,
+        ] {
+            assert!(!spotify_reconnect_grants_play(state, true), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn stale_projection_advances_the_clock_and_restores_only_spotify_reconnect_play() {
+        let snapshot = playing(MusicProvider::Spotify, true);
+        let stale = snapshot.stale_projection(MonotonicTimestamp::new(10));
+        assert_eq!(stale.state(), MusicPlaybackState::Stale);
+        assert_eq!(stale.observed_at(), MonotonicTimestamp::new(11));
+        assert_eq!(stale.session_id().as_str(), "session");
+        assert_eq!(stale.provider(), MusicProvider::Spotify);
+        assert_eq!(
+            stale.item().map(|item| item.identifier().as_str()),
+            Some("track")
+        );
+        assert_eq!(stale.position_milliseconds(), Some(10));
+        assert_eq!(stale.duration_milliseconds(), Some(100));
+        assert!(stale.capabilities().supports(MusicCommand::Play));
+        assert!(stale.capabilities().supports(MusicCommand::OpenProvider));
+        assert!(!stale.capabilities().supports(MusicCommand::Previous));
+        assert!(!stale.capabilities().supports(MusicCommand::Pause));
+        assert!(!stale.capabilities().supports(MusicCommand::Next));
+        assert_eq!(
+            snapshot
+                .stale_projection(MonotonicTimestamp::new(50))
+                .observed_at(),
+            MonotonicTimestamp::new(50)
+        );
+        assert_eq!(advance_observed_at(u64::MAX, 1), u64::MAX);
+        assert_eq!(advance_observed_at(u64::MAX, u64::MAX), u64::MAX);
+        let at_max = MusicSnapshot::new(
+            MusicProvider::Spotify,
+            "session",
+            MusicPlaybackState::Paused,
+            None,
+            MusicPlaybackPosition::default(),
+            MonotonicTimestamp::new(u64::MAX),
+            MusicCapabilities::new().with(MusicCommand::OpenProvider),
+        )
+        .expect("max clock");
+        assert_eq!(
+            at_max
+                .stale_projection(MonotonicTimestamp::new(1))
+                .observed_at(),
+            MonotonicTimestamp::new(u64::MAX)
+        );
+
+        let apple =
+            playing(MusicProvider::AppleMusic, true).stale_projection(MonotonicTimestamp::new(10));
+        assert!(!apple.capabilities().supports(MusicCommand::Play));
+        assert!(!apple.capabilities().supports(MusicCommand::Pause));
+        assert!(apple.capabilities().supports(MusicCommand::OpenProvider));
+
+        let closed =
+            playing(MusicProvider::Spotify, false).stale_projection(MonotonicTimestamp::new(10));
+        assert!(!closed.capabilities().supports(MusicCommand::Play));
+        assert!(!closed.capabilities().supports(MusicCommand::OpenProvider));
+    }
+
+    #[test]
+    fn observation_gap_is_disconnected_with_only_open_provider() {
+        let item = MusicItem::new("track", Some("Song".to_owned()), None).expect("item");
+        let snapshot = observation_gap_snapshot(
+            MusicProvider::AppleMusic,
+            Some(item),
+            MonotonicTimestamp::new(42),
+        )
+        .expect("apple gap");
+        assert_eq!(snapshot.session_id().as_str(), "music-observation-gap");
+        assert_eq!(snapshot.state(), MusicPlaybackState::Disconnected);
+        assert_eq!(snapshot.observed_at(), MonotonicTimestamp::new(42));
+        assert_eq!(snapshot.position_milliseconds(), None);
+        assert_eq!(snapshot.duration_milliseconds(), None);
+        assert_eq!(snapshot.item().and_then(MusicItem::title), Some("Song"));
+        assert!(snapshot.capabilities().supports(MusicCommand::OpenProvider));
+        assert!(!snapshot.capabilities().supports(MusicCommand::Play));
+        assert!(!snapshot.capabilities().supports(MusicCommand::Pause));
+        assert!(!snapshot.capabilities().supports(MusicCommand::Previous));
+        assert!(!snapshot.capabilities().supports(MusicCommand::Next));
+        assert!(
+            observation_gap_snapshot(MusicProvider::Spotify, None, MonotonicTimestamp::new(1))
+                .expect("spotify gap")
+                .item()
+                .is_none()
+        );
+        assert_eq!(
+            observation_gap_snapshot(MusicProvider::SoundCloud, None, MonotonicTimestamp::new(1)),
+            Err(MusicValidationError::ProviderObservationUnsupported)
+        );
+    }
+
+    #[test]
+    fn apple_music_transport_follows_item_presence_and_playback_state() {
+        for state in [
+            MusicPlaybackState::Playing,
+            MusicPlaybackState::Paused,
+            MusicPlaybackState::Stopped,
+            MusicPlaybackState::Buffering,
+            MusicPlaybackState::Interrupted,
+            MusicPlaybackState::Unauthorized,
+            MusicPlaybackState::Unavailable,
+            MusicPlaybackState::Disconnected,
+            MusicPlaybackState::Stale,
+        ] {
+            let with_item = apple_music_transport_capabilities(true, state);
+            let without_item = apple_music_transport_capabilities(false, state);
+            assert!(with_item.supports(MusicCommand::Previous), "{state:?}");
+            assert!(with_item.supports(MusicCommand::Next), "{state:?}");
+            assert!(with_item.supports(MusicCommand::OpenProvider), "{state:?}");
+            assert!(!without_item.supports(MusicCommand::Previous), "{state:?}");
+            assert!(!without_item.supports(MusicCommand::Next), "{state:?}");
+            assert!(
+                without_item.supports(MusicCommand::OpenProvider),
+                "{state:?}"
+            );
+            let play = state == MusicPlaybackState::Paused || state == MusicPlaybackState::Stopped;
+            let pause = state == MusicPlaybackState::Playing;
+            assert_eq!(with_item.supports(MusicCommand::Play), play, "{state:?}");
+            assert_eq!(with_item.supports(MusicCommand::Pause), pause, "{state:?}");
+            assert_eq!(without_item.supports(MusicCommand::Play), play, "{state:?}");
+            assert_eq!(
+                without_item.supports(MusicCommand::Pause),
+                pause,
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn android_playback_state_uses_the_platform_integers() {
+        let cases = [
+            (3, MusicPlaybackState::Playing),
+            (4, MusicPlaybackState::Playing),
+            (5, MusicPlaybackState::Playing),
+            (2, MusicPlaybackState::Paused),
+            (6, MusicPlaybackState::Buffering),
+            (8, MusicPlaybackState::Buffering),
+            (1, MusicPlaybackState::Stopped),
+            (0, MusicPlaybackState::Stopped),
+            (7, MusicPlaybackState::Unavailable),
+            (9, MusicPlaybackState::Unavailable),
+            (10, MusicPlaybackState::Unavailable),
+            (11, MusicPlaybackState::Unavailable),
+            (-1, MusicPlaybackState::Unavailable),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(android_media_playback_state(state), expected, "{state}");
+        }
+    }
 }

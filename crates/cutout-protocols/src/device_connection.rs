@@ -320,13 +320,12 @@ impl DeviceConnectionSession {
         &mut self,
         token: &ConnectionAttemptToken,
         now: MonotonicTimestamp,
-        timeout: cutout_core::Duration,
     ) -> Vec<cutout_core::PendingProbe> {
         if !self.state.connection.is_current(token) {
             return Vec::new();
         }
         self.detector
-            .expire_pending_probes(&mut self.state, now, timeout)
+            .expire_pending_probes(&mut self.state, now)
             .into_iter()
             .collect()
     }
@@ -408,13 +407,12 @@ impl DeviceConnectionSession {
     pub fn expire_pending_probes_unscoped(
         &mut self,
         now: MonotonicTimestamp,
-        timeout: cutout_core::Duration,
     ) -> Vec<cutout_core::PendingProbe> {
         if self.state.connection.snapshot().token.is_some() {
             return Vec::new();
         }
         self.detector
-            .expire_pending_probes(&mut self.state, now, timeout)
+            .expire_pending_probes(&mut self.state, now)
             .into_iter()
             .collect()
     }
@@ -919,10 +917,7 @@ impl DeviceConnectionSession {
         // Native transport completion cannot retire an unanswered identity query.
         // An exact model may be admitted while optional firmware/IMU queries continue.
         if resolution.staged.model.is_none()
-            && self
-                .detector
-                .next_probe_expiry(&self.state, cutout_core::Duration::from_milliseconds(0))
-                .is_some()
+            && self.detector.next_probe_expiry(&self.state).is_some()
         {
             return;
         }

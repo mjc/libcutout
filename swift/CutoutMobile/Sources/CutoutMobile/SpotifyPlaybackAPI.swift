@@ -158,7 +158,7 @@ struct SpotifyPlayback: Sendable {
     var device: Device? { value.deviceId().map(Device.init(id:)) }
     var item: Item? {
         guard value.itemIdentifier() != nil,
-            let item = value.snapshot(state: .playing, observedAtMs: 0).item
+            let item = value.snapshot(state: .playing, observedAtMs: 0, canReconnect: false).item
         else { return nil }
         return Item(uri: item.identifier, name: item.title, artist: item.artist)
     }
@@ -166,7 +166,11 @@ struct SpotifyPlayback: Sendable {
     var artworkURL: URL? { value.artworkUrl().flatMap(URL.init(string:)) }
     var withoutActiveDevice: Self { Self(value.withoutActiveDevice()) }
 
-    func snapshot(state: MobileMusicPlaybackStateDto, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        value.snapshot(state: state, observedAtMs: observedAtMs)
+    func snapshot(
+        state: MobileMusicPlaybackStateDto,
+        observedAtMs: UInt64,
+        canReconnect: Bool = false
+    ) -> MobileMusicSnapshotDto {
+        value.snapshot(state: state, observedAtMs: observedAtMs, canReconnect: canReconnect)
     }
 }

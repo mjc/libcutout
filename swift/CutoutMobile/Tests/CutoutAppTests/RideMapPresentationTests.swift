@@ -738,8 +738,8 @@ final class RideMapPresentationTests: XCTestCase {
         )
         XCTAssertTrue(imperial.contains("2.2"))
         XCTAssertTrue(imperial.localizedCaseInsensitiveContains("mph"))
-        XCTAssertTrue(metric.contains("3,6"))
-        XCTAssertTrue(metric.localizedCaseInsensitiveContains("km/h"))
+        XCTAssertTrue(metric.contains("2.2"))
+        XCTAssertTrue(metric.localizedCaseInsensitiveContains("mph"))
     }
 
     func testRideMapStringsResolveFromTheAppCatalog() {

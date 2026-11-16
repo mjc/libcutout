@@ -2648,12 +2648,8 @@ impl CutoutSessionStateHandle {
             })
             .map_or_else(|| state.detector_resolution().into(), Into::into)
     }
-    pub fn expire_begode_probe_responses(
-        &self,
-        now_ms: u64,
-        timeout_ms: u64,
-    ) -> Vec<MobilePendingProbeDto> {
-        self.expire_begode_probe_responses_unscoped(now_ms, timeout_ms)
+    pub fn expire_begode_probe_responses(&self, now_ms: u64) -> Vec<MobilePendingProbeDto> {
+        self.expire_begode_probe_responses_unscoped(now_ms)
     }
     pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
         self.mark_begode_probe_responses_missing_unscoped()
@@ -2759,14 +2755,10 @@ impl CutoutSessionStateHandle {
     pub fn expire_begode_probe_responses_unscoped(
         &self,
         now_ms: u64,
-        timeout_ms: u64,
     ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
         state
-            .expire_pending_probes_unscoped(
-                MonotonicTimestamp::new(now_ms),
-                CoreDuration::from_milliseconds(timeout_ms),
-            )
+            .expire_pending_probes_unscoped(MonotonicTimestamp::new(now_ms))
             .into_iter()
             .map(MobilePendingProbeDto::from)
             .collect()
@@ -3873,15 +3865,10 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
         now_ms: u64,
-        timeout_ms: u64,
     ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
         state
-            .expire_pending_probes(
-                &token.into(),
-                MonotonicTimestamp::new(now_ms),
-                CoreDuration::from_milliseconds(timeout_ms),
-            )
+            .expire_pending_probes(&token.into(), MonotonicTimestamp::new(now_ms))
             .into_iter()
             .map(MobilePendingProbeDto::from)
             .collect()
@@ -3901,10 +3888,10 @@ impl CutoutSessionStateHandle {
     }
 
     /// Returns the next strict Begode probe-expiration deadline.
-    pub fn next_begode_probe_expiry(&self, timeout_ms: u64) -> Option<u64> {
+    pub fn next_begode_probe_expiry(&self) -> Option<u64> {
         let state = self.lock_inner();
         state
-            .next_probe_expiry(CoreDuration::from_milliseconds(timeout_ms))
+            .next_probe_expiry()
             .map(MonotonicTimestamp::as_milliseconds)
     }
 
@@ -19950,7 +19937,7 @@ mod tests {
                 writes: vec![MobileIdentificationProbeWriteDto::begode(b"N")],
             }
         );
-        assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
+        assert_eq!(session.next_begode_probe_expiry(), Some(3_001));
     }
 
     #[test]
@@ -19967,7 +19954,7 @@ mod tests {
             duplicate,
             MobileIdentificationProbeOutcomeDto::AlreadyPending
         );
-        assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
+        assert_eq!(session.next_begode_probe_expiry(), Some(3_001));
     }
 
     #[test]
@@ -20115,7 +20102,7 @@ mod tests {
 
         assert!(session.should_retry_identification());
         assert_eq!(session.resolution(), expected);
-        assert_eq!(session.next_begode_probe_expiry(2_000), None);
+        assert_eq!(session.next_begode_probe_expiry(), None);
         session.set_device_connection_intent(DeviceConnectionIntentDto::RecordOnly);
         assert!(!session.should_retry_identification());
         session.set_device_connection_intent(DeviceConnectionIntentDto::Use);
@@ -20380,7 +20367,7 @@ mod tests {
         let _ = session.observe_begode_imu_probe_at(1_002);
         let _ = session.observe_notification(b"NAME=Falcon".to_vec());
 
-        let expired = session.expire_begode_probe_responses(3_003, 2_000);
+        let expired = session.expire_begode_probe_responses(3_003);
 
         assert_eq!(
             expired,
@@ -20389,7 +20376,7 @@ mod tests {
                 MobilePendingProbeDto::BegodeImu
             ]
         );
-        assert_eq!(session.next_begode_probe_expiry(2_000), None);
+        assert_eq!(session.next_begode_probe_expiry(), None);
     }
 
     #[test]

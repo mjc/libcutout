@@ -10,6 +10,13 @@ use std::{
     sync::{Arc, Condvar, Mutex, PoisonError},
 };
 
+/// Minimum location-provider interval, in milliseconds. Zero leaves filtering to Rust.
+#[must_use]
+#[uniffi::export]
+pub fn location_acquisition_minimum_interval_ms() -> u64 {
+    cutout_application::location::LOCATION_ACQUISITION_MINIMUM_INTERVAL_MILLISECONDS
+}
+
 /// Capacity ownership acquired before native dispatch retains a location callback.
 #[derive(Debug, Default)]
 pub(crate) struct LocationCallbackCapacity {
@@ -321,6 +328,11 @@ mod tests {
     };
     use std::{sync::mpsc, time::Duration};
     use uuid::Uuid;
+
+    #[test]
+    fn display_policy_location_acquisition_interval_is_unfiltered() {
+        assert_eq!(location_acquisition_minimum_interval_ms(), 0);
+    }
 
     fn sample(index: u64) -> MobilePhoneLocationSampleDto {
         MobilePhoneLocationSampleDto {

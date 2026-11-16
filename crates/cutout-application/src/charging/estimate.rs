@@ -1,5 +1,8 @@
 //! Retained battery estimation, current freshness and voltage-sag learning.
 
+/// How long charge-estimate telemetry stays usable for one presentation sample.
+pub const CHARGE_ESTIMATE_FRESHNESS_MILLISECONDS: u64 = 30_000;
+
 use cutout_core::{
     BatteryCurrent, BatteryLevel, BatteryLevelBasis, Capacity, CapacitySource, ChargeEstimateInput,
     ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,

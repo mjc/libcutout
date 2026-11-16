@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.content.res.ColorStateList
+import android.location.Geocoder
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.text.InputType
@@ -79,6 +80,7 @@ class ChargingMapPanel(
     private var editorStatus: String? = null
     private var syncRequestedOnActivation = false
     private var syncMessage: String? = null
+    private var connectorChoices: List<MobileChargingConnectorDto> = mobileChargingConnectorChoices(null)
     private val status = ui.text("", 14f, false, ui.muted)
     private val communityActions = ui.row().apply { visibility = View.GONE }
     private val emptyAction = ui.action(context.getString(R.string.charging_empty)) { addSpot() }.apply {
@@ -120,11 +122,13 @@ class ChargingMapPanel(
     fun dispose() {
         modalDialog?.dismiss()
         modalDialog = null
+        releaseEditor()
         mapView.showChargingPopup(null)
         locationClient.close()
         controller.onChanged = null
         mapView.onViewportChanged = null
         mapView.onChargingSpotSelected = null
+        controller.close()
     }
 
     fun activate() {
@@ -356,7 +360,7 @@ class ChargingMapPanel(
                         else -> directoryMode
                     }
                     if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
-                    if (sheetMode == Mode.EDITOR) editor = null
+                    if (sheetMode == Mode.EDITOR) releaseEditor()
                     if (sheetMode == Mode.DETAILS) controller.select(null)
                     render()
                 }
@@ -382,7 +386,7 @@ class ChargingMapPanel(
             else -> directoryMode
         }
         if (mode == Mode.MAP || mode == Mode.LIST) directoryMode = mode
-        if (expected == Mode.EDITOR) editor = null
+        if (expected == Mode.EDITOR) releaseEditor()
         if (expected == Mode.DETAILS) controller.select(null)
         val dialog = modalDialog
         modalDialog = null
@@ -524,18 +528,21 @@ class ChargingMapPanel(
         val input = conflict.input ?: return
         editorStatus = null
         editorReturnMode = Mode.REVIEW
-        editor = ChargingSpotEditorPanel(context, null, input.coordinate,
-            onCancel = { editor = null; mode = Mode.REVIEW; render() },
+        releaseEditor()
+        val panel = ChargingSpotEditorPanel(context, null, input.coordinate,
+            onCancel = { releaseEditor(); mode = Mode.REVIEW; render() },
             onSave = { updated ->
                 controller.replaceBlocked(conflict, updated) { result ->
                     result.fold(
-                        onSuccess = { editor = null; mode = Mode.REVIEW; render() },
+                        onSuccess = { releaseEditor(); mode = Mode.REVIEW; render() },
                         onFailure = { editorStatus = it.message ?: context.getString(R.string.charging_validation); render() },
                     )
                 }
             },
             initialInput = input,
         )
+        editor = panel
+        resolveEditorPower(panel)
         mode = Mode.EDITOR
         render()
     }
@@ -576,7 +583,7 @@ class ChargingMapPanel(
             card.setOnClickListener { controller.select(spot.id); mode = Mode.DETAILS }
             page.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
         }
-        if (controller.state.cursor != null) {
+        if (controller.state.cursor != null && !controller.state.limitReached) {
             page.addView(ui.action(context.getString(R.string.charging_load_more)) { currentBounds()?.let { controller.load(it, true) } },
                 LinearLayout.LayoutParams(-1, ui.dp(48)))
         }
@@ -731,12 +738,13 @@ class ChargingMapPanel(
         val actual = coordinate ?: spot?.input?.coordinate ?: return
         editorStatus = null
         editorReturnMode = if (spot == null) directoryMode else Mode.DETAILS
-        editor = ChargingSpotEditorPanel(
+        releaseEditor()
+        val panel = ChargingSpotEditorPanel(
             context = context,
             spot = spot,
             initialCoordinate = actual,
             onCancel = {
-                editor = null
+                releaseEditor()
                 mode = if (spot == null) editorReturnMode else Mode.DETAILS
                 directoryMode = if (mode == Mode.MAP || mode == Mode.LIST) mode else directoryMode
                 render()
@@ -745,7 +753,7 @@ class ChargingMapPanel(
                 controller.save(spot, input) { result ->
                     result.fold(
                         onSuccess = { saved ->
-                            editor = null
+                            releaseEditor()
                             if (saved == null) {
                                 mode = editorReturnMode
                                 syncMessage = context.getString(R.string.charging_saved_queued)
@@ -761,8 +769,59 @@ class ChargingMapPanel(
                 }
             },
         )
+        editor = panel
+        resolveEditorPower(panel)
         mode = Mode.EDITOR
         render()
+    }
+
+    private fun releaseEditor() {
+        val current = editor ?: return
+        editor = null
+        current.close()
+    }
+
+    private fun resolveEditorPower(panel: ChargingSpotEditorPanel) {
+        val fix = locationClient.freshFix()
+        if (fix == null) {
+            panel.setCountryCode(null)
+            panel.setConnectorChoices(null)
+            return
+        }
+        val origin = MobileMapCoordinateDto(fix.latitudeDegrees, fix.longitudeDegrees)
+        client.withDatabase({ database ->
+            val country = countryCodeAt(origin)
+            EditorPowerContext(country, database.chargingConnectorChoicesNear(origin, country))
+        }) { result ->
+            result.onSuccess { resolved ->
+                connectorChoices = resolved.choices
+                if (editor === panel) {
+                    panel.setCountryCode(resolved.country)
+                    panel.setConnectorChoices(resolved.choices)
+                }
+            }
+            result.onFailure {
+                if (editor === panel) {
+                    panel.setCountryCode(null)
+                    panel.setConnectorChoices(null)
+                }
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun countryCodeAt(origin: MobileMapCoordinateDto): String? {
+        if (!Geocoder.isPresent()) return null
+        return try {
+            val code = Geocoder(context).getFromLocation(
+                origin.latitudeDegrees, origin.longitudeDegrees, 1,
+            )?.firstOrNull()?.countryCode
+            code?.takeIf { it.length == 2 && it.all { letter -> letter in 'A'..'Z' || letter in 'a'..'z' } }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun showConflict(spot: MobileChargingSpotDto?) {
@@ -931,7 +990,7 @@ class ChargingMapPanel(
     )[index])) }
 
     private fun selectConnectorFilter() {
-        val choices = ChargingConnectorArtwork.catalog
+        val choices = connectorChoices
         val labels = listOf(context.getString(R.string.charging_all)) + choices.map(::connectorText)
         val selectedIndex = controller.filter.connector?.let { selected -> choices.indexOf(selected) + 1 } ?: 0
         AlertDialog.Builder(context).setTitle(R.string.charging_connector)
@@ -998,4 +1057,9 @@ class ChargingMapPanel(
     }
 
     private fun connectorText(value: MobileChargingConnectorDto): String = ChargingConnectorArtwork.label(ui, value)
+
+    private data class EditorPowerContext(
+        val country: String?,
+        val choices: List<MobileChargingConnectorDto>,
+    )
 }

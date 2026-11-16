@@ -167,12 +167,10 @@ public enum CaptureEvent: Equatable, Sendable {
     }
 }
 
-struct BegodeProbeResponsePolicy {
-    static let timeoutAfter = MonotonicMilliseconds(2_000)
-}
-
 struct ProtocolDetectionResponsePolicy {
-    static let timeoutAfter = MonotonicMilliseconds(2_000)
+    static var timeoutAfter: MonotonicMilliseconds {
+        MonotonicMilliseconds(protocolDetectionResponseTimeoutMs())
+    }
 }
 
 struct IdentificationProbeTransportCoordinator {
@@ -200,27 +198,6 @@ struct IdentificationProbeTransportCoordinator {
 
     func observeNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
         return detectionSession.observeNotification(bytes: bytes)
-    }
-
-    func vescNotificationsEnabled(
-        at now: MonotonicMilliseconds,
-        using sink: any CoreBluetoothOperationSink
-    ) {
-        let session = VescReadOnlyTransportSession()
-        guard
-            let linkActions = try? session.linkUp(
-                at: now,
-                writeLimit: TransportWriteLimitBytes(512)
-            )
-        else {
-            return
-        }
-        linkActions
-            .filter { $0.kind == .write }
-            .forEach { action in
-                guard let channel = BluetoothUuid(action.channel) else { return }
-                _ = sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
-            }
     }
 }
 
@@ -3774,9 +3751,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 }
                 publishCaptureProgress()
                 if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
-                    deviceDetectionSession.nextBegodeProbeExpiry(
-                        timeout: BegodeProbeResponsePolicy.timeoutAfter
-                    ) == nil
+                    deviceDetectionSession.nextBegodeProbeExpiry() == nil
                 {
                     finishProtocolDetectionOrRecord(
                         detectionResolution,
@@ -3880,10 +3855,6 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         if isDetectingProtocol, channel.bluetooth16Value == 0xffe1, characteristic.isNotifying {
             startEucProtocolDetection(on: characteristic.service?.peripheral)
-            return
-        }
-        if isDetectingProtocol, channel == .vescNordicUartNotify, characteristic.isNotifying {
-            identificationProbeTransport.vescNotificationsEnabled(at: clock.now(), using: self)
             return
         }
         liveOwner?.handleNotificationStateUpdate(
@@ -4102,10 +4073,7 @@ extension CutoutSessionCore {
 
     func expireOutstandingBegodeProbeResponses() {
         onBleQueue {
-            let expired = deviceDetectionSession.expireBegodeProbeResponses(
-                at: clock.now(),
-                timeout: BegodeProbeResponsePolicy.timeoutAfter
-            )
+            let expired = deviceDetectionSession.expireBegodeProbeResponses(at: clock.now())
             publishMissingBegodeProbeResponses(expired)
             advanceIdentificationQueries()
             scheduleBegodeProbeExpiry()
@@ -4254,9 +4222,7 @@ extension CutoutSessionCore {
         }
         if let characteristic = subscribedCharacteristics[.vescNordicUartNotify] {
             scheduleProtocolDetectionExpiry(on: peripheral)
-            if characteristic.isNotifying {
-                identificationProbeTransport.vescNotificationsEnabled(at: clock.now(), using: self)
-            } else {
+            if !characteristic.isNotifying {
                 identificationProbeTransport.subscribeVesc(using: self)
             }
             subscribed = true
@@ -4322,9 +4288,7 @@ extension CutoutSessionCore {
     private func scheduleBegodeProbeExpiry() {
         begodeProbeExpiryWorkItem?.cancel()
         guard
-            let deadline = deviceDetectionSession.nextBegodeProbeExpiry(
-                timeout: BegodeProbeResponsePolicy.timeoutAfter
-            )
+            let deadline = deviceDetectionSession.nextBegodeProbeExpiry()
         else {
             begodeProbeExpiryWorkItem = nil
             return

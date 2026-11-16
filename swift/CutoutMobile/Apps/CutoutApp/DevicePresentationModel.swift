@@ -309,7 +309,11 @@ final class DevicePresentationModel {
     }
     var vescRideSnapshot: VescRideSnapshot? {
         VescRideSnapshot(
-            displayState: displayState, title: selectedRideTitle, identity: deviceSessionSnapshot?.identity)
+            displayState: displayState,
+            title: selectedRideTitle,
+            identity: deviceSessionSnapshot?.identity,
+            connectedPlatformIdentifier: selectedRideIdentifier
+        )
     }
     var connectionStatusText: String { connectionState.statusText ?? phase.displayText }
 

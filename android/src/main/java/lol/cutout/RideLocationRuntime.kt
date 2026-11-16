@@ -120,17 +120,17 @@ class RideLocationRuntime(
         val receiptWallClock = System.currentTimeMillis().toULong()
         val samples = locations.map { location ->
             MobilePhoneLocationSampleDto(
-                wallClockUnixMs = receiptWallClock,
-                sourceTimestampUnixSeconds = location.time.takeIf { it > 0L }?.let { it / 1000.0 },
+                wallClockUnixMs = if (location.time > 0L) location.time.toULong() else 0UL,
+                sourceTimestampUnixSeconds = location.time.toDouble() / 1_000.0,
                 latitudeDegrees = location.latitude,
                 longitudeDegrees = location.longitude,
                 altitudeMeters = location.altitude,
-                horizontalAccuracyMeters = location.accuracy.toDouble().takeIf { location.hasAccuracy() },
-                verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters.toDouble() else null,
-                speedMetersPerSecond = location.speed.toDouble().takeIf { location.hasSpeed() },
-                speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond.toDouble() else null,
-                courseDegrees = location.bearing.toDouble().takeIf { location.hasBearing() },
-                courseAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees.toDouble() else null,
+                horizontalAccuracyMeters = location.accuracy.toDouble(),
+                verticalAccuracyMeters = location.verticalAccuracyMeters.toDouble(),
+                speedMetersPerSecond = location.speed.toDouble(),
+                speedAccuracyMetersPerSecond = location.speedAccuracyMetersPerSecond.toDouble(),
+                courseDegrees = location.bearing.toDouble(),
+                courseAccuracyDegrees = location.bearingAccuracyDegrees.toDouble(),
             )
         }
         // Keep the dashboard readback independent from route-point admission. A stationary
@@ -184,11 +184,11 @@ class RideLocationRuntime(
             val manager = locationManager ?: throw IllegalArgumentException("Android location service is unavailable")
             var requested = fineGranted && locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
             if (requested) {
-                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, LOCATION_INTERVAL_MS, 0f, listener, thread.looper)
+                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, locationIntervalMs(), 0f, listener, thread.looper)
                 active = true
             }
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, LOCATION_INTERVAL_MS, 0f, listener, thread.looper)
+                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, locationIntervalMs(), 0f, listener, thread.looper)
                 requested = true
                 active = true
             }
@@ -251,7 +251,5 @@ class RideLocationRuntime(
         thread.quitSafely()
     }
 
-    companion object {
-        private const val LOCATION_INTERVAL_MS = 1_000L
-    }
+    private fun locationIntervalMs(): Long = locationAcquisitionMinimumIntervalMs().toLong()
 }

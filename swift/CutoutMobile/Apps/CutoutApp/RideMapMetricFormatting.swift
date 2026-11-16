@@ -17,8 +17,15 @@ enum RideMapMetricFormatting {
     }
 
     static func distanceText(for summary: MobileRideMapSummaryDto) -> String {
-        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        let millimetres = (summary.distanceMeters * 1_000).rounded()
+        guard millimetres.isFinite, millimetres <= Double(Int64.max), millimetres >= Double(Int64.min) else {
+            return "0.0 \(RideUnits.distanceUnitImperial)"
+        }
+        let text = RideUnits.distanceText(
+            millimetres: Int64(millimetres),
+            unit: RideUnits.distanceUnitImperial
+        )
+        return "\(text) \(RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit))"
     }
 
     static func movingTimeText(for summary: MobileRideMapSummaryDto) -> String {
@@ -66,8 +73,7 @@ enum RideMapMetricFormatting {
     }
 
     private static func durationText(milliseconds: UInt64) -> String {
-        Duration.seconds(Double(milliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        RideUnits.durationText(milliseconds: milliseconds)
     }
 
     static func recordedAtText(for milliseconds: UInt64) -> String {

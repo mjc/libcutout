@@ -3761,10 +3761,11 @@ final class CutoutSessionCoreTests: XCTestCase {
                     rideID: "current-ride", state: statistics == nil ? .stopped : .active,
                     summary: MobileRideMapSummaryDto(
                         pointCount: points, distanceMeters: 999, durationMilliseconds: 999_000),
-                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: nil
+                    liveActivityStatistics: statistics, segmentCount: 1, associatedVehicle: "wheel"
                 )
             )
-            return try XCTUnwrap(VescRideSnapshot(displayState: display, title: nil))
+            return try XCTUnwrap(
+                VescRideSnapshot(displayState: display, title: nil, connectedPlatformIdentifier: "wheel"))
         }
         let statistics = MobileRideMapLiveActivityStatisticsDto(
             durationMilliseconds: 522_000, distanceMillimetres: 1_609_344)

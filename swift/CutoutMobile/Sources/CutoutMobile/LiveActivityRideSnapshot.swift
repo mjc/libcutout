@@ -300,14 +300,18 @@ public enum LiveActivityRidePwmSeverity: String, Codable, Equatable, Hashable, S
     case critical
     case unavailable
 
-    public static let criticalThreshold = 0.80
+    public static var criticalThreshold: Double {
+        Double(liveActivityPwmCriticalPermille()) / 1_000
+    }
 
     public init(pwm: LiveActivityRideValue) {
         guard let usage = pwm.progressValue else {
             self = .unavailable
             return
         }
-        self = usage > Self.criticalThreshold ? .critical : .nominal
+        let permille = (usage * 1_000).rounded(.toNearestOrAwayFromZero)
+        let clamped = min(max(permille, 0), Double(UInt16.max))
+        self = liveActivityPwmIsCritical(usagePermille: UInt16(clamped)) ? .critical : .nominal
     }
 
     public var accessibilityDescription: String? {

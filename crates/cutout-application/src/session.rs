@@ -95,10 +95,10 @@ impl ApplicationDeviceSession {
 
     /// Next strict timeout deadline for any pending identity probe.
     #[must_use]
-    pub fn next_probe_expiry(&self, timeout: cutout_core::Duration) -> Option<MonotonicTimestamp> {
+    pub fn next_probe_expiry(&self) -> Option<MonotonicTimestamp> {
         self.protocol
             .detector()
-            .next_probe_expiry(self.protocol.session_state(), timeout)
+            .next_probe_expiry(self.protocol.session_state())
     }
 
     /// Replaces detector evidence for one current connection attempt.
@@ -176,9 +176,8 @@ impl ApplicationDeviceSession {
         &mut self,
         token: &ConnectionAttemptToken,
         now: MonotonicTimestamp,
-        timeout: cutout_core::Duration,
     ) -> Vec<cutout_core::PendingProbe> {
-        self.protocol.expire_pending_probes(token, now, timeout)
+        self.protocol.expire_pending_probes(token, now)
     }
     /// Marks outstanding probes missing for a current connection.
     pub fn mark_pending_probes_missing(
@@ -191,9 +190,8 @@ impl ApplicationDeviceSession {
     pub fn expire_pending_probes_unscoped(
         &mut self,
         now: MonotonicTimestamp,
-        timeout: cutout_core::Duration,
     ) -> Vec<cutout_core::PendingProbe> {
-        self.protocol.expire_pending_probes_unscoped(now, timeout)
+        self.protocol.expire_pending_probes_unscoped(now)
     }
     /// Marks standalone probes missing.
     pub fn mark_pending_probes_missing_unscoped(&mut self) -> Vec<cutout_core::PendingProbe> {

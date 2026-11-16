@@ -535,6 +535,7 @@ class RideMapPanel(
         tag = "ride_map_charging_page"
     }
     private var lastProjectionRevision: ULong? = null
+    private var lastProjectedRideId: String? = null
     private var lastPresentation = RideMapPresentation()
     private val cameraPositions = mutableMapOf<Mode, CameraPosition>()
     private var historyLoaded = false
@@ -651,7 +652,11 @@ class RideMapPanel(
         mode = value
         updatePresentationOrder()
         when (value) {
-            Mode.LIVE -> { lastProjectionRevision = null; render(lastPresentation) }
+            Mode.LIVE -> {
+                lastProjectionRevision = null
+                lastProjectedRideId = null
+                render(lastPresentation)
+            }
             Mode.HISTORY -> {
                 mapView.clearRoute()
                 historyLoaded = true
@@ -831,6 +836,7 @@ class RideMapPanel(
             followsLatestPoint = true
             latestLiveProjection = null
             lastProjectionRevision = null
+            lastProjectedRideId = null
             if (mode == Mode.LIVE) {
                 mapView.clearRoute()
                 liveWarning.visibility = View.GONE
@@ -839,7 +845,15 @@ class RideMapPanel(
         }
         updateCameraControl()
         val revision = snapshot?.revision
-        if (mode == Mode.LIVE && snapshot != null && revision != lastProjectionRevision) {
+        val incomingRide = snapshot?.rideId
+        val admitProjection = incomingRide != null && revision != null && shouldPublishRideSnapshot(
+            lastProjectedRideId,
+            incomingRide,
+            lastProjectionRevision ?: 0UL,
+            revision,
+        ) && (lastProjectedRideId != incomingRide || lastProjectionRevision != revision)
+        if (mode == Mode.LIVE && snapshot != null && admitProjection) {
+            lastProjectedRideId = snapshot.rideId
             lastProjectionRevision = revision
             val requestedRideId = snapshot.rideId
             val budget = mobileRideMapLimits().liveTailPointLimit
@@ -889,7 +903,7 @@ class RideMapPanel(
         val speed = snapshot.liveSpeed
         liveMetricLabels[3].text = if (speed.source == MobileRideMapSpeedSourceDto.PHONE_GPS) ui.label("euc.metric.gps_speed") else context.getString(R.string.speed)
         liveMetricValues[3].text = if (speed.source == MobileRideMapSpeedSourceDto.UNAVAILABLE) "—" else
-            String.format(java.util.Locale.getDefault(), "%.1f mph", speed.millimetresPerSecond * 0.0022369362920544)
+            "${RideMetricFormatting.speed(speed.millimetresPerSecond.toLong())} ${RideMetricFormatting.speedUnit(context)}"
         liveVehicle.text = snapshot.associatedVehicle?.let { resolveVehicleName(it)?.takeIf(String::isNotBlank)
             ?: context.getString(R.string.ride_map_vehicle_name_unavailable) } ?: context.getString(R.string.ride_map_gps_only)
         liveVehicle.setTextColor(when (snapshot.telemetryState) {

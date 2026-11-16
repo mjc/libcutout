@@ -248,7 +248,11 @@ class RideHistoryController(private val runtime: RideMapRuntime, private val now
     }
 
     private fun filter() = MobileRideHistoryFilterDto(
-        if (last30Days) (now() - 30L * 24 * 60 * 60 * 1000).coerceAtLeast(0).toULong() else null,
+        if (last30Days) {
+            val current = now().coerceAtLeast(0).toULong()
+            val window = mobileRideMapLimits().historyRecentWindowMilliseconds
+            if (current > window) current - window else 0UL
+        } else null,
         vehicleIdentity,
         searchText.trim().takeIf(String::isNotEmpty),
         includeShortRides,

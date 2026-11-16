@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cutout_application::music::provider_lifecycle as application;
+use cutout_core::MonotonicTimestamp;
 use cutout_music::callback_epoch::{
     AuthorizationTransactionKind, AuthorizationTransactionMatch, CallbackEpochMatch,
 };
@@ -24,9 +25,10 @@ use cutout_music::{
 };
 
 use crate::{
-    CoreMusicCapabilities, CoreMusicPlaybackState, CoreMusicSnapshot, MobileMusicCapabilitiesDto,
-    MobileMusicCommandDto, MobileMusicPlaybackStateDto, MobileMusicProviderDto,
-    MobileMusicRideEventKindDto, MobileMusicSnapshotDto, MobileRideMapCoreErrorDto,
+    CoreMusicCapabilities, CoreMusicCommand, CoreMusicItem, CoreMusicPlaybackState,
+    CoreMusicSnapshot, MobileMusicCapabilitiesDto, MobileMusicCommandDto, MobileMusicItemDto,
+    MobileMusicPlaybackStateDto, MobileMusicProviderDto, MobileMusicRideEventKindDto,
+    MobileMusicSnapshotDto, MobileRideMapCoreErrorDto,
 };
 
 /// Platform interface selected by the Rust provider contract.
@@ -1548,6 +1550,111 @@ impl From<MusicTransportCompletion> for MobileMusicTransportCompletion {
     }
 }
 
+fn mobile_capabilities(capabilities: CoreMusicCapabilities) -> MobileMusicCapabilitiesDto {
+    MobileMusicCapabilitiesDto {
+        previous: capabilities.supports(CoreMusicCommand::Previous),
+        play: capabilities.supports(CoreMusicCommand::Play),
+        pause: capabilities.supports(CoreMusicCommand::Pause),
+        next: capabilities.supports(CoreMusicCommand::Next),
+        open_provider: capabilities.supports(CoreMusicCommand::OpenProvider),
+    }
+}
+
+fn apply_stale_projection(
+    mut snapshot: MobileMusicSnapshotDto,
+    observed_at_ms: u64,
+) -> MobileMusicSnapshotDto {
+    snapshot.state = MobileMusicPlaybackStateDto::Stale;
+    snapshot.observed_at_ms =
+        cutout_music::advance_observed_at(snapshot.observed_at_ms, observed_at_ms);
+    snapshot.capabilities = mobile_capabilities(cutout_music::stale_observation_capabilities(
+        snapshot.provider.into(),
+        snapshot.capabilities.open_provider,
+    ));
+    snapshot
+}
+
+/// Projects a retained observation as stale.
+///
+/// The clock, capability, and state rules live in `cutout-music`. An invalid
+/// boundary record still receives that same clock and capability projection.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI owns the boundary record"
+)]
+pub fn music_stale_projection(
+    snapshot: MobileMusicSnapshotDto,
+    observed_at_ms: u64,
+) -> MobileMusicSnapshotDto {
+    match CoreMusicSnapshot::try_from(snapshot.clone()) {
+        Ok(parsed) => MobileMusicSnapshotDto::from(
+            &parsed.stale_projection(MonotonicTimestamp::new(observed_at_ms)),
+        ),
+        Err(_) => apply_stale_projection(snapshot, observed_at_ms),
+    }
+}
+
+/// Disconnected observation for an app that has left the foreground.
+///
+/// Returns nothing when the item is invalid or the provider cannot carry a
+/// disconnected observation. The caller then skips submission.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI owns the boundary record"
+)]
+pub fn music_observation_gap_snapshot(
+    provider: MobileMusicProviderDto,
+    item: Option<MobileMusicItemDto>,
+    observed_at_ms: u64,
+) -> Option<MobileMusicSnapshotDto> {
+    let item = match item.map(|item| CoreMusicItem::new(item.identifier, item.title, item.artist)) {
+        Some(Ok(item)) => Some(item),
+        Some(Err(_)) => return None,
+        None => None,
+    };
+    cutout_music::observation_gap_snapshot(
+        provider.into(),
+        item,
+        MonotonicTimestamp::new(observed_at_ms),
+    )
+    .ok()
+    .map(|snapshot| MobileMusicSnapshotDto::from(&snapshot))
+}
+
+/// Whether Spotify may expose Play so the listener can reconnect.
+#[uniffi::export]
+#[must_use]
+pub fn spotify_reconnect_grants_play(
+    state: MobileMusicPlaybackStateDto,
+    can_reconnect: bool,
+) -> bool {
+    cutout_music::spotify_reconnect_grants_play(state.into(), can_reconnect)
+}
+
+/// Apple Music transport capabilities for item presence and playback state.
+#[uniffi::export]
+#[must_use]
+pub fn apple_music_transport_capabilities(
+    item_present: bool,
+    state: MobileMusicPlaybackStateDto,
+) -> MobileMusicCapabilitiesDto {
+    mobile_capabilities(cutout_music::apple_music_transport_capabilities(
+        item_present,
+        state.into(),
+    ))
+}
+
+/// Maps an Android `PlaybackState` integer onto the shared playback state.
+#[uniffi::export]
+#[must_use]
+pub fn android_media_playback_state(state: i32) -> MobileMusicPlaybackStateDto {
+    cutout_music::android_media_playback_state(state).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1725,5 +1832,131 @@ mod tests {
             lifecycle.expire_player_state_request(request, 11_001),
             MobileMusicRequestExpiration::Stale
         );
+    }
+
+    #[test]
+    fn exported_projection_follows_the_shared_music_policy() {
+        use crate::{
+            MobileMusicCapabilitiesDto, MobileMusicItemDto, MobileMusicPlaybackStateDto,
+            MobileMusicProviderDto, MobileMusicSnapshotDto,
+        };
+
+        let gap = super::music_observation_gap_snapshot(
+            MobileMusicProviderDto::AppleMusic,
+            Some(MobileMusicItemDto {
+                identifier: "track".to_owned(),
+                title: Some("Song".to_owned()),
+                artist: None,
+            }),
+            42,
+        )
+        .expect("gap");
+        assert_eq!(gap.session_id, "music-observation-gap");
+        assert_eq!(gap.state, MobileMusicPlaybackStateDto::Disconnected);
+        assert_eq!(gap.observed_at_ms, 42);
+        assert_eq!(gap.position_milliseconds, None);
+        assert_eq!(gap.duration_milliseconds, None);
+        assert_eq!(gap.item.expect("retained item").identifier, "track");
+        assert!(gap.capabilities.open_provider);
+        assert!(!gap.capabilities.play);
+        assert!(!gap.capabilities.previous);
+        assert!(
+            super::music_observation_gap_snapshot(MobileMusicProviderDto::SoundCloud, None, 1)
+                .is_none()
+        );
+        assert!(
+            super::music_observation_gap_snapshot(
+                MobileMusicProviderDto::AppleMusic,
+                Some(MobileMusicItemDto {
+                    identifier: " ".to_owned(),
+                    title: None,
+                    artist: None,
+                }),
+                1,
+            )
+            .is_none()
+        );
+
+        let stale = super::music_stale_projection(
+            MobileMusicSnapshotDto {
+                provider: MobileMusicProviderDto::Spotify,
+                session_id: "session".to_owned(),
+                state: MobileMusicPlaybackStateDto::Playing,
+                item: None,
+                position_milliseconds: Some(10),
+                duration_milliseconds: Some(100),
+                observed_at_ms: 10,
+                capabilities: MobileMusicCapabilitiesDto {
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    open_provider: true,
+                },
+            },
+            10,
+        );
+        assert_eq!(stale.state, MobileMusicPlaybackStateDto::Stale);
+        assert_eq!(stale.observed_at_ms, 11);
+        assert_eq!(stale.position_milliseconds, Some(10));
+        assert!(stale.capabilities.play);
+        assert!(stale.capabilities.open_provider);
+        assert!(!stale.capabilities.pause);
+        assert!(!stale.capabilities.previous);
+        assert!(!stale.capabilities.next);
+
+        let invalid = super::music_stale_projection(
+            MobileMusicSnapshotDto {
+                provider: MobileMusicProviderDto::Spotify,
+                session_id: " ".to_owned(),
+                state: MobileMusicPlaybackStateDto::Playing,
+                item: None,
+                position_milliseconds: None,
+                duration_milliseconds: None,
+                observed_at_ms: u64::MAX,
+                capabilities: MobileMusicCapabilitiesDto {
+                    previous: true,
+                    play: true,
+                    pause: true,
+                    next: true,
+                    open_provider: true,
+                },
+            },
+            5,
+        );
+        assert_eq!(invalid.session_id, " ");
+        assert_eq!(invalid.state, MobileMusicPlaybackStateDto::Stale);
+        assert_eq!(invalid.observed_at_ms, u64::MAX);
+        assert!(invalid.capabilities.play);
+        assert!(invalid.capabilities.open_provider);
+        assert!(!invalid.capabilities.previous);
+        assert!(!invalid.capabilities.pause);
+        assert!(!invalid.capabilities.next);
+    }
+
+    #[test]
+    fn exported_transport_rules_follow_the_shared_music_policy() {
+        use crate::MobileMusicPlaybackStateDto;
+
+        let apple =
+            super::apple_music_transport_capabilities(true, MobileMusicPlaybackStateDto::Paused);
+        assert!(apple.previous && apple.next && apple.play && apple.open_provider);
+        assert!(!apple.pause);
+        assert_eq!(
+            super::android_media_playback_state(3),
+            MobileMusicPlaybackStateDto::Playing
+        );
+        assert_eq!(
+            super::android_media_playback_state(0),
+            MobileMusicPlaybackStateDto::Stopped
+        );
+        assert!(super::spotify_reconnect_grants_play(
+            MobileMusicPlaybackStateDto::Unavailable,
+            true
+        ));
+        assert!(!super::spotify_reconnect_grants_play(
+            MobileMusicPlaybackStateDto::Paused,
+            true
+        ));
     }
 }

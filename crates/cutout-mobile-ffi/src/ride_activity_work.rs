@@ -359,6 +359,178 @@ impl MobileRideActivityWorkQueue {
     }
 }
 
+/// Unit selected with the rounded display number.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideDisplayUnitDto {
+    /// Statute miles per hour.
+    MilesPerHour,
+    /// Statute miles.
+    Miles,
+    /// Kilowatts.
+    Kilowatts,
+    /// Percent produced by truncating permille by ten.
+    Percent,
+}
+
+/// Rounded ride quantity. Platforms show `text` and may localize `unit`.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideQuantityDisplayDto {
+    /// Canonical decimal text, including the sign and a `.` decimal point.
+    pub text: String,
+    /// Signed integer of the last displayed digit.
+    pub scaled: i64,
+    /// Digits after the decimal point.
+    pub fraction_digits: u8,
+    /// Unit already applied to `text` and `scaled`.
+    pub unit: MobileRideDisplayUnitDto,
+}
+
+/// One displayed pack current. A pack index is present only for paired values.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileDisplayedPackCurrentDto {
+    /// One-based pack index. Absent for the legacy pack current.
+    pub pack_index: Option<u8>,
+    /// Physical current, including a measured zero.
+    pub current: crate::BatteryCurrent,
+}
+
+fn quantity_dto(value: cutout_core::RideQuantityDisplay) -> MobileRideQuantityDisplayDto {
+    let unit = match value.unit {
+        cutout_core::RideDisplayUnit::MilesPerHour => MobileRideDisplayUnitDto::MilesPerHour,
+        cutout_core::RideDisplayUnit::Miles => MobileRideDisplayUnitDto::Miles,
+        cutout_core::RideDisplayUnit::Kilowatts => MobileRideDisplayUnitDto::Kilowatts,
+        cutout_core::RideDisplayUnit::Percent => MobileRideDisplayUnitDto::Percent,
+    };
+    MobileRideQuantityDisplayDto {
+        text: value.text,
+        scaled: value.scaled,
+        fraction_digits: value.fraction_digits,
+        unit,
+    }
+}
+
+/// Speed in miles per hour, one fractional digit, from millimetres per second.
+#[must_use]
+#[uniffi::export]
+pub fn ride_speed_display(millimetres_per_second: i64) -> MobileRideQuantityDisplayDto {
+    quantity_dto(cutout_core::ride_speed_display(millimetres_per_second))
+}
+
+/// Distance in miles, one fractional digit, from millimetres.
+#[must_use]
+#[uniffi::export]
+pub fn ride_distance_display(millimetres: i64) -> MobileRideQuantityDisplayDto {
+    quantity_dto(cutout_core::ride_distance_display(millimetres))
+}
+
+/// Power in kilowatts. Two fractional digits below one kilowatt, otherwise one.
+#[must_use]
+#[uniffi::export]
+pub fn ride_power_display(milliwatts: i64) -> MobileRideQuantityDisplayDto {
+    quantity_dto(cutout_core::ride_power_display(milliwatts))
+}
+
+/// Percent label for permille, using truncating division by ten.
+#[must_use]
+#[uniffi::export]
+pub fn ride_permille_percent_label(permille: i64) -> MobileRideQuantityDisplayDto {
+    quantity_dto(cutout_core::ride_permille_percent_label(permille))
+}
+
+/// Duration from whole seconds: `m:ss` under one hour and `h:mm:ss` from one hour.
+#[must_use]
+#[uniffi::export]
+pub fn ride_duration_text(milliseconds: u64) -> String {
+    cutout_core::ride_duration_text(milliseconds)
+}
+
+/// Telemetry is fresh only inside the shared two-second receipt window.
+#[must_use]
+#[uniffi::export]
+pub fn telemetry_sample_is_fresh(observed_at_ms: Option<u64>, now_ms: u64) -> bool {
+    application::telemetry_sample_is_fresh(observed_at_ms, now_ms)
+}
+
+/// Dashboard recording statistics are for this connection only when the vehicle ids match.
+#[must_use]
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI string inputs are owned"
+)]
+pub fn recording_matches_connected_vehicle(
+    associated_vehicle: Option<String>,
+    connected_platform_id: String,
+) -> bool {
+    application::recording_matches_connected_vehicle(
+        associated_vehicle.as_deref(),
+        &connected_platform_id,
+    )
+}
+
+/// Publish when the current ride is absent, the ride id changed, or the revision is not older.
+#[must_use]
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI string inputs are owned"
+)]
+pub fn should_publish_ride_snapshot(
+    current_ride: Option<String>,
+    incoming_ride: String,
+    current_revision: u64,
+    incoming_revision: u64,
+) -> bool {
+    application::should_publish_ride_snapshot(
+        current_ride.as_deref(),
+        &incoming_ride,
+        current_revision,
+        incoming_revision,
+    )
+}
+
+/// Freshness window passed to the charge estimator, in milliseconds.
+#[must_use]
+#[uniffi::export]
+pub fn charge_estimate_freshness_milliseconds() -> u64 {
+    cutout_application::charging::estimate::CHARGE_ESTIMATE_FRESHNESS_MILLISECONDS
+}
+
+/// Live Activity PWM usage is critical only above 800 permille.
+#[must_use]
+#[uniffi::export]
+pub fn live_activity_pwm_is_critical(usage_permille: u16) -> bool {
+    cutout_core::live_activity_pwm_is_critical(usage_permille)
+}
+
+/// Permille boundary used by [`live_activity_pwm_is_critical`]. Exactly this value is nominal.
+#[must_use]
+#[uniffi::export]
+pub fn live_activity_pwm_critical_permille() -> u16 {
+    cutout_core::LIVE_ACTIVITY_PWM_CRITICAL_PERMILLE
+}
+
+/// Paired pack currents when any exist; otherwise the legacy current.
+#[must_use]
+#[uniffi::export]
+pub fn displayed_pack_currents(
+    pack_0: Option<crate::BatteryCurrent>,
+    pack_1: Option<crate::BatteryCurrent>,
+    legacy: Option<crate::BatteryCurrent>,
+) -> Vec<MobileDisplayedPackCurrentDto> {
+    cutout_core::displayed_pack_currents(
+        pack_0.map(cutout_core::BatteryCurrent::from),
+        pack_1.map(cutout_core::BatteryCurrent::from),
+        legacy.map(cutout_core::BatteryCurrent::from),
+    )
+    .into_iter()
+    .map(|reading| MobileDisplayedPackCurrentDto {
+        pack_index: reading.pack_index,
+        current: reading.current.into(),
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,5 +1129,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn display_policy_exports_speed_freshness_vehicle_and_snapshot_revision() {
+        let speed = ride_speed_display(1_234);
+        assert_eq!(speed.text, "2.8");
+        assert_eq!(speed.unit, MobileRideDisplayUnitDto::MilesPerHour);
+        assert_eq!(ride_distance_display(1_609_344).text, "1.0");
+        assert_eq!(ride_duration_text(3_661_000), "1:01:01");
+        assert!(!telemetry_sample_is_fresh(None, 2_000));
+        assert!(telemetry_sample_is_fresh(Some(1_000), 3_000));
+        assert!(!telemetry_sample_is_fresh(Some(1_000), 3_001));
+        assert!(recording_matches_connected_vehicle(
+            Some("wheel".to_owned()),
+            "wheel".to_owned()
+        ));
+        assert!(!recording_matches_connected_vehicle(
+            None,
+            "wheel".to_owned()
+        ));
+        assert!(should_publish_ride_snapshot(None, "ride".to_owned(), 4, 1));
+        assert!(!should_publish_ride_snapshot(
+            Some("ride".to_owned()),
+            "ride".to_owned(),
+            5,
+            4
+        ));
+        assert!(should_publish_ride_snapshot(
+            Some("ride-a".to_owned()),
+            "ride-b".to_owned(),
+            9,
+            1
+        ));
+        assert_eq!(charge_estimate_freshness_milliseconds(), 30_000);
+        assert_eq!(live_activity_pwm_critical_permille(), 800);
+        assert!(!live_activity_pwm_is_critical(800));
+        assert!(live_activity_pwm_is_critical(801));
+        let paired = displayed_pack_currents(
+            Some(crate::BatteryCurrent::CurrentOut { milliamps: 5_000 }),
+            None,
+            Some(crate::BatteryCurrent::CurrentOut { milliamps: 10_000 }),
+        );
+        assert_eq!(paired.len(), 1);
+        assert_eq!(paired[0].pack_index, Some(1));
     }
 }

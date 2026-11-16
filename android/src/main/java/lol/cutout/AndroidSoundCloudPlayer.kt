@@ -415,12 +415,14 @@ class AndroidSoundCloudPlayer(
         require(parsed.protocol == "https" && parsed.host == "api.soundcloud.com") {
             appContext.getString(R.string.music_soundcloud_invalid_response)
         }
-        for (attempt in 0..1) {
+        var attempt: UByte = 0.toUByte()
+        while (true) {
             val connection = request(parsed, authorizationHeader())
             try {
                 val status = connection.responseCode
-                if (status == HttpURLConnection.HTTP_UNAUTHORIZED && attempt == 0) {
+                if (status == HttpURLConnection.HTTP_UNAUTHORIZED && soundcloudUnauthorizedRetry(attempt)) {
                     core.invalidateAuthorization()
+                    attempt = attempt.inc()
                     continue
                 }
                 val bytes = if (status == HttpURLConnection.HTTP_MOVED_TEMP) byteArrayOf() else readBounded(connection, MAX_RESPONSE_BYTES)
@@ -429,7 +431,6 @@ class AndroidSoundCloudPlayer(
                 connection.disconnect()
             }
         }
-        error(appContext.getString(R.string.music_soundcloud_authorization_failed))
     }
 
     private fun authorizationHeader(): String {

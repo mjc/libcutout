@@ -3,7 +3,18 @@ package lol.cutout
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import uniffi.cutout_mobile_ffi.*
 import java.io.Closeable
 import java.util.concurrent.ArrayBlockingQueue
@@ -59,6 +70,9 @@ class AndroidChargingClient(
         { task -> Thread(task, "CutoutChargingIO").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
+    private val chargingDispatcher = worker.asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + chargingDispatcher)
+    private val operationOrder = Mutex()
     // Capture batches can wait on large HTTP transfers. Keep that work off the shared
     // charging/database worker while bounding both concurrency and queued batches.
     private val captureBatchWorker = ThreadPoolExecutor(
@@ -75,16 +89,25 @@ class AndroidChargingClient(
     )
 
     fun <T> withDatabase(operation: suspend (RideDatabaseHandle) -> T, completed: (Result<T>) -> Unit) {
+        launchCharging({ operation(runtime.databaseForNativeOwner()) }, completed)
+    }
+
+    private fun <T> launchCharging(operation: suspend () -> T, completed: (Result<T>) -> Unit) {
         if (closed) {
             main.post { completed(Result.failure(IllegalStateException("Charging client is closed"))) }
             return
         }
         try {
-            worker.execute {
-                val result = runCatching {
-                    check(!closed) { "Charging client is closed" }
-                    val database = runtime.databaseForNativeOwner()
-                    runBlocking { operation(database) }
+            scope.launch {
+                val result = try {
+                    operationOrder.withLock {
+                        check(!closed) { "Charging client is closed" }
+                        Result.success(operation())
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    Result.failure(error)
                 }
                 main.post { completed(result) }
             }
@@ -132,13 +155,13 @@ class AndroidChargingClient(
         check(!closed) { "Charging client is closed" }
         val stored = try {
             credentials.load()
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
-            database.refreshChargingDirectory()
-            return publish(ChargingClientStatus(
-                MobileChargingSyncCredentialState.UNREADABLE,
-                message = error.message,
-                lastUpdatedMilliseconds = database.chargingDirectoryLastUpdatedMs(),
-            ))
+            val step = refreshUnauthenticatedDirectory(database)
+            return publishRefresh(
+                database, MobileChargingSyncCredentialState.UNREADABLE, step, error.message,
+            )
         }
         val admission = mobileChargingRegistrationAdmission(credentialState(stored), explicitRetry)
         val credential = try { when (admission) {
@@ -147,12 +170,13 @@ class AndroidChargingClient(
                 else when (val raced = credentials.load()) {
                     is ChargingCredentialRecord.Ready -> MobileChargingIdentityDto(raced.identityId, raced.token)
                     else -> {
-                        database.refreshChargingDirectory()
-                        return publish(ChargingClientStatus(
+                        val step = refreshUnauthenticatedDirectory(database)
+                        return publishRefresh(
+                            database,
                             MobileChargingSyncCredentialState.REGISTRATION_STARTED,
-                            message = "Registration needs an explicit retry.",
-                            lastUpdatedMilliseconds = database.chargingDirectoryLastUpdatedMs(),
-                        ))
+                            step,
+                            "Registration needs an explicit retry.",
+                        )
                     }
                 }
             }
@@ -163,63 +187,131 @@ class AndroidChargingClient(
                 MobileChargingIdentityDto(ready.identityId, ready.token)
             }
             MobileChargingRegistrationAdmission.PUBLIC_REFRESH -> {
-                val summary = database.refreshChargingDirectory()
-                return publish(ChargingClientStatus(
-                    credentialState(stored), resultFor(summary.outcome), summary.pendingCount,
-                    summary.downloaded, summary.uploaded, database.chargingDirectoryLastUpdatedMs(),
-                ))
+                val step = refreshUnauthenticatedDirectory(database)
+                return publishRefresh(database, credentialState(stored), step)
             }
             MobileChargingRegistrationAdmission.REQUIRE_EXPLICIT_RETRY -> {
-                database.refreshChargingDirectory()
-                return publish(ChargingClientStatus(
+                val step = refreshUnauthenticatedDirectory(database)
+                return publishRefresh(
+                    database,
                     MobileChargingSyncCredentialState.REGISTRATION_STARTED,
-                    message = "Registration outcome is uncertain. Retry to continue.",
-                    lastUpdatedMilliseconds = database.chargingDirectoryLastUpdatedMs(),
-                ))
+                    step,
+                    "Registration outcome is uncertain. Retry to continue.",
+                )
             }
-        } } catch (error: Throwable) {
-            val current = runCatching { credentials.load() }.getOrNull()
+        } } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            val current = try {
+                credentials.load()
+            } catch (loadError: CancellationException) {
+                throw loadError
+            } catch (_: Throwable) {
+                null
+            }
             if (current == ChargingCredentialRecord.RegistrationStarted) {
-                runCatching { database.refreshChargingDirectory() }
-                return publish(ChargingClientStatus(
+                val step = refreshUnauthenticatedDirectory(database)
+                return publishRefresh(
+                    database,
                     MobileChargingSyncCredentialState.REGISTRATION_STARTED,
-                    message = "Registration outcome is uncertain. Retry to continue.",
-                    lastUpdatedMilliseconds = runCatching { database.chargingDirectoryLastUpdatedMs() }.getOrNull(),
-                ))
+                    step,
+                    "Registration outcome is uncertain. Retry to continue.",
+                )
             }
             throw error
         }
 
         var runState = MobileChargingSyncRunState(0u, 0u, 0u, 0u, 0u)
         while (true) {
-            val step = try {
-                val summary = database.synchronizeChargingSpots(credential.token)
-                mobileChargingSyncObserveSummary(runState, summary)
-            } catch (error: MobileChargingException) {
-                mobileChargingSyncObserveError(runState, error)
-            }
+            val step = observeAuthenticated(database, credential.token, runState)
             runState = step.state
             when (val action = step.action) {
                 MobileChargingSyncAction.NextRound -> continue
-                is MobileChargingSyncAction.Retry -> {
-                    Thread.sleep(action.afterSeconds.toLong() * 1_000L)
-                }
+                is MobileChargingSyncAction.Retry -> delay(action.afterSeconds.toLong() * 1_000L)
                 is MobileChargingSyncAction.Finished -> {
-                    val next = ChargingClientStatus(
-                        MobileChargingSyncCredentialState.READY,
-                        action.result,
-                        runState.pendingCount,
-                        runState.downloaded,
-                        runState.uploaded,
-                        database.chargingDirectoryLastUpdatedMs(),
+                    if (action.result == MobileChargingSyncResult.AUTHENTICATION_REQUIRED) {
+                        refreshUnauthenticatedDirectory(database, runState)
+                    }
+                    return publishRefresh(
+                        database, MobileChargingSyncCredentialState.READY, step,
                     )
-                    val message = if (action.result == MobileChargingSyncResult.AUTHENTICATION_REQUIRED) {
-                        runCatching { database.refreshChargingDirectory() }.exceptionOrNull()?.message
-                    } else null
-                    return publish(next.copy(message = message))
                 }
             }
         }
+    }
+
+    /** Public directory refresh using Rust's bounded retry. `delay` stays cancellable. */
+    private suspend fun refreshUnauthenticatedDirectory(
+        database: RideDatabaseHandle,
+        initial: MobileChargingSyncRunState = MobileChargingSyncRunState(0u, 0u, 0u, 0u, 0u),
+    ): MobileChargingSyncStep {
+        var runState = initial
+        while (true) {
+            val step = observeRefresh(database, runState)
+            runState = step.state
+            when (val action = step.action) {
+                MobileChargingSyncAction.NextRound -> continue
+                is MobileChargingSyncAction.Retry -> delay(action.afterSeconds.toLong() * 1_000L)
+                is MobileChargingSyncAction.Finished -> return step
+            }
+        }
+    }
+
+    private suspend fun observeRefresh(
+        database: RideDatabaseHandle,
+        runState: MobileChargingSyncRunState,
+    ): MobileChargingSyncStep = observe(runState) { database.refreshChargingDirectory() }
+
+    private suspend fun observeAuthenticated(
+        database: RideDatabaseHandle,
+        token: String,
+        runState: MobileChargingSyncRunState,
+    ): MobileChargingSyncStep = observe(runState) { database.synchronizeChargingSpots(token) }
+
+    private suspend fun observe(
+        runState: MobileChargingSyncRunState,
+        request: suspend () -> MobileChargingSyncSummaryDto,
+    ): MobileChargingSyncStep {
+        coroutineContext.ensureActive()
+        check(!closed) { "Charging client is closed" }
+        return try {
+            val summary = request()
+            coroutineContext.ensureActive()
+            mobileChargingSyncObserveSummary(runState, summary)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: MobileChargingException) {
+            mobileChargingSyncObserveError(runState, error)
+        } catch (error: Throwable) {
+            val message = error.message ?: "Could not save or read the spot"
+            mobileChargingSyncObserveError(runState, MobileChargingException.StorageFailure(message))
+        }
+    }
+
+    private suspend fun publishRefresh(
+        database: RideDatabaseHandle,
+        credential: MobileChargingSyncCredentialState,
+        step: MobileChargingSyncStep,
+        message: String? = null,
+    ): ChargingClientStatus {
+        val result = (step.action as? MobileChargingSyncAction.Finished)?.result
+        return publish(ChargingClientStatus(
+            credential,
+            result,
+            step.state.pendingCount,
+            step.state.downloaded,
+            step.state.uploaded,
+            directoryTimestamp(database),
+            message,
+        ))
+    }
+
+    private suspend fun directoryTimestamp(database: RideDatabaseHandle): ULong? = try {
+        database.chargingDirectoryLastUpdatedMs()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Throwable) {
+        null
     }
 
     fun refreshDirectory(completed: (Result<MobileChargingSyncSummaryDto>) -> Unit) =
@@ -227,23 +319,11 @@ class AndroidChargingClient(
 
     /** Reads the encrypted credential owner without triggering registration or network work. */
     fun refreshAccountCredentialState(completed: (Result<MobileChargingSyncCredentialState>) -> Unit) {
-        if (closed) {
-            main.post { completed(Result.failure(IllegalStateException("Charging client is closed"))) }
-            return
-        }
-        try {
-            worker.execute {
-                val result = runCatching {
-                    check(!closed) { "Charging client is closed" }
-                    val current = credentialState(credentials.load())
-                    publish(status.copy(credentialState = current))
-                    current
-                }
-                main.post { completed(result) }
-            }
-        } catch (error: RejectedExecutionException) {
-            main.post { completed(Result.failure(error)) }
-        }
+        launchCharging({
+            val current = credentialState(credentials.load())
+            publish(status.copy(credentialState = current))
+            current
+        }, completed)
     }
 
     fun submitReport(spotId: String, message: String, completed: (Result<MobileChargingReportReceiptDto>) -> Unit) {
@@ -290,10 +370,15 @@ class AndroidChargingClient(
     /** Only an explicit capture Send may obtain or provision this existing private identity. */
     internal suspend fun captureCredential(): MobileChargingIdentityDto = credentialForExplicitAction()
 
-    internal fun existingCaptureCredential(): MobileChargingIdentityDto? = when (val stored = credentials.load()) {
-        is ChargingCredentialRecord.Ready -> MobileChargingIdentityDto(stored.identityId, stored.token)
-        is ChargingCredentialRecord.DeletionPending -> MobileChargingIdentityDto(stored.identityId, stored.token)
-        else -> null
+    internal fun existingCaptureCredential(): MobileChargingIdentityDto? {
+        val stored = credentials.load()
+        if (mobileChargingRegistrationAdmission(credentialState(stored), false)
+            != MobileChargingRegistrationAdmission.SYNCHRONIZE
+        ) {
+            return null
+        }
+        val ready = stored as? ChargingCredentialRecord.Ready ?: return null
+        return MobileChargingIdentityDto(ready.identityId, ready.token)
     }
 
     private suspend fun credentialForExplicitAction(): MobileChargingIdentityDto {
@@ -331,11 +416,6 @@ class AndroidChargingClient(
         ChargingCredentialRecord.Deleted -> MobileChargingSyncCredentialState.DELETED
     }
 
-    private fun resultFor(outcome: MobileChargingSyncOutcome): MobileChargingSyncResult? = when (outcome) {
-        MobileChargingSyncOutcome.MoreWork -> MobileChargingSyncResult.PENDING
-        is MobileChargingSyncOutcome.Finished -> outcome.result
-    }
-
     private fun publish(value: ChargingClientStatus): ChargingClientStatus {
         status = value
         return value
@@ -344,7 +424,8 @@ class AndroidChargingClient(
     override fun close() {
         closed = true
         reportOperations.close()
-        worker.shutdown()
+        scope.cancel()
+        chargingDispatcher.close()
         captureBatchWorker.shutdown()
     }
 }

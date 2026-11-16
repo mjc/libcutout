@@ -193,20 +193,23 @@ public final class SoundCloudNativePlayer {
         guard let url = URL(string: endpoint), url.scheme == "https", url.host == "api.soundcloud.com" else {
             throw Failure.invalidResponse
         }
-        for attempt in 0...1 {
+        var attempt: UInt8 = 0
+        while true {
             var request = URLRequest(url: url)
             request.setValue(try await authorization(), forHTTPHeaderField: "Authorization")
             let (data, response) = try await session.data(for: request)
             guard let response = response as? HTTPURLResponse else { throw Failure.invalidResponse }
             if response.statusCode == 401 {
                 core.invalidateAuthorization()
-                if attempt == 0 { continue }
+                if soundcloudUnauthorizedRetry(attempt: attempt) {
+                    attempt &+= 1
+                    continue
+                }
                 throw Failure.expiredToken
             }
             guard data.count <= 512 * 1024 else { throw Failure.invalidResponse }
             return (data, response)
         }
-        throw Failure.expiredToken
     }
 
     private func requireSuccess(_ response: HTTPURLResponse) throws {

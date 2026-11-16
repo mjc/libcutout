@@ -332,6 +332,15 @@ impl MobileSoundCloudPlayer {
     }
 }
 
+/// Whether a `SoundCloud` HTTP 401 should invalidate authorization and retry once.
+///
+/// Attempt `0` retries. A later attempt returns the unauthorized response.
+#[uniffi::export]
+#[must_use]
+pub fn soundcloud_unauthorized_retry(attempt: u8) -> bool {
+    cutout_music::soundcloud::soundcloud_unauthorized_retry(attempt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -360,5 +369,12 @@ mod tests {
             MobileSoundCloudEffect::Fetch { .. }
         ));
         Ok(())
+    }
+
+    #[test]
+    fn unauthorized_retry_is_only_the_first_attempt() {
+        assert!(super::soundcloud_unauthorized_retry(0));
+        assert!(!super::soundcloud_unauthorized_retry(1));
+        assert!(!super::soundcloud_unauthorized_retry(u8::MAX));
     }
 }
