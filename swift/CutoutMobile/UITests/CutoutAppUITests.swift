@@ -9547,7 +9547,10 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertTrue(throttleLimit.waitForExistence(timeout: 5), phoneApp.debugDescription)
         throttleLimit.tap()
         throttleLimit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "0")
-        let save = revealPhoneSettingsButton("ride.phone-control.save")
+        let keyboardReturn = phoneApp.keyboards.buttons["Return"]
+        if keyboardReturn.waitForExistence(timeout: 2) { keyboardReturn.tap() }
+        let save = scrollPhoneSettingsUntilHittable("ride.phone-control.save")
+        XCTAssertTrue(save.isHittable, phoneApp.debugDescription)
         XCTAssertTrue(save.isEnabled, phoneApp.debugDescription)
         save.tap()
         let failure = phoneElement("ride.phone-control.limits-error")
@@ -9559,6 +9562,31 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         XCTAssertLessThan(
             failure.frame.midY, sheet.frame.minY + sheet.frame.height * 0.55,
             "A rejected current limit stays in the first screen of the settings sheet")
+        let saveAgain = phoneApp.buttons["ride.phone-control.save"]
+        var repeatedSaveReady = false
+        for _ in 0..<16 {
+            if !failure.isHittable, saveAgain.isHittable {
+                repeatedSaveReady = true
+                break
+            }
+            // Drag the upper part of the sheet. A hold on the current fields
+            // selects text instead of scrolling, and a long drag flings past Save.
+            let saveAbove = !failure.isHittable && saveAgain.exists && !saveAgain.isHittable
+            let start = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: saveAbove ? 0.40 : 0.50))
+            let end = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: saveAbove ? 0.62 : 0.36))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.05)
+        }
+        XCTAssertTrue(repeatedSaveReady, phoneApp.debugDescription)
+        saveAgain.tap()
+        let visibleAgain = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"), object: failure)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [visibleAgain], timeout: 5), .completed, phoneApp.debugDescription)
+        XCTAssertGreaterThanOrEqual(failure.frame.minY, sheet.frame.minY - 1)
+        XCTAssertLessThanOrEqual(failure.frame.maxY, sheet.frame.maxY + 1)
+        XCTAssertLessThan(
+            failure.frame.midY, sheet.frame.minY + sheet.frame.height * 0.55,
+            "A repeated rejected current limit returns to the first screen of the settings sheet")
     }
 
     func testPhoneAreaPreservesHeaderLowerBoundsTabsAndPlayerAtAccessibilityDynamicType() throws {
@@ -9884,6 +9912,21 @@ final class PhoneDriveSimulatorUITests: XCTestCase {
         let sheet = phoneElement("ride.phone-control.settings-sheet")
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), phoneApp.debugDescription)
         XCTAssertFalse(phoneElement("ride.phone-control.activation-error").exists)
+    }
+
+    /// A short drag flings this form. Move slowly and stop when the control can
+    /// take a tap, including when a keyboard covers the lower part of the sheet.
+    private func scrollPhoneSettingsUntilHittable(_ identifier: String) -> XCUIElement {
+        let button = phoneApp.buttons[identifier]
+        let sheet = phoneElement("ride.phone-control.settings-sheet")
+        if button.isHittable { return button }
+        for _ in 0..<14 {
+            let start = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.70))
+            let end = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            start.press(forDuration: 0.2, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.15)
+            if button.isHittable { return button }
+        }
+        return button
     }
 
     /// Form materializes rows near the viewport. At the largest text size, Save

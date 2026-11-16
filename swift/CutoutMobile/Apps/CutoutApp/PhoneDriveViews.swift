@@ -219,8 +219,8 @@ struct PhoneDriveSettingsSheet: View {
                     if model.activationError || model.limitsError || model.settingsError {
                         Section {
                             // Form only exposes rows near the viewport. These
-                            // failures stay in the first section, and a new
-                            // failure scrolls here from Activate or Save.
+                            // failures stay in the first section, and each
+                            // rejection scrolls here from Activate or Save.
                             VStack(alignment: .leading, spacing: 8) {
                                 phoneDriveSettingsFailures
                             }
@@ -233,6 +233,8 @@ struct PhoneDriveSettingsSheet: View {
                                 Task {
                                     if let request = await model.saveSettingsAndRequestActivation() {
                                         requestActivation(request)
+                                    } else {
+                                        revealCurrentSettingsFailure(proxy)
                                     }
                                 }
                             }
@@ -240,7 +242,7 @@ struct PhoneDriveSettingsSheet: View {
                             .accessibilityIdentifier("ride.phone-control.activate")
                         }
                     }
-                    settingsFields
+                    settingsFields { revealCurrentSettingsFailure(proxy) }
                     Section {
                         Text(localizedAppText("phone_control.limitations"))
                             .font(.footnote)
@@ -255,6 +257,11 @@ struct PhoneDriveSettingsSheet: View {
                 }
                 .onChange(of: model.settingsError) { _, failed in
                     revealSettingsFailure(failed, proxy: proxy)
+                }
+                .onChange(of: model.settingsFailureCount) { _, count in
+                    // A repeated rejection leaves the same flag true, so the
+                    // count is what brings this section back into view.
+                    revealSettingsFailure(count > 0, proxy: proxy)
                 }
                 .navigationTitle(localizedAppText("phone_control.title"))
                 .toolbar {
@@ -280,6 +287,11 @@ struct PhoneDriveSettingsSheet: View {
         }
     }
 
+    private func revealCurrentSettingsFailure(_ proxy: ScrollViewProxy) {
+        revealSettingsFailure(
+            model.activationError || model.limitsError || model.settingsError, proxy: proxy)
+    }
+
     @ViewBuilder private var phoneDriveSettingsFailures: some View {
         if model.activationError {
             Text(localizedAppText("phone_control.activation_failed"))
@@ -301,7 +313,7 @@ struct PhoneDriveSettingsSheet: View {
         }
     }
 
-    private var settingsFields: some View {
+    private func settingsFields(revealFailure: @escaping () -> Void) -> some View {
         Section {
             Picker(
                 localizedAppText("phone_control.input_mode"),
@@ -333,7 +345,10 @@ struct PhoneDriveSettingsSheet: View {
                 identifier: "ride.phone-control.brake-current"
             )
             Button(localizedAppText("phone_control.save_limits")) {
-                Task { _ = await model.saveSettings() }
+                Task {
+                    _ = await model.saveSettings()
+                    revealFailure()
+                }
             }
             .disabled(model.settingsBusy || !model.settingsLoaded)
             .accessibilityIdentifier("ride.phone-control.save")
@@ -341,7 +356,10 @@ struct PhoneDriveSettingsSheet: View {
                 ProgressView(localizedAppText("phone_control.input_mode"))
             } else if !model.settingsLoaded {
                 Button(localizedAppText("phone_control.retry")) {
-                    Task { await model.loadSettings() }
+                    Task {
+                        await model.loadSettings()
+                        revealFailure()
+                    }
                 }
                 .disabled(model.settingsBusy)
             }

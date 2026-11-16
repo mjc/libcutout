@@ -32,6 +32,9 @@ final class PhoneDriveModel {
     private(set) var settingsError = false
     private(set) var limitsError = false
     private(set) var activationError = false
+    /// Each rejected load, save, or activation increments this, including a
+    /// rejection that leaves the same error flag set.
+    private(set) var settingsFailureCount = 0
     private(set) var settingsMode = MobilePhoneControlModeDto.disabled
     var throttleAmpsText = "3"
     var brakeAmpsText = "3"
@@ -140,12 +143,14 @@ final class PhoneDriveModel {
             settingsError = false
             limitsError = false
             activationError = activationFailed
+            if activationFailed { noteSettingsFailure() }
             settingsMode = .disabled
             throttleAmpsText = "3"
             brakeAmpsText = "3"
             return true
         } catch {
             settingsError = true
+            noteSettingsFailure()
             refresh()
             return false
         }
@@ -248,6 +253,7 @@ final class PhoneDriveModel {
                 settingsError = true
                 limitsError = false
             }
+            noteSettingsFailure()
             return .rejected
         }
     }
@@ -287,6 +293,7 @@ final class PhoneDriveModel {
             return true
         } catch {
             activationError = true
+            noteSettingsFailure()
             refresh()
             return false
         }
@@ -345,7 +352,12 @@ final class PhoneDriveModel {
                 return
             }
             settingsError = true
+            noteSettingsFailure()
         }
+    }
+
+    private func noteSettingsFailure() {
+        settingsFailureCount += 1
     }
 
     private func beginSettingsOperation() -> UUID {
