@@ -4048,6 +4048,34 @@ pub fn mobile_subscription_requires_notify(channel: Vec<u8>) -> bool {
     cutout_protocols::subscription_requires_notify(&GattChannel::from_bytes(channel))
 }
 
+/// Service to bind when a channel UUID occurs under more than one service.
+///
+/// Backfire telemetry returns F1F0. Other channels return nothing.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_preferred_subscription_service(channel: Vec<u8>) -> Option<Vec<u8>> {
+    let Ok(channel) = <[u8; 16]>::try_from(channel) else {
+        return None;
+    };
+    cutout_protocols::preferred_subscription_service(&GattChannel::from_bytes(channel))
+        .map(|service| service.as_bytes().to_vec())
+}
+
+/// Whether unresolved capture may enable this characteristic.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
+#[uniffi::export]
+pub fn mobile_capture_subscription_permitted(fingerprint: MobileGattFingerprintDto) -> bool {
+    cutout_protocols::capture_subscription_permitted(&GattFingerprint::from(fingerprint))
+}
+
 /// Transport service UUIDs to request from native Bluetooth scans.
 ///
 /// These are discovery hints; the device still requires protocol detection.

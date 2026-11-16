@@ -3900,6 +3900,12 @@ extension CutoutSessionCore {
             subscribedCharacteristics[channel] = characteristic
             return
         }
+        if channel == .backfireTelemetry,
+            characteristic.service?.uuid == BluetoothUuid.backfireService.coreBluetoothUuid
+        {
+            subscribedCharacteristics[channel] = characteristic
+            return
+        }
         guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
             return
         }
@@ -4066,7 +4072,23 @@ extension CutoutSessionCore {
 
     func subscribeRecordOnlyCharacteristics(_ characteristics: [CBCharacteristic], on peripheral: CBPeripheral) {
         characteristics
-            .filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
+            .filter { characteristic in
+                guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid),
+                    let service = characteristic.service.flatMap({
+                        BluetoothUuid(coreBluetoothUuid: $0.uuid)
+                    })
+                else {
+                    return characteristic.properties.contains(.notify)
+                        || characteristic.properties.contains(.indicate)
+                }
+                return mobileCaptureSubscriptionPermitted(
+                    fingerprint: MobileGattFingerprintDto(
+                        service: service.bytes,
+                        characteristic: channel.bytes,
+                        roles: characteristic.mobileGattRoles,
+                        verification: .hardwareVerified
+                    ))
+            }
             .forEach { peripheral.setNotifyValue(true, for: $0) }
     }
 

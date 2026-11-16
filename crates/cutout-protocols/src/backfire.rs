@@ -168,10 +168,48 @@ pub fn subscription_requires_notify(channel: &GattChannel) -> bool {
     *channel == BACKFIRE_TELEMETRY_CHANNEL
 }
 
+/// Service a host should bind when several characteristics share `channel`.
+///
+/// Backfire telemetry resolves to F1F0. Other channels keep the caller's existing lookup.
+#[must_use]
+pub fn preferred_subscription_service(channel: &GattChannel) -> Option<GattChannel> {
+    (*channel == BACKFIRE_TELEMETRY_CHANNEL).then_some(BACKFIRE_SERVICE_CHANNEL)
+}
+
+/// Whether an unresolved capture may enable this characteristic.
+///
+/// Backfire telemetry is enabled only on F1F0, and only when that characteristic notifies.
+#[must_use]
+pub fn capture_subscription_permitted(fingerprint: &GattFingerprint) -> bool {
+    if fingerprint.characteristic == BACKFIRE_TELEMETRY_CHANNEL {
+        fingerprint.service == BACKFIRE_SERVICE_CHANNEL && fingerprint.roles.supports_notify()
+    } else {
+        fingerprint.roles.supports_notify() || fingerprint.roles.supports_indicate()
+    }
+}
+
+/// Whether a notification on `channel` can admit Backfire.
+///
+/// The frame must decode, and the stored inventory must contain a notifying F1F2 on F1F0.
+#[must_use]
+pub(crate) fn admits_from_notification(
+    gatt: &[GattFingerprint],
+    channel: GattChannel,
+    bytes: &[u8],
+) -> bool {
+    channel == BACKFIRE_TELEMETRY_CHANNEL
+        && BackfireReport::decode(bytes).is_some()
+        && gatt.iter().any(|fingerprint| {
+            fingerprint.service == BACKFIRE_SERVICE_CHANNEL
+                && fingerprint.characteristic == BACKFIRE_TELEMETRY_CHANNEL
+                && fingerprint.roles.supports_notify()
+        })
+}
+
 /// Characteristics a host may enable before a protocol frame arrives.
 ///
-/// FFE0, FFF0, and Nordic UART contribute each notify or indicate characteristic.
-/// F1F0 contributes only the telemetry characteristic, and only when it notifies.
+/// FFE0, FFF0, and Nordic UART contribute each notify or indicate characteristic
+/// except the Backfire telemetry UUID. F1F0 contributes that UUID only when it notifies.
 #[must_use]
 pub fn discovery_subscription_channels(fingerprints: &[GattFingerprint]) -> Vec<GattChannel> {
     let mut channels = passive_observation_channels(fingerprints);
@@ -181,6 +219,7 @@ pub fn discovery_subscription_channels(fingerprints: &[GattFingerprint]) -> Vec<
             .iter()
             .any(|known| known.as_bytes() == &service);
         if blanket
+            && fingerprint.characteristic != BACKFIRE_TELEMETRY_CHANNEL
             && (fingerprint.roles.supports_notify() || fingerprint.roles.supports_indicate())
             && !channels.contains(&fingerprint.characteristic)
         {
@@ -348,6 +387,27 @@ mod tests {
         let mut state = CutoutSessionState::default();
         let mut detector = DeviceDetectionSession::default();
         detector.observe(&mut state, event)
+    }
+
+    fn observe_on_backfire_service(bytes: &[u8]) -> DeviceDetectionResolution {
+        let mut state = CutoutSessionState::default();
+        let mut detector = DeviceDetectionSession::default();
+        let telemetry = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        let _ = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::Gatt { gatt: &[telemetry] },
+        );
+        detector.observe(
+            &mut state,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: BACKFIRE_TELEMETRY_CHANNEL,
+                bytes,
+            },
+        )
     }
 
     #[test]
@@ -519,10 +579,7 @@ mod tests {
 
     #[test]
     fn telemetry_channel_admits_backfire_without_a_catalog_model() {
-        let resolution = observe(DeviceDetectionEvent::NotificationOnChannel {
-            channel: BACKFIRE_TELEMETRY_CHANNEL,
-            bytes: &SCREENSHOT,
-        });
+        let resolution = observe_on_backfire_service(&SCREENSHOT);
         assert_eq!(resolution.protocol, ProtocolFamilyState::Backfire);
         assert!(!resolution.awaits_passive_evidence());
         assert_eq!(resolution.staged.model, None);
@@ -557,12 +614,39 @@ mod tests {
             name: Some(b"BF_Zealot"),
         });
         assert_ne!(named.protocol, ProtocolFamilyState::Backfire);
+
+        let mut state = CutoutSessionState::default();
+        let mut detector = DeviceDetectionSession::default();
+        let foreign = fingerprint(
+            bluetooth16(0xffe0),
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        let _ = detector.observe(&mut state, DeviceDetectionEvent::Gatt { gatt: &[foreign] });
+        let foreign_frame = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::NotificationOnChannel {
+                channel: BACKFIRE_TELEMETRY_CHANNEL,
+                bytes: &SCREENSHOT,
+            },
+        );
+        assert_ne!(foreign_frame.protocol, ProtocolFamilyState::Backfire);
+        assert!(DeviceSession::from_detection(&foreign_frame).is_none());
     }
 
     #[test]
     fn a_later_distinct_family_conflicts() {
         let mut state = CutoutSessionState::default();
         let mut detector = DeviceDetectionSession::default();
+        let telemetry = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        let _ = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::Gatt { gatt: &[telemetry] },
+        );
         let _ = detector.observe(
             &mut state,
             DeviceDetectionEvent::NotificationOnChannel {
@@ -640,6 +724,29 @@ mod tests {
         assert!(subscription_requires_notify(&BACKFIRE_TELEMETRY_CHANNEL));
         assert!(!subscription_requires_notify(&BACKFIRE_WRITE_CHANNEL));
         assert!(!subscription_requires_notify(&bluetooth16(0xffe1)));
+        assert_eq!(
+            preferred_subscription_service(&BACKFIRE_TELEMETRY_CHANNEL),
+            Some(BACKFIRE_SERVICE_CHANNEL)
+        );
+        assert_eq!(
+            preferred_subscription_service(&BACKFIRE_WRITE_CHANNEL),
+            None
+        );
+        assert!(!capture_subscription_permitted(&telemetry));
+        assert!(!capture_subscription_permitted(&foreign));
+        let notifying = fingerprint(
+            BACKFIRE_SERVICE_CHANNEL,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
+        assert!(capture_subscription_permitted(&notifying));
+        assert!(!capture_subscription_permitted(&readable));
+        let serial = fingerprint(
+            bluetooth16(0xffe0),
+            bluetooth16(0xffe1),
+            GattRoles::empty().with_notify(),
+        );
+        assert!(capture_subscription_permitted(&serial));
     }
 
     #[test]
@@ -663,13 +770,19 @@ mod tests {
             BACKFIRE_TELEMETRY_CHANNEL,
             GattRoles::empty().with_notify(),
         );
+        let telemetry_on_ffe0 = fingerprint(
+            ffe0,
+            BACKFIRE_TELEMETRY_CHANNEL,
+            GattRoles::empty().with_notify(),
+        );
         assert_eq!(
             discovery_subscription_channels(&[
                 ffe1_notify,
                 ffe1_read,
                 indicate_only,
                 other_notify,
-                unrelated
+                unrelated,
+                telemetry_on_ffe0,
             ]),
             vec![ffe1]
         );
@@ -694,10 +807,7 @@ mod tests {
     }
 
     fn admitted_session() -> DeviceSession {
-        let resolution = observe(DeviceDetectionEvent::NotificationOnChannel {
-            channel: BACKFIRE_TELEMETRY_CHANNEL,
-            bytes: &SCREENSHOT,
-        });
+        let resolution = observe_on_backfire_service(&SCREENSHOT);
         DeviceSession::from_detection(&resolution).expect("admitted backfire")
     }
 

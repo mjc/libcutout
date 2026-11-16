@@ -769,8 +769,12 @@ class AndroidBleClient(
             }
         }
 
-        private fun characteristic(channel: ByteArray): BluetoothGattCharacteristic? =
-            characteristics.filter { it.uuid == wireUuid(channel) }.singleOrNull()
+        private fun characteristic(channel: ByteArray): BluetoothGattCharacteristic? {
+            val matches = characteristics.filter { it.uuid == wireUuid(channel) }
+            val preferred = mobilePreferredSubscriptionService(channel)
+            if (preferred != null) return matches.singleOrNull { it.service.uuid == wireUuid(preferred) }
+            return matches.singleOrNull()
+        }
 
         private fun key(kind: String, characteristic: BluetoothGattCharacteristic): String =
             "$kind:${characteristic.service.uuid}:${characteristic.uuid}"

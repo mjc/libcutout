@@ -456,9 +456,12 @@ impl DeviceDetectionSession {
                 self.observe_notification(state, bytes, &current);
             }
             DeviceDetectionEvent::NotificationOnChannel { channel, bytes } => {
-                if channel == crate::BACKFIRE_TELEMETRY_CHANNEL
-                    && crate::backfire::BackfireReport::decode(bytes).is_some()
-                {
+                let admits = crate::backfire::admits_from_notification(
+                    state.identity().gatt.as_slice(),
+                    channel,
+                    bytes,
+                );
+                if admits {
                     self.observe_backfire(state, &current);
                 } else {
                     self.observe_notification(state, bytes, &current);
