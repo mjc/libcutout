@@ -1995,7 +1995,8 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         let telemetry = displayState.telemetry ?? TelemetrySnapshot()
         guard telemetry.hasVisibleRideValues || identity?.protocol == .vesc else { return nil }
         let recording = displayState.logicalRide
-        let statistics = recording.flatMap { ride in
+        let statistics = recording.flatMap {
+            (ride) -> MobileRideMapLiveActivityStatisticsDto? in
             guard let connectedPlatformIdentifier,
                 recordingMatchesConnectedVehicle(
                     associatedVehicle: ride.associatedVehicle,
