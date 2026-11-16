@@ -109,7 +109,13 @@ struct PhoneDriveRideSurface<Content: View>: View {
                 .accessibilityHidden(true)
             }
         }
-        .accessibilityIdentifier("phone-control.buttons")
+        .background(alignment: .topLeading) {
+            // An identifier on this stack replaces each hold button's identifier.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("phone-control.buttons")
+                .allowsHitTesting(false)
+        }
     }
 
     private func holdButton(_ action: MobilePhoneDriveActionDto) -> some View {
@@ -208,96 +214,156 @@ struct PhoneDriveSettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Picker(
-                        localizedAppText("phone_control.input_mode"),
-                        selection: Binding(
-                            get: { model.settingsMode },
-                            set: { model.updateSettingsMode($0) }
-                        )
-                    ) {
-                        ForEach([MobilePhoneControlModeDto.disabled, .buttons, .area], id: \.self) { mode in
-                            Text(mode.phoneControlTitle).tag(mode)
+            ScrollViewReader { proxy in
+                Form {
+                    if model.activationError || model.limitsError || model.settingsError {
+                        Section {
+                            // Form only exposes rows near the viewport. These
+                            // failures stay in the first section, and each
+                            // rejection scrolls here from Activate or Save.
+                            VStack(alignment: .leading, spacing: 8) {
+                                phoneDriveSettingsFailures
+                            }
+                            .id(Self.settingsFailureID)
                         }
                     }
-                    .disabled(model.settingsBusy || !model.settingsLoaded)
-                    .accessibilityIdentifier("ride.phone-control.mode")
-                    phoneDriveCurrentField(
-                        "phone_control.throttle_current",
-                        text: Binding(
-                            get: { model.throttleAmpsText },
-                            set: { model.throttleAmpsText = $0 }
-                        ),
-                        identifier: "ride.phone-control.throttle-current"
-                    )
-                    phoneDriveCurrentField(
-                        "phone_control.brake_current",
-                        text: Binding(
-                            get: { model.brakeAmpsText },
-                            set: { model.brakeAmpsText = $0 }
-                        ),
-                        identifier: "ride.phone-control.brake-current"
-                    )
-                    Button(localizedAppText("phone_control.save_limits")) {
-                        Task { _ = await model.saveSettings() }
-                    }
-                    .disabled(model.settingsBusy || !model.settingsLoaded)
-                    .accessibilityIdentifier("ride.phone-control.save")
                     if model.settingsMode != .disabled, model.settingsLoaded {
-                        Button(localizedAppText("phone_control.arm")) {
-                            Task {
-                                if let request = await model.saveSettingsAndRequestActivation() {
-                                    requestActivation(request)
+                        Section {
+                            Button(localizedAppText("phone_control.arm")) {
+                                Task {
+                                    if let request = await model.saveSettingsAndRequestActivation() {
+                                        requestActivation(request)
+                                    } else {
+                                        revealCurrentSettingsFailure(proxy)
+                                    }
                                 }
                             }
+                            .disabled(model.settingsBusy)
+                            .accessibilityIdentifier("ride.phone-control.activate")
                         }
-                        .disabled(model.settingsBusy)
-                        .accessibilityIdentifier("ride.phone-control.activate")
                     }
-                    if model.activationError {
-                        Text(localizedAppText("phone_control.activation_failed"))
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("ride.phone-control.activation-error")
-                    }
-                    if model.limitsError {
-                        Text(localizedAppText("phone_control.limits_failed"))
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("ride.phone-control.limits-error")
-                    }
-                    if model.settingsError {
-                        Text(
-                            localizedAppText(
-                                model.settingsLoaded ? "phone_control.save_failed" : "phone_control.load_failed")
-                        )
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("ride.phone-control.error")
-                    }
-                    if !model.settingsLoaded && model.settingsBusy {
-                        ProgressView(localizedAppText("phone_control.input_mode"))
-                    } else if !model.settingsLoaded {
-                        Button(localizedAppText("phone_control.retry")) {
-                            Task { await model.loadSettings() }
-                        }
-                        .disabled(model.settingsBusy)
+                    settingsFields { revealCurrentSettingsFailure(proxy) }
+                    Section {
+                        Text(localizedAppText("phone_control.limitations"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                Section {
-                    Text(localizedAppText("phone_control.limitations"))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                .onChange(of: model.activationError) { _, failed in
+                    revealSettingsFailure(failed, proxy: proxy)
                 }
-            }
-            .navigationTitle(localizedAppText("phone_control.title"))
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(localizedAppText("music.done")) { dismiss() }
-                        .accessibilityIdentifier("ride.phone-control.done")
+                .onChange(of: model.limitsError) { _, failed in
+                    revealSettingsFailure(failed, proxy: proxy)
+                }
+                .onChange(of: model.settingsError) { _, failed in
+                    revealSettingsFailure(failed, proxy: proxy)
+                }
+                .onChange(of: model.settingsFailureCount) { _, count in
+                    // A repeated rejection leaves the same flag true, so the
+                    // count is what brings this section back into view.
+                    revealSettingsFailure(count > 0, proxy: proxy)
+                }
+                .navigationTitle(localizedAppText("phone_control.title"))
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(localizedAppText("music.done")) { dismiss() }
+                            .accessibilityIdentifier("ride.phone-control.done")
+                    }
                 }
             }
         }
         .task { await model.loadSettings() }
         .accessibilityIdentifier("ride.phone-control.settings-sheet")
+    }
+
+    private static let settingsFailureID = "phone-drive-settings-failure"
+
+    /// The failure row is inserted by the same update that sets the flag, so
+    /// scrolling in that update cannot see its id yet.
+    private func revealSettingsFailure(_ failed: Bool, proxy: ScrollViewProxy) {
+        guard failed else { return }
+        Task { @MainActor in
+            proxy.scrollTo(Self.settingsFailureID, anchor: .top)
+        }
+    }
+
+    private func revealCurrentSettingsFailure(_ proxy: ScrollViewProxy) {
+        revealSettingsFailure(
+            model.activationError || model.limitsError || model.settingsError, proxy: proxy)
+    }
+
+    @ViewBuilder private var phoneDriveSettingsFailures: some View {
+        if model.activationError {
+            Text(localizedAppText("phone_control.activation_failed"))
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("ride.phone-control.activation-error")
+        }
+        if model.limitsError {
+            Text(localizedAppText("phone_control.limits_failed"))
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("ride.phone-control.limits-error")
+        }
+        if model.settingsError {
+            Text(
+                localizedAppText(
+                    model.settingsLoaded ? "phone_control.save_failed" : "phone_control.load_failed")
+            )
+            .foregroundStyle(.red)
+            .accessibilityIdentifier("ride.phone-control.error")
+        }
+    }
+
+    private func settingsFields(revealFailure: @escaping () -> Void) -> some View {
+        Section {
+            Picker(
+                localizedAppText("phone_control.input_mode"),
+                selection: Binding(
+                    get: { model.settingsMode },
+                    set: { model.updateSettingsMode($0) }
+                )
+            ) {
+                ForEach([MobilePhoneControlModeDto.disabled, .buttons, .area], id: \.self) { mode in
+                    Text(mode.phoneControlTitle).tag(mode)
+                }
+            }
+            .disabled(model.settingsBusy || !model.settingsLoaded)
+            .accessibilityIdentifier("ride.phone-control.mode")
+            phoneDriveCurrentField(
+                "phone_control.throttle_current",
+                text: Binding(
+                    get: { model.throttleAmpsText },
+                    set: { model.throttleAmpsText = $0 }
+                ),
+                identifier: "ride.phone-control.throttle-current"
+            )
+            phoneDriveCurrentField(
+                "phone_control.brake_current",
+                text: Binding(
+                    get: { model.brakeAmpsText },
+                    set: { model.brakeAmpsText = $0 }
+                ),
+                identifier: "ride.phone-control.brake-current"
+            )
+            Button(localizedAppText("phone_control.save_limits")) {
+                Task {
+                    _ = await model.saveSettings()
+                    revealFailure()
+                }
+            }
+            .disabled(model.settingsBusy || !model.settingsLoaded)
+            .accessibilityIdentifier("ride.phone-control.save")
+            if !model.settingsLoaded && model.settingsBusy {
+                ProgressView(localizedAppText("phone_control.input_mode"))
+            } else if !model.settingsLoaded {
+                Button(localizedAppText("phone_control.retry")) {
+                    Task {
+                        await model.loadSettings()
+                        revealFailure()
+                    }
+                }
+                .disabled(model.settingsBusy)
+            }
+        }
     }
 
     private func phoneDriveCurrentField(

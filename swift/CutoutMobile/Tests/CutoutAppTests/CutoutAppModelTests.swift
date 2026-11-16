@@ -2847,8 +2847,15 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertFalse(saved)
             XCTAssertTrue(model.settingsError)
             XCTAssertFalse(model.limitsError)
+            XCTAssertEqual(model.settingsFailureCount, 1)
             XCTAssertFalse(model.capturesInput)
             XCTAssertEqual(state.phoneDriveSnapshot().availability, .ready)
+
+            let repeated = await model.saveSettings()
+
+            XCTAssertFalse(repeated)
+            XCTAssertTrue(model.settingsError)
+            XCTAssertEqual(model.settingsFailureCount, 2)
         }
     }
 
@@ -2866,6 +2873,13 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertFalse(saved)
             XCTAssertTrue(model.limitsError)
             XCTAssertFalse(model.settingsError)
+            XCTAssertEqual(model.settingsFailureCount, 1)
+
+            let repeated = await model.saveSettings()
+
+            XCTAssertFalse(repeated)
+            XCTAssertTrue(model.limitsError)
+            XCTAssertEqual(model.settingsFailureCount, 2)
         }
     }
     @MainActor

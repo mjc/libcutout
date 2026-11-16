@@ -596,7 +596,7 @@ extension EnvironmentValues {
 }
 
 /// Shared primary-navigation composition for the compact player.
-public struct MusicCompactPlayerInset: ViewModifier {
+public struct MusicCompactPlayerInset<Trailing: View>: ViewModifier {
     @State private var accessoryFrame: CGRect?
     public let nowPlaying: MusicNowPlaying?
     public let isHidden: Bool
@@ -604,29 +604,41 @@ public struct MusicCompactPlayerInset: ViewModifier {
     public let onOpenDetails: () -> Void
     public let onOpenSettings: () -> Void
     public let onDismiss: () -> Void
+    public let showsTrailingAccessory: Bool
+    public let trailingAccessory: Trailing
 
     public func body(content: Content) -> some View {
         #if os(iOS)
             content
-                .environment(\.musicCompactPlayerFrame, showsPlayer ? accessoryFrame : nil)
-                .tabViewBottomAccessory(isEnabled: showsPlayer) {
-                    player
-                        .frame(maxHeight: .infinity)
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .global)
-                        } action: { frame in
-                            accessoryFrame = frame.width > 0 && frame.height > 0 ? frame : nil
-                        }
+                .environment(\.musicCompactPlayerFrame, showsAccessory ? accessoryFrame : nil)
+                .tabViewBottomAccessory(isEnabled: showsAccessory) {
+                    HStack(spacing: 0) {
+                        if showsPlayer { player }
+                        if showsTrailingAccessory { trailingAccessory }
+                    }
+                    .frame(maxHeight: .infinity)
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .global)
+                    } action: { frame in
+                        accessoryFrame = frame.width > 0 && frame.height > 0 ? frame : nil
+                    }
                 }
-                .onChange(of: showsPlayer) { _, isShown in
+                .onChange(of: showsAccessory) { _, isShown in
                     if !isShown { accessoryFrame = nil }
                 }
         #else
             content.safeAreaInset(edge: .bottom, spacing: 0) {
-                if showsPlayer { player }
+                if showsAccessory {
+                    HStack(spacing: 0) {
+                        if showsPlayer { player }
+                        if showsTrailingAccessory { trailingAccessory }
+                    }
+                }
             }
         #endif
     }
+
+    private var showsAccessory: Bool { showsPlayer || showsTrailingAccessory }
 
     var showsPlayer: Bool {
         !isHidden && nowPlaying?.showsCompactPlayer == true
@@ -658,6 +670,28 @@ extension View {
         onOpenSettings: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) -> some View {
+        musicCompactPlayer(
+            nowPlaying: nowPlaying,
+            isHidden: isHidden,
+            onCommand: onCommand,
+            onOpenDetails: onOpenDetails,
+            onOpenSettings: onOpenSettings,
+            onDismiss: onDismiss,
+            showsTrailingAccessory: false,
+            trailingAccessory: { EmptyView() }
+        )
+    }
+
+    public func musicCompactPlayer<Trailing: View>(
+        nowPlaying: MusicNowPlaying?,
+        isHidden: Bool,
+        onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onOpenDetails: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void,
+        onDismiss: @escaping () -> Void,
+        showsTrailingAccessory: Bool,
+        @ViewBuilder trailingAccessory: () -> Trailing
+    ) -> some View {
         modifier(
             MusicCompactPlayerInset(
                 nowPlaying: nowPlaying,
@@ -665,7 +699,9 @@ extension View {
                 onCommand: onCommand,
                 onOpenDetails: onOpenDetails,
                 onOpenSettings: onOpenSettings,
-                onDismiss: onDismiss
+                onDismiss: onDismiss,
+                showsTrailingAccessory: showsTrailingAccessory,
+                trailingAccessory: trailingAccessory()
             )
         )
     }

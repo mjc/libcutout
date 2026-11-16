@@ -81,6 +81,94 @@ fn cancelled_activation_request_cannot_be_reused_after_a_fresh_all_up() {
     assert_eq!(owner.phone_drive_activation(), None);
 }
 
+#[test]
+fn phone_drive_settings_handoff_does_not_rearm_cancelled_navigation() {
+    let (mut owner, token, generation) = active();
+    assert!(owner.set_phone_drive_settings_presented(&token, true));
+    assert_eq!(
+        owner.phone_drive_availability(),
+        PhoneDriveAvailability::Ready,
+        "opening Ride settings retires the current-session grant"
+    );
+    assert_eq!(
+        owner.phone_drive_input_snapshot().phase,
+        PhoneDriveInputPhase::Cancelled(PhoneDriveCancelReason::Navigation)
+    );
+    let cancelled_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    assert_ne!(cancelled_generation, generation);
+
+    let release = drives(&owner.tick_phone_drive(&token, at(3_001), true).unwrap())[0].0;
+    assert_eq!(release.kind, PhoneDriveWriteKind::Release);
+    assert!(owner.mark_phone_drive_transport(
+        &token,
+        release,
+        ApplicationQueryTransportStatus::Submitted,
+        at(3_001)
+    ));
+    assert!(owner.set_phone_drive_settings_presented(&token, false));
+    assert_eq!(owner.phone_drive_activation(), None);
+
+    let idle_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            idle_generation,
+            PhoneDriveContacts::Released,
+            at(3_002),
+            at(3_002),
+        )
+        .unwrap();
+    let held_without_grant = owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            idle_generation,
+            held(PhoneDriveAction::Throttle),
+            at(3_003),
+            at(3_003),
+        )
+        .unwrap();
+    assert_eq!(
+        drives(&held_without_grant),
+        Vec::new(),
+        "a hold after navigation cancellation must not restore drive authority"
+    );
+    assert_eq!(owner.phone_drive_activation(), None);
+
+    owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            idle_generation,
+            PhoneDriveContacts::Released,
+            at(3_004),
+            at(3_004),
+        )
+        .unwrap();
+    let activation =
+        activate_current(&mut owner, &token, PhoneDriveLimits::default(), at(3_005)).unwrap();
+    let armed_generation = owner.phone_drive_input_snapshot().generation.unwrap();
+    assert_ne!(armed_generation, idle_generation);
+    owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            armed_generation,
+            PhoneDriveContacts::Released,
+            at(3_005),
+            at(3_005),
+        )
+        .unwrap();
+    let armed_hold = owner
+        .observe_phone_drive_contacts_at(
+            &token,
+            armed_generation,
+            held(PhoneDriveAction::Throttle),
+            at(3_006),
+            at(3_006),
+        )
+        .unwrap();
+    assert_eq!(drives(&armed_hold)[0].0.kind, PhoneDriveWriteKind::Setpoint);
+    assert_eq!(drives(&armed_hold)[0].0.activation_id, activation);
+}
+
 fn held(action: PhoneDriveAction) -> PhoneDriveContacts {
     PhoneDriveContacts::Single {
         contact: PhoneDriveContactId::new(1).unwrap(),

@@ -350,6 +350,7 @@ struct ContentView: View {
         .tint(tabAccent)
         .appMusicCompactPlayer(
             model: model,
+            showsRidePhoneSettings: availableTabs.first(where: \.isSelected)?.id == .ride,
             onOpenDetails: openMusicPlayer,
             onOpenSettings: { presentedSheet = .musicSettings }
         )

@@ -3,6 +3,22 @@ import CutoutMobile
 import CutoutMobileFFI
 import SwiftUI
 
+struct RidePhoneSettingsGearButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(localizedAppText("phone_control.settings"))
+        .accessibilityIdentifier("ride.phone-control.settings")
+    }
+}
+
 struct VescRideScreenView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -56,33 +72,6 @@ struct VescRideScreenView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .toolbar {
-            #if os(iOS)
-                ToolbarItem(placement: .bottomBar) {
-                    if let phoneDrive, phoneDrive.canPresentSettings {
-                        Button {
-                            presentPhoneDriveSettings(phoneDrive)
-                        } label: {
-                            Label(
-                                localizedAppText("phone_control.settings"),
-                                systemImage: "gearshape")
-                        }
-                        .accessibilityIdentifier("ride.phone-control.settings")
-                    }
-                }
-            #else
-                ToolbarItem(placement: .automatic) {
-                    if let phoneDrive, phoneDrive.canPresentSettings {
-                        Button {
-                            presentPhoneDriveSettings(phoneDrive)
-                        } label: {
-                            Label(localizedAppText("phone_control.settings"), systemImage: "gearshape")
-                        }
-                        .accessibilityIdentifier("ride.phone-control.settings")
-                    }
-                }
-            #endif
-        }
         .sheet(
             isPresented: $showsPhoneDriveSettings,
             onDismiss: {
@@ -102,6 +91,9 @@ struct VescRideScreenView: View {
         .sheet(item: $drivetrainEditor) { editor in
             VescDrivetrainEditorView(editor: editor)
         }
+        .onChange(of: phoneDrive?.navigationSettingsRequest) { _, request in
+            if let request, request > 0 { showsPhoneDriveSettings = true }
+        }
         .onChange(of: showsStandardReadings) { _, _ in phoneDrive?.cancel(.navigation) }
         .onChange(of: drivetrainEditor != nil) { _, _ in phoneDrive?.cancel(.navigation) }
         .onChange(of: liveSnapshot?.warning) { _, warning in
@@ -115,11 +107,6 @@ struct VescRideScreenView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
-    }
-
-    private func presentPhoneDriveSettings(_ phoneDrive: PhoneDriveModel) {
-        guard phoneDrive.presentSettings() else { return }
-        showsPhoneDriveSettings = true
     }
 
     private var refloatInstruments: some View {
@@ -220,35 +207,14 @@ struct VescRideScreenView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.top.navigation")
         } primary: { landscape in
-            if usesCompactPhoneInstruments {
-                GeometryReader { geometry in
-                    HStack(spacing: 8) {
-                        VStack(spacing: 0) {
-                            PevRideSpeedReading(
-                                speed: presentation.speedReadout,
-                                caption: localizedAppText("vesc.speed.caption"),
-                                pointSize: min(104, geometry.size.width * 0.30, geometry.size.height * 0.75),
-                                muted: PevDashboardColors.rideMuted
-                            )
-                            drivetrainRecoveryAccessory
-                        }
-                        .frame(width: max(0, geometry.size.width * 0.64 - 4))
-                        standardEnergyReading(
-                            pointSize: min(36, geometry.size.width * 0.105, geometry.size.height * 0.50)
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
-                    .frame(maxHeight: .infinity)
-                }
+            if isEskate {
+                eskatePrimaryInstruments(landscape: landscape)
             } else {
                 PevRidePrimaryInstruments(
                     speed: presentation.speedReadout,
                     caption: localizedAppText("vesc.speed.caption"), landscape: landscape,
-                    speedFraction: isEskate ? 0.48 : 0.42,
-                    muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted,
-                    speedAccessory: {
-                        drivetrainRecoveryAccessory
-                    }
+                    muted: PevColors.muted,
+                    speedAccessory: { drivetrainRecoveryAccessory }
                 ) { size in
                     standardEnergyReading(pointSize: min(76, size.width * 0.23, size.height * 0.45))
                 }
@@ -273,6 +239,92 @@ struct VescRideScreenView: View {
 
     private var isEskate: Bool { liveSnapshot?.vehicleKind == .eskate }
 
+    private func eskatePrimaryInstruments(landscape: Bool) -> some View {
+        GeometryReader { geometry in
+            let batteryReserve: CGFloat = 72
+            let speedBudget = max(48, geometry.size.height - batteryReserve)
+            let pointSize: CGFloat =
+                if dynamicTypeSize.isAccessibilitySize {
+                    min(64, geometry.size.width * 0.26, speedBudget * 0.45)
+                } else if landscape {
+                    min(112, geometry.size.width * 0.34, speedBudget * 0.62)
+                } else {
+                    min(164, geometry.size.width * 0.40, speedBudget * 0.72)
+                }
+            VStack(spacing: 8) {
+                VStack(spacing: 0) {
+                    PevRideSpeedReading(
+                        speed: presentation.speedReadout,
+                        caption: localizedAppText("vesc.speed.caption"),
+                        pointSize: pointSize,
+                        muted: PevDashboardColors.rideMuted
+                    )
+                    drivetrainRecoveryAccessory
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                eskateBatteryReading
+                Spacer(minLength: 0)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+        }
+    }
+
+    private var eskateBatteryReading: some View {
+        let tile = presentation.standardEnergyTile
+        let level = liveSnapshot?.batteryLevelReported ?? liveSnapshot?.batteryLevelEstimated
+        return Button {
+            showsStandardReadings = true
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(tile.label)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(PevDashboardColors.rideMuted)
+                        .layoutPriority(1)
+                    Spacer(minLength: 8)
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(tile.metricValue.displayText)
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                        if tile.metricValue != .unavailable {
+                            Text(tile.unit)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(PevDashboardColors.rideMuted)
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                Capsule()
+                    .fill(PevDashboardColors.rideLine)
+                    .frame(height: 4)
+                    .overlay(alignment: .leading) {
+                        if let level {
+                            GeometryReader { proxy in
+                                Capsule()
+                                    .fill(
+                                        colorScheme == .dark
+                                            ? PevDashboardColors.rideAccent : PevDashboardColors.rideInk
+                                    )
+                                    .frame(
+                                        width: proxy.size.width * max(0, min(1, Double(level.value) / 100))
+                                    )
+                            }
+                        }
+                    }
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(tile.label)
+        .accessibilityValue(tile.metricValue.accessibilityValue(unit: tile.unit, detail: tile.detail))
+        .accessibilityHint(localizedAppText("ride.readings.open"))
+        .accessibilityIdentifier("ride.readings.open")
+    }
+
     @ViewBuilder
     private var drivetrainRecoveryAccessory: some View {
         if phase == .live, !presentation.speedReadout.isAvailable, let makeDrivetrainEditor {
@@ -295,37 +347,15 @@ struct VescRideScreenView: View {
         return Button {
             showsStandardReadings = true
         } label: {
-            Group {
-                if isEskate, tile.kind == .batteryLevel, !dynamicTypeSize.isAccessibilitySize,
-                    let level = liveSnapshot?.batteryLevelReported ?? liveSnapshot?.batteryLevelEstimated
-                {
-                    PevRideReserveGauge(
-                        label: tile.label, valueText: tile.metricValue.displayText, unit: tile.unit,
-                        progress: Double(level.value) / 100,
-                        accent: colorScheme == .dark ? PevDashboardColors.rideAccent : PevDashboardColors.rideInk,
-                        track: PevDashboardColors.rideLine,
-                        ink: PevDashboardColors.rideInk,
-                        muted: PevDashboardColors.rideMuted,
-                        showsScale: false, compact: usesCompactPhoneInstruments,
-                        valueScale: usesCompactPhoneInstruments ? 0.35 : 0.30
-                    )
-                    .frame(
-                        maxWidth: usesCompactPhoneInstruments ? 140 : 292,
-                        maxHeight: usesCompactPhoneInstruments ? 112 : 220)
-                } else {
-                    PevInstrumentReading(
-                        label: tile.label, value: tile.metricValue, unit: tile.unit,
-                        pointSize: dynamicTypeSize.isAccessibilitySize ? min(52, pointSize) : pointSize,
-                        identifier: "vesc.ride.energy", alignment: .center,
-                        detail: tile.detail,
-                        ink: isEskate ? PevDashboardColors.rideInk : PevColors.primaryText,
-                        muted: isEskate ? PevDashboardColors.rideMuted : PevColors.muted
-                    )
-                    .visualContent
-                }
-            }
+            PevInstrumentReading(
+                label: tile.label, value: tile.metricValue, unit: tile.unit,
+                pointSize: dynamicTypeSize.isAccessibilitySize ? min(52, pointSize) : pointSize,
+                identifier: "vesc.ride.energy", alignment: .center,
+                detail: tile.detail, ink: PevColors.primaryText, muted: PevColors.muted
+            )
+            .visualContent
             .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.vertical, usesCompactPhoneInstruments ? 4 : 14)
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
