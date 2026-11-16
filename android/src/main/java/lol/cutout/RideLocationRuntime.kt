@@ -125,12 +125,12 @@ class RideLocationRuntime(
                 latitudeDegrees = location.latitude,
                 longitudeDegrees = location.longitude,
                 altitudeMeters = location.altitude,
-                horizontalAccuracyMeters = location.accuracy.toDouble(),
-                verticalAccuracyMeters = location.verticalAccuracyMeters.toDouble(),
-                speedMetersPerSecond = location.speed.toDouble(),
-                speedAccuracyMetersPerSecond = location.speedAccuracyMetersPerSecond.toDouble(),
-                courseDegrees = location.bearing.toDouble(),
-                courseAccuracyDegrees = location.bearingAccuracyDegrees.toDouble(),
+                horizontalAccuracyMeters = location.accuracy.toDouble().takeIf { location.hasAccuracy() },
+                verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters.toDouble() else null,
+                speedMetersPerSecond = location.speed.toDouble().takeIf { location.hasSpeed() },
+                speedAccuracyMetersPerSecond = if (location.hasSpeedAccuracy()) location.speedAccuracyMetersPerSecond.toDouble() else null,
+                courseDegrees = location.bearing.toDouble().takeIf { location.hasBearing() },
+                courseAccuracyDegrees = if (location.hasBearingAccuracy()) location.bearingAccuracyDegrees.toDouble() else null,
             )
         }
         // Keep the dashboard readback independent from route-point admission. A stationary
