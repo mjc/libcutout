@@ -11830,7 +11830,7 @@ impl MobileRideMapCore {
     fn complete_lifecycle_command(
         &self,
         command_id: u64,
-        _event: MobileRideEventDto,
+        event: MobileRideEventDto,
         at_ms: u64,
         result: Result<
             cutout_application::ride_recording::RideRecordingSnapshot,
@@ -11863,9 +11863,16 @@ impl MobileRideMapCore {
         if state.pending_music_stop_command_id == Some(command_id) {
             state.pending_music_stop_command_id = None;
         }
-        state
-            .project_recording_snapshot(&snapshot, at_ms)
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
+        // Discard clears the live ride id before this receipt is projected.
+        // Re-reading the recorder would report that no ride exists. The
+        // committed snapshot is the discarded ride.
+        let projected = if event == MobileRideEventDto::Discard {
+            let logical_at_ms = at_ms.saturating_add(snapshot.monotonic_epoch_offset_ms);
+            state.project_recording_projection(snapshot, logical_at_ms)
+        } else {
+            state.project_recording_snapshot(&snapshot, at_ms)
+        };
+        projected.ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
     }
 }
 
@@ -17543,6 +17550,33 @@ mod tests {
                 .state,
             MobileRideLifecycleStateDto::Active
         );
+    }
+
+    #[test]
+    fn queued_discard_projects_the_committed_ride() {
+        let core = MobileRideMapCore::new();
+        let started = core.start_gps_only(1_000).expect("GPS-only ride starts");
+        let stopped = core
+            .begin_lifecycle_command(
+                MobileRideEventDto::Stop,
+                started.command_token.expect("start has a command token"),
+                2_000,
+            )
+            .expect("stop is admitted")
+            .wait_result()
+            .expect("stop settles");
+        assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
+        let discarded = core
+            .begin_lifecycle_command(
+                MobileRideEventDto::Discard,
+                stopped.command_token.expect("stop has a command token"),
+                2_000,
+            )
+            .expect("discard is admitted")
+            .wait_result()
+            .expect("discard settles");
+        assert_eq!(discarded.state, MobileRideLifecycleStateDto::Discarded);
+        assert_eq!(discarded.ride_id, stopped.ride_id);
     }
 
     #[test]
