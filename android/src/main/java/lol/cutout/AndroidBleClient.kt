@@ -917,16 +917,43 @@ class AndroidBleClient(
         }
 
         private fun retryIdentification() {
-            if (!current()) return
-            state.connectionLinkDown(token)
+            if (!current() || draining) return
+            ending = true
+            draining = true
+            queue.close()
+            cancelWakeup?.invoke()
+            cancelDeadline?.invoke()
+            cancelIdentificationTimers()
+            val endedAt = now()
             val retryDevice = device
             val retryToken = token
-            retire(invalidate = false)
-            connection = null
-            view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
-                telemetry = null, settings = null, bms = null, problem = true)
-            scheduleRustRetry(retryDevice, retryToken)
-            publish()
+            (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
+                postOnOwner {
+                    if (retired || connection !== this) return@postOnOwner
+                    if (result.isFailure) {
+                        draining = false
+                        view = view.copy(problem = true)
+                        publish()
+                        return@postOnOwner
+                    }
+                    val schedule = {
+                        state.connectionLinkDown(retryToken)
+                        retire(invalidate = false)
+                        connection = null
+                        view = view.copy(phase = NativePhase.IDLE, session = state.deviceSessionSnapshot(),
+                            telemetry = null, settings = null, bms = null, problem = true)
+                        scheduleRustRetry(retryDevice, retryToken)
+                        publish()
+                    }
+                    if (diagnostics.hasWriter(retryToken)) {
+                        if (captureLinkUp) diagnostics.linkDown(retryToken)
+                        captureLinkUp = false
+                        diagnostics.finishAfterLinkDown(retryToken, schedule)
+                    } else {
+                        schedule()
+                    }
+                }
+            }
         }
 
         private fun cancelIdentificationTimers() {
