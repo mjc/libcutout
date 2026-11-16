@@ -1005,11 +1005,10 @@ class AndroidBleClient(
             (context.applicationContext as CutoutApplication).rides.prepareForTransportEnd(state, token, endedAt) { result ->
                 postOnOwner {
                     if (retired || connection !== this) return@postOnOwner
+                    // Completion of the ride drain is the barrier. A failed drain still has
+                    // to finish the capture and release the link; the queue is already closed.
                     if (result.isFailure) {
-                        draining = false
-                        view = view.copy(problem = true)
-                        publish()
-                        return@postOnOwner
+                        Log.w("CutoutBle", "Ride drain failed before transport teardown", result.exceptionOrNull())
                     }
                     if (diagnostics.hasWriter(token)) {
                         if (captureLinkUp) diagnostics.linkDown(token)
